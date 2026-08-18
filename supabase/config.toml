@@ -1,0 +1,4 @@
+# Local Supabase project identifier only — NOT a hosted/cloud instance.
+# This whole stack runs locally in Docker via `supabase start`.
+# See README.md ("Supabase runs locally in Docker").
+project_id = "illokcvaflhzrpxlwhtj"

@@ -1,0 +1,71 @@
+export interface InterestCalculationParams {
+  debentureKitta: number;       // Number of debentures held
+  unitFaceValue?: number;       // Default NPR 1000 per debenture
+  annualInterestRate: number;   // e.g. 7 for 7%
+  fromDate?: Date;
+  toDate?: Date;
+  daysCount?: number;           // explicit day count
+  taxRate?: number;             // e.g. 0.06 for 6% TDS
+  taxCategory?: 'PUBLIC' | 'PRIVATE' | 'MUTUAL_FUND' | 'INSTITUTION' | 'TAX_EXEMPTED' | 'PROMOTER' | 'CUSTOM';
+}
+
+export interface InterestResult {
+  totalPrincipal: number;
+  annualInterestAmount: number;
+  dailyInterestRate: number;
+  daysCount: number;
+  grossPeriodInterest: number;
+  tdsRate: number;
+  taxAmount: number;
+  netInterestPayable: number;
+}
+
+export const InterestCalculator = {
+  calculate(params: InterestCalculationParams): InterestResult {
+    const faceValue = params.unitFaceValue || 1000;
+    const totalPrincipal = params.debentureKitta * faceValue;
+
+    // Annual Interest (e.g. 7% of total principal)
+    const annualInterestAmount = (totalPrincipal * params.annualInterestRate) / 100;
+
+    // Daily Interest (365-day convention)
+    const dailyInterestRate = annualInterestAmount / 365;
+
+    // Compute days from dates if not explicitly provided
+    let days = params.daysCount ?? 0;
+    if (!days && params.fromDate && params.toDate) {
+      const timeDiff = params.toDate.getTime() - params.fromDate.getTime();
+      days = Math.max(0, Math.ceil(timeDiff / (1000 * 3600 * 24)));
+    }
+
+    // Gross Period Interest
+    const grossPeriodInterest = dailyInterestRate * days;
+
+    // TDS rate logic
+    let tdsRate = params.taxRate !== undefined ? params.taxRate : 0.06;
+    
+    if (params.taxCategory === 'TAX_EXEMPTED' || params.taxCategory === 'MUTUAL_FUND') {
+      tdsRate = 0.0; // Tax Exempted / Mutual Fund
+    } else if (params.taxCategory === 'INSTITUTION') {
+      tdsRate = 0.15; // Legal Person / Company
+    } else if (params.taxCategory === 'PUBLIC' || params.taxCategory === 'PRIVATE' || params.taxCategory === 'PROMOTER') {
+      tdsRate = 0.06; // Natural Person
+    } else if (params.taxCategory === 'CUSTOM' && params.taxRate !== undefined) {
+      tdsRate = params.taxRate;
+    }
+
+    const taxAmount = grossPeriodInterest * tdsRate;
+    const netInterestPayable = grossPeriodInterest - taxAmount;
+
+    return {
+      totalPrincipal,
+      annualInterestAmount: Math.round(annualInterestAmount * 100) / 100,
+      dailyInterestRate: Math.round(dailyInterestRate * 1000000) / 1000000,
+      daysCount: days,
+      grossPeriodInterest: Math.round(grossPeriodInterest * 100) / 100,
+      tdsRate,
+      taxAmount: Math.round(taxAmount * 100) / 100,
+      netInterestPayable: Math.round(netInterestPayable * 100) / 100
+    };
+  }
+};
