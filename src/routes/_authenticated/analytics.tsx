@@ -123,39 +123,56 @@ function AnalyticsPage() {
   const summaryStats = useMemo(() => {
     const totalCompanies = new Set(filteredSummary.map((s) => s.company_id)).size;
     const totalRecords = filteredSummary.reduce(
-      (s, r) => s + r.dividend_count + r.interest_count,
+      (s, r) => s + r.dividend_count + r.interest_count + (r.mutual_fund_count || 0),
       0
     );
     const dividendGross = filteredSummary.reduce((s, r) => s + r.dividend_gross, 0);
     const interestGross = filteredSummary.reduce((s, r) => s + r.interest_gross, 0);
+    const mutualFundGross = filteredSummary.reduce((s, r) => s + (r.mutual_fund_gross || 0), 0);
     const totalPaid = filteredSummary.reduce((s, r) => s + r.total_paid, 0);
     const totalPending = filteredSummary.reduce((s, r) => s + r.total_pending, 0);
-    return { totalCompanies, totalRecords, dividendGross, interestGross, totalPaid, totalPending };
+    const totalGross = dividendGross + interestGross + mutualFundGross;
+    return {
+      totalCompanies,
+      totalRecords,
+      dividendGross,
+      interestGross,
+      mutualFundGross,
+      totalGross,
+      totalPaid,
+      totalPending,
+    };
   }, [filteredSummary]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-6">
       <PageHeader
-        title="Analytics & Summaries"
-        description="Comprehensive overview of companies, records, and overall payment statuses by fiscal year."
+        title="Analytics & Fiscal Summaries"
+        description="Comprehensive overview of companies, records, and overall payment statuses across Equity Dividends, Debentures, and Mutual Funds."
       />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
         <StatCard title="Companies" value={summaryStats.totalCompanies.toString()} icon={Building2} />
         <StatCard title="Total Records" value={fmtCount(summaryStats.totalRecords)} icon={Layers} />
-        <StatCard title="Dividend Gross" value={fmt(summaryStats.dividendGross)} icon={BarChart3} />
-        <StatCard title="Interest Gross" value={fmt(summaryStats.interestGross)} icon={TrendingUp} />
-        <StatCard title="Total Paid" value={fmt(summaryStats.totalPaid)} icon={CheckCircle2} colorClass="text-emerald-600" />
-        <StatCard title="Total Pending" value={fmt(summaryStats.totalPending)} icon={Clock} colorClass="text-amber-600" />
+        <StatCard title="Equity Dividend" value={fmt(summaryStats.dividendGross)} icon={BarChart3} />
+        <StatCard title="Debenture Interest" value={fmt(summaryStats.interestGross)} icon={TrendingUp} />
+        <StatCard title="Mutual Fund" value={fmt(summaryStats.mutualFundGross)} icon={Layers} />
+        <StatCard
+          title="Total Paid"
+          value={fmt(summaryStats.totalPaid)}
+          icon={CheckCircle2}
+          colorClass="text-emerald-600"
+          subtitle={`Pending: NPR ${fmt(summaryStats.totalPending)}`}
+        />
       </div>
 
       <Card>
         <CardHeader className="pb-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <CardTitle className="text-base">Company × Fiscal Year Summary</CardTitle>
+              <CardTitle className="text-base">Company × Fiscal Year Breakdown</CardTitle>
               <CardDescription>
-                {filteredSummary.length} record{filteredSummary.length !== 1 ? "s" : ""} found
+                {filteredSummary.length} fiscal summary record{filteredSummary.length !== 1 ? "s" : ""} across all instruments
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -176,7 +193,7 @@ function AnalyticsPage() {
                 }}
               >
                 <Download className="h-3.5 w-3.5 mr-1.5" />
-                Export
+                Export Excel
               </Button>
             </div>
           </div>
@@ -187,19 +204,31 @@ function AnalyticsPage() {
               <Input
                 placeholder="Search company or FY…"
                 value={summarySearch}
-                onChange={(e) => { setSummarySearch(e.target.value); setSummaryPage(1); }}
+                onChange={(e) => {
+                  setSummarySearch(e.target.value);
+                  setSummaryPage(1);
+                }}
                 className="pl-8 h-8 text-sm"
               />
               {summarySearch && (
                 <button
-                  onClick={() => { setSummarySearch(""); setSummaryPage(1); }}
+                  onClick={() => {
+                    setSummarySearch("");
+                    setSummaryPage(1);
+                  }}
                   className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
               )}
             </div>
-            <Select value={selectedFy} onValueChange={(v) => { setSelectedFy(v); setSummaryPage(1); }}>
+            <Select
+              value={selectedFy}
+              onValueChange={(v) => {
+                setSelectedFy(v);
+                setSummaryPage(1);
+              }}
+            >
               <SelectTrigger className="w-40 h-8 text-sm">
                 <Calendar className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
                 <SelectValue placeholder="All fiscal years" />
@@ -207,11 +236,19 @@ function AnalyticsPage() {
               <SelectContent>
                 <SelectItem value="all">All fiscal years</SelectItem>
                 {fiscalYears.map((fy) => (
-                  <SelectItem key={fy} value={fy}>{fy}</SelectItem>
+                  <SelectItem key={fy} value={fy}>
+                    {fy}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <Select value={selectedCompany} onValueChange={(v) => { setSelectedCompany(v); setSummaryPage(1); }}>
+            <Select
+              value={selectedCompany}
+              onValueChange={(v) => {
+                setSelectedCompany(v);
+                setSummaryPage(1);
+              }}
+            >
               <SelectTrigger className="w-56 h-8 text-sm">
                 <Building2 className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
                 <SelectValue placeholder="All companies" />
@@ -236,10 +273,10 @@ function AnalyticsPage() {
                   <TableHead>FY</TableHead>
                   <TableHead className="text-right">Div. Count</TableHead>
                   <TableHead className="text-right">Div. Gross</TableHead>
-                  <TableHead className="text-right">Div. Net</TableHead>
                   <TableHead className="text-right">Int. Count</TableHead>
                   <TableHead className="text-right">Int. Gross</TableHead>
-                  <TableHead className="text-right">Int. Net</TableHead>
+                  <TableHead className="text-right">MF Count</TableHead>
+                  <TableHead className="text-right">MF Gross</TableHead>
                   <TableHead className="text-right text-emerald-600">Paid</TableHead>
                   <TableHead className="text-right text-amber-600">Pending</TableHead>
                   <TableHead className="pr-6 text-right">Actions</TableHead>
@@ -265,7 +302,7 @@ function AnalyticsPage() {
                   </TableRow>
                 ) : (
                   pagedSummary.map((row) => (
-                    <TableRow key={`${row.company_id}|${row.fiscal_year}`} className="group">
+                    <TableRow key={`${row.company_id}|${row.fiscal_year}`} className="group hover:bg-muted/40">
                       <TableCell className="pl-6">
                         <div>
                           <span className="font-medium text-sm">{row.company_name}</span>
@@ -280,23 +317,23 @@ function AnalyticsPage() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right tabular-nums text-sm">{fmtCount(row.dividend_count)}</TableCell>
-                      <TableCell className="text-right tabular-nums text-sm">{fmt(row.dividend_gross)}</TableCell>
-                      <TableCell className="text-right tabular-nums text-sm">{fmt(row.dividend_net)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-sm font-medium">{fmt(row.dividend_gross)}</TableCell>
                       <TableCell className="text-right tabular-nums text-sm">{fmtCount(row.interest_count)}</TableCell>
-                      <TableCell className="text-right tabular-nums text-sm">{fmt(row.interest_gross)}</TableCell>
-                      <TableCell className="text-right tabular-nums text-sm">{fmt(row.interest_net)}</TableCell>
-                      <TableCell className="text-right tabular-nums text-sm font-semibold text-emerald-600">
+                      <TableCell className="text-right tabular-nums text-sm font-medium">{fmt(row.interest_gross)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-sm">{fmtCount(row.mutual_fund_count)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-sm font-medium">{fmt(row.mutual_fund_gross)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-sm font-bold text-emerald-600">
                         {fmt(row.total_paid)}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums text-sm font-semibold text-amber-600">
+                      <TableCell className="text-right tabular-nums text-sm font-bold text-amber-600">
                         {fmt(row.total_pending)}
                       </TableCell>
                       <TableCell className="pr-6 text-right">
-                         <Link to="/data-management" search={{ companyId: row.company_id, fy: row.fiscal_year }}>
-                           <Button size="icon" variant="ghost" className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity">
-                             <Eye className="h-3.5 w-3.5" />
-                           </Button>
-                         </Link>
+                        <Link to="/data-management" search={{ companyId: row.company_id, fy: row.fiscal_year }}>
+                          <Button size="icon" variant="ghost" className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Eye className="h-3.5 w-3.5" />
+                          </Button>
+                        </Link>
                       </TableCell>
                     </TableRow>
                   ))

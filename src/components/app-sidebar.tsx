@@ -1,4 +1,6 @@
 import { Link, useRouterState } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import {
   LayoutDashboard,
   Building2,
@@ -19,6 +21,7 @@ import {
   Package,
   BarChart3,
   ShieldCheck,
+  ListChecks,
 } from "lucide-react";
 import {
   Sidebar,
@@ -32,6 +35,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { Badge } from "@/components/ui/badge";
 import { useAuth, type AppRole } from "@/hooks/use-auth";
 
 interface NavItem {
@@ -97,6 +101,12 @@ const sections: NavSection[] = [
         roles: ["admin", "supervisor"] as AppRole[],
       },
       {
+        title: "Classification Review",
+        url: "/classification-review",
+        icon: ListChecks,
+        roles: ["admin", "supervisor"] as AppRole[],
+      },
+      {
         title: "Audit Log",
         url: "/audit-logs",
         icon: ShieldCheck,
@@ -106,11 +116,11 @@ const sections: NavSection[] = [
   },
   {
     label: "Administration",
-    roles: ["admin"] as AppRole[],
+    roles: ["admin", "supervisor"] as AppRole[],
     items: [
-      { title: "Users & Roles", url: "/users", icon: UserCog },
-      { title: "Fiscal Years", url: "/settings/fiscal-years", icon: Calendar },
-      { title: "System Settings", url: "/settings", icon: Settings },
+      { title: "Users & Roles", url: "/users", icon: UserCog, roles: ["admin"] as AppRole[] },
+      { title: "Fiscal Years", url: "/settings/fiscal-years", icon: Calendar, roles: ["admin", "supervisor"] as AppRole[] },
+      { title: "System Settings", url: "/settings", icon: Settings, roles: ["admin"] as AppRole[] },
     ],
   },
 ];
@@ -118,6 +128,32 @@ const sections: NavSection[] = [
 export function AppSidebar() {
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const { roles } = useAuth();
+
+  // Live badge for investors still needing a tax classification.
+  const { data: reviewCount = 0 } = useQuery({
+    queryKey: ["classification-review-count"],
+    queryFn: async () => {
+      const { count } = await (supabase as any)
+        .from("clients")
+        .select("id", { count: "exact", head: true })
+        .or("classification_status.eq.REVIEW_REQUIRED,payee_classification.eq.UNCLASSIFIED");
+      return count ?? 0;
+    },
+    refetchInterval: 60_000,
+  });
+
+  // Live badge for pending approvals
+  const { data: pendingApprovalCount = 0 } = useQuery({
+    queryKey: ["pending-approvals-badge-count"],
+    queryFn: async () => {
+      const { count } = await (supabase as any)
+        .from("pending_approvals")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "Pending");
+      return count ?? 0;
+    },
+    refetchInterval: 60_000,
+  });
 
   const isActive = (url: string) => pathname === url || pathname.startsWith(url + "/");
 
@@ -159,6 +195,21 @@ export function AppSidebar() {
                         <Link to={item.url}>
                           <item.icon />
                           <span>{item.title}</span>
+                          {item.url === "/classification-review" && reviewCount > 0 && (
+                            <Badge
+                              variant="destructive"
+                              className="ml-auto h-5 min-w-5 px-1.5 text-[10px]"
+                            >
+                              {reviewCount}
+                            </Badge>
+                          )}
+                          {item.url === "/approvals" && pendingApprovalCount > 0 && (
+                            <Badge
+                              className="ml-auto h-5 min-w-5 px-1.5 text-[10px] bg-amber-500 hover:bg-amber-600 text-white"
+                            >
+                              {pendingApprovalCount}
+                            </Badge>
+                          )}
                         </Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>

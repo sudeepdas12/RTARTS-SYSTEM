@@ -10,9 +10,15 @@ export interface ColumnMapping {
   grandfather_name?: string;
   citizenship?: string;
   pan?: string;
+  date_of_birth?: string;
+  gender?: string;
+  occupation?: string;
   address?: string;
+  province?: string;
   district?: string;
+  municipality?: string;
   phone?: string;
+  email?: string;
   shares_held?: string; // KITTA / ALLOTED_QUANTITY
   bonus_actual?: string; // ACTUAL_BONUS 7%
   bonus_issued?: string; // ISSUED BONUS
@@ -24,13 +30,16 @@ export interface ColumnMapping {
   net_payable?: string; // NET_DIV. / NET INTEREST PAYABLE / NET DIVIDEND / ROUND UP DIV
   bank_code?: string;
   bank_name?: string;
+  bank_branch?: string;
   bank_account_no?: string;
+  account_type?: string;
   pledge?: string;
   lot_name?: string;
   investor_type?: string; // D-PUBLIC / P-PUBLIC / TYPE
   status?: string; // STATUS / REMARKS 1
   approve_date?: string;
   isin?: string;
+  client_id?: string;
 }
 
 export interface ParsedSheetData {
@@ -48,6 +57,7 @@ export interface ParsedSheetData {
   rowCount: number;
   isPreCalculated: boolean;
   isRawInputFile: boolean;
+  detectedIsin?: string;
   calculationDiscrepancies?: { row: number; field: string; expected: number; actual: number; }[];
 }
 
@@ -56,6 +66,7 @@ export interface ParsedExcelData {
   fileName: string;
   sheets: ParsedSheetData[];
   detectedCompanyName?: string;  // Company name extracted from title rows or file name
+  detectedIsin?: string; // ISIN auto-detected from sheet columns or rows
   detectedRate?: number; // Rate auto-detected from filename
   grandTotals: {
     totalRows: number;
@@ -67,33 +78,42 @@ export interface ParsedExcelData {
 }
 
 const COLUMN_ALIASES: Record<keyof ColumnMapping, string[]> = {
-  boid: ['BOID', 'BENEFICIARY ID', 'CLIENT ID', 'BENEFICIARY_ID', 'CLIENT_ID', 'DP ID', 'DPID', 'BO ID'],
-  full_name: ['NAME', 'APPLICANT_NAME', 'SHAREHOLDER NAME', 'NAME ', 'HOLDER NAME', 'UNIT HOLDER NAME', 'DEBENTURE HOLDER', 'INVESTOR NAME', 'ACCOUNT HOLDER', 'CLIENT NAME'],
-  father_name: ["FATHER'S NAME", 'FATHERS NAME', 'FATHER_NAME', 'FATHER NAME', "FATHER'S NAME ", 'FATHER_NAME_MOTHER_NAME'],
-  grandfather_name: ["GRANDFATHER'S NAME", 'GRANDFATHERS NAME', 'GRANDFATHER_NAME', 'GRANDFATHER NAME', "GRANDFATHER'S NAME ", 'GRANDFATHER_NAME_SPOUSE_NAME'],
-  citizenship: ['CITIZENSHIP', 'CITIZENSHIP_NUMBER', 'CITIZENSHIP NUMBER'],
-  pan: ['PAN', 'PAN NO', 'PAN NUMBER'],
-  address: ['ADDRESS', 'LOCATION'],
+  boid: ['BOID', 'BENEFICIARY ID', 'CLIENT ID', 'BENEFICIARY_ID', 'CLIENT_ID', 'DP ID', 'DPID', 'BO ID', 'BO_ID', 'BENEFICIARY_NO', 'BENEFICIARY NO', 'BENEFICIARY', 'CLIENT CODE', 'CLIENT_CODE', 'DMAT A/C', 'DEMAT A/C', 'DEMAT_ACCOUNT', 'DEMAT', 'BOID NO', 'BOID NO.'],
+  full_name: ['NAME', 'APPLICANT_NAME', 'APPLICANT NAME', 'SHAREHOLDER NAME', 'SHARE HOLDER NAME', 'NAME ', 'HOLDER NAME', 'UNIT HOLDER NAME', 'UNITHOLDER NAME', 'DEBENTURE HOLDER', 'INVESTOR NAME', 'ACCOUNT HOLDER', 'CLIENT NAME', 'BENEFICIARY NAME', 'FULL NAME', 'FULL_NAME', 'INVESTOR_NAME', 'PARTY NAME', 'MEMBER NAME'],
+  father_name: ["FATHER'S NAME", 'FATHERS NAME', 'FATHER_NAME', 'FATHER NAME', "FATHER'S NAME ", 'FATHER_NAME_MOTHER_NAME', 'FATHER/HUSBAND NAME'],
+  grandfather_name: ["GRANDFATHER'S NAME", 'GRANDFATHERS NAME', 'GRANDFATHER_NAME', 'GRANDFATHER NAME', "GRANDFATHER'S NAME ", 'GRANDFATHER_NAME_SPOUSE_NAME', 'GRAND FATHER NAME', "GRAND FATHER'S NAME"],
+  citizenship: ['CITIZENSHIP', 'CITIZENSHIP_NUMBER', 'CITIZENSHIP NUMBER', 'CITIZENSHIP NO', 'CITIZENSHIP_NO', 'CITIZENSHIP NO.', 'CITIZENSHIP/REG NO', 'CITIZENSHIP_REG_NO'],
+  pan: ['PAN', 'PAN NO', 'PAN NUMBER', 'PAN_NO', 'PAN_NUMBER', 'PAN NO.', 'PAN/REG NO', 'PAN_REG_NO', 'REGISTRATION NO', 'COMPANY REG NO'],
+  date_of_birth: ['DOB', 'DATE OF BIRTH', 'DATE_OF_BIRTH', 'BIRTH DATE', 'BIRTH_DATE', 'D.O.B', 'D.O.B.', 'DOB (BS)', 'DOB (AD)', 'BIRTHDATE', 'DATE_OF_BIRTH_BS', 'DATE_OF_BIRTH_AD', 'BIRTH_DT'],
+  gender: ['GENDER', 'SEX'],
+  occupation: ['OCCUPATION', 'PROFESSION'],
+  address: ['ADDRESS', 'LOCATION', 'PERMANENT ADDRESS', 'ADDRESS1', 'FULL ADDRESS', 'STREET', 'CURRENT ADDRESS'],
+  province: ['PROVINCE', 'STATE', 'PROVINCE NO', 'PROVINCE_NO'],
   district: ['DISTRICT'],
-  phone: ['CONTACT', 'PHONE', 'MOBILE', 'CONTACT NO', 'CONTACT ', 'CONTACT 2'],
-  shares_held: ['TOTAL KITTA', 'TOTA KITTA', 'ALLOTED_QUANTITY', 'SHARES', 'TOTAL SHARES', 'KITTA', 'UNITS HELD', 'UNIT HELD', 'UNITS', 'NO OF UNITS', 'FACE VALUE UNITS', 'DEBENTURE UNITS', 'PRINCIPAL AMOUNT', 'NOMINAL VALUE', 'FREE BALANCE'],
-  bonus_actual: ['ACTUAL_BONUS 7%', 'ACTUAL_BONUS', 'BONUS KITTA', 'ACTUAL BONUS'],
+  municipality: ['MUNICIPALITY', 'VDC', 'MUNICIPALITY / VDC', 'MUNICIPALITY/VDC', 'LOCAL BODY', 'MUNICIPALITY_VDC', 'VDC_MUNICIPALITY'],
+  phone: ['CONTACT', 'PHONE', 'MOBILE', 'CONTACT NO', 'CONTACT ', 'CONTACT 2', 'MOBILE NO', 'MOBILE_NO', 'PHONE NO', 'PHONE_NO', 'MOBILE NUMBER', 'PHONE NUMBER', 'CONTACT NUMBER', 'TEL NO'],
+  email: ['EMAIL', 'EMAIL ADDRESS', 'EMAIL_ADDRESS', 'E-MAIL', 'E-MAIL ADDRESS', 'EMAIL ID', 'E_MAIL'],
+  shares_held: ['TOTAL KITTA', 'TOTA KITTA', 'ALLOTED_QUANTITY', 'ALLOTTED_QUANTITY', 'ALLOTED QUANTITY', 'ALLOTTED QUANTITY', 'SHARES', 'TOTAL SHARES', 'KITTA', 'TOTAL_KITTA', 'TOT_KITTA', 'UNITS HELD', 'UNIT HELD', 'UNITS', 'NO OF UNITS', 'NO. OF UNITS', 'NO_OF_UNITS', 'TOTAL UNITS', 'TOTAL UNIT', 'TOTAL_UNITS', 'TOT_UNITS', 'UNIT BALANCE', 'BALANCE UNITS', 'BALANCE', 'HOLDING', 'HOLDINGS', 'CURRENT HOLDING', 'HOLDING_QTY', 'QTY', 'QUANTITY', 'TOTAL QTY', 'TOT_QTY', 'FREE BALANCE', 'FREE_BALANCE', 'SAFEKEEP', 'SAFEKEEP_BALANCE', 'FACE VALUE UNITS', 'DEBENTURE UNITS', 'PRINCIPAL AMOUNT', 'NOMINAL VALUE', 'NO. OF SHARES', 'NO OF SHARES', 'NO_OF_SHARES'],
+  bonus_actual: ['ACTUAL_BONUS 7%', 'ACTUAL_BONUS', 'BONUS KITTA', 'ACTUAL BONUS', 'BONUS_KITTA'],
   bonus_issued: ['ISSUED BONUS', 'ISSUED_BONUS'],
-  bonus_fraction: ['REM FRACTION', 'FRACTION', 'REMAINING FRACTION'],
-  after_bonus_kitta: ['AFTER BONUS KITTA', 'T.KITTA', 'AFTER_BONUS_KITTA'],
-  cash_dividend: ['DIVIDEND 5.631', 'DIVIDEND', 'AMOUNT/DIVIDEND', 'AMOUNT', 'INTEREST-PUMORI', 'INTEREST PUMORI', 'INT. @ 7%', 'INTEREST AMOUNT', 'GROSS INTEREST', 'GROSS AMOUNT', 'DISTRIBUTION AMOUNT', 'INT AMOUNT', 'INTEREST @ 7%', 'COUPON AMOUNT'],
-  bon_tax: ['BON_TAX', 'BONUS TAX'],
-  div_tax: ['DIV_TAX', 'DIVIDEND TAX', 'TAX @6%', 'TAX', 'TDS', 'TDS AMOUNT', 'WITHHOLDING TAX', 'TAX DEDUCTED'],
-  net_payable: ['NET_DIV.', 'NET INTEREST PAYABLE', 'NET DIVIDEND', 'NET PAYABLE', 'ROUND UP DIV', 'ROUNDUP', 'NET', 'NET INT', 'NET AMOUNT', 'NET INTEREST', 'NET DISTRIBUTION'],
-  bank_code: ['BANK CODE'],
-  bank_name: ['BANK NAME', 'BANK NAME ', 'BANK'],
-  bank_account_no: ['BANK A/C NO.', 'BANK A/C NO', 'ACCOUNT_NUMBER', 'BANK ACCOUNT NO.', 'BANK ACCOUNT NO', 'ACCOUNT NUMBER'],
-  pledge: ['PLEDGE', 'REMARKS'],
-  lot_name: ['LOT'],
-  investor_type: ['TYPE', 'CATEGORY', 'INVESTOR TYPE', 'HOLDER TYPE', 'SHAREHOLDER TYPE'],
-  status: ['STATUS', 'REMARKS 1'],
-  approve_date: ['APPROVED DATE', 'APPROVE DATE'],
-  isin: ['ISIN NO.', 'ISIN NO', 'ISIN']
+  bonus_fraction: ['REM FRACTION', 'FRACTION', 'REMAINING FRACTION', 'REM_FRACTION'],
+  after_bonus_kitta: ['AFTER BONUS KITTA', 'T.KITTA', 'AFTER_BONUS_KITTA', 'TOTAL AFTER BONUS'],
+  cash_dividend: ['DIVIDEND 5.631', 'DIVIDEND', 'AMOUNT/DIVIDEND', 'AMOUNT', 'DIVIDEND AMOUNT', 'DIVIDEND_AMOUNT', 'GROSS AMOUNT', 'GROSS_AMOUNT', 'GROSS DIVIDEND', 'GROSS_DIVIDEND', 'GROSS INTEREST', 'GROSS_INTEREST', 'GROSS PAYABLE', 'GROSS_PAYABLE', 'PAYABLE AMOUNT', 'DISTRIBUTION AMOUNT', 'DISTRIBUTION', 'TOTAL AMOUNT', 'TOTAL_AMOUNT', 'RETURN AMOUNT', 'RETURN', 'INTEREST-PUMORI', 'INTEREST PUMORI', 'INT. @ 7%', 'INTEREST AMOUNT', 'INT AMOUNT', 'INTEREST @ 7%', 'COUPON AMOUNT'],
+  bon_tax: ['BON_TAX', 'BONUS TAX', 'BONUS_TAX'],
+  div_tax: ['DIV_TAX', 'DIVIDEND TAX', 'TAX @6%', 'TAX', 'TAX AMOUNT', 'TAX_AMOUNT', 'TDS', 'TDS AMOUNT', 'TDS_AMOUNT', 'WITHHOLDING TAX', 'WHT', 'TAX DEDUCTED'],
+  net_payable: ['NET_DIV.', 'NET_DIV', 'NET INTEREST PAYABLE', 'NET DIVIDEND', 'NET_DIVIDEND', 'NET PAYABLE', 'NET_PAYABLE', 'NET AMOUNT', 'NET_AMOUNT', 'ROUND UP DIV', 'ROUNDUP', 'NET', 'NET INT', 'NET INTEREST', 'NET DISTRIBUTION', 'PAYABLE NET', 'TOTAL NET', 'TOTAL_NET'],
+  bank_code: ['BANK CODE', 'BANK_CODE'],
+  bank_name: ['BANK NAME', 'BANK NAME ', 'BANK', 'BANK_NAME', 'BANKNAME', 'NAME OF BANK', 'BANK/FINANCIAL INSTITUTION', 'BANK / FINANCIAL INSTITUTION', 'BANK DETAILS', 'BANK_TITLE'],
+  bank_branch: ['BANK BRANCH', 'BRANCH NAME', 'BRANCH', 'BANK_BRANCH', 'BANK BRANCH NAME', 'BRANCH_NAME', 'BRANCHNAME'],
+  bank_account_no: ['BANK A/C NO.', 'BANK A/C NO', 'BANK_A/C_NO', 'ACCOUNT_NUMBER', 'ACCOUNT NUMBER', 'ACCOUNT NO', 'ACCOUNT NO.', 'BANK ACCOUNT NO.', 'BANK ACCOUNT NO', 'BANK_ACCOUNT_NO', 'BANK ACC NO', 'BANK ACC NO.', 'BANK ACC NUMBER', 'BANK ACCOUNT NUMBER', 'A/C NO', 'A/C NO.', 'ACC NO', 'ACC NO.', 'A/C NUMBER', 'ACC NUMBER', 'BANK A/C.', 'BANK ACC', 'A/C_NO', 'ACC_NO', 'ACCOUNT_NO', 'ACCT_NO', 'ACCT NO'],
+  account_type: ['ACCOUNT TYPE', 'ACCOUNT_TYPE', 'A/C TYPE', 'ACC TYPE', 'A/C_TYPE'],
+  pledge: ['PLEDGE', 'REMARKS', 'FREEZE STATUS', 'PLEDGED'],
+  lot_name: ['LOT', 'LOT NAME', 'LOT_NAME'],
+  investor_type: ['TYPE', 'CATEGORY', 'INVESTOR TYPE', 'HOLDER TYPE', 'SHAREHOLDER TYPE', 'INVESTOR_TYPE', 'HOLDER_TYPE'],
+  status: ['STATUS', 'REMARKS 1', 'STATUS / REMARKS 1'],
+  approve_date: ['APPROVED DATE', 'APPROVE DATE', 'APPROVAL_DATE'],
+  isin: ['ISIN NO.', 'ISIN NO', 'ISIN', 'ISIN_NO', 'ISIN CODE', 'SECURITY CODE'],
+  client_id: ['CLIENT ID', 'CLIENT_ID', 'CLIENT NO', 'CLIENT_NO', 'CLIENT NO.', 'MEMBER ID', 'MEMBER_ID']
 };
 
 export const ExcelParser = {
@@ -111,45 +131,76 @@ export const ExcelParser = {
       detectedRate = Number(rateMatch[1]);
     }
 
-    if (fileNameLower.includes('debenture') || fileNameLower.includes('interest')) fileType = 'debenture';
-    else if (fileNameLower.includes('mutual fund') || fileNameLower.includes('rmf') || fileNameLower.includes('mf ') || fileNameLower.includes('mf-')) fileType = 'mutual_fund';
-    else if (fileNameLower.includes('bonus') || fileNameLower.includes('agm')) fileType = 'bonus_share';
-    else if (fileNameLower.includes('right')) fileType = 'right_share';
-    else if (fileNameLower.includes('dividend') || fileNameLower.includes('book close')) fileType = 'dividend';
+    // --- Filename-based detection (strong signals first) ---
+    // NOTE: 'agm' is NOT a bonus signal. AGM files are typically cash dividend distributions.
+    // Only 'bonus' in the filename explicitly means bonus shares.
+    if (fileNameLower.includes('debenture') || fileNameLower.includes('interest')) {
+      fileType = 'debenture';
+    } else if (fileNameLower.includes('mutual fund') || fileNameLower.includes('rmf') || fileNameLower.includes('mf ') || fileNameLower.includes('mf-')) {
+      fileType = 'mutual_fund';
+    } else if (fileNameLower.includes('bonus share') || (fileNameLower.includes('bonus') && !fileNameLower.includes('dividend'))) {
+      fileType = 'bonus_share';
+    } else if (fileNameLower.includes('right share') || (fileNameLower.includes('right') && !fileNameLower.includes('copyright'))) {
+      fileType = 'right_share';
+    } else if (
+      fileNameLower.includes('dividend') ||
+      fileNameLower.includes('book close') ||
+      fileNameLower.includes('agm') ||  // AGM distributions are cash dividends
+      fileNameLower.includes('div ') || // "DIV " prefix
+      fileNameLower.includes('batch') ||
+      fileNameLower.includes('report') ||
+      fileNameLower.includes('arko') ||
+      fileNameLower.includes('neco') ||
+      fileNameLower.includes('payout')
+    ) {
+      fileType = 'dividend';
+    }
 
-    // NEW: If filename didn't give a strong signal, inspect the sheet headers/columns
-    // to auto-detect the file type (e.g. "BARUN LIST.xlsx" containing DIVIDEND/TAX/NET_DIV columns).
+    // --- Content-based detection (when filename is ambiguous) ---
+    // IMPORTANT: FREE BALANCE, SAFEKEEP, ISIN are standard CDS demat export columns that
+    // appear in ALL file types (dividend, debenture, bonus). Do NOT use them alone to
+    // classify a file as debenture — they are not debenture-specific.
     if (fileType === 'unknown') {
       for (const sheetName of workbook.SheetNames.slice(0, 5)) {
         const ws = workbook.Sheets[sheetName];
         const json2 = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1 });
         if (!json2 || json2.length === 0) continue;
-        // Look at the first 12 rows for header patterns
-        const sampleText = json2.slice(0, 12)
+
+        const sampleText = json2.slice(0, 15)
           .flat()
           .filter(c => c !== null && c !== undefined)
           .map(c => String(c).toUpperCase())
           .join(' ');
         const sheetUpper = sheetName.toUpperCase();
 
-        // Mutual fund indicators (RMF / retirement / NIDC mutual etc.)
-        if (/MUTUAL|RETIREMENT|RMF/.test(sheetUpper + ' ' + sampleText)) {
+        // Mutual fund — strong column signals
+        if (/MUTUAL|RETIREMENT|RMF|UNIT HOLDER|UNIT BALANCE|DISTRIBUTION AMOUNT/.test(sheetUpper + ' ' + sampleText)) {
           fileType = 'mutual_fund';
           break;
         }
-        // Debenture/interest indicators
-        if (/DEBENTURE|INTEREST|INT\.\s*@|COUPON|ISIN NO|SAFEKEEP|FREE BALANCE/.test(sheetUpper + ' ' + sampleText)) {
+
+        // Debenture — requires EXPLICIT debenture markers, not generic CDS columns.
+        // FREE BALANCE / SAFEKEEP / ISIN alone are NOT debenture indicators.
+        if (/DEBENTURE|COUPON|COUPON AMOUNT|INT\.\s*@\s*\d|GROSS INTEREST|NET INTEREST/.test(sheetUpper + ' ' + sampleText)) {
           fileType = 'debenture';
           break;
         }
-        // Bonus share indicators
-        if (/BONUS|RIGHT SHARE|RIGHT/.test(sampleText) && /BON_TAX|ACTUAL_BONUS|AFTER BONUS|ISSUED BONUS/.test(sampleText)) {
+
+        // Bonus share — must have bonus-specific calculation columns
+        if (/ACTUAL_BONUS|ISSUED BONUS|AFTER BONUS KITTA|BON_TAX|BONUS KITTA/.test(sampleText)) {
           fileType = 'bonus_share';
           break;
         }
-        // Dividend indicators — look for typical dividend columns (DIVIDEND, DIV_TAX, NET_DIV, BON_TAX, TOTA KITTA)
-        if (/DIVIDEND|DIV_TAX|NET_DIV\.|BON_TAX|TOTA KITTA|KITTA|AMOUNT.*DIVIDEND/.test(sampleText)) {
+
+        // Dividend — standard CDS cash dividend indicators
+        if (/DIVIDEND|DIV_TAX|NET_DIV|TOTA KITTA|TOTAL KITTA|GROSS DIVIDEND|DIVIDEND AMOUNT/.test(sampleText)) {
           fileType = 'dividend';
+          break;
+        }
+
+        // Raw demat / CDS shareholder register — BOID + FREE BALANCE but no financial columns
+        if (/FREE BALANCE|SAFEKEEP|TOTAL KITTA/.test(sampleText) && !/DIVIDEND|DEBENTURE|COUPON|BONUS/.test(sampleText)) {
+          fileType = 'raw_demat';
           break;
         }
       }
@@ -444,6 +495,15 @@ export const ExcelParser = {
       
       const isRawInputFile = !hasFinancialColumns && hasKitta;
 
+      let detectedIsin: string | undefined;
+      for (const r of processedRows.slice(0, 50)) {
+        const val = String(r.isin || r['ISIN NO.'] || r['ISIN NO'] || r['ISIN'] || '').trim();
+        if (val && val.length >= 6 && val.toUpperCase() !== 'ISIN' && val.toUpperCase() !== 'ISIN NO.') {
+          detectedIsin = val;
+          break;
+        }
+      }
+
       sheets.push({
         sheetName,
         sheetType,
@@ -459,6 +519,7 @@ export const ExcelParser = {
         totalNet: Math.round(sheetNet * 100) / 100,
         isPreCalculated,
         isRawInputFile,
+        detectedIsin,
       });
 
       // SUMMARY / report-only sheets are skipped above, so always accumulate.
@@ -526,6 +587,16 @@ export const ExcelParser = {
       }
     }
     
-    return { fileType, fileName: file.name, sheets, detectedCompanyName, grandTotals };
+    const overallIsin = sheets.find(s => s.detectedIsin)?.detectedIsin;
+
+    return {
+      fileType,
+      fileName: file.name,
+      sheets,
+      detectedCompanyName,
+      detectedIsin: overallIsin,
+      detectedRate,
+      grandTotals,
+    };
   }
 };

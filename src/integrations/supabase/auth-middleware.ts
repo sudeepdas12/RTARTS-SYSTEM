@@ -32,15 +32,19 @@ function createSupabaseFetch(supabaseKey: string): typeof fetch {
 
 export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server(
   async ({ next }) => {
+    // Server-side code runs inside the Docker container, so it must reach the
+    // host's local Supabase via SUPABASE_URL (e.g. host.docker.internal). The
+    // browser-facing VITE_* values (127.0.0.1) are baked into the client bundle
+    // and are NOT valid from inside the container, so prefer SUPABASE_URL.
     const SUPABASE_URL =
+      process.env.SUPABASE_URL ||
       process.env.NEXT_PUBLIC_SUPABASE_URL ||
-      process.env.VITE_SUPABASE_URL ||
-      process.env.SUPABASE_URL;
+      process.env.VITE_SUPABASE_URL;
 
     const SUPABASE_PUBLISHABLE_KEY =
+      process.env.SUPABASE_PUBLISHABLE_KEY ||
       process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-      process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-      process.env.SUPABASE_PUBLISHABLE_KEY;
+      process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
     if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
       const missing = [

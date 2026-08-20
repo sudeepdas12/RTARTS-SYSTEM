@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { useMemo, useRef, useState, useEffect, useCallback } from "react";
+import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { supabase, fetchAllRows } from "@/lib/services/database";
 import { useAuth } from "@/hooks/use-auth";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -32,9 +32,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Pencil, Plus, Trash2, Download, Upload, CheckCircle2, Calculator, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
+import { Pencil, Plus, Trash2, Download, Upload, CheckCircle2, Calculator, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FileSpreadsheet, FileText, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import { exportToExcel, importFromExcel } from "@/lib/xlsx-utils";
+import { SummaryReportService } from "@/lib/services/summary-report.service";
+import {
+  getTaxRateFromRules,
+  investorCategoryToClassification,
+  loadTaxRules,
+} from "@/lib/services/tax-rules.service";
 
 export const Route = createFileRoute("/_authenticated/mutual-fund")({
   component: MutualFundPage,
@@ -73,7 +79,10 @@ interface Payable {
     boid: string | null;
     father_name: string | null;
     grandfather_name: string | null;
+    pan_no?: string | null;
+    citizenship_no?: string | null;
     pan_or_citizenship: string | null;
+    nid_number?: string | null;
     address: string | null;
     district: string | null;
     phone: string | null;
@@ -96,6 +105,8 @@ const emptyForm = {
   client_father_name: "",
   client_grandfather_name: "",
   client_pan: "",
+  client_citizenship: "",
+  client_nid: "",
   client_address: "",
   client_district: "",
   client_phone: "",
@@ -163,27 +174,20 @@ function MutualFundPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("clients")
-        .select(
-          "id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no",
-        )
+        .select("id, client_code, full_name, boid, bank_name, bank_account_no")
         .order("full_name")
-        .limit(100000);
+        .limit(5000);
       if (error) throw error;
-      return data as {
+      return (data || []) as {
         id: string;
         client_code: string;
         full_name: string;
         boid: string | null;
-        father_name: string | null;
-        grandfather_name: string | null;
-        pan_or_citizenship: string | null;
-        address: string | null;
-        district: string | null;
-        phone: string | null;
         bank_name: string | null;
         bank_account_no: string | null;
       }[];
     },
+    staleTime: 5 * 60 * 1000,
   });
 
   const companyMap = useMemo(() => Object.fromEntries(companies.map((c) => [c.id, c])), [companies]);
@@ -192,6 +196,12 @@ function MutualFundPage() {
     () => Object.fromEntries(companies.map((c) => [c.company_code.toLowerCase(), c.id])),
     [companies],
   );
+
+  // Centralized TDS rules — the calculator uses exactly what imports/DB apply.
+  const { data: mfRules } = useQuery({
+    queryKey: ["tax-rules"],
+    queryFn: () => loadTaxRules(true),
+  });
   const clientByCode = useMemo(
     () => Object.fromEntries(clients.map((c) => [c.client_code.toLowerCase(), c.id])),
     [clients],
@@ -201,55 +211,37 @@ function MutualFundPage() {
     [clients],
   );
 
-  const { data = [], isLoading } = useQuery({
-    queryKey: ["mutual_fund_payables"],
+  // Debounced search — wait 400ms before firing server query
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 400);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Reset to page 1 whenever filters change
+  useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, companyFilter, fyFilter]);
+
+  // Fetch fiscal years for filter dropdown
+  const { data: fiscalYears = [] } = useQuery({
+    queryKey: ["mutual_fund_fiscal_years"],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("mutual_fund_payables")
-        .select(
-          "*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no), company:companies(id, company_code, company_name)",
-        )
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data as Payable[];
+      const { data } = await supabase.from("mutual_fund_payables").select("fiscal_year").order("fiscal_year", { ascending: false });
+      return Array.from(new Set((data || []).map((r: { fiscal_year: string | null }) => r.fiscal_year).filter(Boolean))) as string[];
     },
+    staleTime: 5 * 60 * 1000,
   });
 
-  const fiscalYears = useMemo(
-    () => Array.from(new Set(data.map((p) => p.fiscal_year).filter(Boolean))) as string[],
-    [data],
-  );
-
-  const filtered = useMemo(() => {
-    const query = search.toLowerCase();
-    return data.filter((p) => {
-      if (statusFilter !== "all" && p.payment_status !== statusFilter) return false;
-      if (companyFilter !== "all" && p.company_id !== companyFilter) return false;
-      if (fyFilter !== "all" && p.fiscal_year !== fyFilter) return false;
-      if (!query) return true;
-      const c = p.company ?? null;
-      const cl = p.client ?? null;
-      return (
-        (c?.company_name.toLowerCase().includes(query) ?? false) ||
-        (c?.company_code.toLowerCase().includes(query) ?? false) ||
-        (cl?.full_name.toLowerCase().includes(query) ?? false) ||
-        (cl?.client_code.toLowerCase().includes(query) ?? false) ||
-        (cl?.boid?.toLowerCase().includes(query) ?? false) ||
-        (p.payment_reference ?? "").toLowerCase().includes(query) ||
-        (p.bank_name ?? "").toLowerCase().includes(query) ||
-        (p.bank_account_no ?? "").toLowerCase().includes(query)
-      );
-    });
-  }, [data, search, statusFilter, companyFilter, fyFilter]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const safePage = Math.min(page, totalPages);
-  const pageItems = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
-
-  const totals = useMemo(
-    () =>
-      filtered.reduce(
-        (acc, p) => ({
+  // Server-side totals for KPI cards
+  const { data: totals = { count: 0, paidCount: 0, pendingCount: 0, units: 0, gross: 0, tax: 0, net: 0 } } = useQuery({
+    queryKey: ["mutual_fund_payables_totals", statusFilter, companyFilter, fyFilter],
+    queryFn: async () => {
+      let q = supabase.from("mutual_fund_payables").select("payment_status, shares_held, gross_dividend, tax_amount, net_payable");
+      if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
+      if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
+      if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+      const { data } = await q;
+      return (data || []).reduce(
+        (acc: { count: number; paidCount: number; pendingCount: number; units: number; gross: number; tax: number; net: number }, p: { payment_status: string; shares_held: number | null; gross_dividend: number | null; tax_amount: number | null; net_payable: number | null }) => ({
           count: acc.count + 1,
           paidCount: acc.paidCount + (p.payment_status === "Paid" ? 1 : 0),
           pendingCount: acc.pendingCount + (p.payment_status === "Pending" ? 1 : 0),
@@ -258,9 +250,85 @@ function MutualFundPage() {
           tax: acc.tax + Number(p.tax_amount ?? 0),
           net: acc.net + Number(p.net_payable ?? 0),
         }),
-        { count: 0, paidCount: 0, pendingCount: 0, units: 0, gross: 0, tax: 0, net: 0 },
+        { count: 0, paidCount: 0, pendingCount: 0, units: 0, gross: 0, tax: 0, net: 0 }
+      );
+    },
+    staleTime: 60_000,
+  });
+
+  // Main server-side paginated query
+  const { data: pageResult = { rows: [], count: 0 }, isLoading } = useQuery({
+    queryKey: ["mutual_fund_payables", page, pageSize, debouncedSearch, statusFilter, companyFilter, fyFilter],
+    queryFn: async () => {
+      let q = (supabase as any)
+        .from("mutual_fund_payables")
+        .select(
+          "*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no), company:companies(id, company_code, company_name)",
+          { count: "exact" }
+        )
+        .order("created_at", { ascending: false })
+        .range((page - 1) * pageSize, page * pageSize - 1);
+
+      if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
+      if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
+      if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+
+      if (debouncedSearch) {
+        q = q.or(
+          `lot_name.ilike.%${debouncedSearch}%,payment_reference.ilike.%${debouncedSearch}%,bank_name.ilike.%${debouncedSearch}%,bank_account_no.ilike.%${debouncedSearch}%`
+        );
+      }
+
+      const { data, count, error } = await q;
+      if (error) throw error;
+      return { rows: (data || []) as Payable[], count: count || 0 };
+    },
+    placeholderData: keepPreviousData,
+  });
+
+  const data = pageResult.rows;
+  const totalPages = Math.max(1, Math.ceil(pageResult.count / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const pageItems = data;
+
+  // Helper to fetch all filtered rows for export
+  const fetchAllFiltered = useCallback(async (): Promise<Payable[]> => {
+    return fetchAllRows<Payable>((from, to) => {
+      let q = (supabase as any)
+        .from("mutual_fund_payables")
+        .select(
+          "*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no), company:companies(id, company_code, company_name)"
+        )
+        .order("created_at", { ascending: false })
+        .range(from, to);
+      if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
+      if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
+      if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+      return q;
+    });
+  }, [statusFilter, companyFilter, fyFilter]);
+
+  // Category-wise distribution summary in the CDS "SUMMARY" sheet layout.
+  const mfSummary = useQuery({
+    queryKey: ["mf-summary", companyFilter, fyFilter],
+    queryFn: () =>
+      SummaryReportService.getMutualFundSummary({
+        companyId: companyFilter,
+        fiscalYear: fyFilter,
+      }),
+  });
+  const mfTotal = useMemo(
+    () =>
+      (mfSummary.data ?? []).reduce(
+        (acc, r) => ({
+          kitta: acc.kitta + r.kitta,
+          gross: acc.gross + r.gross,
+          tax: acc.tax + r.tax,
+          net: acc.net + r.net,
+        }),
+        { kitta: 0, gross: 0, tax: 0, net: 0 },
       ),
-    [filtered],
+    [mfSummary.data],
   );
 
   const calcResult = useMemo(() => {
@@ -278,7 +346,17 @@ function MutualFundPage() {
     }
 
     let tdsRate = 0;
-    if (calcTaxCategory === "PUBLIC") tdsRate = 0.05;
+    // Authoritative: centralized MUTUAL_FUND rules (fallback = previous values).
+    const ruleRate =
+      calcTaxCategory !== "CUSTOM"
+        ? getTaxRateFromRules(
+            mfRules ?? [],
+            "MUTUAL_FUND",
+            investorCategoryToClassification(calcTaxCategory) ?? "TAX_EXEMPT",
+          )
+        : null;
+    if (ruleRate != null) tdsRate = ruleRate;
+    else if (calcTaxCategory === "PUBLIC") tdsRate = 0.05;
     else if (calcTaxCategory === "INSTITUTION") tdsRate = 0.15;
     else if (calcTaxCategory === "CUSTOM") tdsRate = (Number(calcCustomTds) || 0) / 100;
 
@@ -292,7 +370,7 @@ function MutualFundPage() {
       tax: Math.round(tax * 100) / 100,
       net: Math.round(net * 100) / 100,
     };
-  }, [calcUnits, calcRate, calcRateIsPerUnit, calcFaceValue, calcTaxCategory, calcCustomTds]);
+  }, [calcUnits, calcRate, calcRateIsPerUnit, calcFaceValue, calcTaxCategory, calcCustomTds, mfRules]);
 
   const upsert = useMutation({
     mutationFn: async () => {
@@ -339,7 +417,14 @@ function MutualFundPage() {
         if (form.client_full_name !== undefined) clientPayload.full_name = form.client_full_name || null;
         if (form.client_father_name !== undefined) clientPayload.father_name = form.client_father_name || null;
         if (form.client_grandfather_name !== undefined) clientPayload.grandfather_name = form.client_grandfather_name || null;
-        if (form.client_pan !== undefined) clientPayload.pan_or_citizenship = form.client_pan || null;
+        if (form.client_pan !== undefined) {
+          clientPayload.pan_no = form.client_pan || null;
+        }
+        if (form.client_citizenship !== undefined) {
+          clientPayload.citizenship_no = form.client_citizenship || null;
+        }
+        clientPayload.pan_or_citizenship = form.client_pan || form.client_citizenship || null;
+        if (form.client_nid !== undefined) clientPayload.nid_number = form.client_nid || null;
         if (form.client_address !== undefined) clientPayload.address = form.client_address || null;
         if (form.client_district !== undefined) clientPayload.district = form.client_district || null;
         if (form.client_phone !== undefined) clientPayload.phone = form.client_phone || null;
@@ -359,9 +444,9 @@ function MutualFundPage() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
-      qc.invalidateQueries({ queryKey: ["clients-lookup"] });
-      qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
-      toast.success(editing ? "Payable updated" : "Payable created");
+      qc.invalidateQueries({ queryKey: ["mutual_fund_payables_totals"] });
+      qc.invalidateQueries({ queryKey: ["clients"] });
+      toast.success(editing ? "Payable & client updated" : "Payable created");
       setOpen(false);
       setEditing(null);
       setForm(emptyForm);
@@ -418,7 +503,9 @@ function MutualFundPage() {
       client_full_name: cl?.full_name ?? "",
       client_father_name: cl?.father_name ?? "",
       client_grandfather_name: cl?.grandfather_name ?? "",
-      client_pan: cl?.pan_or_citizenship ?? "",
+      client_pan: cl?.pan_no ?? (cl?.pan_or_citizenship && String(cl.pan_or_citizenship).length === 9 ? cl.pan_or_citizenship : ""),
+      client_citizenship: cl?.citizenship_no ?? (cl?.pan_or_citizenship && String(cl.pan_or_citizenship).length !== 9 ? cl.pan_or_citizenship : ""),
+      client_nid: cl?.nid_number ?? "",
       client_address: cl?.address ?? "",
       client_district: cl?.district ?? "",
       client_phone: cl?.phone ?? "",
@@ -444,9 +531,10 @@ function MutualFundPage() {
     setOpen(true);
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
+    const rows = await fetchAllFiltered();
     exportToExcel(
-      filtered.map((p) => {
+      rows.map((p) => {
         const cl = p.client ?? null;
         const c = p.company ?? null;
         return {
@@ -567,7 +655,20 @@ function MutualFundPage() {
         description="View and manage mutual fund payables that are uploaded through the dedicated mutual fund import path."
         actions={
           <>
-            <Button variant="outline" size="sm" onClick={() => exportToExcel(filtered, "mutual_fund_payables")}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!(mfSummary.data?.length)}
+              onClick={() =>
+                SummaryReportService.exportMutualFundSummaryToExcel(
+                  mfSummary.data ?? [],
+                  "mutual_fund_summary",
+                )
+              }
+            >
+              <FileSpreadsheet className="mr-2 h-4 w-4" /> Summary
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => exportToExcel(filtered as unknown as Record<string, unknown>[], "mutual_fund_payables")}>
               <Download className="mr-2 h-4 w-4" /> Export
             </Button>
             <Button variant="outline" size="sm" onClick={() => setCalcOpen((v) => !v)}>
@@ -626,8 +727,16 @@ function MutualFundPage() {
                             <Input value={form.client_grandfather_name} onChange={(e) => setForm({ ...form, client_grandfather_name: e.target.value })} />
                           </div>
                           <div className="space-y-1.5">
-                            <Label>PAN/Citizenship</Label>
-                            <Input value={form.client_pan} onChange={(e) => setForm({ ...form, client_pan: e.target.value })} />
+                            <Label>PAN Number</Label>
+                            <Input value={form.client_pan} onChange={(e) => setForm({ ...form, client_pan: e.target.value })} placeholder="9-digit PAN" className="font-mono" />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>Citizenship Number</Label>
+                            <Input value={form.client_citizenship} onChange={(e) => setForm({ ...form, client_citizenship: e.target.value })} placeholder="Citizenship No." />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>NID Number (National ID)</Label>
+                            <Input value={form.client_nid} onChange={(e) => setForm({ ...form, client_nid: e.target.value })} placeholder="10-digit NID" className="font-mono" />
                           </div>
                           <div className="space-y-1.5">
                             <Label>Address</Label>
@@ -856,8 +965,8 @@ function MutualFundPage() {
         <Card>
           <CardContent className="p-4">
             <div className="text-xs text-muted-foreground">Total Units Held</div>
-            <div className="text-xl font-semibold">{totals.units.toLocaleString()}</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">{totals.count.toLocaleString()} records ({totals.paidCount} Paid)</div>
+            <div className="text-xl font-semibold">{(totals.units ?? 0).toLocaleString()}</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">{(totals.count ?? 0).toLocaleString()} records ({totals.paidCount ?? 0} Paid)</div>
           </CardContent>
         </Card>
         <Card>
@@ -879,6 +988,113 @@ function MutualFundPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ─── Mutual Fund Distribution Summary Card ─────────────────────────── */}
+      <Card className="mb-4 border-primary/20 shadow-sm">
+        <CardHeader className="py-3 px-4 bg-muted/40 border-b flex flex-row items-center justify-between">
+          <div className="space-y-0.5">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <BarChart3 className="h-4 w-4 text-primary" />
+              Mutual Fund Distribution Summary (CDS Format)
+              <Badge variant="outline" className="font-mono text-[11px] ml-1">
+                {companyFilter === "all" ? "All Schemes" : companies.find(c => c.id === companyFilter)?.company_code || "Selected"} {fyFilter !== "all" ? `— FY ${fyFilter}` : ""}
+              </Badge>
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Scheme-wise unitholder category breakdown (Public 5%, Institution 15%, Tax Exempt 0%)
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={companyFilter} onValueChange={(v) => { setCompanyFilter(v); setPage(1); }}>
+              <SelectTrigger className="h-8 w-44 text-xs bg-background">
+                <SelectValue placeholder="Scheme: All" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Schemes</SelectItem>
+                {companies.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>{c.company_code} — {c.company_name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => SummaryReportService.exportMutualFundSummaryToExcel(mfSummary.data ?? [], `${companies.find(c => c.id === companyFilter)?.company_code || 'Mutual_Fund'}_Summary`)}
+              disabled={!mfSummary.data?.length}
+            >
+              <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
+              Export Excel
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => SummaryReportService.exportMutualFundSummaryToPdf(mfSummary.data ?? [], companies.find(c => c.id === companyFilter)?.company_name || 'Mutual Fund Distribution', `${companies.find(c => c.id === companyFilter)?.company_code || 'All Schemes'} — FY ${fyFilter !== 'all' ? fyFilter : 'All'}`)}
+              disabled={!mfSummary.data?.length}
+            >
+              <FileText className="mr-1.5 h-3.5 w-3.5 text-rose-600" />
+              Export PDF
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0 overflow-x-auto">
+          <table className="w-full text-xs text-left border-collapse">
+            <thead>
+              <tr className="bg-muted/80 text-foreground font-semibold border-b border-border divide-x divide-border">
+                <th className="py-2.5 px-3 text-center w-12 uppercase text-[11px]">S.N.</th>
+                <th className="py-2.5 px-3 uppercase text-[11px]">TYPE / PARTICULAR</th>
+                <th className="py-2.5 px-3 text-right uppercase text-[11px]">NO. OF UNITHOLDERS</th>
+                <th className="py-2.5 px-3 text-right uppercase text-[11px]">KITTA / UNITS HELD</th>
+                <th className="py-2.5 px-3 text-right uppercase text-[11px]">AMOUNT / GROSS</th>
+                <th className="py-2.5 px-3 text-right uppercase text-[11px]">TDS TAX</th>
+                <th className="py-2.5 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200">
+                  NET DISTRIBUTION
+                </th>
+                <th className="py-2.5 px-3 text-right uppercase text-[11px]">COMPOSITION</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border font-mono">
+              {mfSummary.isLoading ? (
+                <tr><td colSpan={8} className="py-8 text-center text-muted-foreground font-sans text-xs">Loading summary…</td></tr>
+              ) : !mfSummary.data || mfSummary.data.length === 0 ? (
+                <tr><td colSpan={8} className="py-8 text-center text-muted-foreground font-sans text-xs">No mutual fund payables for the selected scheme / fiscal year filter.</td></tr>
+              ) : (
+                mfSummary.data.map((row) => (
+                  <tr key={row.type} className="hover:bg-muted/30 transition-colors divide-x divide-border">
+                    <td className="py-2 px-3 text-center text-muted-foreground">{row.sn}</td>
+                    <td className="py-2 px-3 font-semibold font-sans">{row.type}</td>
+                    <td className="py-2 px-3 text-right">{fmt(row.transaction_count)}</td>
+                    <td className="py-2 px-3 text-right font-medium">{fmt(row.kitta)}</td>
+                    <td className="py-2 px-3 text-right">{fmt(row.gross)}</td>
+                    <td className="py-2 px-3 text-right">{fmt(row.tax)}</td>
+                    <td className="py-2 px-3 text-right font-bold bg-emerald-50/70 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-200">
+                      {fmt(row.net)}
+                    </td>
+                    <td className="py-2 px-3 text-right font-sans font-medium">{(row.composition ?? 0).toFixed(2)}%</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+            {mfSummary.data && mfSummary.data.length > 0 && (
+              <tfoot>
+                <tr className="bg-muted/90 font-bold border-t-2 border-b-2 border-foreground/30 divide-x divide-border font-mono">
+                  <td className="py-2.5 px-3 text-center"></td>
+                  <td className="py-2.5 px-3 font-sans uppercase">TOTAL</td>
+                  <td className="py-2.5 px-3 text-right">{fmt(mfSummary.data.reduce((a, r) => a + r.transaction_count, 0))}</td>
+                  <td className="py-2.5 px-3 text-right">{fmt(mfTotal.kitta)}</td>
+                  <td className="py-2.5 px-3 text-right">{fmt(mfTotal.gross)}</td>
+                  <td className="py-2.5 px-3 text-right">{fmt(mfTotal.tax)}</td>
+                  <td className="py-2.5 px-3 text-right bg-emerald-100 text-emerald-950 dark:bg-emerald-900/60 dark:text-emerald-200">
+                    {fmt(mfTotal.net)}
+                  </td>
+                  <td className="py-2.5 px-3 text-right font-sans">100.00%</td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardContent>
@@ -984,10 +1200,10 @@ function MutualFundPage() {
                 )}
               </TableBody>
             </Table>
-            {filtered.length > pageSize && (
+            {pageResult.count > 0 && (
               <div className="flex items-center justify-between border-t px-4 py-3">
                 <div className="text-sm text-muted-foreground">
-                  Showing {(safePage - 1) * pageSize + 1} to {Math.min(safePage * pageSize, filtered.length)} of {filtered.length} records
+                  Showing {(safePage - 1) * pageSize + 1} to {Math.min(safePage * pageSize, pageResult.count)} of {pageResult.count} records
                 </div>
                 <div className="flex items-center gap-2">
                   <select

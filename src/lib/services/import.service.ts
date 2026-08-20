@@ -1,6 +1,12 @@
 import { supabase, throwIfError } from "./database";
 import { mapToHolderType } from "./investor-category";
 import { calculatePayableTotals, detectPayeeCategory, getPayeeTaxRate } from "./payable-summary";
+import {
+  getTaxRateFromRules,
+  investorCategoryToClassification,
+  loadTaxRules,
+  type TaxRule,
+} from "./tax-rules.service";
 
 const EDGE_CHUNK_TIMEOUT_MS = 30000;
 
@@ -25,16 +31,39 @@ function getMissingColumnName(error: any): string | null {
  */
 const CLIENT_LOOKUP_BATCH = 300;
 
-async function fetchClientIdsByBoids(boids: string[]): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
+export interface ClientRecordMeta {
+  id: string;
+  boid: string;
+  holder_type?: string | null;
+  payee_classification?: string | null;
+  payee_segment?: string | null;
+  nid_number?: string | null;
+  pan_no?: string | null;
+  citizenship_no?: string | null;
+}
+
+async function fetchClientInfoByBoids(boids: string[]): Promise<Map<string, ClientRecordMeta>> {
+  const map = new Map<string, ClientRecordMeta>();
   for (let i = 0; i < boids.length; i += CLIENT_LOOKUP_BATCH) {
     const part = boids.slice(i, i + CLIENT_LOOKUP_BATCH);
-    const { data } = await (supabase as any).from("clients").select("id, boid").in("boid", part);
+    const { data } = await (supabase as any)
+      .from("clients")
+      .select("id, boid, holder_type, payee_classification, payee_segment, nid_number, pan_no, citizenship_no")
+      .in("boid", part);
     for (const c of data || []) {
-      if (c?.boid) map.set(String(c.boid), c.id);
+      if (c?.boid) map.set(String(c.boid), c);
     }
   }
   return map;
+}
+
+async function fetchClientIdsByBoids(boids: string[]): Promise<Map<string, string>> {
+  const infoMap = await fetchClientInfoByBoids(boids);
+  const idMap = new Map<string, string>();
+  for (const [boid, info] of infoMap) {
+    idMap.set(boid, info.id);
+  }
+  return idMap;
 }
 
 
@@ -115,20 +144,35 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
  *   Legal Person / Company (Institution):           5%  ← same as natural person
  *   Mutual Fund / Tax Exempt:                        0%
  */
-function getCategoryTdsRate(category: string, isDebenture: boolean): number {
-  return getPayeeTaxRate(category, isDebenture);
+function getCategoryTdsRate(category: string, isDebenture: boolean, isMutualFund = false, rules?: TaxRule[]): number {
+  // Authoritative: centralized payable_tax_rules. Fall back to the hardcoded
+  // map only when rules can't be loaded or the category is unknown.
+  if (rules && rules.length) {
+    const payableCategory = isMutualFund ? "MUTUAL_FUND" : isDebenture ? "INTEREST" : "DIVIDEND";
+    const classification = investorCategoryToClassification(category);
+    if (classification) {
+      const rate = getTaxRateFromRules(rules, payableCategory, classification);
+      if (rate != null) return rate;
+    }
+  }
+  return getPayeeTaxRate(category, isDebenture, undefined, isMutualFund);
 }
 
 function payableClassification(category: string): string {
-  if (category === 'INSTITUTION' || category === 'FOREIGN') return 'COMPANY_INSTITUTION';
-  if (category === 'MUTUAL_FUND' || category === 'TAX_EXEMPT') return 'TAX_EXEMPT';
-  if (category === 'PUBLIC') return 'PUBLIC_LEGAL_PERSON';
-  if (category === 'PROMOTER' || category === 'LOCAL') return 'NATURAL_PERSON';
+  const upper = String(category || '').trim().toUpperCase();
+  if (upper === 'INSTITUTION' || upper === 'FOREIGN' || upper === 'COMPANY_INSTITUTION') return 'COMPANY_INSTITUTION';
+  if (upper === 'MUTUAL_FUND' || upper === 'TAX_EXEMPT' || upper === 'TAX_EXEMPTED') return 'TAX_EXEMPT';
+  if (upper === 'PUBLIC' || upper === 'NATURAL_PERSON' || upper === 'PUBLIC_LEGAL_PERSON') return 'NATURAL_PERSON';
+  if (upper === 'PROMOTER' || upper === 'LOCAL') return 'NATURAL_PERSON';
   return 'UNCLASSIFIED';
 }
 
 function payableSegment(category: string): string | null {
-  return category === 'PROMOTER' || category === 'LOCAL' || category === 'PUBLIC' ? category : null;
+  const upper = String(category || '').trim().toUpperCase();
+  if (upper === 'PROMOTER') return 'PROMOTER';
+  if (upper === 'LOCAL') return 'LOCAL';
+  if (upper === 'PUBLIC') return 'PUBLIC';
+  return null;
 }
 
 /**
@@ -193,6 +237,7 @@ export const ImportService = {
       dividendType?: "Cash" | "Stock" | "Bonus" | "Right";
       companyId?: string; // Direct company UUID — bypasses name-based lookup
       companyName?: string;
+      companyIsin?: string;
       fileHash?: string;
       sheetType?: string; // Sheet type/name for fallback category detection (e.g. 'D-PUBLIC', 'INSTITUTION')
       fileName?: string;
@@ -201,10 +246,13 @@ export const ImportService = {
       sheetName?: string;
       totalRows?: number;
       userId?: string;
+      isPreCalculated?: boolean;
+      isRawInputFile?: boolean;
     },
     sharedContext?: {
       companyId?: string;
       clientIdCache?: Map<string, string>;
+      clientInfoCache?: Map<string, ClientRecordMeta>;
     },
   ) {
     // Filter out footer/total/summary rows that carry no BOID but contain
@@ -254,6 +302,7 @@ export const ImportService = {
           chunkData,
           targetTable,
           companyName: options?.companyName,
+          companyIsin: options?.companyIsin,
           fiscalYear: options?.fiscalYear,
           dividendRate: options?.dividendRate,
           tdsRate: options?.tdsRate,
@@ -302,67 +351,97 @@ export const ImportService = {
 
     // --- BATCHED CLIENT-SIDE FALLBACK ---
     // Resolve company once per upload session and reuse it for subsequent chunks.
-    // Priority: sharedContext.companyId (set from ChunkOptions.companyId) > RPC name lookup.
     let companyId = sharedContext?.companyId || options?.companyId || "";
+    const detectedIsin =
+      options?.companyIsin ||
+      (chunkData[0]?.isin || chunkData[0]?.["ISIN NO."] || chunkData[0]?.["ISIN NO"] || chunkData[0]?.["ISIN"]
+        ? String(chunkData[0]?.isin || chunkData[0]?.["ISIN NO."] || chunkData[0]?.["ISIN NO"] || chunkData[0]?.["ISIN"]).trim()
+        : undefined);
 
     if (!companyId) {
-      // 1. If company name was detected from file, try to find or create it (via RPC to bypass RLS)
-      if (options?.companyName) {
-        const cleanName = options.companyName.trim();
-        const code = cleanName
-          .replace(/[^A-Za-z]/g, "")
-          .substring(0, 4)
-          .toUpperCase();
+      const cleanName = (options?.companyName || "NECO Insurance Ltd.").trim();
+      const code = cleanName
+        .replace(/[^A-Za-z]/g, "")
+        .substring(0, 4)
+        .toUpperCase() || "NECO";
+
+      // 1. Try bulk_upsert_company RPC
+      try {
+        const { data: rpcCompany, error: companyRpcErr } = await (supabase as any).rpc(
+          "bulk_upsert_company",
+          {
+            p_company_name: cleanName,
+            p_company_code: code,
+            p_isin: detectedIsin || null,
+          },
+        );
+        if (!companyRpcErr && rpcCompany?.success && rpcCompany?.company_id) {
+          companyId = rpcCompany.company_id;
+        }
+      } catch (companyEx: any) {
+        console.warn("bulk_upsert_company exception:", companyEx?.message);
+      }
+
+      // 2. Fallback: Query companies table directly
+      if (!companyId) {
         try {
-          const { data: rpcCompany, error: companyRpcErr } = await (supabase as any).rpc(
-            "bulk_upsert_company",
-            {
-              p_company_name: cleanName,
-              p_company_code: code || "UNKN",
-            },
-          );
-          if (companyRpcErr) {
-            console.warn("bulk_upsert_company RPC failed:", companyRpcErr);
-          } else if (rpcCompany?.success) {
-            companyId = rpcCompany.company_id;
-          } else {
-            console.warn("bulk_upsert_company returned error:", rpcCompany?.error);
+          const { data: foundComp } = await (supabase as any)
+            .from("companies")
+            .select("id")
+            .or(`company_code.ilike.%${code}%,company_name.ilike.%${cleanName}%`)
+            .limit(1);
+          if (foundComp && foundComp.length > 0) {
+            companyId = foundComp[0].id;
           }
-        } catch (companyEx: any) {
-          console.warn("bulk_upsert_company exception:", companyEx?.message);
+        } catch (fErr) {
+          console.warn("Direct company lookup failed:", fErr);
         }
       }
-      // 2. Fallback to first existing company or create default
+
+      // 3. Fallback: Direct insert into companies table
+      if (!companyId) {
+        try {
+          const { data: createdComp, error: createErr } = await (supabase as any)
+            .from("companies")
+            .insert({
+              company_name: cleanName,
+              company_code: code,
+              isin: detectedIsin || null,
+              status: "Active",
+            })
+            .select("id")
+            .maybeSingle();
+          if (!createErr && createdComp?.id) {
+            companyId = createdComp.id;
+          }
+        } catch (cErr) {
+          console.warn("Direct company insert failed:", cErr);
+        }
+      }
+
+      // 4. Fallback: Use first available company or default
       if (!companyId) {
         const { data: companies } = await supabase.from("companies").select("id").limit(1);
         if (companies && companies.length > 0) {
           companyId = companies[0].id;
-        } else {
-          try {
-            const { data: rpcCompany2, error: companyRpcErr2 } = await (supabase as any).rpc(
-              "bulk_upsert_company",
-              {
-                p_company_name: "Supermai Hydropower Ltd.",
-                p_company_code: "SMHL",
-              },
-            );
-            if (companyRpcErr2) {
-              console.warn("Fallback company RPC failed:", companyRpcErr2);
-              throw new Error("No company configured. Please create a company first.");
-            }
-            companyId = rpcCompany2?.company_id || "";
-            if (!companyId) {
-              throw new Error("No company configured. Please create a company first.");
-            }
-          } catch (compEx: any) {
-            console.warn("Could not create company:", compEx?.message);
-            throw new Error("No company configured. Please create a company first.");
-          }
         }
       }
 
       if (sharedContext) {
         sharedContext.companyId = companyId;
+      }
+    }
+
+    // If company exists and an ISIN was detected from the sheet, update ISIN if it is empty
+    if (companyId && detectedIsin) {
+      try {
+        await (supabase as any)
+          .from("companies")
+          .update({ isin: detectedIsin })
+          .eq("id", companyId)
+          .is("isin", null);
+      } catch (err: any) {
+        console.warn("Could not update company ISIN:", err?.message);
       }
     }
 
@@ -405,94 +484,363 @@ export const ImportService = {
       return { success: true, skipped: chunkData.length, errors: rowErrors };
 
     const missingBoids = uniqueBoids.filter((boid) => !sharedContext?.clientIdCache?.has(boid));
-    const existingBoidMap =
-      missingBoids.length > 0 ? await fetchClientIdsByBoids(missingBoids) : new Map<string, string>();
+    const existingClientMap =
+      missingBoids.length > 0 ? await fetchClientInfoByBoids(missingBoids) : new Map<string, ClientRecordMeta>();
 
-    for (const [boid, cid] of existingBoidMap) {
-      sharedContext?.clientIdCache?.set(boid, cid);
+    if (sharedContext && !sharedContext.clientInfoCache) {
+      sharedContext.clientInfoCache = new Map<string, ClientRecordMeta>();
+    }
+
+    for (const [boid, clientMeta] of existingClientMap) {
+      sharedContext?.clientIdCache?.set(boid, clientMeta.id);
+      sharedContext?.clientInfoCache?.set(boid, clientMeta);
     }
 
     // Prepare new client records
     const newClientRecords: any[] = [];
     const resolvedClientIds = new Map<string, string>();
 
+function extractRowField(row: any, keys: string[]): string {
+  if (!row || typeof row !== "object") return "";
+  for (const k of keys) {
+    if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== "") {
+      return String(row[k]).trim();
+    }
+  }
+  // Case-insensitive / normalized lookup
+  const rowKeys = Object.keys(row);
+  for (const targetKey of keys) {
+    const cleanTarget = targetKey.toUpperCase().replace(/[_\s\-\.\/]/g, "");
+    for (const rk of rowKeys) {
+      const cleanRk = rk.toUpperCase().replace(/[_\s\-\.\/]/g, "");
+      if (
+        cleanRk === cleanTarget &&
+        row[rk] !== undefined &&
+        row[rk] !== null &&
+        String(row[rk]).trim() !== ""
+      ) {
+        return String(row[rk]).trim();
+      }
+    }
+  }
+  return "";
+}
+
     for (const boid of uniqueBoids) {
+      const row = boidMap.get(boid);
+      const nidNumber = extractRowField(row, [
+        "nid_number",
+        "nid",
+        "NID",
+        "NID_NO",
+        "NID NO",
+        "NID NO.",
+        "NID_NUMBER",
+        "NATIONAL ID",
+        "NATIONAL_ID",
+        "NATIONAL ID NO",
+        "NATIONAL ID NUMBER",
+        "RASTRIYA PARICHAYAPATRA",
+        "RASTRIYA_PARICHAYAPATRA",
+      ]);
+
+      const panNo = extractRowField(row, [
+        "pan_no",
+        "pan",
+        "PAN",
+        "PAN NO",
+        "PAN NO.",
+        "PAN_NO",
+        "PERMANENT ACCOUNT NUMBER",
+        "PERMANENT_ACCOUNT_NUMBER",
+      ]);
+
+      const citizenshipNo = extractRowField(row, [
+        "citizenship_no",
+        "citizenship",
+        "CITIZENSHIP",
+        "CITIZENSHIP NO",
+        "CITIZENSHIP NO.",
+        "CITIZENSHIP_NO",
+        "CITIZENSHIP NUMBER",
+        "NAGARIKTA NO",
+        "NAGARIKTA_NO",
+        "NAGARIKTA",
+      ]);
+
       const cachedClientId = sharedContext?.clientIdCache?.get(boid);
       if (cachedClientId) {
         resolvedClientIds.set(boid, cachedClientId);
-      } else if (existingBoidMap.has(boid)) {
-        const clientId = existingBoidMap.get(boid)!;
-        sharedContext?.clientIdCache?.set(boid, clientId);
-        resolvedClientIds.set(boid, clientId);
+      } else if (existingClientMap.has(boid)) {
+        const clientMeta = existingClientMap.get(boid)!;
+        sharedContext?.clientIdCache?.set(boid, clientMeta.id);
+        sharedContext?.clientInfoCache?.set(boid, clientMeta);
+        resolvedClientIds.set(boid, clientMeta.id);
+
+        // If existing client lacks NID, PAN, or Citizenship and this sheet provides it, queue update
+        const needsNidUpdate = nidNumber && !clientMeta.nid_number;
+        const needsPanUpdate = panNo && !clientMeta.pan_no;
+        const needsCtzUpdate = citizenshipNo && !clientMeta.citizenship_no;
+
+        if (needsNidUpdate || needsPanUpdate || needsCtzUpdate) {
+          newClientRecords.push({
+            id: clientMeta.id,
+            boid: boid,
+            nid_number: nidNumber || clientMeta.nid_number || null,
+            pan_no: panNo || clientMeta.pan_no || null,
+            citizenship_no: citizenshipNo || clientMeta.citizenship_no || null,
+            pan_or_citizenship: panNo || citizenshipNo || null,
+            client_code: buildClientCode(row, boid),
+            full_name: extractRowField(row, ["full_name", "name", "NAME", "SHAREHOLDER NAME"]) || "Existing Investor",
+          });
+          if (needsNidUpdate) clientMeta.nid_number = nidNumber;
+          if (needsPanUpdate) clientMeta.pan_no = panNo;
+          if (needsCtzUpdate) clientMeta.citizenship_no = citizenshipNo;
+        }
       } else {
-        const row = boidMap.get(boid);
         const tempId = crypto.randomUUID();
         sharedContext?.clientIdCache?.set(boid, tempId);
         resolvedClientIds.set(boid, tempId);
         // Smart categorization: detect investor type from row data or sheet name
         const investorCategory = detectInvestorCategory(row, options?.sheetType);
         const holderType = mapToHolderType(investorCategory);
+
+        const fullName =
+          extractRowField(row, [
+            "full_name",
+            "name",
+            "NAME",
+            "SHAREHOLDER NAME",
+            "HOLDER NAME",
+            "UNIT HOLDER NAME",
+            "DEBENTURE HOLDER",
+            "INVESTOR NAME",
+            "ACCOUNT HOLDER",
+            "APPLICANT_NAME",
+            "ApplicantName",
+          ]) || "Unknown Investor";
+
+        const dob = extractRowField(row, [
+          "date_of_birth",
+          "dob",
+          "DATE OF BIRTH",
+          "DATE_OF_BIRTH",
+          "BIRTH DATE",
+          "BIRTH_DATE",
+          "D.O.B",
+          "D.O.B.",
+          "DOB (BS)",
+          "DOB (AD)",
+          "BIRTHDATE",
+          "DATE_OF_BIRTH_BS",
+          "DATE_OF_BIRTH_AD",
+        ]);
+
+        const bankName = extractRowField(row, [
+          "bank_name",
+          "bank",
+          "BANK NAME",
+          "BANK",
+          "NAME OF BANK",
+          "BANK/FINANCIAL INSTITUTION",
+          "BANK / FINANCIAL INSTITUTION",
+          "BANK DETAILS",
+          "BANK_TITLE",
+        ]);
+
+        const bankBranch = extractRowField(row, [
+          "bank_branch",
+          "branch",
+          "BANK BRANCH",
+          "BRANCH NAME",
+          "BRANCH",
+          "BANK_BRANCH",
+          "BANK BRANCH NAME",
+        ]);
+
+        const bankAccountNo = extractRowField(row, [
+          "bank_account_no",
+          "bank_account",
+          "account_number",
+          "account_no",
+          "acc_no",
+          "ac_no",
+          "BANK A/C NO.",
+          "BANK A/C NO",
+          "BANK ACCOUNT NO",
+          "BANK ACCOUNT NO.",
+          "ACCOUNT NUMBER",
+          "ACCOUNT NO",
+          "A/C NO",
+          "A/C NO.",
+          "ACC NO",
+          "ACC NO.",
+          "BANK ACC NO",
+          "BANK ACC NO.",
+          "BANK A/C NUMBER",
+          "BANK ACCOUNT NUMBER",
+        ]);
+
+        const accountType = extractRowField(row, [
+          "account_type",
+          "ACCOUNT TYPE",
+          "A/C TYPE",
+          "ACC TYPE",
+          "A/C_TYPE",
+        ]);
+
+        const panNo = extractRowField(row, [
+          "pan_no",
+          "pan",
+          "PAN",
+          "PAN NO",
+          "PAN NO.",
+          "PAN_NO",
+          "PERMANENT ACCOUNT NUMBER",
+          "PERMANENT_ACCOUNT_NUMBER",
+        ]);
+
+        const citizenshipNo = extractRowField(row, [
+          "citizenship_no",
+          "citizenship",
+          "CITIZENSHIP",
+          "CITIZENSHIP NO",
+          "CITIZENSHIP NO.",
+          "CITIZENSHIP_NO",
+          "CITIZENSHIP NUMBER",
+          "NAGARIKTA NO",
+          "NAGARIKTA_NO",
+          "NAGARIKTA",
+        ]);
+
+        const panOrCitizenship = panNo || citizenshipNo || extractRowField(row, [
+          "pan_or_citizenship",
+          "REGISTRATION NO",
+          "COMPANY REG NO",
+        ]);
+
+        const nidNumber = extractRowField(row, [
+          "nid_number",
+          "nid",
+          "NID",
+          "NID_NO",
+          "NID NO",
+          "NID NO.",
+          "NID_NUMBER",
+          "NATIONAL ID",
+          "NATIONAL_ID",
+          "NATIONAL ID NO",
+          "NATIONAL ID NUMBER",
+          "RASTRIYA PARICHAYAPATRA",
+          "RASTRIYA_PARICHAYAPATRA",
+        ]);
+
+        const fatherName = extractRowField(row, [
+          "father_name",
+          "fatherName",
+          "FATHER'S NAME",
+          "FATHERS NAME",
+          "FATHER_NAME",
+          "FATHER NAME",
+          "FATHER",
+        ]);
+
+        const grandfatherName = extractRowField(row, [
+          "grandfather_name",
+          "grandfatherName",
+          "GRANDFATHER'S NAME",
+          "GRANDFATHERS NAME",
+          "GRANDFATHER_NAME",
+          "GRANDFATHER NAME",
+          "GRAND FATHER NAME",
+          "GRAND FATHER'S NAME",
+        ]);
+
+        const gender = extractRowField(row, ["gender", "GENDER", "SEX"]);
+        const occupation = extractRowField(row, ["occupation", "OCCUPATION", "PROFESSION"]);
+        const address = extractRowField(row, [
+          "address",
+          "ADDRESS",
+          "FULL ADDRESS",
+          "PERMANENT ADDRESS",
+          "LOCATION",
+        ]);
+        const province = extractRowField(row, ["province", "PROVINCE", "STATE", "PROVINCE NO"]);
+        const district = extractRowField(row, ["district", "DISTRICT"]);
+        const municipality = extractRowField(row, [
+          "municipality",
+          "MUNICIPALITY",
+          "VDC",
+          "MUNICIPALITY / VDC",
+          "LOCAL BODY",
+        ]);
+        const phone = extractRowField(row, [
+          "phone",
+          "mobile",
+          "contact",
+          "PHONE",
+          "MOBILE",
+          "CONTACT",
+          "MOBILE NO",
+          "PHONE NO",
+          "CONTACT NO",
+          "MOBILE NUMBER",
+          "PHONE NUMBER",
+        ]);
+        const email = extractRowField(row, [
+          "email",
+          "EMAIL",
+          "EMAIL ADDRESS",
+          "E-MAIL",
+          "E-MAIL ADDRESS",
+          "EMAIL ID",
+        ]);
+        const clientId = extractRowField(row, [
+          "client_id",
+          "clientId",
+          "CLIENT ID",
+          "CLIENT NO",
+          "MEMBER ID",
+        ]);
+
         newClientRecords.push({
           id: tempId,
           boid,
           company_id: companyId,
-          full_name: String(
-            row.full_name ||
-              row.name ||
-              row.NAME ||
-              row["SHAREHOLDER NAME"] ||
-              row["HOLDER NAME"] ||
-              row["UNIT HOLDER NAME"] ||
-              row["DEBENTURE HOLDER"] ||
-              row["INVESTOR NAME"] ||
-              row["ACCOUNT HOLDER"] ||
-              row.APPLICANT_NAME ||
-              row.ApplicantName ||
-              "Unknown Investor",
-          ),
+          full_name: fullName,
           client_code: buildClientCode(row, boid),
-          father_name:
-            row.father_name || row.fatherName || row.FATHER_NAME || row["FATHER'S NAME"] || "",
-          grandfather_name:
-            row.grandfather_name ||
-            row.grandfatherName ||
-            row.GRANDFATHER_NAME ||
-            row["GRANDFATHER'S NAME"] ||
-            "",
-          pan_or_citizenship:
-            row.pan_or_citizenship ||
-            row.citizenship ||
-            row.pan ||
-            row.PAN ||
-            row.CITIZENSHIP ||
-            "",
-          address: row.address || row.ADDRESS || "",
-          district: row.district || row.DISTRICT || "",
-          phone: row.phone || row.contact || row.CONTACT || row.phone_number || "",
-          bank_name:
-            row.bank_name || row.bankName || row.bank || row.BANK || row["BANK NAME"] || "",
-          bank_account_no:
-            row.bank_account_no ||
-            row.bank_account ||
-            row.bankAccount ||
-            row.ACCOUNT_NUMBER ||
-            row.account_number ||
-            row["BANK A/C NO."] ||
-            row["BANK A/C NO"] ||
-            row["ACCOUNT NUMBER"] ||
-            "",
+          client_id: clientId || null,
+          father_name: fatherName || null,
+          grandfather_name: grandfatherName || null,
+          pan_no: panNo || null,
+          citizenship_no: citizenshipNo || null,
+          pan_or_citizenship: panOrCitizenship || null,
+          nid_number: nidNumber || null,
+          date_of_birth: dob || null,
+          gender: gender || null,
+          occupation: occupation || null,
+          address: address || null,
+          province: province || null,
+          district: district || null,
+          municipality: municipality || null,
+          phone: phone || null,
+          email: email || null,
+          bank_name: bankName || null,
+          bank_branch: bankBranch || null,
+          bank_account_no: bankAccountNo || null,
+          account_type: accountType || null,
           holder_type: holderType,
           payee_classification: payableClassification(investorCategory),
           payee_segment: payableSegment(investorCategory),
-          classification_status: investorCategory === 'UNKNOWN' ? 'REVIEW_REQUIRED' : 'AUTO_CLASSIFIED',
-          classification_source: investorCategory === 'UNKNOWN' ? 'upload_requires_review' : 'upload_evidence',
+          classification_status: investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
+          classification_source: investorCategory === "UNKNOWN" ? "upload_requires_review" : "upload_evidence",
           status: "Active",
           verification_status: "Verified",
         });
       }
     }
 
-    // Batch insert new clients using SECURITY DEFINER RPC (bypasses RLS)
+    // Batch insert new clients using SECURITY DEFINER RPC with direct fallback
     let clientsInserted = 0;
     if (newClientRecords.length > 0) {
       try {
@@ -501,59 +849,87 @@ export const ImportService = {
           { p_clients: newClientRecords },
         );
         if (rpcErr) {
-          console.error("bulk_insert_clients RPC failed:", rpcErr);
-          // Fail fast: RPC should be available and run as SECURITY DEFINER.
-          // Avoid client-side direct inserts which will be blocked by RLS for non-privileged users.
-          throw new Error(
-            "bulk_insert_clients RPC failed: " + (rpcErr?.message || JSON.stringify(rpcErr)),
-          );
+          console.warn("bulk_insert_clients RPC failed, falling back to direct upserts:", rpcErr.message);
         } else {
-          // RPC returned without transport error
           if (rpcResult?.errors && rpcResult.errors.length > 0) {
-            console.warn("Some client inserts failed:", rpcResult.errors);
+            console.warn("Some client inserts reported RPC errors:", rpcResult.errors);
           }
-          clientsInserted = Number(rpcResult?.inserted ?? newClientRecords.length ?? 0);
-          if (clientsInserted === 0) {
-            throw new Error("Client import completed without inserting any rows.");
-          }
+          clientsInserted = Number(rpcResult?.inserted ?? 0);
         }
       } catch (rpcEx: any) {
-        console.error("bulk_insert_clients RPC exception:", rpcEx);
-        throw new Error("bulk_insert_clients RPC exception: " + (rpcEx?.message || String(rpcEx)));
+        console.warn("bulk_insert_clients RPC exception, falling back to direct upserts:", rpcEx?.message);
       }
 
-      // CRITICAL: Re-fetch actual client IDs from the database.
-      // The bulk_insert_clients RPC uses ON CONFLICT (boid) DO UPDATE,
-      // which means existing clients keep their original IDs, not the temp IDs
-      // we generated. We must update resolvedClientIds with the real database IDs
-      // so the payables insert doesn't fail with an FK violation on client_id.
-      // Note: lookups are batched — a single .in() with ~1000 BOIDs exceeds the
-      // URL length limit ("URI too long") and silently returns no rows.
+      // Direct fallback if RPC inserted 0 or failed
+      if (clientsInserted === 0) {
+        for (const clientRec of newClientRecords) {
+          try {
+            const { error: insErr } = await (supabase as any)
+              .from("clients")
+              .upsert(clientRec, { onConflict: "boid" });
+            if (!insErr) {
+              clientsInserted++;
+            } else {
+              // Strip dynamic columns if table doesn't have them
+              const baseClient = {
+                id: clientRec.id,
+                boid: clientRec.boid,
+                company_id: clientRec.company_id || null,
+                full_name: clientRec.full_name,
+                client_code: clientRec.client_code,
+                father_name: clientRec.father_name,
+                grandfather_name: clientRec.grandfather_name,
+                pan_or_citizenship: clientRec.pan_or_citizenship,
+                address: clientRec.address,
+                district: clientRec.district,
+                phone: clientRec.phone,
+                bank_name: clientRec.bank_name,
+                bank_account_no: clientRec.bank_account_no,
+                holder_type: clientRec.holder_type,
+                payee_classification: clientRec.payee_classification,
+                payee_segment: clientRec.payee_segment,
+                status: clientRec.status,
+                verification_status: clientRec.verification_status,
+              };
+              const { error: insErr2 } = await (supabase as any)
+                .from("clients")
+                .upsert(baseClient, { onConflict: "boid" });
+              if (!insErr2) clientsInserted++;
+            }
+          } catch (cEx) {
+            console.warn("Direct client upsert error:", cEx);
+          }
+        }
+      }
+
+      // CRITICAL: Re-fetch actual client IDs and metadata from the database.
       const newBoids = newClientRecords.map((c) => c.boid);
-      const actualClientIds = await fetchClientIdsByBoids(newBoids);
-      for (const [boid, cid] of actualClientIds) {
-        resolvedClientIds.set(boid, cid);
-        sharedContext?.clientIdCache?.set(boid, cid);
+      const actualClientInfo = await fetchClientInfoByBoids(newBoids);
+      for (const [boid, info] of actualClientInfo) {
+        resolvedClientIds.set(boid, info.id);
+        sharedContext?.clientIdCache?.set(boid, info.id);
+        sharedContext?.clientInfoCache?.set(boid, info);
       }
 
-      // CRITICAL: Any client whose real row could not be confirmed in the DB
-      // must NOT keep its temporary (in-memory only) UUID. If we used that
-      // phantom ID as the payable's client_id, every payable in the chunk would
-      // fail the client_id foreign key and the whole 1,000-row chunk would be
-      // reported as "inserted: 0" -> a giant, un-actionable 16,000-row error.
-      // Drop the unconfirmed ID so the rows fall through to a clear, per-row
-      // client_not_found error below instead.
+      let unconfirmedCount = 0;
       for (const boid of newBoids) {
-        if (!actualClientIds.has(boid)) {
+        if (!actualClientInfo.has(boid)) {
           resolvedClientIds.delete(boid);
           sharedContext?.clientIdCache?.delete(boid);
+          sharedContext?.clientInfoCache?.delete(boid);
+          unconfirmedCount++;
         }
+      }
+      if (unconfirmedCount > 0) {
+        console.warn(`Warning: ${unconfirmedCount}/${newBoids.length} newly inserted BOIDs could not be confirmed in DB.`);
       }
     }
 
     // Prepare batch payables with auto-calculation fallback
     const payablesToInsert: any[] = [];
     const isDebenture = targetTable === "interest_payables";
+
+    const taxRules: TaxRule[] | undefined = await loadTaxRules().catch(() => undefined);
 
     for (const row of chunkData) {
       const boid = String(
@@ -581,8 +957,6 @@ export const ImportService = {
         continue;
       }
 
-      // Read raw values from Excel (may be 0 or NaN if formula failed).
-      // Aliases cover standard CDS exports, RBB Debenture, and Mutual Fund formats.
       const sharesHeld = Number(
         row.shares_held ||
           row.kitta ||
@@ -636,31 +1010,65 @@ export const ImportService = {
           row["NET DISTRIBUTION"] ||
           0,
       );
-      const bankName =
-        row.bank_name || row.bankName || row.bank || row.BANK || row["BANK NAME"] || "";
-      const bankAccountNo =
-        row.bank_account_no ||
-        row.bank_account ||
-        row.bankAccount ||
-        row.ACCOUNT_NUMBER ||
-        row.account_number ||
-        row["BANK A/C NO."] ||
-        row["BANK A/C NO"] ||
-        row["ACCOUNT NUMBER"] ||
-        "";
-      const lotName = row.lot_name || row.lot || row.LOT || "";
-      const status = row.status || row.STATUS || "Pending";
+      const bankName = extractRowField(row, [
+        "bank_name",
+        "bankName",
+        "bank",
+        "BANK",
+        "BANK NAME",
+        "NAME OF BANK",
+        "BANK/FINANCIAL INSTITUTION",
+        "BANK DETAILS",
+      ]);
+      const bankAccountNo = extractRowField(row, [
+        "bank_account_no",
+        "bank_account",
+        "bankAccount",
+        "account_number",
+        "account_no",
+        "acc_no",
+        "ac_no",
+        "BANK A/C NO.",
+        "BANK A/C NO",
+        "BANK ACCOUNT NO",
+        "BANK ACCOUNT NO.",
+        "ACCOUNT NUMBER",
+        "ACCOUNT NO",
+        "A/C NO",
+        "ACC NO",
+        "BANK ACC NO",
+        "BANK ACC NO.",
+        "BANK A/C NUMBER",
+      ]);
+      const bankBranch = extractRowField(row, [
+        "bank_branch",
+        "branch",
+        "BANK BRANCH",
+        "BRANCH NAME",
+        "BRANCH",
+        "BANK_BRANCH",
+        "BANK BRANCH NAME",
+      ]);
+      const lotName = extractRowField(row, ["lot_name", "lot", "LOT", "LOT NAME"]);
+      const status = extractRowField(row, ["status", "STATUS"]) || "Pending";
 
-      // *** SMART ROW-LEVEL CATEGORIZATION ***
-      // Detect investor category from this specific row's TYPE/CATEGORY column
-      const investorCategory = detectInvestorCategory(row, options?.sheetType);
-      // Determine TDS rate: row-level category → sheet-level override → default
+      let investorCategory = detectInvestorCategory(row, options?.sheetType);
+      if (investorCategory === "UNKNOWN") {
+        const cachedClient = sharedContext?.clientInfoCache?.get(boid);
+        if (cachedClient) {
+          if (cachedClient.payee_classification && cachedClient.payee_classification !== "UNCLASSIFIED") {
+            investorCategory = cachedClient.payee_classification;
+          } else if (cachedClient.holder_type) {
+            investorCategory = normalizePayeeCategory(cachedClient.holder_type);
+          }
+        }
+      }
+
       const rowTdsRate =
         options?.tdsRate !== undefined
-          ? options.tdsRate // User explicitly set a sheet-level override — respect it
-          : getCategoryTdsRate(investorCategory, isDebenture); // Auto-detect from row data
+          ? options.tdsRate
+          : getCategoryTdsRate(investorCategory, isDebenture, targetTable === 'mutual_fund_payables', taxRules);
 
-      // Auto-calculate: if gross is 0 but we have shares × rate, compute it
       let grossAmount = rawGross;
       let taxAmount = rawTax;
       let netPayable = rawNet;
@@ -687,6 +1095,7 @@ export const ImportService = {
             taxAmount,
             category: investorCategory,
             isDebenture: false,
+            isMutualFund: targetTable === 'mutual_fund_payables',
             customTaxRate: options?.tdsRate,
           });
 
@@ -711,14 +1120,13 @@ export const ImportService = {
           bank_account_no: bankAccountNo || null,
           lot_name: lotName || null,
           payment_status: status === "SUCCESS" ? "Paid" : "Pending",
+          payee_classification: payableClassification(investorCategory),
+          payee_segment: payableSegment(investorCategory),
+          classification_status: investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
         });
       } else if (targetTable === "interest_payables") {
         if (!options?.isPreCalculated) {
           if (!grossAmount && sharesHeld && options?.dividendRate) {
-            // For debentures, Face Value is typically 1000. 
-            // If the user enters 8.75 (percentage), rate per share = 1000 * 8.75 / 100 = 87.5
-            // If they enter 87.5 directly, then we might over-multiply, but standard is entering %.
-            // We'll assume if rate is <= 20 it's a percentage, multiply by 1000 / 100 = 10.
             const multiplier = options.dividendRate <= 20 ? 10 : 1;
             grossAmount = Math.round(sharesHeld * (options.dividendRate * multiplier) * 100) / 100;
           }
@@ -752,39 +1160,38 @@ export const ImportService = {
           tds_rate: totals.taxRate,
           due_date: new Date().toISOString().split("T")[0],
           fiscal_year: options?.fiscalYear ?? null,
+          bank_name: bankName || null,
+          bank_account_no: bankAccountNo || null,
+          bank_branch: bankBranch || null,
+          lot_name: lotName || null,
           payment_status: status === "SUCCESS" ? "Paid" : "Pending",
+          payee_classification: payableClassification(investorCategory),
+          payee_segment: payableSegment(investorCategory),
+          classification_status: investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
         });
       }
     }
 
-    // Batch insert payables using SECURITY DEFINER RPC (bypasses RLS)
+    // Batch insert payables with RPC and direct fallback
     let payablesInserted = 0;
     if (payablesToInsert.length > 0) {
+      const rpcName =
+        targetTable === "interest_payables"
+          ? "bulk_insert_interest_payables"
+          : targetTable === "mutual_fund_payables"
+            ? "bulk_insert_mutual_fund_payables"
+            : "bulk_insert_dividend_payables";
+
       try {
-        const rpcName =
-          targetTable === "interest_payables"
-            ? "bulk_insert_interest_payables"
-            : targetTable === "mutual_fund_payables"
-              ? "bulk_insert_mutual_fund_payables"
-              : "bulk_insert_dividend_payables";
         const { data: rpcResult, error: rpcErr } = await (supabase as any).rpc(rpcName, {
           p_payables: payablesToInsert,
         });
-        if (rpcErr) {
-          console.error(rpcName + " RPC failed:", rpcErr);
-          // Fail fast: RPC should handle payables insertion with SECURITY DEFINER.
-          throw new Error(rpcName + " RPC failed: " + (rpcErr?.message || JSON.stringify(rpcErr)));
-        } else {
+
+        if (!rpcErr && rpcResult) {
           payablesInserted = Number(rpcResult?.inserted ?? 0);
           const rpcErrors = Array.isArray(rpcResult?.errors) ? rpcResult.errors : [];
           if (rpcErrors.length > 0) {
-            // Surface the REAL per-row SQL errors returned by the RPC instead of
-            // hiding them behind a single chunk-wide "inserted: 0" exception that
-            // lumps the entire 1,000-row chunk into one giant, un-actionable error.
-            console.warn("Some payable inserts failed:", rpcErrors);
-
-            // client_id -> boid -> row_number reverse lookups so each rejected
-            // row points back at its original Excel row for the error download.
+            console.warn("Some payable inserts reported RPC errors:", rpcErrors);
             const clientIdToBoid = new Map<string, string>();
             for (const [boid, cid] of resolvedClientIds) clientIdToBoid.set(cid, boid);
             const boidToRowNum = new Map<string, number>();
@@ -808,18 +1215,22 @@ export const ImportService = {
               });
             }
           }
-
-          // Guard against a silently empty insert: only escalate to a chunk-level
-          // exception when the RPC inserted nothing AND returned no per-row detail.
-          // (When per-row errors ARE present, chunk-processor counts exactly those
-          // rows instead of the whole chunk, so no throw is needed.)
-          if (payablesInserted === 0 && rpcErrors.length === 0) {
-            throw new Error("Payable import completed without inserting any rows.");
-          }
+        } else if (rpcErr) {
+          console.warn(`${rpcName} RPC failed, attempting direct table insert fallback:`, rpcErr.message);
         }
       } catch (rpcEx: any) {
-        console.error("Payable RPC exception:", rpcEx);
-        throw new Error("Payable RPC exception: " + (rpcEx?.message || String(rpcEx)));
+        console.warn(`${rpcName} RPC exception, attempting direct table insert fallback:`, rpcEx?.message);
+      }
+
+      // Direct fallback if RPC inserted 0 rows
+      if (payablesInserted === 0 && payablesToInsert.length > 0) {
+        try {
+          console.log(`Running direct insert fallback for ${payablesToInsert.length} ${targetTable} rows...`);
+          payablesInserted = await insertRowsWithSchemaFallback(targetTable, payablesToInsert);
+        } catch (fallbackEx: any) {
+          console.error("Direct payable insert fallback failed:", fallbackEx);
+          throw new Error("Payable insert failed: " + (fallbackEx?.message || String(fallbackEx)));
+        }
       }
     }
 

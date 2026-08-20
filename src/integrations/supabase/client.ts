@@ -31,13 +31,31 @@ function getSupabaseClientConfig() {
   const DEFAULT_SUPABASE_URL = "http://127.0.0.1:54321";
   const DEFAULT_SUPABASE_KEY = "sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH";
 
-  const SUPABASE_URL =
+  let SUPABASE_URL =
     import.meta.env.NEXT_PUBLIC_SUPABASE_URL ||
     import.meta.env.VITE_SUPABASE_URL ||
     (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_SUPABASE_URL) ||
     (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_URL) ||
     (typeof process !== 'undefined' && process.env?.SUPABASE_URL) ||
     DEFAULT_SUPABASE_URL;
+
+  // When accessing from another PC/device on the local network (e.g. http://192.168.1.50:8080),
+  // adapt the local Supabase URL (127.0.0.1 / localhost) to use the host's actual IP address/hostname
+  // so the client browser sends auth/REST requests to the host machine running Supabase.
+  if (typeof window !== 'undefined' && window.location?.hostname) {
+    const currentHost = window.location.hostname;
+    if (currentHost !== 'localhost' && currentHost !== '127.0.0.1') {
+      try {
+        const parsed = new URL(SUPABASE_URL);
+        if (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost') {
+          parsed.hostname = currentHost;
+          SUPABASE_URL = parsed.toString().replace(/\/$/, '');
+        }
+      } catch {
+        SUPABASE_URL = SUPABASE_URL.replace(/127\.0\.0\.1|localhost/g, currentHost);
+      }
+    }
+  }
 
   const SUPABASE_PUBLISHABLE_KEY =
     import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||

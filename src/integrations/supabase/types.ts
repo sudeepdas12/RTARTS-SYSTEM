@@ -101,14 +101,20 @@ export type Database = {
           client_id: string | null
           created_at: string
           created_by: string | null
+          date_of_birth: string | null
           district: string | null
           email: string | null
           father_name: string | null
           full_name: string
+          gender: string | null
           grandfather_name: string | null
           holder_type: Database["public"]["Enums"]["holder_type"] | null
           id: string
           municipality: string | null
+          nid_number: string | null
+          occupation: string | null
+          pan_no: string | null
+          citizenship_no: string | null
           pan_or_citizenship: string | null
           phone: string | null
           province: string | null
@@ -128,14 +134,20 @@ export type Database = {
           client_id?: string | null
           created_at?: string
           created_by?: string | null
+          date_of_birth?: string | null
           district?: string | null
           email?: string | null
           father_name?: string | null
           full_name: string
+          gender?: string | null
           grandfather_name?: string | null
           holder_type?: Database["public"]["Enums"]["holder_type"] | null
           id?: string
           municipality?: string | null
+          nid_number?: string | null
+          occupation?: string | null
+          pan_no?: string | null
+          citizenship_no?: string | null
           pan_or_citizenship?: string | null
           phone?: string | null
           province?: string | null
@@ -155,14 +167,20 @@ export type Database = {
           client_id?: string | null
           created_at?: string
           created_by?: string | null
+          date_of_birth?: string | null
           district?: string | null
           email?: string | null
           father_name?: string | null
           full_name?: string
+          gender?: string | null
           grandfather_name?: string | null
           holder_type?: Database["public"]["Enums"]["holder_type"] | null
           id?: string
           municipality?: string | null
+          nid_number?: string | null
+          occupation?: string | null
+          pan_no?: string | null
+          citizenship_no?: string | null
           pan_or_citizenship?: string | null
           phone?: string | null
           province?: string | null

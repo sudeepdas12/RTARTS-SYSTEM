@@ -1,4 +1,15 @@
-export type AppRole = 'admin' | 'supervisor' | 'operator' | 'maker' | 'checker' | 'approver' | 'auditor' | 'read_only';
+export type AppRole =
+  | 'admin'
+  | 'supervisor'
+  | 'operator'
+  | 'maker'
+  | 'checker'
+  | 'approver'
+  | 'auditor'
+  | 'read_only'
+  | 'finance_operator'
+  | 'reconciliation_officer'
+  | 'report_viewer';
 
 export interface UserContext {
   id: string;
@@ -54,6 +65,19 @@ const ROLE_PERMISSIONS: Record<AppRole, Permission[]> = {
     'view_reconciliation', 'run_reconciliation',
     'view_reports', 'export_reports'
   ],
+  finance_operator: [
+    'view_dashboard', 'view_companies', 'manage_companies', 'view_clients', 'manage_clients',
+    'upload_data', 'validate_data', 'import_data',
+    'view_payments', 'create_payment_batch',
+    'view_reconciliation', 'run_reconciliation',
+    'view_reports', 'export_reports'
+  ],
+  reconciliation_officer: [
+    'view_dashboard', 'view_companies', 'view_clients',
+    'view_payments',
+    'view_reconciliation', 'run_reconciliation', 'apply_reconciliation',
+    'view_reports', 'export_reports'
+  ],
   maker: [
     'view_dashboard', 'view_companies', 'view_clients',
     'upload_data', 'validate_data', 'import_data',
@@ -76,6 +100,10 @@ const ROLE_PERMISSIONS: Record<AppRole, Permission[]> = {
     'view_dashboard', 'view_companies', 'view_clients',
     'view_payments', 'view_reconciliation',
     'view_reports', 'view_audit_logs', 'view_approvals'
+  ],
+  report_viewer: [
+    'view_dashboard', 'view_companies', 'view_clients',
+    'view_reports', 'export_reports'
   ],
   read_only: [
     'view_dashboard', 'view_companies', 'view_clients',
@@ -123,6 +151,7 @@ export const RBACService = {
     if (user.roles.includes('admin')) return true;
     if (user.roles.includes('maker')) return true;
     if (user.roles.includes('operator')) return true;
+    if (user.roles.includes('finance_operator')) return true;
     if (user.roles.includes('supervisor')) return true;
     return false;
   },
@@ -140,6 +169,18 @@ export const RBACService = {
   },
 
   getAllRoles(): AppRole[] {
-    return ['admin', 'supervisor', 'operator', 'maker', 'checker', 'approver', 'auditor', 'read_only'];
+    return [
+      'admin',
+      'supervisor',
+      'approver',
+      'checker',
+      'maker',
+      'operator',
+      'finance_operator',
+      'reconciliation_officer',
+      'auditor',
+      'report_viewer',
+      'read_only'
+    ];
   }
 };

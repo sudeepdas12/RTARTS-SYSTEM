@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx';
-import { supabase } from './database';
-import { aggregatePayableCategorySummary, normalizePayeeCategory, validatePayableConsistency } from './payable-summary';
+import { supabase, fetchAllRows } from './database';
+import { normalizePayeeCategory, validatePayableConsistency } from './payable-summary';
 
 export interface CompanySummaryRow {
   company_id: string;
@@ -129,9 +129,6 @@ function aggregateRows(rows: SummarySourceRow[], kind: 'dividend' | 'interest', 
       entry.netPayable += netPayable;
       currentCategoryMap[key] = entry;
     };
-    // Classification and ownership segment are two report dimensions. Keeping
-    // both lets finance see the four requested entity totals and the
-    // Promoter/Local/Public breakdown without reclassifying a transaction.
     addCategory(categoryKey);
     if (row.payee_segment) addCategory(row.payee_segment);
     existing.category_totals = currentCategoryMap;
@@ -140,31 +137,86 @@ function aggregateRows(rows: SummarySourceRow[], kind: 'dividend' | 'interest', 
   }
 }
 
+export interface MutualFundSummaryRow {
+  sn?: number;
+  type: string;
+  transaction_count: number;
+  kitta: number;
+  gross: number;
+  tax: number;
+  net: number;
+  composition?: number;
+}
+
+export function mfSummaryType(row: {
+  payee_classification?: string | null;
+  payee_segment?: string | null;
+  lot_name?: string | null;
+  client?: {
+    full_name?: string | null;
+    holder_type?: string | null;
+    payee_classification?: string | null;
+  } | null;
+}): string {
+  const lot = (row.lot_name || '').toUpperCase();
+  if (lot.includes('PROMOT')) return 'PROMOTER';
+  if (lot.includes('INSTITUT')) return 'INSTITUTION';
+  if (lot.includes('TAX EXEMPT') || lot.includes('MUTUAL')) return 'TAX EXEMPTED';
+  if (lot.includes('LOCAL')) return 'LOCAL UNVERIFIED';
+  if (lot.includes('PUBLIC')) return 'PUBLIC';
+
+  const cls = (row.payee_classification || row.client?.payee_classification || '').trim().toUpperCase();
+  if (cls === 'COMPANY_INSTITUTION' || cls.includes('INSTITUTION')) return 'INSTITUTION';
+  if (cls === 'TAX_EXEMPT' || cls.includes('TAX_EXEMPT') || cls.includes('MUTUAL_FUND')) return 'TAX EXEMPTED';
+  if (cls === 'NATURAL_PERSON' || cls === 'PUBLIC_LEGAL_PERSON' || (cls.includes('PUBLIC') && cls !== 'UNCLASSIFIED')) {
+    if (row.payee_segment === 'PROMOTER') return 'PROMOTER';
+    if (row.payee_segment === 'LOCAL') return 'LOCAL UNVERIFIED';
+    return 'PUBLIC';
+  }
+  if (cls === 'UNCLASSIFIED') return 'OTHERS';
+
+  const holder = (row.client?.holder_type || '').toUpperCase();
+  if (holder.includes('PROMOT')) return 'PROMOTER';
+  if (holder.includes('LEGAL') || holder.includes('INSTITUT')) return 'INSTITUTION';
+  if (holder.includes('EXEMPT') || holder.includes('MUTUAL')) return 'TAX EXEMPTED';
+  if (holder.includes('LOCAL')) return 'LOCAL UNVERIFIED';
+  if (holder.includes('PUBLIC')) return 'PUBLIC';
+
+  const clientName = (row.client?.full_name || '').toUpperCase();
+  if (/(MUTUAL\s*FUND|RETIREMENT\s*FUND|PENSION\s*FUND|PROVIDENT\s*FUND|KOSH\b|SANCHAYA\s*KOSH|NAGARIK\s*LAGANI|\bCIT\b|\bEPF\b|SAMRIDDHI\s*FUND|EQUITY\s*FUND|GROWTH\s*FUND|SCHEME\b)/i.test(clientName)) {
+    return 'TAX EXEMPTED';
+  }
+  if (/(PVT\.?LTD|PRIVATE LIMITED|\bLIMITED\b|\bLTD\.?\b|\bCOMPANY\b|CORPORATION|ASSOCIATES|FOUNDATION|\bGROUP\b|HOLDINGS|\bTRUST\b|\bBANK\b|FINANCE|MICROFINANCE|HYDROPOWER|INSURANCE|INSTITUTE|SOCIETY|COOPERATIVE|SAHAKARI|ENTERPRISES|VENTURES|INVESTMENT|CAPITAL|SECURITIES)/i.test(clientName)) {
+    return 'INSTITUTION';
+  }
+
+  return 'OTHERS';
+}
+
 export const SummaryReportService = {
   async getCompanySummary(filters: CompanySummaryFilters = {}): Promise<CompanySummaryRow[]> {
-    const [dividendRes, interestRes, mutualFundRes] = await Promise.all([
-      (supabase as any)
-        .from('dividend_payables')
-        .select('company_id, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, payment_date, created_at, client:clients(holder_type, payee_classification), companies!inner(company_name, company_code)')
-        .order('created_at', { ascending: false }),
-      (supabase as any)
-        .from('interest_payables')
-        .select('company_id, gross_interest, tax_amount, net_payable, payee_classification, payee_segment, payment_date, due_date, created_at, client:clients(holder_type, payee_classification), companies!inner(company_name, company_code)')
-        .order('created_at', { ascending: false }),
-      (supabase as any)
-        .from('mutual_fund_payables')
-        .select('company_id, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, payment_date, created_at, client:clients(holder_type, payee_classification), companies!inner(company_name, company_code)')
-        .order('created_at', { ascending: false }),
+    const [dividendRows, interestRows, mutualFundRows] = await Promise.all([
+      fetchAllRows<SummarySourceRow>((from, to) =>
+        (supabase as any)
+          .from('dividend_payables')
+          .select('company_id, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, payment_date, created_at, client:clients(holder_type, payee_classification), companies!inner(company_name, company_code)')
+          .range(from, to)
+      ),
+      fetchAllRows<SummarySourceRow>((from, to) =>
+        (supabase as any)
+          .from('interest_payables')
+          .select('company_id, gross_interest, tax_amount, net_payable, payee_classification, payee_segment, payment_date, due_date, created_at, client:clients(holder_type, payee_classification), companies!inner(company_name, company_code)')
+          .range(from, to)
+      ),
+      fetchAllRows<SummarySourceRow>((from, to) =>
+        (supabase as any)
+          .from('mutual_fund_payables')
+          .select('company_id, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, payment_date, created_at, client:clients(holder_type, payee_classification), companies!inner(company_name, company_code)')
+          .range(from, to)
+      ),
     ]);
 
-    if (dividendRes.error) throw dividendRes.error;
-    if (interestRes.error) throw interestRes.error;
-    if (mutualFundRes.error) throw mutualFundRes.error;
-
     const rowsByCompany = new Map<string, CompanySummaryRow>();
-    const dividendRows = (dividendRes.data || []) as SummarySourceRow[];
-    const interestRows = (interestRes.data || []) as SummarySourceRow[];
-    const mutualFundRows = (mutualFundRes.data || []) as SummarySourceRow[];
 
     aggregateRows(
       dividendRows.filter((row) => {
@@ -218,5 +270,162 @@ export const SummaryReportService = {
     }));
 
     downloadExcel(rows, fileName, 'Company Summary');
+  },
+
+  /**
+   * Mutual-fund distribution summary in the exact layout of the CDS "SUMMARY"
+   * sheet (S.N. | TYPE | NO. OF UNITHOLDERS | KITTA | AMOUNT/DIVIDEND | TAX | NET DIVIDEND | COMPOSITION),
+   * reproduced from the per-holder rows in `mutual_fund_payables` with client heuristic fallback.
+   */
+  async getMutualFundSummary(
+    filters: { companyId?: string; fiscalYear?: string } = {},
+  ): Promise<MutualFundSummaryRow[]> {
+    const data = await fetchAllRows<any>((from, to) => {
+      let query = (supabase as any)
+        .from('mutual_fund_payables')
+        .select(
+          'shares_held, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, lot_name, client:clients(id, full_name, holder_type, payee_classification)',
+        )
+        .range(from, to);
+      if (filters.companyId && filters.companyId !== 'all') {
+        query = query.eq('company_id', filters.companyId);
+      }
+      if (filters.fiscalYear && filters.fiscalYear !== 'all') {
+        query = query.eq('fiscal_year', filters.fiscalYear);
+      }
+      return query;
+    });
+
+    let totalKitta = 0;
+    const map = new Map<string, MutualFundSummaryRow>();
+    for (const row of data ?? []) {
+      const type = mfSummaryType(row);
+      const kitta = Number(row.shares_held ?? 0);
+      totalKitta += kitta;
+
+      const entry =
+        map.get(type) ||
+        ({ type, transaction_count: 0, kitta: 0, gross: 0, tax: 0, net: 0, composition: 0 } as MutualFundSummaryRow);
+      entry.transaction_count += 1;
+      entry.kitta += kitta;
+      entry.gross += Number(row.gross_dividend ?? 0);
+      entry.tax += Number(row.tax_amount ?? 0);
+      entry.net += Number(row.net_payable ?? 0);
+      map.set(type, entry);
+    }
+
+    const order = ['PUBLIC', 'PROMOTER', 'LOCAL UNVERIFIED', 'INSTITUTION', 'TAX EXEMPTED'];
+    const sorted = Array.from(map.values()).sort((a, b) => {
+      const ai = order.indexOf(a.type);
+      const bi = order.indexOf(b.type);
+      return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi) || a.type.localeCompare(b.type);
+    });
+
+    let sn = 1;
+    for (const item of sorted) {
+      item.sn = sn++;
+      item.composition = totalKitta > 0 ? Math.round((item.kitta / totalKitta) * 10000) / 100 : 0;
+    }
+
+    return sorted;
+  },
+
+  /**
+   * Export the mutual-fund summary to Excel with the same columns/format as the
+   * CDS "SUMMARY" sheet, including the TOTAL row and comma-formatted amounts.
+   */
+  exportMutualFundSummaryToExcel(data: MutualFundSummaryRow[], fileName: string): void {
+    const total = data.reduce(
+      (acc, r) => ({
+        transaction_count: acc.transaction_count + r.transaction_count,
+        kitta: acc.kitta + r.kitta,
+        gross: acc.gross + r.gross,
+        tax: acc.tax + r.tax,
+        net: acc.net + r.net,
+      }),
+      { transaction_count: 0, kitta: 0, gross: 0, tax: 0, net: 0 },
+    );
+
+    const aoa: (string | number)[][] = [
+      ['S.N.', 'TYPE', 'NO. OF UNITHOLDERS', 'KITTA / UNITS', 'AMOUNT/DIVIDEND', 'TAX', 'NET DIVIDEND', 'COMPOSITION %'],
+      ...data.map((r) => [r.sn ?? '', r.type, r.transaction_count, r.kitta, r.gross, r.tax, r.net, `${(r.composition ?? 0).toFixed(2)}%`]),
+      ['', 'TOTAL', total.transaction_count, total.kitta, total.gross, total.tax, total.net, '100.00%'],
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 8 }, { wch: 18 }, { wch: 20 }, { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 18 }, { wch: 16 }];
+    const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+    for (let c = 2; c <= 6; c++) {
+      for (let r = 1; r <= range.e.r; r++) {
+        const addr = XLSX.utils.encode_cell({ r, c });
+        if (ws[addr] && typeof ws[addr].v === 'number') ws[addr].z = '#,##0.00';
+      }
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'SUMMARY');
+    XLSX.writeFile(wb, `${fileName.replace(/[^a-zA-Z0-9_-]/g, '_')}.xlsx`);
+  },
+
+  /**
+   * Export the mutual-fund summary to PDF
+   */
+  exportMutualFundSummaryToPdf(data: MutualFundSummaryRow[], companyName = 'RTARTS System', subtitle = 'Mutual Fund Distribution Summary'): void {
+    const total = data.reduce(
+      (acc, r) => ({
+        transaction_count: acc.transaction_count + r.transaction_count,
+        kitta: acc.kitta + r.kitta,
+        gross: acc.gross + r.gross,
+        tax: acc.tax + r.tax,
+        net: acc.net + r.net,
+      }),
+      { transaction_count: 0, kitta: 0, gross: 0, tax: 0, net: 0 },
+    );
+
+    const fmtNr = (n: number) => n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    const columns = [
+      { header: 'S.N.', dataKey: 'sn' },
+      { header: 'TYPE', dataKey: 'type' },
+      { header: 'NO. OF UNITHOLDERS', dataKey: 'transaction_count' },
+      { header: 'KITTA / UNITS', dataKey: 'kitta' },
+      { header: 'AMOUNT/DIVIDEND', dataKey: 'gross' },
+      { header: 'TAX', dataKey: 'tax' },
+      { header: 'NET DIVIDEND', dataKey: 'net' },
+      { header: 'COMPOSITION', dataKey: 'composition' },
+    ];
+
+    const tableData = data.map((r) => ({
+      sn: r.sn ?? '',
+      type: r.type,
+      transaction_count: r.transaction_count.toLocaleString('en-IN'),
+      kitta: fmtNr(r.kitta),
+      gross: fmtNr(r.gross),
+      tax: fmtNr(r.tax),
+      net: fmtNr(r.net),
+      composition: `${(r.composition ?? 0).toFixed(2)}%`,
+    }));
+
+    tableData.push({
+      sn: '' as any,
+      type: 'TOTAL',
+      transaction_count: total.transaction_count.toLocaleString('en-IN'),
+      kitta: fmtNr(total.kitta),
+      gross: fmtNr(total.gross),
+      tax: fmtNr(total.tax),
+      net: fmtNr(total.net),
+      composition: '100.00%',
+    });
+
+    PdfGenerator.generate(
+      {
+        title: 'Mutual Fund Distribution Summary Report',
+        subtitle,
+        companyName,
+        generatedBy: 'RTARTS System',
+      },
+      columns,
+      tableData
+    );
   },
 };

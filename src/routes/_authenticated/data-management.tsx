@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -8,31 +8,59 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
 import {
-  Download, Trash2, Eye, Database, Users, AlertTriangle,
-  RefreshCw, Search, X, Building2, Calendar, TrendingUp,
-  ChevronLeft, ChevronRight, Filter, ShieldAlert, FileX2,
-  BarChart3, Layers, CheckCircle2, Clock,
+  Download,
+  Trash2,
+  Eye,
+  Users,
+  AlertTriangle,
+  RefreshCw,
+  Search,
+  X,
+  Building2,
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
+  Filter,
+  ShieldAlert,
+  FileX2,
+  BarChart3,
+  Layers,
+  CheckCircle2,
+  ArrowRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   DataManagementService,
   type CompanyFiscalData,
-  type ClientFiscalData,
   type BulkDeleteResult,
 } from "@/lib/services/data-management.service";
 
@@ -41,12 +69,14 @@ import {
 interface DataManagementSearch {
   companyId?: string;
   fy?: string;
+  tab?: string;
 }
 
 export const Route = createFileRoute("/_authenticated/data-management")({
   validateSearch: (search: Record<string, unknown>): DataManagementSearch => ({
     companyId: typeof search.companyId === "string" ? search.companyId : undefined,
     fy: typeof search.fy === "string" ? search.fy : undefined,
+    tab: typeof search.tab === "string" ? search.tab : undefined,
   }),
   component: DataManagementPage,
 });
@@ -62,6 +92,7 @@ type DeleteDialogState = {
     companyId: string;
     deleteDividends: boolean;
     deleteInterests: boolean;
+    deleteMutualFunds: boolean;
     deleteClients: boolean;
     deleteOrphans: boolean;
     deleteCompany: boolean;
@@ -85,39 +116,6 @@ const fmt = (n: number | null | undefined) =>
 
 const fmtCount = (n: number | null | undefined) =>
   n == null || n === 0 ? "—" : Number(n).toLocaleString();
-
-// ── Sub-components ────────────────────────────────────────────────────────────
-
-function StatCard({
-  title,
-  value,
-  icon: Icon,
-  colorClass = "",
-  subtitle,
-}: {
-  title: string;
-  value: string;
-  icon: React.ElementType;
-  colorClass?: string;
-  subtitle?: string;
-}) {
-  return (
-    <Card className="relative overflow-hidden">
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between">
-          <div className="space-y-1">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{title}</p>
-            <p className={`text-2xl font-bold tabular-nums ${colorClass}`}>{value}</p>
-            {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
-          </div>
-          <div className={`rounded-xl p-2.5 ${colorClass ? "bg-current/10" : "bg-muted"}`}>
-            <Icon className={`h-5 w-5 ${colorClass || "text-muted-foreground"}`} />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 function DeleteResultsSummary({ results }: { results: BulkDeleteResult[] }) {
   const errors = results.filter((r) => r.error);
@@ -165,49 +163,13 @@ function DeleteResultsSummary({ results }: { results: BulkDeleteResult[] }) {
   );
 }
 
-// ── Main Component ────────────────────────────────────────────────────────────
-
 function DataManagementPage() {
   const { hasAny } = useAuth();
   const isAdmin = hasAny(["admin"]);
   const qc = useQueryClient();
-
-  // ── Filter state ──────────────────────────────────────────────────────────
-  const [selectedFy, setSelectedFy] = useState<string>("all");
-  const [selectedCompany, setSelectedCompany] = useState<string>("all");
-  const [summarySearch, setSummarySearch] = useState<string>("");
-  const [summaryPage, setSummaryPage] = useState<number>(1);
-  const [activeTab, setActiveTab] = useState<string>("summary");
-
-  // ── Client detail state ───────────────────────────────────────────────────
-  const [detailCompany, setDetailCompany] = useState<{ id: string; name: string } | null>(null);
-  const [detailFy, setDetailFy] = useState<string>("");
-  const [detailType, setDetailType] = useState<"dividend" | "interest" | "all">("all");
-  const [detailSearch, setDetailSearch] = useState<string>("");
-  const [detailPage, setDetailPage] = useState<number>(1);
-  
-  // Initialize detail state from URL search params (companyId, fy)
   const search = Route.useSearch();
 
-  // ── Delete dialog state ───────────────────────────────────────────────────
-  const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState>(null);
-  const [deleteOrphans, setDeleteOrphans] = useState<boolean>(false);
-
-  // ── Delete results display ────────────────────────────────────────────────
-  const [lastDeleteResults, setLastDeleteResults] = useState<BulkDeleteResult[] | null>(null);
-  const [showDeleteResults, setShowDeleteResults] = useState<boolean>(false);
-
-  // ── Danger zone state ─────────────────────────────────────────────────────
-  const [dangerCompany, setDangerCompany] = useState<string>("all");
-  const [dangerFy, setDangerFy] = useState<string>("all");
-  const [dangerDate, setDangerDate] = useState<string>("");
-  const [dangerDividends, setDangerDividends] = useState<boolean>(true);
-  const [dangerInterests, setDangerInterests] = useState<boolean>(true);
-  const [dangerClients, setDangerClients] = useState<boolean>(false);
-  const [dangerDeleteCompany, setDangerDeleteCompany] = useState<boolean>(false);
-  const [dangerDeleteOrphans, setDangerDeleteOrphans] = useState<boolean>(true);
-
-  // ── Queries ───────────────────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState<string>(search.tab || "clients");
 
   const { data: companies = [] } = useQuery({
     queryKey: ["companies-lookup"],
@@ -231,47 +193,71 @@ function DataManagementPage() {
     [companies]
   );
 
-  // Initialize detail state from URL search params (companyId, fy)
+  const [explorerCompanyId, setExplorerCompanyId] = useState<string>(search.companyId || "");
+  const [explorerFy, setExplorerFy] = useState<string>(search.fy || "");
+  const [explorerType, setExplorerType] = useState<"dividend" | "interest" | "mutual_fund" | "all">("all");
+  const [explorerSearch, setExplorerSearch] = useState<string>("");
+  const [explorerPage, setExplorerPage] = useState<number>(1);
+
   useEffect(() => {
-    const companyId = search.companyId;
-    const fy = search.fy;
-    if (companyId && fy) {
-      setDetailCompany({ id: companyId, name: companyMap[companyId]?.company_name || "" });
-      setDetailFy(fy);
-      setDetailPage(1);
-      setActiveTab("clients");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, companyMap]);
+    if (search.companyId) setExplorerCompanyId(search.companyId);
+    else if (!explorerCompanyId && companies.length > 0) setExplorerCompanyId(companies[0].id);
 
-  const { data: summary = [], isLoading: summaryLoading, refetch: refetchSummary } = useQuery({
-    queryKey: ["company-fiscal-summary", selectedFy],
-    queryFn: () =>
-      DataManagementService.getCompanyFiscalSummary(
-        selectedFy !== "all" ? selectedFy : undefined
-      ),
-  });
+    if (search.fy) setExplorerFy(search.fy);
+    else if (!explorerFy && fiscalYears.length > 0) setExplorerFy(fiscalYears[0]);
+  }, [search, companies, fiscalYears]);
 
-  const { data: clientDetail = [], isLoading: detailLoading } = useQuery({
-    queryKey: ["client-fiscal-detail", detailCompany?.id, detailFy, detailType],
+  const selectedExplorerCompany = useMemo(
+    () => companies.find((c) => c.id === explorerCompanyId),
+    [companies, explorerCompanyId]
+  );
+
+  const { data: clientDetail = [], isLoading: detailLoading, refetch: refetchClientDetail } = useQuery({
+    queryKey: ["client-fiscal-detail", explorerCompanyId, explorerFy, explorerType],
     queryFn: () =>
       DataManagementService.getClientFiscalDetail(
-        detailCompany!.id,
-        detailFy,
-        detailType !== "all" ? detailType : undefined
+        explorerCompanyId,
+        explorerFy,
+        explorerType !== "all" ? explorerType : undefined
       ),
-    enabled: !!detailCompany && !!detailFy,
+    enabled: !!explorerCompanyId && !!explorerFy,
   });
 
-  // ── Computed values ───────────────────────────────────────────────────────
+  const filteredClientDetail = useMemo(() => {
+    if (!explorerSearch.trim()) return clientDetail;
+    const q = explorerSearch.toLowerCase();
+    return clientDetail.filter(
+      (r) =>
+        r.full_name.toLowerCase().includes(q) ||
+        r.boid.toLowerCase().includes(q) ||
+        r.client_code.toLowerCase().includes(q)
+    );
+  }, [clientDetail, explorerSearch]);
+
+  const detailPageCount = Math.max(1, Math.ceil(filteredClientDetail.length / PAGE_SIZE));
+  const pagedClientDetail = filteredClientDetail.slice(
+    (explorerPage - 1) * PAGE_SIZE,
+    explorerPage * PAGE_SIZE
+  );
+
+  const [opsFy, setOpsFy] = useState<string>("all");
+  const [opsCompany, setOpsCompany] = useState<string>("all");
+  const [opsSearch, setOpsSearch] = useState<string>("");
+  const [opsPage, setOpsPage] = useState<number>(1);
+
+  const { data: summary = [], isLoading: summaryLoading, refetch: refetchSummary } = useQuery({
+    queryKey: ["company-fiscal-summary", opsFy],
+    queryFn: () =>
+      DataManagementService.getCompanyFiscalSummary(opsFy !== "all" ? opsFy : undefined),
+  });
 
   const filteredSummary = useMemo(() => {
     let data = summary;
-    if (selectedCompany !== "all") {
-      data = data.filter((s) => s.company_id === selectedCompany);
+    if (opsCompany !== "all") {
+      data = data.filter((s) => s.company_id === opsCompany);
     }
-    if (summarySearch.trim()) {
-      const q = summarySearch.toLowerCase();
+    if (opsSearch.trim()) {
+      const q = opsSearch.toLowerCase();
       data = data.filter(
         (s) =>
           s.company_name.toLowerCase().includes(q) ||
@@ -280,42 +266,24 @@ function DataManagementPage() {
       );
     }
     return data;
-  }, [summary, selectedCompany, summarySearch]);
+  }, [summary, opsCompany, opsSearch]);
 
-  const summaryPageCount = Math.max(1, Math.ceil(filteredSummary.length / PAGE_SIZE));
-  const pagedSummary = filteredSummary.slice((summaryPage - 1) * PAGE_SIZE, summaryPage * PAGE_SIZE);
+  const opsPageCount = Math.max(1, Math.ceil(filteredSummary.length / PAGE_SIZE));
+  const pagedSummary = filteredSummary.slice((opsPage - 1) * PAGE_SIZE, opsPage * PAGE_SIZE);
 
-  const filteredClientDetail = useMemo(() => {
-    if (!detailSearch.trim()) return clientDetail;
-    const q = detailSearch.toLowerCase();
-    return clientDetail.filter(
-      (r) =>
-        r.full_name.toLowerCase().includes(q) ||
-        r.boid.toLowerCase().includes(q) ||
-        r.client_code.toLowerCase().includes(q)
-    );
-  }, [clientDetail, detailSearch]);
+  const [dangerCompany, setDangerCompany] = useState<string>("all");
+  const [dangerDate, setDangerDate] = useState<string>("");
+  const [dangerDividends, setDangerDividends] = useState<boolean>(true);
+  const [dangerMutualFunds, setDangerMutualFunds] = useState<boolean>(true);
+  const [dangerInterests, setDangerInterests] = useState<boolean>(true);
+  const [dangerClients, setDangerClients] = useState<boolean>(false);
+  const [dangerDeleteCompany, setDangerDeleteCompany] = useState<boolean>(false);
+  const [dangerDeleteOrphans, setDangerDeleteOrphans] = useState<boolean>(true);
 
-  const detailPageCount = Math.max(1, Math.ceil(filteredClientDetail.length / PAGE_SIZE));
-  const pagedClientDetail = filteredClientDetail.slice(
-    (detailPage - 1) * PAGE_SIZE,
-    detailPage * PAGE_SIZE
-  );
-
-  const summaryStats = useMemo(() => {
-    const totalCompanies = new Set(filteredSummary.map((s) => s.company_id)).size;
-    const totalRecords = filteredSummary.reduce(
-      (s, r) => s + r.dividend_count + r.interest_count,
-      0
-    );
-    const dividendGross = filteredSummary.reduce((s, r) => s + r.dividend_gross, 0);
-    const interestGross = filteredSummary.reduce((s, r) => s + r.interest_gross, 0);
-    const totalPaid = filteredSummary.reduce((s, r) => s + r.total_paid, 0);
-    const totalPending = filteredSummary.reduce((s, r) => s + r.total_pending, 0);
-    return { totalCompanies, totalRecords, dividendGross, interestGross, totalPaid, totalPending };
-  }, [filteredSummary]);
-
-  // ── Mutations ──────────────────────────────────────────────────────────────
+  const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState>(null);
+  const [deleteOrphans, setDeleteOrphans] = useState<boolean>(false);
+  const [lastDeleteResults, setLastDeleteResults] = useState<BulkDeleteResult[] | null>(null);
+  const [showDeleteResults, setShowDeleteResults] = useState<boolean>(false);
 
   const invalidateAll = useCallback(() => {
     qc.invalidateQueries({ queryKey: ["company-fiscal-summary"] });
@@ -325,23 +293,26 @@ function DataManagementPage() {
     qc.invalidateQueries({ queryKey: ["companies-lookup"] });
   }, [qc]);
 
-  const handleDeleteSuccess = useCallback((results: BulkDeleteResult[]) => {
-    invalidateAll();
-    setDeleteDialog(null);
-    setDeleteOrphans(false);
+  const handleDeleteSuccess = useCallback(
+    (results: BulkDeleteResult[]) => {
+      invalidateAll();
+      setDeleteDialog(null);
+      setDeleteOrphans(false);
 
-    const errors = results.filter((r) => r.error);
-    const totalDeleted = results.filter((r) => !r.error).reduce((s, r) => s + r.deleted, 0);
+      const errors = results.filter((r) => r.error);
+      const totalDeleted = results.filter((r) => !r.error).reduce((s, r) => s + r.deleted, 0);
 
-    setLastDeleteResults(results);
-    setShowDeleteResults(true);
+      setLastDeleteResults(results);
+      setShowDeleteResults(true);
 
-    if (errors.length > 0) {
-      toast.error(`Operation completed with ${errors.length} error(s). ${totalDeleted} records deleted.`);
-    } else {
-      toast.success(`Successfully deleted ${totalDeleted.toLocaleString()} record(s)`);
-    }
-  }, [invalidateAll]);
+      if (errors.length > 0) {
+        toast.error(`Operation completed with ${errors.length} error(s). ${totalDeleted} records deleted.`);
+      } else {
+        toast.success(`Successfully deleted ${totalDeleted.toLocaleString()} record(s)`);
+      }
+    },
+    [invalidateAll]
+  );
 
   const bulkDelete = useMutation({
     mutationFn: async (): Promise<BulkDeleteResult[]> => {
@@ -358,10 +329,8 @@ function DataManagementPage() {
         case "fy-all":
           return DataManagementService.deleteByFiscalYear(deleteDialog.fiscalYear!);
         case "all-clients": {
-          // Batched delete of all clients
           const BATCH = 200;
           let deleted = 0;
-          // eslint-disable-next-line no-constant-condition
           while (true) {
             const { data: batch, error: fe } = await supabase
               .from("clients")
@@ -388,25 +357,6 @@ function DataManagementPage() {
     },
   });
 
-  // ── Handlers ──────────────────────────────────────────────────────────────
-
-  const openDetail = (companyId: string, companyName: string, fy: string) => {
-    setDetailCompany({ id: companyId, name: companyName });
-    setDetailFy(fy);
-    setDetailType("all");
-    setDetailSearch("");
-    setDetailPage(1);
-    setActiveTab("clients");
-  };
-
-  const closeDetail = () => {
-    setDetailCompany(null);
-    setDetailFy("");
-    setDetailSearch("");
-    setDetailPage(1);
-    setActiveTab("summary");
-  };
-
   const openCompanyFyDelete = (row: CompanyFiscalData) => {
     setDeleteOrphans(false);
     setDeleteDialog({
@@ -417,6 +367,14 @@ function DataManagementPage() {
     });
   };
 
+  const handleInspectCompanyFy = (companyId: string, fy: string) => {
+    setExplorerCompanyId(companyId);
+    setExplorerFy(fy);
+    setExplorerPage(1);
+    setExplorerSearch("");
+    setActiveTab("clients");
+  };
+
   const handleDangerDelete = () => {
     setDeleteDialog({
       mode: "custom",
@@ -424,7 +382,8 @@ function DataManagementPage() {
         companyId: dangerCompany,
         deleteDividends: dangerDividends,
         deleteInterests: dangerInterests,
-        deleteClients: dangerCompany === "all" ? dangerClients : false,
+        deleteMutualFunds: dangerMutualFunds,
+        deleteClients: dangerClients,
         deleteOrphans: dangerDeleteOrphans,
         deleteCompany: dangerCompany !== "all" ? dangerDeleteCompany : false,
         importedAfter: dangerDate || undefined,
@@ -440,60 +399,39 @@ function DataManagementPage() {
         return (
           <div className="space-y-3">
             <p>
-              Permanently delete all dividend and interest payables for{" "}
+              Permanently delete all dividend, mutual fund, and interest payables for{" "}
               <strong>{deleteDialog.companyName}</strong> — fiscal year{" "}
               <strong className="font-mono">{deleteDialog.fiscalYear}</strong>.
             </p>
             <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 p-3">
               <Checkbox
-                id="orphanCheck"
+                id="del-orphans"
                 checked={deleteOrphans}
                 onCheckedChange={(v) => setDeleteOrphans(!!v)}
+                className="mt-0.5"
               />
-              <Label htmlFor="orphanCheck" className="text-sm cursor-pointer leading-snug">
-                Also remove <strong>orphaned clients</strong> — clients who have no remaining
-                payables after this deletion
-              </Label>
+              <div className="space-y-0.5">
+                <Label htmlFor="del-orphans" className="text-xs font-semibold cursor-pointer">
+                  Also remove orphaned client records
+                </Label>
+                <p className="text-[11px] text-muted-foreground">
+                  Deletes client profiles associated with this company that have no other payable transactions.
+                </p>
+              </div>
             </div>
           </div>
         );
-
-      case "company-all":
-        return (
-          <p>
-            Permanently delete <strong>ALL</strong> dividend payables, interest payables, payments,
-            and reconciliation results for <strong>{deleteDialog.companyName}</strong> across all
-            fiscal years.
-          </p>
-        );
-
-      case "fy-all":
-        return (
-          <p>
-            Permanently delete <strong>ALL</strong> dividend and interest payables for fiscal year{" "}
-            <strong className="font-mono">{deleteDialog.fiscalYear}</strong> across{" "}
-            <strong>ALL companies</strong>.
-          </p>
-        );
-
-      case "all-clients":
-        return (
-          <p>
-            Permanently delete <strong>ALL client records</strong> from the database. This will
-            also cascade to any related payables and payments.
-          </p>
-        );
-
       case "custom": {
         const opts = deleteDialog.customOptions!;
         const companyLabel =
-          opts.companyId !== "all"
-            ? companyMap[opts.companyId]?.company_name || opts.companyId
-            : "ALL companies";
+          opts.companyId === "all"
+            ? "ALL Companies"
+            : companyMap[opts.companyId]?.company_name || opts.companyId;
+
         return (
           <div className="space-y-3">
-            <p>
-              Permanently delete the selected data
+            <p className="text-sm">
+              You are about to delete selected records
               {opts.companyId !== "all" ? ` for ${companyLabel}` : " across ALL companies"}
               {opts.importedAfter ? ` imported on or after ${opts.importedAfter}` : ""}.
             </p>
@@ -501,143 +439,137 @@ function DataManagementPage() {
               {opts.deleteDividends && (
                 <li className="flex items-center gap-2">
                   <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-                  Dividend Payables
+                  Equity Dividend Payables
+                </li>
+              )}
+              {opts.deleteMutualFunds && (
+                <li className="flex items-center gap-2">
+                  <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+                  Mutual Fund Payables
                 </li>
               )}
               {opts.deleteInterests && (
                 <li className="flex items-center gap-2">
                   <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-                  Interest Payables
+                  Debenture Interest Payables
                 </li>
               )}
               {opts.deleteClients && (
                 <li className="flex items-center gap-2">
                   <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-                  All Client Records (Global)
-                </li>
-              )}
-              {opts.deleteOrphans && (
-                <li className="flex items-center gap-2">
-                  <span className="h-1.5 w-1.5 rounded-full bg-orange-500" />
-                  Orphaned Clients (cleanup)
+                  Client Records
                 </li>
               )}
               {opts.deleteCompany && (
                 <li className="flex items-center gap-2 font-bold text-destructive">
                   <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
-                  Company Record Itself
+                  Company Master Record
                 </li>
               )}
             </ul>
           </div>
         );
       }
+      default:
+        return null;
     }
   };
 
-  // ── Render ─────────────────────────────────────────────────────────────────
-
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-6">
       <PageHeader
-        title="Data Management"
-        description="Manage fiscal year data — view summaries, drill into client records, export, and perform bulk deletions."
+        title="Data Management & Operations"
+        description="Inspect client-level payables, prune fiscal-year datasets, and perform secure database maintenance."
       />
 
+      <Card className="border-primary/20 bg-gradient-to-r from-primary/5 via-background to-background">
+        <CardContent className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="rounded-lg bg-primary/10 p-2 text-primary">
+              <BarChart3 className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold">Looking for high-level fiscal reporting and charts?</p>
+              <p className="text-xs text-muted-foreground">
+                View executive KPIs, instrument distributions, and payment status progress bars in the Analytics Workspace.
+              </p>
+            </div>
+          </div>
+          <Link to="/analytics">
+            <Button variant="outline" size="sm" className="shrink-0 text-xs">
+              Go to Analytics <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+            </Button>
+          </Link>
+        </CardContent>
+      </Card>
+
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="h-10">
-          <TabsTrigger value="summary" className="gap-2">
-            <BarChart3 className="h-4 w-4" /> Fiscal Summary
-          </TabsTrigger>
-          <TabsTrigger value="clients" className="gap-2">
-            <Users className="h-4 w-4" /> Client Detail
-            {detailCompany && (
+        <TabsList className="h-10 bg-muted/60 p-1">
+          <TabsTrigger value="clients" className="gap-2 text-xs md:text-sm">
+            <Users className="h-4 w-4" /> Client Records Explorer
+            {selectedExplorerCompany && (
               <Badge variant="secondary" className="ml-1 py-0 px-1.5 text-[10px]">
-                {detailCompany.name}
+                {selectedExplorerCompany.company_code}
               </Badge>
             )}
           </TabsTrigger>
+          <TabsTrigger value="operations" className="gap-2 text-xs md:text-sm">
+            <Layers className="h-4 w-4" /> Data Operations & Pruning
+          </TabsTrigger>
           {isAdmin && (
-            <TabsTrigger value="danger" className="gap-2 text-destructive data-[state=active]:text-destructive">
+            <TabsTrigger value="danger" className="gap-2 text-xs md:text-sm text-destructive data-[state=active]:text-destructive">
               <ShieldAlert className="h-4 w-4" /> Danger Zone
             </TabsTrigger>
           )}
         </TabsList>
 
-        {/* ═══════════════════════════════════════════════════════
-            TAB 1 — FISCAL SUMMARY
-        ═══════════════════════════════════════════════════════ */}
-        <TabsContent value="summary" className="space-y-4">
+        <TabsContent value="clients" className="space-y-4">
           <Card>
             <CardHeader className="pb-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <CardTitle className="text-base">Company × Fiscal Year Summary</CardTitle>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    Client Payables Explorer
+                    {selectedExplorerCompany && explorerFy && (
+                      <Badge variant="secondary" className="font-normal font-mono text-xs">
+                        {selectedExplorerCompany.company_name} · FY {explorerFy}
+                      </Badge>
+                    )}
+                  </CardTitle>
                   <CardDescription>
-                    {filteredSummary.length} record{filteredSummary.length !== 1 ? "s" : ""} found — click the{" "}
-                    <Eye className="inline h-3 w-3 mx-0.5" /> icon to view client-level detail
+                    {filteredClientDetail.length} client transaction record{filteredClientDetail.length !== 1 ? "s" : ""} matching selection
                   </CardDescription>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" size="sm" onClick={() => refetchSummary()} disabled={summaryLoading}>
-                    <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${summaryLoading ? "animate-spin" : ""}`} />
-                    Refresh
-                  </Button>
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={filteredSummary.length === 0}
+                    disabled={filteredClientDetail.length === 0}
                     onClick={() => {
-                      DataManagementService.exportCompanyFiscalToExcel(
-                        filteredSummary,
-                        `company_fiscal_summary${selectedFy !== "all" ? `_${selectedFy}` : ""}`
+                      DataManagementService.exportClientFiscalToExcel(
+                        filteredClientDetail,
+                        `clients_${selectedExplorerCompany?.company_code || "export"}_${explorerFy}`
                       );
-                      toast.success("Exported successfully");
+                      toast.success("Client transactions exported to Excel.");
                     }}
                   >
-                    <Download className="h-3.5 w-3.5 mr-1.5" />
-                    Export
+                    <Download className="h-3.5 w-3.5 mr-1.5 text-emerald-600" />
+                    Export Excel
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => refetchClientDetail()} disabled={detailLoading}>
+                    <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${detailLoading ? "animate-spin" : ""}`} />
+                    Refresh
                   </Button>
                 </div>
               </div>
 
-              <div className="mt-2 flex flex-wrap gap-2">
-                <div className="relative flex-1 min-w-[180px]">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                  <Input
-                    placeholder="Search company or FY…"
-                    value={summarySearch}
-                    onChange={(e) => { setSummarySearch(e.target.value); setSummaryPage(1); }}
-                    className="pl-8 h-8 text-sm"
-                  />
-                  {summarySearch && (
-                    <button
-                      onClick={() => { setSummarySearch(""); setSummaryPage(1); }}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
-                <Select value={selectedFy} onValueChange={(v) => { setSelectedFy(v); setSummaryPage(1); }}>
-                  <SelectTrigger className="w-40 h-8 text-sm">
-                    <Calendar className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
-                    <SelectValue placeholder="All fiscal years" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All fiscal years</SelectItem>
-                    {fiscalYears.map((fy) => (
-                      <SelectItem key={fy} value={fy}>{fy}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select value={selectedCompany} onValueChange={(v) => { setSelectedCompany(v); setSummaryPage(1); }}>
-                  <SelectTrigger className="w-56 h-8 text-sm">
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                <Select value={explorerCompanyId} onValueChange={(v) => { setExplorerCompanyId(v); setExplorerPage(1); }}>
+                  <SelectTrigger className="h-9 text-xs">
                     <Building2 className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
-                    <SelectValue placeholder="All companies" />
+                    <SelectValue placeholder="Select company" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All companies</SelectItem>
                     {companies.map((c) => (
                       <SelectItem key={c.id} value={c.id}>
                         {c.company_code} — {c.company_name}
@@ -645,214 +577,65 @@ function DataManagementPage() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
-            </CardHeader>
-<CardContent className="px-0 pb-0">
-              <div className="overflow-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead className="pl-6">Company</TableHead>
-                      <TableHead>FY</TableHead>
-                      <TableHead className="text-right">Div. Count</TableHead>
-                      <TableHead className="text-right">Div. Gross</TableHead>
-                      <TableHead className="text-right">Div. Net</TableHead>
-                      <TableHead className="text-right">Int. Count</TableHead>
-                      <TableHead className="text-right">Int. Gross</TableHead>
-                      <TableHead className="text-right">Int. Net</TableHead>
-                      <TableHead className="text-right text-emerald-600">Paid</TableHead>
-                      <TableHead className="text-right text-amber-600">Pending</TableHead>
-                      <TableHead className="pr-6 text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {summaryLoading ? (
-                      Array.from({ length: 5 }).map((_, i) => (
-                        <TableRow key={i}>
-                          {Array.from({ length: 11 }).map((_, j) => (
-                            <TableCell key={j}>
-                              <div className="h-4 rounded bg-muted animate-pulse" />
-                            </TableCell>
-                          ))}
-                        </TableRow>
-                      ))
-                    ) : pagedSummary.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={11} className="py-16 text-center text-muted-foreground">
-                          <FileX2 className="h-10 w-10 mx-auto mb-3 opacity-30" />
-                          <p className="text-sm">No data found matching your filters.</p>
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-pagedSummary.map((row) => (
-                        <TableRow key={`${row.company_id}|${row.fiscal_year}`} className="group">
-                          <TableCell className="pl-6">
-                            <div>
-                              <span className="font-medium text-sm">{row.company_name}</span>
-                              <span className="ml-1.5 font-mono text-[10px] text-muted-foreground bg-muted px-1 rounded">
-                                {companyMap[row.company_id]?.company_code ?? ""}
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="font-mono text-[10px]">
-                              {row.fiscal_year}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">{fmtCount(row.dividend_count)}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">{fmt(row.dividend_gross)}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">{fmt(row.dividend_net)}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">{fmtCount(row.interest_count)}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">{fmt(row.interest_gross)}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">{fmt(row.interest_net)}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm font-semibold text-emerald-600">
-                            {fmt(row.total_paid)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums text-sm font-semibold text-amber-600">
-                            {fmt(row.total_pending)}
-                          </TableCell>
-                          <TableCell className="pr-6 text-right">
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-7 w-7"
-                              onClick={() => openDetail(row.company_id, row.company_name, row.fiscal_year)}
-                            >
-                              <Eye className="h-3.5 w-3.5" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
 
-              {summaryPageCount > 1 && (
-                <div className="flex items-center justify-between border-t px-6 py-3">
-                  <p className="text-xs text-muted-foreground">
-                    Page {summaryPage} of {summaryPageCount} · {filteredSummary.length} rows
-                  </p>
-                  <div className="flex gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      disabled={summaryPage <= 1}
-                      onClick={() => setSummaryPage((p) => Math.max(1, p - 1))}
-                    >
-                      <ChevronLeft className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      disabled={summaryPage >= summaryPageCount}
-                      onClick={() => setSummaryPage((p) => Math.min(summaryPageCount, p + 1))}
-                    >
-                      <ChevronRight className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
+                <Select value={explorerFy} onValueChange={(v) => { setExplorerFy(v); setExplorerPage(1); }}>
+                  <SelectTrigger className="h-9 text-xs">
+                    <Calendar className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
+                    <SelectValue placeholder="Select fiscal year" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {fiscalYears.map((fy) => (
+                      <SelectItem key={fy} value={fy}>
+                        FY {fy}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
 
-        {/* ═══════════════════════════════════════════════════════
-            TAB 2 — CLIENT DETAIL
-        ═══════════════════════════════════════════════════════ */}
-        <TabsContent value="clients" className="space-y-4">
-          <Card>
-            <CardHeader className="pb-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <CardTitle className="text-base flex items-center gap-2">
-                    Client Detail
-                    {detailCompany && (
-                      <Badge variant="secondary" className="font-normal">
-                        {detailCompany.name}
-                        <span className="mx-1 text-muted-foreground">·</span>
-                        <span className="font-mono">{detailFy}</span>
-                      </Badge>
-                    )}
-                  </CardTitle>
-                  <CardDescription>
-                    {detailCompany
-                      ? `${filteredClientDetail.length} client record${filteredClientDetail.length !== 1 ? "s" : ""} found`
-                      : "Click the eye icon on any summary row to view client-level detail"}
-                  </CardDescription>
-                </div>
-                {detailCompany && (
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={clientDetail.length === 0}
-                      onClick={() => {
-                        DataManagementService.exportClientFiscalToExcel(
-                          filteredClientDetail,
-                          `clients_${detailCompany.name}_${detailFy}`
-                        );
-                        toast.success("Exported successfully");
-                      }}
+                <Select
+                  value={explorerType}
+                  onValueChange={(v) => {
+                    setExplorerType(v as "dividend" | "interest" | "mutual_fund" | "all");
+                    setExplorerPage(1);
+                  }}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <Filter className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
+                    <SelectValue placeholder="Instrument type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Instruments</SelectItem>
+                    <SelectItem value="dividend">Equity Dividends</SelectItem>
+                    <SelectItem value="interest">Debenture Interest</SelectItem>
+                    <SelectItem value="mutual_fund">Mutual Funds</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                  <Input
+                    placeholder="Search name, BOID, code…"
+                    value={explorerSearch}
+                    onChange={(e) => { setExplorerSearch(e.target.value); setExplorerPage(1); }}
+                    className="pl-8 h-9 text-xs"
+                  />
+                  {explorerSearch && (
+                    <button
+                      onClick={() => { setExplorerSearch(""); setExplorerPage(1); }}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                     >
-                      <Download className="h-3.5 w-3.5 mr-1.5" />
-                      Export
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={closeDetail}>
-                      <X className="h-3.5 w-3.5 mr-1.5" />
-                      Close
-                    </Button>
-                  </div>
-                )}
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
-
-              {detailCompany && (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <div className="relative flex-1 min-w-[180px]">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                    <Input
-                      placeholder="Search by name, BOID, code…"
-                      value={detailSearch}
-                      onChange={(e) => { setDetailSearch(e.target.value); setDetailPage(1); }}
-                      className="pl-8 h-8 text-sm"
-                    />
-                    {detailSearch && (
-                      <button
-                        onClick={() => { setDetailSearch(""); setDetailPage(1); }}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
-                  <Select
-                    value={detailType}
-                    onValueChange={(v) => { setDetailType(v as "dividend" | "interest" | "all"); setDetailPage(1); }}
-                  >
-                    <SelectTrigger className="w-36 h-8 text-sm">
-                      <Filter className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All types</SelectItem>
-                      <SelectItem value="dividend">Dividend only</SelectItem>
-                      <SelectItem value="interest">Interest only</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
             </CardHeader>
 
             <CardContent className="px-0 pb-0">
-              {!detailCompany ? (
+              {!explorerCompanyId || !explorerFy ? (
                 <div className="py-20 text-center text-muted-foreground">
                   <Eye className="h-12 w-12 mx-auto mb-4 opacity-20" />
-                  <p className="text-sm font-medium">No company selected</p>
-                  <p className="text-xs mt-1 text-muted-foreground/70">
-                    Go to Fiscal Summary and click the <Eye className="inline h-3 w-3 mx-0.5" /> icon on any row
-                  </p>
+                  <p className="text-sm font-medium">Select a company and fiscal year to explore client records.</p>
                 </div>
               ) : (
                 <>
@@ -863,11 +646,11 @@ pagedSummary.map((row) => (
                           <TableHead className="pl-6">Client Name</TableHead>
                           <TableHead>BOID</TableHead>
                           <TableHead>Code</TableHead>
-                          <TableHead>Type</TableHead>
-                          <TableHead className="text-right">Gross</TableHead>
-                          <TableHead className="text-right">Tax</TableHead>
-                          <TableHead className="text-right">Net</TableHead>
-                          <TableHead className="pr-6">Status</TableHead>
+                          <TableHead>Instrument</TableHead>
+                          <TableHead className="text-right">Gross Amount</TableHead>
+                          <TableHead className="text-right">Tax (TDS)</TableHead>
+                          <TableHead className="text-right font-semibold">Net Payable</TableHead>
+                          <TableHead className="pr-6">Payment Status</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -885,26 +668,26 @@ pagedSummary.map((row) => (
                           <TableRow>
                             <TableCell colSpan={8} className="py-16 text-center text-muted-foreground">
                               <FileX2 className="h-10 w-10 mx-auto mb-3 opacity-30" />
-                              <p className="text-sm">No records found.</p>
+                              <p className="text-sm">No client records found for this selection.</p>
                             </TableCell>
                           </TableRow>
                         ) : (
                           pagedClientDetail.map((row, idx) => (
-                            <TableRow key={`${row.client_id}-${row.payable_type}-${idx}`}>
+                            <TableRow key={`${row.client_id}-${row.payable_type}-${idx}`} className="hover:bg-muted/30">
                               <TableCell className="pl-6 font-medium text-sm">{row.full_name}</TableCell>
                               <TableCell className="font-mono text-xs text-muted-foreground">{row.boid || "—"}</TableCell>
                               <TableCell className="font-mono text-xs">{row.client_code || "—"}</TableCell>
                               <TableCell>
                                 <Badge
-                                  variant={row.payable_type === "dividend" ? "default" : "secondary"}
-                                  className="text-[10px] capitalize"
+                                  variant="secondary"
+                                  className="text-[10px] uppercase font-mono"
                                 >
-                                  {row.payable_type}
+                                  {row.payable_type === "mutual_fund" ? "Mutual Fund" : row.payable_type}
                                 </Badge>
                               </TableCell>
                               <TableCell className="text-right tabular-nums text-sm">{fmt(row.gross_amount)}</TableCell>
-                              <TableCell className="text-right tabular-nums text-sm text-muted-foreground">{fmt(row.tax_amount)}</TableCell>
-                              <TableCell className="text-right tabular-nums text-sm font-semibold">{fmt(row.net_amount)}</TableCell>
+                              <TableCell className="text-right tabular-nums text-sm text-amber-600 font-mono">{fmt(row.tax_amount)}</TableCell>
+                              <TableCell className="text-right tabular-nums text-sm font-bold text-emerald-600">{fmt(row.net_amount)}</TableCell>
                               <TableCell className="pr-6">
                                 <Badge
                                   variant={
@@ -932,19 +715,18 @@ pagedSummary.map((row) => (
                     </Table>
                   </div>
 
-                  {/* Pagination */}
                   {detailPageCount > 1 && (
                     <div className="flex items-center justify-between border-t px-6 py-3">
                       <p className="text-xs text-muted-foreground">
-                        Page {detailPage} of {detailPageCount} · {filteredClientDetail.length} rows
+                        Page {explorerPage} of {detailPageCount} · {filteredClientDetail.length} rows
                       </p>
                       <div className="flex gap-1">
                         <Button
                           variant="ghost"
                           size="icon"
                           className="h-7 w-7"
-                          disabled={detailPage <= 1}
-                          onClick={() => setDetailPage((p) => Math.max(1, p - 1))}
+                          disabled={explorerPage <= 1}
+                          onClick={() => setExplorerPage((p) => Math.max(1, p - 1))}
                         >
                           <ChevronLeft className="h-3.5 w-3.5" />
                         </Button>
@@ -952,8 +734,8 @@ pagedSummary.map((row) => (
                           variant="ghost"
                           size="icon"
                           className="h-7 w-7"
-                          disabled={detailPage >= detailPageCount}
-                          onClick={() => setDetailPage((p) => Math.min(detailPageCount, p + 1))}
+                          disabled={explorerPage >= detailPageCount}
+                          onClick={() => setExplorerPage((p) => Math.min(detailPageCount, p + 1))}
                         >
                           <ChevronRight className="h-3.5 w-3.5" />
                         </Button>
@@ -961,19 +743,18 @@ pagedSummary.map((row) => (
                     </div>
                   )}
 
-                  {/* Totals */}
                   {filteredClientDetail.length > 0 && (
-                    <div className="border-t px-6 py-4">
+                    <div className="border-t px-6 py-4 bg-muted/20">
                       <div className="grid gap-3 sm:grid-cols-3">
                         {[
-                          { label: "Total Gross", key: "gross_amount" as const, color: "" },
-                          { label: "Total Tax", key: "tax_amount" as const, color: "text-muted-foreground" },
-                          { label: "Total Net", key: "net_amount" as const, color: "text-foreground" },
+                          { label: "Total Gross Amount", key: "gross_amount" as const, color: "" },
+                          { label: "Total Tax (TDS)", key: "tax_amount" as const, color: "text-amber-600 font-mono" },
+                          { label: "Total Net Payable", key: "net_amount" as const, color: "text-emerald-600 font-bold" },
                         ].map(({ label, key, color }) => (
-                          <div key={label} className="rounded-lg border bg-muted/30 p-3">
+                          <div key={label} className="rounded-lg border bg-background p-3">
                             <p className="text-xs text-muted-foreground">{label}</p>
-                            <p className={`text-lg font-bold tabular-nums mt-0.5 ${color}`}>
-                              {fmt(filteredClientDetail.reduce((s, r) => s + r[key], 0))}
+                            <p className={`text-lg tabular-nums mt-0.5 ${color}`}>
+                              NPR {fmt(filteredClientDetail.reduce((s, r) => s + r[key], 0))}
                             </p>
                           </div>
                         ))}
@@ -986,19 +767,200 @@ pagedSummary.map((row) => (
           </Card>
         </TabsContent>
 
-        {/* ═══════════════════════════════════════════════════════
-            TAB 3 — DANGER ZONE (admin only)
-        ═══════════════════════════════════════════════════════ */}
+        <TabsContent value="operations" className="space-y-4">
+          <Card>
+            <CardHeader className="pb-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <CardTitle className="text-base">Company Fiscal Dataset Operations</CardTitle>
+                  <CardDescription>
+                    {filteredSummary.length} dataset{filteredSummary.length !== 1 ? "s" : ""} available for client exploration and targeted deletion
+                  </CardDescription>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={() => refetchSummary()} disabled={summaryLoading}>
+                    <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${summaryLoading ? "animate-spin" : ""}`} />
+                    Refresh
+                  </Button>
+                </div>
+              </div>
+
+              <div className="mt-2 flex flex-wrap gap-2">
+                <div className="relative flex-1 min-w-[180px]">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                  <Input
+                    placeholder="Search company or FY…"
+                    value={opsSearch}
+                    onChange={(e) => { setOpsSearch(e.target.value); setOpsPage(1); }}
+                    className="pl-8 h-8 text-sm"
+                  />
+                  {opsSearch && (
+                    <button
+                      onClick={() => { setOpsSearch(""); setOpsPage(1); }}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+                <Select value={opsFy} onValueChange={(v) => { setOpsFy(v); setOpsPage(1); }}>
+                  <SelectTrigger className="w-40 h-8 text-sm">
+                    <Calendar className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
+                    <SelectValue placeholder="All fiscal years" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All fiscal years</SelectItem>
+                    {fiscalYears.map((fy) => (
+                      <SelectItem key={fy} value={fy}>{fy}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={opsCompany} onValueChange={(v) => { setOpsCompany(v); setOpsPage(1); }}>
+                  <SelectTrigger className="w-56 h-8 text-sm">
+                    <Building2 className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
+                    <SelectValue placeholder="All companies" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All companies</SelectItem>
+                    {companies.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.company_code} — {c.company_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </CardHeader>
+
+            <CardContent className="px-0 pb-0">
+              <div className="overflow-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="pl-6">Company</TableHead>
+                      <TableHead>FY</TableHead>
+                      <TableHead className="text-right">Dividend Records</TableHead>
+                      <TableHead className="text-right">Debenture Records</TableHead>
+                      <TableHead className="text-right">Mutual Fund Records</TableHead>
+                      <TableHead className="text-right text-emerald-600">Total Paid</TableHead>
+                      <TableHead className="text-right text-amber-600">Total Pending</TableHead>
+                      <TableHead className="pr-6 text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {summaryLoading ? (
+                      Array.from({ length: 5 }).map((_, i) => (
+                        <TableRow key={i}>
+                          {Array.from({ length: 8 }).map((_, j) => (
+                            <TableCell key={j}>
+                              <div className="h-4 rounded bg-muted animate-pulse" />
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                      ))
+                    ) : pagedSummary.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={8} className="py-16 text-center text-muted-foreground">
+                          <FileX2 className="h-10 w-10 mx-auto mb-3 opacity-30" />
+                          <p className="text-sm">No datasets found matching your filters.</p>
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      pagedSummary.map((row) => (
+                        <TableRow key={`${row.company_id}|${row.fiscal_year}`} className="group hover:bg-muted/30">
+                          <TableCell className="pl-6">
+                            <div>
+                              <span className="font-medium text-sm">{row.company_name}</span>
+                              <span className="ml-1.5 font-mono text-[10px] text-muted-foreground bg-muted px-1 rounded">
+                                {companyMap[row.company_id]?.company_code ?? ""}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="font-mono text-[10px]">
+                              {row.fiscal_year}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-sm">{fmtCount(row.dividend_count)}</TableCell>
+                          <TableCell className="text-right tabular-nums text-sm">{fmtCount(row.interest_count)}</TableCell>
+                          <TableCell className="text-right tabular-nums text-sm">{fmtCount(row.mutual_fund_count)}</TableCell>
+                          <TableCell className="text-right tabular-nums text-sm font-semibold text-emerald-600">
+                            {fmt(row.total_paid)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-sm font-semibold text-amber-600">
+                            {fmt(row.total_pending)}
+                          </TableCell>
+                          <TableCell className="pr-6 text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                onClick={() => handleInspectCompanyFy(row.company_id, row.fiscal_year)}
+                              >
+                                <Eye className="h-3 w-3 mr-1" />
+                                Inspect
+                              </Button>
+                              {isAdmin && (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-7 w-7 text-destructive hover:bg-destructive/10"
+                                  onClick={() => openCompanyFyDelete(row)}
+                                  title="Delete FY payables"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {opsPageCount > 1 && (
+                <div className="flex items-center justify-between border-t px-6 py-3">
+                  <p className="text-xs text-muted-foreground">
+                    Page {opsPage} of {opsPageCount} · {filteredSummary.length} datasets
+                  </p>
+                  <div className="flex gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      disabled={opsPage <= 1}
+                      onClick={() => setOpsPage((p) => Math.max(1, p - 1))}
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      disabled={opsPage >= opsPageCount}
+                      onClick={() => setOpsPage((p) => Math.min(opsPageCount, p + 1))}
+                    >
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         {isAdmin && (
           <TabsContent value="danger" className="space-y-5">
-            {/* Last delete results */}
             {showDeleteResults && lastDeleteResults && (
               <Card className="border-emerald-200 dark:border-emerald-800">
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-sm flex items-center gap-2">
                       <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                      Last Delete Operation Results
+                      Last Purge Results
                     </CardTitle>
                     <Button
                       variant="ghost"
@@ -1021,24 +983,22 @@ pagedSummary.map((row) => (
                 <div className="flex items-center gap-2">
                   <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
                   <p className="text-sm font-medium text-destructive">
-                    All operations in this zone are irreversible. Proceed with extreme caution.
+                    All operations in this zone are irreversible. Operations are performed server-side with full audit logging.
                   </p>
                 </div>
               </div>
 
               <div className="space-y-5 p-3">
-                {/* Section 1: Custom bulk delete */}
                 <div>
                   <h3 className="text-sm font-semibold mb-1 flex items-center gap-2">
                     <span className="flex h-5 w-5 items-center justify-center rounded-full bg-destructive/10 text-destructive text-[10px] font-bold">1</span>
-                    Advanced Bulk Delete
+                    Advanced Bulk Purge
                   </h3>
                   <p className="text-xs text-muted-foreground mb-3">
-                    Specify filters and select what data to delete. All deletions are performed server-side with audit logging.
+                    Specify company scope and select exact instruments to purge.
                   </p>
 
                   <div className="grid gap-4 md:grid-cols-2">
-                    {/* Left: filters */}
                     <div className="space-y-3">
                       <div className="space-y-1.5">
                         <Label className="text-xs font-medium">Company Scope</Label>
@@ -1047,7 +1007,7 @@ pagedSummary.map((row) => (
                             <SelectValue placeholder="All Companies" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="all">All Companies</SelectItem>
+                            <SelectItem value="all">All Companies (Global Wipe)</SelectItem>
                             {companies.map((c) => (
                               <SelectItem key={c.id} value={c.id}>
                                 {c.company_code} — {c.company_name}
@@ -1076,9 +1036,8 @@ pagedSummary.map((row) => (
                       </div>
                     </div>
 
-                    {/* Right: data type checkboxes */}
                     <div className="rounded-lg border border-destructive/20 bg-muted/20 p-3 space-y-2.5">
-                      <Label className="text-xs font-medium block mb-1">Data to Delete</Label>
+                      <Label className="text-xs font-medium block mb-1">Data to Purge</Label>
 
                       <div className="flex items-center gap-2.5">
                         <Checkbox
@@ -1087,7 +1046,18 @@ pagedSummary.map((row) => (
                           onCheckedChange={(v) => setDangerDividends(!!v)}
                         />
                         <Label htmlFor="del-div" className="text-sm cursor-pointer">
-                          Dividend Payables
+                          Equity Dividend Payables
+                        </Label>
+                      </div>
+
+                      <div className="flex items-center gap-2.5">
+                        <Checkbox
+                          id="del-mf"
+                          checked={dangerMutualFunds}
+                          onCheckedChange={(v) => setDangerMutualFunds(!!v)}
+                        />
+                        <Label htmlFor="del-mf" className="text-sm cursor-pointer">
+                          Mutual Fund Payables
                         </Label>
                       </div>
 
@@ -1098,79 +1068,36 @@ pagedSummary.map((row) => (
                           onCheckedChange={(v) => setDangerInterests(!!v)}
                         />
                         <Label htmlFor="del-int" className="text-sm cursor-pointer">
-                          Interest Payables
+                          Debenture Interest Payables
                         </Label>
                       </div>
 
-                      <Separator className="my-2" />
-
-                      {dangerCompany === "all" ? (
-                        <div className="flex items-center gap-2.5">
-                          <Checkbox
-                            id="del-cli"
-                            checked={dangerClients}
-                            onCheckedChange={(v) => setDangerClients(!!v)}
-                          />
-                          <Label htmlFor="del-cli" className="text-sm cursor-pointer">
-                            <span className="font-semibold text-destructive">All Client Records</span>
-                            <span className="text-xs text-muted-foreground ml-1">(global purge)</span>
-                          </Label>
-                        </div>
-                      ) : (
-                        <p className="text-xs text-muted-foreground italic">
-                          Clients are global — select "All Companies" to delete clients globally.
-                        </p>
-                      )}
-
-                      <div className="flex items-start gap-2.5">
+                      <div className="flex items-center gap-2.5">
                         <Checkbox
-                          id="del-orphans"
+                          id="del-orphans-danger"
                           checked={dangerDeleteOrphans}
                           onCheckedChange={(v) => setDangerDeleteOrphans(!!v)}
-                          className="mt-0.5"
                         />
-                        <Label htmlFor="del-orphans" className="text-sm cursor-pointer leading-snug">
-                          Clean up <strong>Orphaned Clients</strong>
-                          <span className="text-xs text-muted-foreground block">
-                            clients with no remaining payable records
-                          </span>
+                        <Label htmlFor="del-orphans-danger" className="text-sm cursor-pointer text-orange-600 dark:text-orange-400">
+                          Clean up orphaned client records
                         </Label>
                       </div>
-
-                      {dangerCompany !== "all" && (
-                        <div className="flex items-start gap-2.5 pt-1 border-t border-destructive/20">
-                          <Checkbox
-                            id="del-company"
-                            checked={dangerDeleteCompany}
-                            onCheckedChange={(v) => setDangerDeleteCompany(!!v)}
-                            className="mt-0.5"
-                          />
-                          <Label htmlFor="del-company" className="text-sm cursor-pointer leading-snug">
-                            <span className="font-semibold text-destructive">Delete Company Record</span>
-                            <span className="text-xs text-muted-foreground block">
-                              permanently removes the company from the system
-                            </span>
-                          </Label>
-                        </div>
-                      )}
                     </div>
                   </div>
 
                   <div className="mt-4 flex justify-end">
                     <Button
                       variant="destructive"
-                      disabled={!dangerDividends && !dangerInterests && !dangerClients && !dangerDeleteOrphans && !dangerDeleteCompany}
+                      size="sm"
                       onClick={handleDangerDelete}
+                      disabled={!dangerDividends && !dangerInterests && !dangerMutualFunds && !dangerClients && !dangerDeleteCompany}
                     >
-                      <Trash2 className="h-4 w-4 mr-2" />
-                      Delete Selected Data
+                      <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                      Execute Purge
                     </Button>
                   </div>
                 </div>
 
-                <Separator />
-
-                {/* Section 2: Delete all clients */}
                 <div>
                   <h3 className="text-sm font-semibold mb-1 flex items-center gap-2">
                     <span className="flex h-5 w-5 items-center justify-center rounded-full bg-destructive/10 text-destructive text-[10px] font-bold">2</span>
@@ -1180,7 +1107,7 @@ pagedSummary.map((row) => (
                     <div>
                       <p className="text-sm font-medium">Delete ALL Clients</p>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Removes every client record from the database. This is batched and may take a moment.
+                        Removes every client record from the database.
                       </p>
                     </div>
                     <Button

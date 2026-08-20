@@ -1,3 +1,4 @@
+﻿-- Update bulk_insert_clients to include payee classification columns (migration 20261111)
 CREATE OR REPLACE FUNCTION public.bulk_insert_clients(
   p_clients jsonb
 )

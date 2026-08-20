@@ -27,3 +27,28 @@ export interface Page<T> {
   pageSize: number;
   totalPages: number;
 }
+
+/**
+ * Automatically pages through Supabase PostgREST queries (which default to 1,000 rows max)
+ * to retrieve the entire dataset for full reporting and summary aggregation.
+ */
+export async function fetchAllRows<T>(
+  queryBuilder: (from: number, to: number) => Promise<{ data: T[] | null; error: any }>,
+  pageSize = 1000,
+  maxRows = 200000
+): Promise<T[]> {
+  const allRows: T[] = [];
+  let from = 0;
+
+  while (from < maxRows) {
+    const to = from + pageSize - 1;
+    const { data, error } = await queryBuilder(from, to);
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    allRows.push(...data);
+    if (data.length < pageSize) break; // Reached last page
+    from += pageSize;
+  }
+
+  return allRows;
+}

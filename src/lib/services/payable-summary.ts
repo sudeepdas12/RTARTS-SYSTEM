@@ -12,13 +12,20 @@ export function normalizePayeeCategory(value?: string | null): PayeeCategory {
   const raw = String(value ?? '').trim().toUpperCase();
   if (!raw) return 'UNKNOWN';
 
-  if (/LEGAL PERSON|COMPANY|CORPORATION|LIMITED|LTD|PRIVATE LIMITED|INSTITUT/i.test(raw)) return 'INSTITUTION';
-  if (/NATURAL PERSON|PUBLIC|INDIVIDUAL/.test(raw)) return 'PUBLIC';
+  // 1. Tax exempt and mutual funds must be matched before generic institutions
+  if (/MUTUAL|MF\b|SAMRIDDHI|EQUITY\s*FUND|GROWTH\s*FUND|SCHEME\b/i.test(raw)) return 'MUTUAL_FUND';
+  if (/TAX.?EXEMPT|EXEMPT|RETIREMENT\s*FUND|PENSION|PROVIDENT|SANCHAYA\s*KOSH|NAGARIK|\bCIT\b|\bEPF\b/i.test(raw)) return 'TAX_EXEMPT';
+  
+  // 2. Promoter & Local segments
   if (/PROMOT/i.test(raw)) return 'PROMOTER';
-  if (/LOCAL/.test(raw)) return 'LOCAL';
-  if (/FOREIGN|NRN/.test(raw)) return 'FOREIGN';
-  if (/MUTUAL|MF|FUND/.test(raw)) return 'MUTUAL_FUND';
-  if (/TAX.?EXEMPT|EXEMPT/.test(raw)) return 'TAX_EXEMPT';
+  if (/LOCAL/i.test(raw)) return 'LOCAL';
+  if (/FOREIGN|NRN/i.test(raw)) return 'FOREIGN';
+
+  // 3. Institution / Company
+  if (/LEGAL PERSON|COMPANY|CORPORATION|LIMITED|\bLTD\b|PRIVATE LIMITED|INSTITUT|BANK|FINANCE|HYDRO|INSURANCE|CAPITAL|SECURITIES/i.test(raw)) return 'INSTITUTION';
+
+  // 4. Natural person / Public
+  if (/NATURAL PERSON|PUBLIC|INDIVIDUAL|GENERAL/.test(raw)) return 'PUBLIC';
 
   return 'UNKNOWN';
 }
@@ -29,6 +36,8 @@ export function getPayeeCategoryLabel(category?: string | null): string {
     case 'PUBLIC_LEGAL_PERSON': return 'Public Legal Person';
     case 'COMPANY_INSTITUTION': return 'Company / Institution';
     case 'TAX_EXEMPT': return 'Tax Exempted';
+    case 'MUTUAL_FUND': return 'Mutual Fund';
+    case 'FOREIGN': return 'Foreign';
     case 'UNCLASSIFIED': return 'Review Required';
     case 'PROMOTER': return 'Promoter';
     case 'LOCAL': return 'Local';
@@ -56,6 +65,7 @@ export interface PayableTotalsInput {
   taxAmount?: number | null;
   category?: string | null;
   isDebenture?: boolean;
+  isMutualFund?: boolean;
   customTaxRate?: number | null;
 }
 
@@ -96,16 +106,15 @@ export function detectPayeeCategory(row: Record<string, any> = {}, sheetType?: s
 
   if (rawType) {
     const upper = rawType.toUpperCase();
-    if (/PROMOT/i.test(upper)) return 'PROMOTER';
-    if (/INSTIT/i.test(upper)) return 'INSTITUTION';
     if (/MUTUAL|MF|FUND/i.test(upper)) return 'MUTUAL_FUND';
     if (/TAX.?EXEMPT|EXEMPT/i.test(upper)) return 'TAX_EXEMPT';
+    if (/PROMOT/i.test(upper)) return 'PROMOTER';
+    if (/INSTIT/i.test(upper)) return 'INSTITUTION';
     if (/LOCAL/i.test(upper)) return 'LOCAL';
     if (/PUBLIC|GENERAL|INDIVIDUAL/i.test(upper)) return 'PUBLIC';
     if (/FOREIGN|NRN/i.test(upper)) return 'FOREIGN';
     if (/D-PUBLIC|P-PUBLIC/.test(upper)) return 'PUBLIC';
     if (/D-PROMOT/.test(upper)) return 'PROMOTER';
-    if (upper.length > 1) return upper as PayeeCategory;
   }
 
   const legalPersonName = String(
@@ -113,18 +122,19 @@ export function detectPayeeCategory(row: Record<string, any> = {}, sheetType?: s
     row.company_name || row.companyName || row.company || ''
   ).trim();
 
-  const legalPersonSignals = /(PVT\.?LTD|PRIVATE LIMITED|LIMITED|LTD\.?|COMPANY|CORPORATION|ASSOCIATES|FOUNDATION|GROUP|HOLDINGS|TRUST|BANK|FINANCE|MICROFINANCE|HYDROPOWER|INSURANCE|INSTITUTE|SOCIETY)/i;
+  // 1. Tax Exempted / Mutual Fund detection from name
+  const taxExemptSignals = /(MUTUAL\s*FUND|RETIREMENT\s*FUND|PENSION\s*FUND|PROVIDENT\s*FUND|KOSH\b|SANCHAYA\s*KOSH|NAGARIK\s*LAGANI|\bCIT\b|\bEPF\b|SAMRIDDHI\s*FUND|EQUITY\s*FUND|GROWTH\s*FUND|SCHEME\b)/i;
+  if (legalPersonName && taxExemptSignals.test(legalPersonName)) {
+    return 'TAX_EXEMPT';
+  }
+
+  // 2. Legal Person / Institutional signals from name
+  const legalPersonSignals = /(PVT\.?LTD|PRIVATE LIMITED|\bLIMITED\b|\bLTD\.?\b|\bCOMPANY\b|CORPORATION|ASSOCIATES|FOUNDATION|\bGROUP\b|HOLDINGS|\bTRUST\b|\bBANK\b|FINANCE|MICROFINANCE|HYDROPOWER|INSURANCE|INSTITUTE|SOCIETY|COOPERATIVE|SAHAKARI|ENTERPRISES|VENTURES|INVESTMENT|CAPITAL|SECURITIES)/i;
   if (legalPersonName && legalPersonSignals.test(legalPersonName)) {
     return 'INSTITUTION';
   }
 
-  const fatherName = String(row.father_name || row.fatherName || row.FATHER_NAME || row["FATHER'S NAME"] || row['FATHER_NAME_MOTHER_NAME'] || '').trim();
-  const grandfatherName = String(row.grandfather_name || row.grandfatherName || row.GRANDFATHER_NAME || row["GRANDFATHER'S NAME"] || row['GRANDFATHER_NAME_SPOUSE_NAME'] || '').trim();
-  const citizenship = String(row.citizenship || row.CITIZENSHIP || '').trim();
-
-  if (fatherName || grandfatherName) return 'PUBLIC';
-  if (citizenship && /[-a-zA-Z]/.test(citizenship)) return 'PUBLIC';
-
+  // 3. Sheet Type takes priority over generic family names
   if (sheetType) {
     const upper = sheetType.toUpperCase();
     if (upper.includes('PROMOT')) return 'PROMOTER';
@@ -135,15 +145,31 @@ export function detectPayeeCategory(row: Record<string, any> = {}, sheetType?: s
     if (upper.includes('PUBLIC')) return 'PUBLIC';
   }
 
-  // Classification must be evidence-based.  A record without an explicit type,
-  // master-data match, or person/company indicator is sent to review instead
-  // of silently receiving an individual tax rate.
+  // 4. Natural person signals (Family names or citizenship)
+  const fatherName = String(row.father_name || row.fatherName || row.FATHER_NAME || row["FATHER'S NAME"] || row['FATHER_NAME_MOTHER_NAME'] || '').trim();
+  const grandfatherName = String(row.grandfather_name || row.grandfatherName || row.GRANDFATHER_NAME || row["GRANDFATHER'S NAME"] || row['GRANDFATHER_NAME_SPOUSE_NAME'] || '').trim();
+  const citizenship = String(row.citizenship || row.CITIZENSHIP || '').trim();
+
+  if (fatherName || grandfatherName) return 'PUBLIC';
+  if (citizenship && /[-a-zA-Z0-9]/.test(citizenship)) return 'PUBLIC';
+
+  // A bare name with no corroborating signal (TYPE column, sheet name,
+  // father/grandfather/citizenship) is genuinely ambiguous: a 2-word name can be
+  // a natural person OR a company lacking a standard suffix. Auto-guessing PUBLIC
+  // here would under-deduct TDS for a company on debenture interest (6% vs 15%).
+  // We deliberately leave it UNKNOWN for operator review rather than risk a tax
+  // error, matching the conservative behaviour of the edge-function importer.
   return 'UNKNOWN';
 }
 
-export function getPayeeTaxRate(category: string | null | undefined, isDebenture = false, customTaxRate?: number | null): number {
-  const sanitized = (category || 'UNKNOWN').toUpperCase();
+export function getPayeeTaxRate(
+  category: string | null | undefined,
+  isDebenture = false,
+  customTaxRate?: number | null,
+  isMutualFund = false,
+): number {
   if (customTaxRate !== undefined && customTaxRate !== null) return Number(customTaxRate) || 0;
+  const sanitized = (category || 'UNKNOWN').toUpperCase();
 
   switch (sanitized) {
     case 'PROMOTER':
@@ -156,7 +182,9 @@ export function getPayeeTaxRate(category: string | null | undefined, isDebenture
     case 'INSTITUTION':
     case 'COMPANY_INSTITUTION':
     case 'FOREIGN':
-      return isDebenture ? 0.15 : 0.05;
+      // Mutual-fund institutional distributions are taxed at 15% (per the
+      // RMF sample file); ordinary dividends stay at 5%.
+      return isMutualFund || isDebenture ? 0.15 : 0.05;
     case 'MUTUAL_FUND':
     case 'TAX_EXEMPT':
       return 0;
@@ -168,7 +196,12 @@ export function getPayeeTaxRate(category: string | null | undefined, isDebenture
 export function calculatePayableTotals(input: PayableTotalsInput): PayableTotalsResult {
   const grossAmount = Number(input.grossAmount ?? 0);
   const category = (input.category || 'UNKNOWN').toUpperCase() as PayeeCategory;
-  const taxRate = getPayeeTaxRate(category, Boolean(input.isDebenture), input.customTaxRate);
+  const taxRate = getPayeeTaxRate(
+    category,
+    Boolean(input.isDebenture),
+    input.customTaxRate,
+    Boolean(input.isMutualFund),
+  );
   const taxAmountFromInput = input.taxAmount !== undefined && input.taxAmount !== null ? Number(input.taxAmount ?? 0) : null;
   const taxAmount = taxAmountFromInput !== null ? taxAmountFromInput : Math.round(grossAmount * taxRate * 100) / 100;
   const netPayable = Math.round((grossAmount - taxAmount) * 100) / 100;

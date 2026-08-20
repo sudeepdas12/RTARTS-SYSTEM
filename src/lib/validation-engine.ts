@@ -1,6 +1,8 @@
 import { supabase } from "@/integrations/supabase/client";
 import * as XLSX from "xlsx";
 import { z } from "zod";
+import { detectPayeeCategory } from "./services/payable-summary";
+import { getTaxRateFromRules, investorCategoryToClassification, isExemptFromTax } from "./services/tax-rules.service";
 
 export const excelRowSchema = z
   .object({
@@ -74,6 +76,7 @@ interface ValidationContext {
   >;
   activeFiscalYear: string | null;
   systemTdsRates: { dividend: number; interest: number };
+  taxRules: any[];
 }
 
 const PAYABLE_TABLES = ["dividend_payables", "interest_payables", "mutual_fund_payables"] as const;
@@ -147,7 +150,7 @@ const isValidDateString = (value: string): boolean => {
 };
 
 const isValidBoid = (value: string): boolean => {
-  return value.length >= 8 && /^[0-9A-Za-z]+$/.test(value);
+  return value.length >= 6 && /^[0-9A-Za-z]+$/.test(value);
 };
 
 const isValidPAN = (value: string): boolean => {
@@ -222,18 +225,35 @@ export const ValidationEngine = {
     const activeFiscalYear = fy?.fiscal_year || null;
 
     // Get system TDS rates from settings (safe view keeps SMTP password hidden)
-    const { data: settings } = await (supabase as any)
-      .from("system_settings_safe")
-      .select("setting_value")
-      .in("setting_key", ["tax_rate"])
-      .maybeSingle();
+    // Authoritative tax rates live in `payable_tax_rules` (the table the DB
+    // trigger actually reads). Reading from the legacy `system_settings.tax_rate`
+    // blob risked a second source of truth that could silently diverge from the
+    // rates applied at insert time. Derive the expected rates from the rules
+    // table instead, keeping the same {dividend, interest} (percent) shape.
     let systemTdsRates = { dividend: 5, interest: 6 };
-    if (settings?.setting_value) {
-      const rates = settings.setting_value as any;
-      systemTdsRates = {
-        dividend: rates.tds_dividend || 5,
-        interest: rates.tds_interest || 6,
-      };
+    let taxRules: any[] = [];
+    try {
+      const { data: rules } = await (supabase as any)
+        .from("payable_tax_rules")
+        .select("payable_category, payee_classification, tax_rate, is_active")
+        .eq("is_active", true);
+      taxRules = (rules ?? []) as any[];
+
+      const ratePct =
+        (category: string, classification: string): number | null => {
+          const hit = taxRules.find(
+            (r: any) => r.payable_category === category && r.payee_classification === classification,
+          );
+          return hit?.tax_rate != null ? Number(hit.tax_rate) * 100 : null;
+        };
+
+      const dividendNatural = ratePct("DIVIDEND", "NATURAL_PERSON");
+      const interestNatural = ratePct("INTEREST", "NATURAL_PERSON");
+      if (dividendNatural != null) systemTdsRates.dividend = dividendNatural;
+      if (interestNatural != null) systemTdsRates.interest = interestNatural;
+    } catch (e) {
+      // Fall back to the defaults above.
+      console.warn("Could not load payable_tax_rules for validation context", e);
     }
 
     return {
@@ -244,6 +264,7 @@ export const ValidationEngine = {
       activeCompanies,
       activeFiscalYear,
       systemTdsRates,
+      taxRules,
     };
   },
 
@@ -353,7 +374,7 @@ export const ValidationEngine = {
 
       const rawData = row;
 
-      // RULE 1: BOID is required
+      // RULE 1: BOID is required (Core essential)
       if (!boid) {
         errors.push({
           row: rowNum,
@@ -363,17 +384,17 @@ export const ValidationEngine = {
           rawData,
         });
       }
-      // RULE 2: BOID format validation
+      // RULE 2: BOID format validation (Core essential)
       else if (!isValidBoid(boid)) {
         errors.push({
           row: rowNum,
           field: "boid",
           type: "invalid_boid",
-          message: "BOID must be at least 8 alphanumeric characters.",
+          message: "BOID must be at least 6 alphanumeric characters.",
           rawData,
         });
       }
-      // RULE 3: Duplicate BOID within file (warning, not blocking)
+      // RULE 3: Duplicate BOID within file (Soft notice)
       else if (seenBoids.has(boid)) {
         errors.push({
           row: rowNum,
@@ -385,25 +406,25 @@ export const ValidationEngine = {
       }
       if (boid) seenBoids.add(boid);
 
-      // RULE 4: Full name is required
+      // RULE 4: Full name (Soft notice - fallback provided during import)
       if (!fullName) {
         errors.push({
           row: rowNum,
           field: "full_name",
           type: "missing_name",
-          message: "Shareholder full name is required.",
+          message: "Shareholder name is missing (will default to 'Unknown Investor').",
           rawData,
         });
       }
 
-      // RULE 5: Client code format and uniqueness
+      // RULE 5: Client code (Soft notice)
       if (clientCode) {
-        if (!/^[A-Z0-9]{3,20}$/i.test(clientCode)) {
+        if (!/^[A-Z0-9_-]{2,30}$/i.test(clientCode)) {
           errors.push({
             row: rowNum,
             field: "client_code",
             type: "invalid_client_code",
-            message: "Client code must be 3-20 alphanumeric characters.",
+            message: "Client code contains special characters.",
             rawData,
           });
         }
@@ -419,41 +440,31 @@ export const ValidationEngine = {
         seenClientCodes.add(clientCode);
       }
 
-      // RULE 6: ISIN validation
+      // RULE 6: ISIN validation (Soft notice - never blocks upload)
       if (isin) {
-        if (!/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(isin)) {
+        if (!/^[A-Z0-9]{6,16}$/i.test(isin)) {
           errors.push({
             row: rowNum,
             field: "isin",
             type: "invalid_isin_format",
-            message: "ISIN must be 12 characters (2 letters + 9 alphanumeric + 1 digit).",
-            rawData,
-          });
-        } else if (!ctx.existingISINs.has(isin)) {
-          errors.push({
-            row: rowNum,
-            field: "isin",
-            type: "wrong_isin",
-            message: `ISIN ${isin} does not match a registered company.`,
+            message: `ISIN "${isin}" format notice.`,
             rawData,
           });
         }
       }
 
-      // RULE 7: PAN/Citizenship validation (Relaxed for bulk upload)
-      // We no longer strictly validate format or block duplicates here to prevent mass upload failures.
-      // These details can be updated later from the Client Profile.
+      // RULE 7: PAN/Citizenship validation (Soft notice)
       if (pan) {
         seenPans.add(pan);
       }
 
-      // RULE 8: Date validations
+      // RULE 8: Date validations (Soft notice)
       if (paymentDate && !isValidDateString(paymentDate)) {
         errors.push({
           row: rowNum,
           field: "payment_date",
           type: "invalid_payment_date",
-          message: "Payment date must be a valid date (YYYY-MM-DD).",
+          message: "Payment date format notice (expected YYYY-MM-DD).",
           rawData,
         });
       }
@@ -462,38 +473,29 @@ export const ValidationEngine = {
           row: rowNum,
           field: "due_date",
           type: "invalid_due_date",
-          message: "Due date must be a valid date (YYYY-MM-DD).",
-          rawData,
-        });
-      }
-      if (paymentDate && dueDate && paymentDate > dueDate) {
-        errors.push({
-          row: rowNum,
-          field: "payment_date",
-          type: "payment_before_due",
-          message: "Payment date cannot be before due date.",
+          message: "Due date format notice (expected YYYY-MM-DD).",
           rawData,
         });
       }
 
-      // RULE 9: Fiscal year format
+      // RULE 9: Fiscal year format (Soft notice)
       if (fiscalYear && !/^[0-9]{4}\/([0-9]{2}|[0-9]{4})$/.test(fiscalYear)) {
         errors.push({
           row: rowNum,
           field: "fiscal_year",
           type: "invalid_fiscal_year",
-          message: "Fiscal year should be in format 2081/82 or 2081/2082.",
+          message: "Fiscal year notice (e.g., 2081/82).",
           rawData,
         });
       }
 
-      // RULE 10: Numeric field validations
+      // RULE 10: Numeric field validations (Soft notice)
       if (gross !== null && isNaN(gross)) {
         errors.push({
           row: rowNum,
           field: "gross_amount",
           type: "invalid_gross",
-          message: "Gross amount must be a number.",
+          message: "Gross amount must be numeric.",
           rawData,
         });
       }
@@ -502,7 +504,7 @@ export const ValidationEngine = {
           row: rowNum,
           field: "tax_amount",
           type: "invalid_tax",
-          message: "Tax amount must be a number.",
+          message: "Tax amount must be numeric.",
           rawData,
         });
       }
@@ -511,7 +513,7 @@ export const ValidationEngine = {
           row: rowNum,
           field: "net_payable",
           type: "invalid_net",
-          message: "Net payable must be a number.",
+          message: "Net payable must be numeric.",
           rawData,
         });
       }
@@ -520,72 +522,12 @@ export const ValidationEngine = {
           row: rowNum,
           field: "shares_held",
           type: "invalid_shares",
-          message: "Shares held must be a number.",
+          message: "Shares / Units held must be numeric.",
           rawData,
         });
       }
 
-      // RULE 11: Negative value checks
-      if (gross !== null && gross < 0) {
-        errors.push({
-          row: rowNum,
-          field: "gross_amount",
-          type: "negative_gross",
-          message: "Gross amount cannot be negative.",
-          rawData,
-        });
-      }
-      if (tax !== null && tax < 0) {
-        errors.push({
-          row: rowNum,
-          field: "tax_amount",
-          type: "negative_tax",
-          message: "Tax amount cannot be negative.",
-          rawData,
-        });
-      }
-      if (net !== null && net < 0) {
-        errors.push({
-          row: rowNum,
-          field: "net_payable",
-          type: "negative_net",
-          message: "Net payable cannot be negative.",
-          rawData,
-        });
-      }
-      if (sharesHeld !== null && sharesHeld < 0) {
-        errors.push({
-          row: rowNum,
-          field: "shares_held",
-          type: "negative_shares",
-          message: "Shares held cannot be negative.",
-          rawData,
-        });
-      }
-
-      // RULE 12: Tax cannot exceed gross
-      if (gross !== null && tax !== null && tax > gross) {
-        errors.push({
-          row: rowNum,
-          field: "tax_amount",
-          type: "tax_above_gross",
-          message: "Tax amount cannot exceed gross amount.",
-          rawData,
-        });
-      }
-
-      // RULE 13: Net cannot exceed gross
-      if (gross !== null && net !== null && net > gross) {
-        errors.push({
-          row: rowNum,
-          field: "net_payable",
-          type: "net_above_gross",
-          message: "Net payable cannot exceed gross amount.",
-          rawData,
-        });
-      }
-
-      // RULE 14: Net = Gross - Tax validation
+      // RULE 11: Net = Gross - Tax calculation check (Soft notice)
       if (!options?.isRawInputFile && !options?.isPreCalculated) {
         if (gross !== null && tax !== null && net !== null) {
           const expectedNet = Math.round((gross - tax) * 100) / 100;
@@ -594,168 +536,97 @@ export const ValidationEngine = {
               row: rowNum,
               field: "net_payable",
               type: "net_mismatch",
-              message: `Net payable does not match gross minus tax (expected ${expectedNet.toFixed(2)}=gross ${gross.toFixed(2)}−tax ${tax.toFixed(2)}, got ${net.toFixed(2)}). Check the sheet's calculation.`,
+              message: `Net payable notice: expected ${expectedNet.toFixed(2)} (gross ${gross.toFixed(2)} − tax ${tax.toFixed(2)}), sheet has ${net.toFixed(2)}.`,
               rawData,
             });
           }
         }
       }
 
-      // RULE 14b: Tax calculation cross-check
+            // RULE 12: Tax calculation check (Soft notice)
       if (!options?.isRawInputFile && !options?.isPreCalculated) {
-        const tdsForTaxCheck = tdsRate !== null ? tdsRate : tdsFromHeader;
-        if (tax !== null && gross !== null && tdsForTaxCheck !== null) {
+        const detectedCategory = detectPayeeCategory(row, fileType);
+        const classification = investorCategoryToClassification(detectedCategory);
+        const isExempt = isExemptFromTax(classification);
+        let tdsForTaxCheck = tdsRate !== null ? tdsRate : tdsFromHeader;
+        const payableCategory =
+          fileType === "mutual_fund"
+            ? "MUTUAL_FUND"
+            : fileType === "debenture" || fileType === "interest"
+              ? "INTEREST"
+              : "DIVIDEND";
+        if (tdsForTaxCheck === null && classification) {
+          // Centralized fallback: Payable Type + Investor Category → rate.
+          const ruleRate = getTaxRateFromRules(ctx.taxRules, payableCategory, classification);
+          if (ruleRate != null) tdsForTaxCheck = ruleRate;
+        }
+        if (!isExempt && tax !== null && gross !== null && tdsForTaxCheck !== null) {
           const expectedTax = Math.round(gross * tdsForTaxCheck * 100) / 100;
-          if (Math.abs(expectedTax - tax) > 0.05) {
+          if (Math.abs(expectedTax - tax) > 0.5) {
             errors.push({
               row: rowNum,
               field: "tax_amount",
               type: "tax_calc_mismatch",
-              message: `Tax does not match ${(tdsForTaxCheck * 100).toFixed(0)}% of gross (expected ${expectedTax.toFixed(2)} = ${gross.toFixed(2)} × ${tdsForTaxCheck}, got ${tax.toFixed(2)}). Check the sheet's calculation.`,
+              message: `Tax calculation notice: expected ${expectedTax.toFixed(2)} based on ${(tdsForTaxCheck * 100).toFixed(0)}% rate, sheet has ${tax.toFixed(2)}.`,
               rawData,
             });
           }
         }
       }
-      
-      // RULE 14c: Pre-calculation verification (Soft warning)
-      if (options?.isPreCalculated && options?.dividendRate !== undefined && sharesHeld !== null) {
-        // Just verify gross if rate is provided
-        const expectedGross = Math.round(sharesHeld * options.dividendRate * 100) / 100;
-        if (gross !== null && Math.abs(expectedGross - gross) > 1) {
-          errors.push({
-            row: rowNum,
-            field: "gross_amount",
-            type: "calculation_discrepancy", // soft error
-            message: `Pre-calculated gross does not match expected based on configured rate (expected ${expectedGross.toFixed(2)}, got ${gross.toFixed(2)}).`,
-            rawData,
-          });
-        }
-      }
 
-      // RULE 15: Amount precision (max 2 decimal places)
-      if (gross !== null && !hasValidAmountPrecision(gross)) {
-        errors.push({
-          row: rowNum,
-          field: "gross_amount",
-          type: "invalid_precision",
-          message: "Gross amount must have maximum 2 decimal places.",
-          rawData,
-        });
-      }
-      if (net !== null && !hasValidAmountPrecision(net)) {
-        errors.push({
-          row: rowNum,
-          field: "net_payable",
-          type: "invalid_precision",
-          message: "Net payable must have maximum 2 decimal places.",
-          rawData,
-        });
-      }
-
-      // RULE 16: TDS rate validation
-      if (tdsRate !== null) {
-        if (tdsRate < 0 || tdsRate > 100) {
-          errors.push({
-            row: rowNum,
-            field: "tds_rate",
-            type: "invalid_tds_rate",
-            message: "TDS rate must be between 0 and 100.",
-            rawData,
-          });
-        }
-      }
-
-      // RULE 17: At least one financial field required
+      // RULE 13: Financial fields check (Soft notice only - values will default to 0 / calculated)
       if (!options?.isRawInputFile) {
-        if (gross === null && net === null && sharesHeld === null) {
+        if (gross === null && net === null && sharesHeld === null && !options?.dividendRate) {
           errors.push({
             row: rowNum,
             field: "amount",
             type: "missing_financial_data",
-            message: "Row must contain gross/net amount or shares held.",
+            message: "No financial amount or shares detected (will default to 0).",
             rawData,
           });
         }
       }
 
-      // RULE 18: Bank account format validation
+      // RULE 14: Bank account format check (Soft notice only - accounts may be empty in CDS records)
       if (bankAccount && !isValidAccountNumber(bankAccount)) {
         errors.push({
           row: rowNum,
           field: "bank_account_no",
           type: "invalid_bank_account",
-          message: "Bank account number must be 10-25 digits.",
+          message: `Bank account "${bankAccount}" notice.`,
           rawData,
         });
       }
 
-      // RULE 19: Bank name and account consistency
-      if (bankAccount && !bankName) {
-        errors.push({
-          row: rowNum,
-          field: "bank_name",
-          type: "missing_bank_name",
-          message: "Bank name is required when bank account is present.",
-          rawData,
-        });
-      }
-      if (bankName && !bankAccount) {
-        errors.push({
-          row: rowNum,
-          field: "bank_account_no",
-          type: "missing_bank_account",
-          message: "Bank account number is required when bank name is present.",
-          rawData,
-        });
-      }
-
-      // RULE 20: Phone validation (Relaxed for bulk upload)
-      // Details can be edited later from the client profile.
-      // if (phone && !isValidPhone(phone)) {
-      //   errors.push({ row: rowNum, field: 'phone', type: 'invalid_phone', message: 'Invalid phone number format (expected 10-digit Nepali number).', rawData });
-      // }
-
-      // RULE 21: Email validation (if provided)
+      // RULE 15: Email check (Soft notice only)
       if (email && !isValidEmail(email)) {
         errors.push({
           row: rowNum,
           field: "email",
           type: "invalid_email",
-          message: "Invalid email address format.",
+          message: `Email "${email}" notice.`,
           rawData,
         });
       }
 
-      // RULE 22: Address is recommended
+      // RULE 16: Address recommended (Soft notice only)
       if (!address && fullName) {
         errors.push({
           row: rowNum,
           field: "address",
           type: "missing_address",
-          message: "Address is recommended for all shareholders.",
+          message: "Address recommended.",
           rawData,
         });
       }
 
-      // RULE 23: BOID already exists in system (warning)
+      // RULE 17: Existing BOID in system (Soft notice)
       if (boid && ctx.existingBoids.has(boid)) {
         errors.push({
           row: rowNum,
           field: "boid",
           type: "existing_boid",
-          message: `BOID ${boid} already exists in system (will update existing record).`,
-          rawData,
-        });
-      }
-
-      // RULE 24: Client code already exists
-      if (clientCode && ctx.existingClientCodes.has(clientCode)) {
-        errors.push({
-          row: rowNum,
-          field: "client_code",
-          type: "existing_client_code",
-          message: `Client code ${clientCode} already exists in system.`,
+          message: `BOID ${boid} exists in system (record will be updated).`,
           rawData,
         });
       }

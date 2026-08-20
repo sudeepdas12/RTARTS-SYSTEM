@@ -1,7 +1,6 @@
 import { defineConfig, loadEnv, type PluginOption, type UserConfig } from "vite";
 import { devtools } from "@tanstack/devtools-vite";
 import tailwindcss from "@tailwindcss/vite";
-import tsConfigPaths from "vite-tsconfig-paths";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import { nitro } from "nitro/vite";
 import react from "@vitejs/plugin-react";
@@ -27,7 +26,6 @@ export default defineConfig(({ mode }) => {
 
   plugins.push(
     tailwindcss(),
-    tsConfigPaths({ projects: ["./tsconfig.json"] }),
     tanstackStart({
       importProtection: {
         behavior: "error",
@@ -61,6 +59,7 @@ export default defineConfig(({ mode }) => {
     },
     resolve: {
       alias: { "@": `${process.cwd()}/src` },
+      tsconfigPaths: true,
       dedupe: [
         "react",
         "react-dom",
@@ -88,8 +87,11 @@ export default defineConfig(({ mode }) => {
 
   if (isDev) {
     config.environments = {
+      ...(config.environments || {}),
       client: {
+        ...(config.environments?.client || {}),
         define: {
+          ...(config.environments?.client?.define || {}),
           "process.env.NODE_ENV": JSON.stringify("development"),
         },
       },

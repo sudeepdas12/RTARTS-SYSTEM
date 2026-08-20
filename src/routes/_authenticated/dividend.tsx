@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState, useRef, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { useMemo, useState, useRef, useEffect, useCallback } from "react";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { supabase, fetchAllRows } from "@/lib/services/database";
 import { useAuth } from "@/hooks/use-auth";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -18,13 +18,14 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Pencil, Plus, Trash2, Download, Upload, CheckCircle2, Calculator, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
+import { Pencil, Plus, Trash2, Download, Upload, CheckCircle2, Calculator, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FileSpreadsheet, FileText, BarChart3, PieChart } from "lucide-react";
 import { toast } from "sonner";
 import { RtsService } from "@/lib/services/rts.service";
 import { DividendService } from "@/lib/services/dividend.service";
 import { SettingsService } from "@/lib/services/settings.service";
 import { exportToExcel, importFromExcel } from "@/lib/xlsx-utils";
 import { DividendCalculator, type DividendResult } from "@/lib/dividend-calculator";
+import { AgmDividendSummaryReportService } from "@/lib/services/dividend-summary-report.service";
 
 export const Route = createFileRoute("/_authenticated/dividend")({
   component: DividendPage,
@@ -56,7 +57,7 @@ interface Payable {
   bank_account_no?: string | null;
   upload_id?: string | null;
   created_at: string;
-  client?: { id: string; client_code: string; full_name: string; boid: string | null; father_name: string | null; grandfather_name: string | null; pan_or_citizenship: string | null; address: string | null; district: string | null; phone: string | null; bank_name: string | null; bank_account_no: string | null } | null;
+  client?: { id: string; client_code: string; full_name: string; boid: string | null; father_name: string | null; grandfather_name: string | null; pan_no?: string | null; citizenship_no?: string | null; pan_or_citizenship: string | null; nid_number?: string | null; address: string | null; district: string | null; phone: string | null; bank_name: string | null; bank_account_no: string | null } | null;
   company?: { id: string; company_code: string; company_name: string } | null;
 }
 
@@ -70,6 +71,8 @@ const emptyForm = {
   client_father_name: "",
   client_grandfather_name: "",
   client_pan: "",
+  client_citizenship: "",
+  client_nid: "",
   client_address: "",
   client_district: "",
   client_phone: "",
@@ -188,14 +191,27 @@ function DividendPage() {
       if (error) throw error;
       return data as { id: string; company_code: string; company_name: string }[];
     },
+    staleTime: 5 * 60 * 1000,
   });
   const { data: clients = [] } = useQuery({
     queryKey: ["clients-lookup"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("clients").select("id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no").order("full_name").limit(100000);
+      const { data, error } = await supabase
+        .from("clients")
+        .select("id, client_code, full_name, boid, bank_name, bank_account_no")
+        .order("full_name")
+        .limit(5000);
       if (error) throw error;
-      return data as { id: string; client_code: string; full_name: string; boid: string | null; father_name: string | null; grandfather_name: string | null; pan_or_citizenship: string | null; address: string | null; district: string | null; phone: string | null; bank_name: string | null; bank_account_no: string | null }[];
+      return (data || []) as {
+        id: string;
+        client_code: string;
+        full_name: string;
+        boid: string | null;
+        bank_name: string | null;
+        bank_account_no: string | null;
+      }[];
     },
+    staleTime: 5 * 60 * 1000,
   });
 
   const companyMap = useMemo(() => Object.fromEntries(companies.map((c) => [c.id, c])), [companies]);
@@ -204,62 +220,140 @@ function DividendPage() {
   const clientByCode = useMemo(() => Object.fromEntries(clients.map((c) => [c.client_code.toLowerCase(), c.id])), [clients]);
   const clientByBoid = useMemo(() => Object.fromEntries(clients.filter(c => c.boid).map((c) => [c.boid!.toLowerCase(), c.id])), [clients]);
 
-  const { data = [], isLoading } = useQuery({
-    queryKey: ["dividend_payables"],
+  // Debounced search — wait 400ms before firing the server query
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 400);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Reset to page 1 whenever filters change
+  useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, companyFilter, fyFilter, typeFilter]);
+
+  // Fetch fiscal years for filter dropdown (lightweight)
+  const { data: fiscalYears = [] } = useQuery({
+    queryKey: ["dividend_fiscal_years"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("dividend_payables")
-        .select("*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no), company:companies(id, company_code, company_name)")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data as Payable[];
+      const { data } = await supabase.from("dividend_payables").select("fiscal_year").order("fiscal_year", { ascending: false });
+      return Array.from(new Set((data || []).map(r => r.fiscal_year).filter(Boolean))) as string[];
     },
+    staleTime: 5 * 60 * 1000,
   });
 
-  const fiscalYears = useMemo(() => Array.from(new Set(data.map((p) => p.fiscal_year).filter(Boolean))) as string[], [data]);
-
-  const filtered = useMemo(() => {
-    const q = search.toLowerCase();
-    return data.filter((p) => {
-      if (statusFilter !== "all" && p.payment_status !== statusFilter) return false;
-      if (companyFilter !== "all" && p.company_id !== companyFilter) return false;
-      if (fyFilter !== "all" && p.fiscal_year !== fyFilter) return false;
-      if (typeFilter !== "all" && (p.dividend_type || "Cash") !== typeFilter) return false;
-      if (!q) return true;
-      const c = p.company ?? null;
-      const cl = p.client ?? null;
-      return (
-        (c?.company_name.toLowerCase().includes(q) ?? false) ||
-        (c?.company_code.toLowerCase().includes(q) ?? false) ||
-        (cl?.full_name.toLowerCase().includes(q) ?? false) ||
-        (cl?.client_code.toLowerCase().includes(q) ?? false) ||
-        (cl?.boid?.toLowerCase().includes(q) ?? false) ||
-        (cl?.bank_name?.toLowerCase().includes(q) ?? false) ||
-        (cl?.bank_account_no?.toLowerCase().includes(q) ?? false) ||
-        (cl?.pan_or_citizenship?.toLowerCase().includes(q) ?? false) ||
-        (p.lot_name ?? "").toLowerCase().includes(q) ||
-        (p.payment_reference ?? "").toLowerCase().includes(q) ||
-        (p.dividend_type ?? "").toLowerCase().includes(q)
+  // Server-side totals for KPI cards (count query — near-instant)
+  const { data: totals = { count: 0, paidCount: 0, pendingCount: 0, gross: 0, tax: 0, bonusTax: 0, net: 0, totalShares: 0, bonusIssued: 0 } } = useQuery({
+    queryKey: ["dividend_payables_totals", statusFilter, companyFilter, fyFilter, typeFilter],
+    queryFn: async () => {
+      let q = supabase.from("dividend_payables").select("payment_status, gross_dividend, tax_amount, bonus_tax, net_payable, shares_held, bonus_issued");
+      if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
+      if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
+      if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+      if (typeFilter !== "all") q = q.eq("dividend_type", typeFilter);
+      const { data } = await q;
+      return (data || []).reduce(
+        (a, p) => ({
+          count: a.count + 1,
+          paidCount: a.paidCount + (p.payment_status === "Paid" ? 1 : 0),
+          pendingCount: a.pendingCount + (p.payment_status === "Pending" ? 1 : 0),
+          gross: a.gross + Number(p.gross_dividend ?? 0),
+          tax: a.tax + Number(p.tax_amount ?? 0),
+          bonusTax: a.bonusTax + Number(p.bonus_tax ?? 0),
+          net: a.net + Number(p.net_payable ?? 0),
+          totalShares: a.totalShares + Number(p.shares_held ?? 0),
+          bonusIssued: a.bonusIssued + Number(p.bonus_issued ?? 0),
+        }),
+        { count: 0, paidCount: 0, pendingCount: 0, gross: 0, tax: 0, bonusTax: 0, net: 0, totalShares: 0, bonusIssued: 0 }
       );
-    });
-  }, [data, search, statusFilter, companyFilter, fyFilter, typeFilter]);
+    },
+    staleTime: 60_000,
+  });
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  // Main server-side paginated query
+  const { data: pageResult = { rows: [], count: 0 }, isLoading } = useQuery({
+    queryKey: ["dividend_payables", page, pageSize, debouncedSearch, statusFilter, companyFilter, fyFilter, typeFilter],
+    queryFn: async () => {
+      let q = supabase
+        .from("dividend_payables")
+        .select("*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no), company:companies(id, company_code, company_name)", { count: "exact" })
+        .order("created_at", { ascending: false })
+        .range((page - 1) * pageSize, page * pageSize - 1);
+
+      if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
+      if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
+      if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+      if (typeFilter !== "all") q = q.eq("dividend_type", typeFilter);
+
+      if (debouncedSearch) {
+        // Search on joined columns via ilike (PostgREST supports filtering on embedded columns)
+        q = q.or(
+          `lot_name.ilike.%${debouncedSearch}%,payment_reference.ilike.%${debouncedSearch}%,dividend_type.ilike.%${debouncedSearch}%`
+        );
+      }
+
+      const { data, count, error } = await q;
+      if (error) throw error;
+      return { rows: (data || []) as Payable[], count: count || 0 };
+    },
+    placeholderData: keepPreviousData,
+  });
+
+  const data = pageResult.rows;
+  const totalPages = Math.max(1, Math.ceil(pageResult.count / pageSize));
   const safePage = Math.min(page, totalPages);
-  const pageItems = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const pageItems = data;
 
-  const totals = useMemo(() => filtered.reduce(
-    (a, p) => ({
-      count: a.count + 1,
-      totalShares: a.totalShares + Number(p.shares_held ?? 0),
-      gross: a.gross + Number(p.gross_dividend ?? 0),
-      tax: a.tax + Number(p.tax_amount ?? 0),
-      bonusTax: a.bonusTax + Number(p.bonus_tax ?? 0),
-      net: a.net + Number(p.net_payable ?? 0),
-      bonusIssued: a.bonusIssued + Number(p.bonus_issued ?? 0),
-    }),
-    { count: 0, totalShares: 0, gross: 0, tax: 0, bonusTax: 0, net: 0, bonusIssued: 0 },
-  ), [filtered]);
+  // For summary report: fetch only required lightweight columns (runs fast without heavy nested client fields)
+  const fetchAllFiltered = useCallback(async (): Promise<Payable[]> => {
+    return fetchAllRows<Payable>((from, to) => {
+      let q = supabase
+        .from("dividend_payables")
+        .select("id, client_id, company_id, shares_held, dividend_rate, gross_dividend, tax_amount, net_payable, fiscal_year, dividend_type, bonus_actual, bonus_issued, bonus_fraction, after_bonus_kitta, bonus_tax, lot_name, payee_classification, payee_segment, client:clients(id, full_name, holder_type, payee_classification, payee_segment)")
+        .range(from, to);
+      if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
+      if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
+      if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+      if (typeFilter !== "all") q = q.eq("dividend_type", typeFilter);
+      return q;
+    });
+  }, [statusFilter, companyFilter, fyFilter, typeFilter]);
+
+  // Summary report data — only loaded when summary section is open and company is selected
+  const selectedCompany = useMemo(() => companies.find((c) => c.id === companyFilter), [companies, companyFilter]);
+
+  const [summaryReportOpen, setSummaryReportOpen] = useState(true);
+  const [summaryBonusRate, setSummaryBonusRate] = useState<string>("");
+  const [summaryCashRate, setSummaryCashRate] = useState<string>("");
+
+  // Automatically fetch summary data with React Query
+  const { data: summaryAllRows = [], isLoading: summaryLoading, refetch: loadSummary } = useQuery({
+    queryKey: ["dividend_summary_rows", companyFilter, fyFilter, typeFilter],
+    queryFn: async () => {
+      return fetchAllRows<Payable>((from, to) => {
+        let q = supabase
+          .from("dividend_payables")
+          .select("id, client_id, company_id, shares_held, dividend_rate, gross_dividend, tax_amount, net_payable, fiscal_year, dividend_type, bonus_actual, bonus_issued, bonus_fraction, after_bonus_kitta, bonus_tax, lot_name, payee_classification, payee_segment, client:clients(id, full_name, holder_type, payee_classification, payee_segment)")
+          .range(from, to);
+        if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
+        if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+        if (typeFilter !== "all") q = q.eq("dividend_type", typeFilter);
+        return q;
+      });
+    },
+    staleTime: 60_000,
+  });
+
+  const agmSummaryReport = useMemo(
+    () =>
+      AgmDividendSummaryReportService.generateReportFromPayables(
+        summaryAllRows,
+        selectedCompany?.company_name || (companyFilter === "all" ? "All Companies" : "Selected Company"),
+        selectedCompany?.company_code || "",
+        fyFilter !== "all" ? fyFilter : "",
+        summaryBonusRate ? Number(summaryBonusRate) : undefined,
+        summaryCashRate ? Number(summaryCashRate) : undefined,
+      ),
+    [summaryAllRows, selectedCompany, companyFilter, fyFilter, summaryBonusRate, summaryCashRate],
+  );
 
   const upsert = useMutation({
     mutationFn: async () => {
@@ -297,7 +391,14 @@ function DividendPage() {
         if (form.client_full_name !== undefined) clientPayload.full_name = form.client_full_name || null;
         if (form.client_father_name !== undefined) clientPayload.father_name = form.client_father_name || null;
         if (form.client_grandfather_name !== undefined) clientPayload.grandfather_name = form.client_grandfather_name || null;
-        if (form.client_pan !== undefined) clientPayload.pan_or_citizenship = form.client_pan || null;
+        if (form.client_pan !== undefined) {
+          clientPayload.pan_no = form.client_pan || null;
+        }
+        if (form.client_citizenship !== undefined) {
+          clientPayload.citizenship_no = form.client_citizenship || null;
+        }
+        clientPayload.pan_or_citizenship = form.client_pan || form.client_citizenship || null;
+        if (form.client_nid !== undefined) clientPayload.nid_number = form.client_nid || null;
         if (form.client_address !== undefined) clientPayload.address = form.client_address || null;
         if (form.client_district !== undefined) clientPayload.district = form.client_district || null;
         if (form.client_phone !== undefined) clientPayload.phone = form.client_phone || null;
@@ -371,7 +472,9 @@ function DividendPage() {
       client_full_name: cl?.full_name ?? "",
       client_father_name: cl?.father_name ?? "",
       client_grandfather_name: cl?.grandfather_name ?? "",
-      client_pan: cl?.pan_or_citizenship ?? "",
+      client_pan: cl?.pan_no ?? (cl?.pan_or_citizenship && String(cl.pan_or_citizenship).length === 9 ? cl.pan_or_citizenship : ""),
+      client_citizenship: cl?.citizenship_no ?? (cl?.pan_or_citizenship && String(cl.pan_or_citizenship).length !== 9 ? cl.pan_or_citizenship : ""),
+      client_nid: cl?.nid_number ?? "",
       client_address: cl?.address ?? "",
       client_district: cl?.district ?? "",
       client_phone: cl?.phone ?? "",
@@ -398,9 +501,10 @@ function DividendPage() {
     setOpen(true);
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
+    const rows = await fetchAllFiltered();
     exportToExcel(
-      filtered.map((p) => {
+      rows.map((p) => {
         const cl = p.client ?? null;
         const c = p.company ?? null;
         return {
@@ -411,12 +515,19 @@ function DividendPage() {
           boid: cl?.boid ?? "",
           shares_held: p.shares_held,
           dividend_rate: p.dividend_rate,
+          dividend_type: p.dividend_type ?? "Cash",
           gross_dividend: p.gross_dividend,
           tax_amount: p.tax_amount,
+          bonus_actual: p.bonus_actual,
+          bonus_issued: p.bonus_issued,
+          bonus_fraction: p.bonus_fraction,
+          after_bonus_kitta: p.after_bonus_kitta,
+          bonus_tax: p.bonus_tax,
           net_payable: p.net_payable,
           payment_status: p.payment_status,
           payment_date: p.payment_date,
           payment_reference: p.payment_reference,
+          lot_name: p.lot_name,
           fiscal_year: p.fiscal_year,
         };
       }),
@@ -428,8 +539,10 @@ function DividendPage() {
     try {
       type Row = {
         company_code?: string; company_id?: string; client_code?: string; client_boid?: string; client_id?: string;
-        shares_held?: number | string; dividend_rate?: number | string; gross_dividend?: number | string;
-        tax_amount?: number | string; net_payable?: number | string; payment_status?: string; payment_date?: string; payment_reference?: string; fiscal_year?: string;
+        shares_held?: number | string; dividend_rate?: number | string; dividend_type?: string; gross_dividend?: number | string;
+        tax_amount?: number | string; net_payable?: number | string; payment_status?: string; payment_date?: string; payment_reference?: string;
+        bonus_actual?: number | string; bonus_issued?: number | string; bonus_fraction?: number | string; after_bonus_kitta?: number | string; bonus_tax?: number | string;
+        lot_name?: string; fiscal_year?: string;
       };
       const rows = await importFromExcel<Row>(file);
       const clean: Record<string, unknown>[] = [];
@@ -446,12 +559,19 @@ function DividendPage() {
           client_id: clid,
           shares_held: shares,
           dividend_rate: rate,
+          dividend_type: r.dividend_type ?? "Cash",
           gross_dividend: gross,
           tax_amount: r.tax_amount != null ? Number(r.tax_amount) : null,
           net_payable: r.net_payable != null ? Number(r.net_payable) : null,
           payment_status: (r.payment_status as PaymentStatus) ?? "Pending",
           payment_date: r.payment_date ?? null,
           payment_reference: r.payment_reference ?? null,
+          bonus_actual: r.bonus_actual != null ? Number(r.bonus_actual) : null,
+          bonus_issued: r.bonus_issued != null ? Number(r.bonus_issued) : null,
+          bonus_fraction: r.bonus_fraction != null ? Number(r.bonus_fraction) : null,
+          after_bonus_kitta: r.after_bonus_kitta != null ? Number(r.after_bonus_kitta) : null,
+          bonus_tax: r.bonus_tax != null ? Number(r.bonus_tax) : null,
+          lot_name: r.lot_name ?? null,
           fiscal_year: r.fiscal_year ?? null,
         });
       });
@@ -459,6 +579,8 @@ function DividendPage() {
       const { error } = await supabase.from("dividend_payables").insert(clean as never);
       if (error) throw error;
       qc.invalidateQueries({ queryKey: ["dividend_payables"] });
+      qc.invalidateQueries({ queryKey: ["dividend_payables_totals"] });
+      qc.invalidateQueries({ queryKey: ["dividend_summary_rows"] });
       toast.success(`Imported ${clean.length} rows${errors.length ? ` (${errors.length} skipped)` : ""}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Import failed");
@@ -532,8 +654,16 @@ function DividendPage() {
                             <Input value={form.client_grandfather_name} onChange={(e) => setForm({ ...form, client_grandfather_name: e.target.value })} />
                           </div>
                           <div className="space-y-1.5">
-                            <Label>PAN/Citizenship</Label>
-                            <Input value={form.client_pan} onChange={(e) => setForm({ ...form, client_pan: e.target.value })} />
+                            <Label>PAN Number</Label>
+                            <Input value={form.client_pan} onChange={(e) => setForm({ ...form, client_pan: e.target.value })} placeholder="9-digit PAN" className="font-mono" />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>Citizenship Number</Label>
+                            <Input value={form.client_citizenship} onChange={(e) => setForm({ ...form, client_citizenship: e.target.value })} placeholder="Citizenship No." />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>NID Number (National ID)</Label>
+                            <Input value={form.client_nid} onChange={(e) => setForm({ ...form, client_nid: e.target.value })} placeholder="10-digit NID" className="font-mono" />
                           </div>
                           <div className="space-y-1.5">
                             <Label>Address</Label>
@@ -809,12 +939,205 @@ function DividendPage() {
       )}
 
       <div className="mb-4 grid gap-3 grid-cols-2 lg:grid-cols-5">
-        <Card><CardContent className="p-4"><div className="text-xs text-muted-foreground">Total Shares Held</div><div className="text-xl font-semibold">{totals.totalShares.toLocaleString()}</div><div className="text-[11px] text-muted-foreground mt-0.5">{totals.count.toLocaleString()} records</div></CardContent></Card>
+        <Card><CardContent className="p-4"><div className="text-xs text-muted-foreground">Total Shares Held</div><div className="text-xl font-semibold">{(totals.totalShares ?? 0).toLocaleString()}</div><div className="text-[11px] text-muted-foreground mt-0.5">{(totals.count ?? 0).toLocaleString()} records</div></CardContent></Card>
         <Card><CardContent className="p-4"><div className="text-xs text-muted-foreground">Gross Cash Dividend</div><div className="text-xl font-semibold">NPR {fmt(totals.gross)}</div></CardContent></Card>
-        <Card><CardContent className="p-4"><div className="text-xs text-muted-foreground">Total Tax (Cash + Bonus)</div><div className="text-xl font-semibold text-destructive">NPR {fmt(totals.tax + totals.bonusTax)}</div></CardContent></Card>
-        <Card><CardContent className="p-4"><div className="text-xs text-muted-foreground">Bonus Shares Issued</div><div className="text-xl font-semibold text-amber-600">{totals.bonusIssued.toLocaleString()} Kitta</div></CardContent></Card>
+        <Card><CardContent className="p-4"><div className="text-xs text-muted-foreground">Total Tax (Cash + Bonus)</div><div className="text-xl font-semibold text-destructive">NPR {fmt((totals.tax ?? 0) + (totals.bonusTax ?? 0))}</div></CardContent></Card>
+        <Card><CardContent className="p-4"><div className="text-xs text-muted-foreground">Bonus Shares Issued</div><div className="text-xl font-semibold text-amber-600">{(totals.bonusIssued ?? 0).toLocaleString()} Kitta</div></CardContent></Card>
         <Card><CardContent className="p-4"><div className="text-xs text-muted-foreground">Net Cash Payable</div><div className="text-xl font-semibold text-emerald-600">NPR {fmt(totals.net)}</div></CardContent></Card>
       </div>
+
+      {/* ─── AGM Dividend & Bonus Distribution Summary Report ─────────────────── */}
+      <Card className="mb-4 border-primary/20 shadow-sm">
+        <CardHeader className="py-3 px-4 bg-muted/40 border-b flex flex-row items-center justify-between">
+          <div className="space-y-0.5">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <BarChart3 className="h-4 w-4 text-primary" />
+              AGM Cash & Bonus Dividend Distribution Summary
+              <Badge variant="outline" className="font-mono text-[11px] ml-1">
+                {agmSummaryReport?.companyCode || "All"} {agmSummaryReport?.fiscalYear ? `— FY ${agmSummaryReport.fiscalYear}` : ""}
+              </Badge>
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Company-wise capital & payable breakdown by shareholder category (Promoter, Public, Local, etc.)
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={companyFilter} onValueChange={(v) => { setCompanyFilter(v); setPage(1); }}>
+              <SelectTrigger className="h-8 w-44 text-xs bg-background">
+                <SelectValue placeholder="Company: All" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Companies</SelectItem>
+                {companies.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>{c.company_code} — {c.company_name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="flex items-center gap-1 bg-background border rounded px-2 py-0.5 h-8">
+              <span className="text-[11px] text-muted-foreground whitespace-nowrap">Bonus %:</span>
+              <input
+                type="number"
+                step="0.01"
+                placeholder={agmSummaryReport?.detectedBonusRate ? String(agmSummaryReport.detectedBonusRate) : "0"}
+                value={summaryBonusRate}
+                onChange={(e) => setSummaryBonusRate(e.target.value)}
+                className="w-14 text-xs font-mono bg-transparent outline-none text-right font-medium text-foreground"
+                title="Override/Set Bonus Share % to calculate Actual Bonus, Issued, Fraction & Bonus Tax"
+              />
+            </div>
+            <div className="flex items-center gap-1 bg-background border rounded px-2 py-0.5 h-8">
+              <span className="text-[11px] text-muted-foreground whitespace-nowrap">Cash Rate:</span>
+              <input
+                type="number"
+                step="0.001"
+                placeholder={agmSummaryReport?.detectedDividendRate ? String(agmSummaryReport.detectedDividendRate) : "0"}
+                value={summaryCashRate}
+                onChange={(e) => setSummaryCashRate(e.target.value)}
+                className="w-14 text-xs font-mono bg-transparent outline-none text-right font-medium text-foreground"
+                title="Override/Set Cash Dividend Rate to calculate Gross Dividend, Tax & Net Dividend"
+              />
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={loadSummary}
+              disabled={summaryLoading}
+            >
+              {summaryLoading ? "Loading…" : agmSummaryReport ? "Refresh" : "Load Summary"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => agmSummaryReport && AgmDividendSummaryReportService.exportToExcel(agmSummaryReport)}
+              disabled={!agmSummaryReport?.rows.length}
+            >
+              <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
+              Export Excel
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => agmSummaryReport && AgmDividendSummaryReportService.exportToPdf(agmSummaryReport)}
+              disabled={!agmSummaryReport?.rows.length}
+            >
+              <FileText className="mr-1.5 h-3.5 w-3.5 text-rose-600" />
+              Export PDF
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setSummaryReportOpen((v) => !v)}
+              title={summaryReportOpen ? "Collapse Summary" : "Expand Summary"}
+            >
+              {summaryReportOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </Button>
+          </div>
+        </CardHeader>
+        {summaryReportOpen && (
+
+          <CardContent className="p-0 overflow-x-auto">
+            {summaryLoading ? (
+              <div className="py-12 text-center text-muted-foreground text-sm flex flex-col items-center justify-center gap-2">
+                <BarChart3 className="h-8 w-8 animate-pulse text-primary opacity-60" />
+                <p className="font-medium">Calculating AGM Distribution Summary…</p>
+                <p className="text-xs text-muted-foreground">Aggregating promoter, public, and local shareholding data</p>
+              </div>
+            ) : (
+            <table className="w-full text-xs text-left border-collapse">
+              <thead>
+                <tr className="bg-muted/80 text-foreground font-semibold border-b border-border divide-x divide-border">
+                  <th className="py-2.5 px-3 text-center w-12 uppercase text-[11px]">S.N.</th>
+                  <th className="py-2.5 px-3 uppercase text-[11px]">PARTICULAR</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">NO. OF SHAREHOLDER</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">KITTA</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">
+                    {agmSummaryReport.detectedBonusRate
+                      ? `ACTUAL_BONUS ${agmSummaryReport.detectedBonusRate}%`
+                      : "ACTUAL_BONUS"}
+                  </th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">ISSUED BONUS</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">REM FRACTION</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200">
+                    AFTER BONUS KITTA
+                  </th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">
+                    {agmSummaryReport.detectedDividendRate
+                      ? `DIVIDEND ${agmSummaryReport.detectedDividendRate}`
+                      : "DIVIDEND"}
+                  </th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">BON_TAX</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">DIV_TAX</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200">
+                    NET_DIV.
+                  </th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">COMPOSITION</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border font-mono">
+                {agmSummaryReport.rows.length === 0 ? (
+                  <tr>
+                    <td colSpan={13} className="py-8 text-center text-muted-foreground font-sans text-xs">
+                      No payable records match the selected company / fiscal year filter.
+                    </td>
+                  </tr>
+                ) : (
+                  agmSummaryReport.rows.map((row) => (
+                    <tr key={row.particular} className="hover:bg-muted/30 transition-colors divide-x divide-border">
+                      <td className="py-2 px-3 text-center text-muted-foreground">{row.sn}</td>
+                      <td className="py-2 px-3 font-semibold font-sans">{row.particular}</td>
+                      <td className="py-2 px-3 text-right">{fmtNr(row.shareholderCount)}</td>
+                      <td className="py-2 px-3 text-right font-medium">{fmtNr(row.kitta)}</td>
+                      <td className="py-2 px-3 text-right">{fmtNr(row.actualBonus)}</td>
+                      <td className="py-2 px-3 text-right">{fmtNr(row.issuedBonus)}</td>
+                      <td className="py-2 px-3 text-right">{fmtNr(row.remFraction)}</td>
+                      <td className="py-2 px-3 text-right font-semibold bg-emerald-50/70 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-200">
+                        {fmtNr(row.afterBonusKitta)}
+                      </td>
+                      <td className="py-2 px-3 text-right font-medium">{fmtNr(row.grossDividend)}</td>
+                      <td className="py-2 px-3 text-right">{fmtNr(row.bonTax)}</td>
+                      <td className="py-2 px-3 text-right">{fmtNr(row.divTax)}</td>
+                      <td className="py-2 px-3 text-right font-bold bg-emerald-50/70 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-200">
+                        {fmtNr(row.netDividend)}
+                      </td>
+                      <td className="py-2 px-3 text-right font-sans font-medium">{row.composition.toFixed(2)}%</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+              {agmSummaryReport.rows.length > 0 && (
+                <tfoot>
+                  <tr className="bg-muted/90 font-bold border-t-2 border-b-2 border-foreground/30 divide-x divide-border font-mono">
+                    <td className="py-2.5 px-3 text-center"></td>
+                    <td className="py-2.5 px-3 font-sans uppercase">TOTAL</td>
+                    <td className="py-2.5 px-3 text-right">{fmtNr(agmSummaryReport.total.shareholderCount)}</td>
+                    <td className="py-2.5 px-3 text-right">{fmtNr(agmSummaryReport.total.kitta)}</td>
+                    <td className="py-2.5 px-3 text-right">{fmtNr(agmSummaryReport.total.actualBonus)}</td>
+                    <td className="py-2.5 px-3 text-right">{fmtNr(agmSummaryReport.total.issuedBonus)}</td>
+                    <td className="py-2.5 px-3 text-right">{fmtNr(agmSummaryReport.total.remFraction)}</td>
+                    <td className="py-2.5 px-3 text-right bg-emerald-100 text-emerald-950 dark:bg-emerald-900/60 dark:text-emerald-200">
+                      {fmtNr(agmSummaryReport.total.afterBonusKitta)}
+                    </td>
+                    <td className="py-2.5 px-3 text-right">{fmtNr(agmSummaryReport.total.grossDividend)}</td>
+                    <td className="py-2.5 px-3 text-right">{fmtNr(agmSummaryReport.total.bonTax)}</td>
+                    <td className="py-2.5 px-3 text-right">{fmtNr(agmSummaryReport.total.divTax)}</td>
+                    <td className="py-2.5 px-3 text-right bg-emerald-100 text-emerald-950 dark:bg-emerald-900/60 dark:text-emerald-200">
+                      {fmtNr(agmSummaryReport.total.netDividend)}
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-sans">{agmSummaryReport.total.composition.toFixed(2)}%</td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+            )}
+          </CardContent>
+        )}
+      </Card>
+
+
 
       <Card>
         <CardContent className="p-4">
@@ -927,7 +1250,7 @@ function DividendPage() {
             {true && (
               <div className="flex items-center justify-between border-t px-4 py-3">
                 <div className="text-sm text-muted-foreground">
-                  Showing {(safePage - 1) * pageSize + 1} to {Math.min(safePage * pageSize, filtered.length)} of {filtered.length} records
+                  Showing {(safePage - 1) * pageSize + 1} to {Math.min(safePage * pageSize, pageResult.count)} of {pageResult.count} records
                 </div>
                 <div className="flex items-center gap-2">
                   <select

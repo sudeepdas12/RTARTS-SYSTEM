@@ -11,6 +11,8 @@ export interface PaymentBatch {
   total_tax: number;
   status: 'Draft' | 'Approved' | 'Processed' | 'Completed' | 'Failed';
   payment_method: string;
+  cds_batch_ref?: string | null;
+  registrar?: string | null;
   neft_file_url: string | null;
   connectips_file_url: string | null;
   rtgs_file_url: string | null;
@@ -44,8 +46,17 @@ export interface PaymentLineItem {
   cheque_no: string | null;
   status: string;
   remarks: string | null;
+  reversal_reason?: string | null;
+  reversed_at?: string | null;
   created_at: string;
   updated_at: string;
+  clients?: {
+    id: string;
+    boid: string | null;
+    full_name: string;
+    bank_name: string | null;
+    bank_account_no: string | null;
+  } | null;
 }
 
 export const PaymentService = {
@@ -91,7 +102,7 @@ export const PaymentService = {
     try {
       const { data, error } = await (supabase as any)
         .from('payments')
-        .select('*')
+        .select('*, clients(id, boid, full_name, bank_name, bank_account_no)')
         .eq('batch_id', batchId)
         .order('created_at', { ascending: true });
       
@@ -359,42 +370,64 @@ export const PaymentService = {
 
   async getPayablesForPayment(companyId?: string, payableType?: string): Promise<any[]> {
     try {
-      let query = (supabase as any)
-        .from('dividend_payables')
-        .select('*, clients(*), companies(*)')
-        .in('payment_status', ['Pending', 'Partial'])
-        .order('created_at', { ascending: true });
-      
-      if (companyId && companyId !== 'all') {
-        query = query.eq('company_id', companyId);
+      const payables: any[] = [];
+      const fetchDividends = !payableType || payableType === 'dividend' || payableType === 'all';
+      const fetchInterest = !payableType || payableType === 'interest' || payableType === 'all';
+      const fetchMutualFund = !payableType || payableType === 'mutual_fund' || payableType === 'all';
+
+      if (fetchDividends) {
+        let query = (supabase as any)
+          .from('dividend_payables')
+          .select('*, clients(*), companies(*)')
+          .in('payment_status', ['Pending', 'Partial'])
+          .order('created_at', { ascending: true });
+        
+        if (companyId && companyId !== 'all') {
+          query = query.eq('company_id', companyId);
+        }
+        
+        const { data: dividendData, error: dividendError } = await query;
+        if (dividendError) console.warn('Failed to fetch dividend payables:', dividendError.message);
+        if (dividendData) {
+          payables.push(...dividendData.map((p: any) => ({ ...p, payable_type: 'dividend' })));
+        }
       }
-      
-      const { data: dividendData, error: dividendError } = await query;
-      
-      // Also fetch interest payables
-      let interestQuery = (supabase as any)
-        .from('interest_payables')
-        .select('*, clients(*), companies(*)')
-        .in('payment_status', ['Pending', 'Partial'])
-        .order('created_at', { ascending: true });
-      
-      if (companyId && companyId !== 'all') {
-        interestQuery = interestQuery.eq('company_id', companyId);
+
+      if (fetchInterest) {
+        let interestQuery = (supabase as any)
+          .from('interest_payables')
+          .select('*, clients(*), companies(*)')
+          .in('payment_status', ['Pending', 'Partial'])
+          .order('created_at', { ascending: true });
+        
+        if (companyId && companyId !== 'all') {
+          interestQuery = interestQuery.eq('company_id', companyId);
+        }
+        
+        const { data: interestData, error: interestError } = await interestQuery;
+        if (interestError) console.warn('Failed to fetch interest payables:', interestError.message);
+        if (interestData) {
+          payables.push(...interestData.map((p: any) => ({ ...p, payable_type: 'interest' })));
+        }
       }
-      
-      const { data: interestData, error: interestError } = await interestQuery;
-      
-      if (dividendError) {
-        console.warn('Failed to fetch dividend payables:', dividendError.message);
+
+      if (fetchMutualFund) {
+        let mfQuery = (supabase as any)
+          .from('mutual_fund_payables')
+          .select('*, clients(*), companies(*)')
+          .in('payment_status', ['Pending', 'Partial'])
+          .order('created_at', { ascending: true });
+        
+        if (companyId && companyId !== 'all') {
+          mfQuery = mfQuery.eq('company_id', companyId);
+        }
+        
+        const { data: mfData, error: mfError } = await mfQuery;
+        if (mfError) console.warn('Failed to fetch mutual fund payables:', mfError.message);
+        if (mfData) {
+          payables.push(...mfData.map((p: any) => ({ ...p, payable_type: 'mutual_fund' })));
+        }
       }
-      if (interestError) {
-        console.warn('Failed to fetch interest payables:', interestError.message);
-      }
-      
-      const payables = [
-        ...(dividendData || []).map((p: any) => ({ ...p, payable_type: 'dividend' })),
-        ...(interestData || []).map((p: any) => ({ ...p, payable_type: 'interest' })),
-      ];
       
       return payables;
     } catch (err: any) {

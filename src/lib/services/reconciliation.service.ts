@@ -62,9 +62,7 @@ export const ReconciliationService = {
    *   and create a payment record with the actual paid amount.
    * - For "Missing": no system changes (the payable was not found in the payment bill).
    *
-   * This is the "adjust data stored in system" step: the system pulls data from
-   * the Excel payment bill, matches it against stored payables, and then updates
-   * the payable records and creates payment records accordingly.
+   * Creates a tracking batch for the reconciliation payments and includes idempotency protection.
    */
   async applyReconciliation(results: ReconciliationResultRow[]): Promise<{ updated: number; paymentsCreated: number; errors: string[] }> {
     const matchedResults = results.filter(r => r.result === 'Matched' || r.result === 'Over_Paid' || r.result === 'Under_Paid');
@@ -76,11 +74,42 @@ export const ReconciliationService = {
     let paymentsCreated = 0;
     const errors: string[] = [];
 
+    // 1. Group by company to create clean reconciliation batches
+    const companyId = matchedResults.find(r => r.company_id)?.company_id || null;
+    let reconBatchId: string | null = null;
+
+    try {
+      const todayStr = new Date().toISOString().split('T')[0];
+      const { data: newBatch, error: batchErr } = await (supabase as any)
+        .from('payment_batches')
+        .insert({
+          batch_name: `Reconciliation Auto-Batch ${todayStr}`,
+          company_id: companyId,
+          payable_type: 'dividend',
+          payment_method: 'ConnectIPS',
+          total_records: matchedResults.length,
+          total_gross: matchedResults.reduce((acc, r) => acc + Number(r.expected_amount || 0), 0),
+          total_tax: 0,
+          total_net: matchedResults.reduce((acc, r) => acc + Number(r.actual_amount || r.expected_amount || 0), 0),
+          status: 'Completed',
+          processed_at: new Date().toISOString(),
+          cds_batch_ref: 'RECON-APPLY',
+        })
+        .select('id')
+        .single();
+
+      if (!batchErr && newBatch) {
+        reconBatchId = newBatch.id;
+      }
+    } catch (bErr) {
+      console.warn('Could not create reconciliation tracking batch:', bErr);
+    }
+
     for (const result of matchedResults) {
       try {
-        const payableType = result.payable_type;
+        const payableType = result.payable_type || 'dividend';
         const payableId = result.payable_id;
-        if (!payableType || !payableId) continue;
+        if (!payableId) continue;
 
         const tableName = payableType === 'dividend'
           ? 'dividend_payables'
@@ -101,7 +130,11 @@ export const ReconciliationService = {
         // Update the payable's payment_status
         const { error: updateError } = await (supabase as any)
           .from(tableName)
-          .update({ payment_status: newStatus })
+          .update({ 
+            payment_status: newStatus,
+            payment_date: new Date().toISOString().split('T')[0],
+            payment_reference: `RECON-${result.id ? String(result.id).slice(0, 8) : 'AUTO'}`
+          })
           .eq('id', payableId);
 
         if (updateError) {
@@ -110,12 +143,34 @@ export const ReconciliationService = {
         }
         updated += 1;
 
+        // Idempotency: Check if payment already exists for this payable_id
+        const { data: existingPayment } = await (supabase as any)
+          .from('payments')
+          .select('id')
+          .eq('payable_id', payableId)
+          .limit(1)
+          .maybeSingle();
+
+        if (existingPayment) {
+          // Already has a payment record, update status and avoid duplicating
+          await (supabase as any)
+            .from('payments')
+            .update({
+              status: 'Completed',
+              payment_date: new Date().toISOString().split('T')[0],
+              paid_amount: Number(result.actual_amount ?? result.expected_amount ?? 0),
+            })
+            .eq('id', existingPayment.id);
+          continue;
+        }
+
         // Create a payment record
         const actualAmount = Number(result.actual_amount ?? 0);
         const expectedAmount = Number(result.expected_amount ?? 0);
         const { error: paymentError } = await (supabase as any)
           .from('payments')
           .insert({
+            batch_id: reconBatchId,
             company_id: result.company_id,
             client_id: result.client_id,
             payable_type: payableType,
@@ -123,12 +178,12 @@ export const ReconciliationService = {
             gross_amount: expectedAmount,
             tax_amount: 0,
             net_amount: expectedAmount,
-            paid_amount: actualAmount,
-            payment_method: 'NEFT',
+            paid_amount: actualAmount || expectedAmount,
+            payment_method: 'ConnectIPS',
             payment_date: new Date().toISOString().split('T')[0],
-            payment_reference: `RECON-${result.id?.slice(0, 8) || 'auto'}`,
-            status: 'Approved',
-            remarks: `Auto-created from reconciliation (${result.result})`,
+            payment_reference: `RECON-${result.id ? String(result.id).slice(0, 8) : 'auto'}`,
+            status: 'Completed',
+            remarks: `Auto-reconciled (${result.result})`,
           });
 
         if (paymentError) {

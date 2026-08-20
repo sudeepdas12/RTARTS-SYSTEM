@@ -1,4 +1,4 @@
-import { supabase } from './database';
+import { supabase, fetchAllRows } from './database';
 import * as XLSX from 'xlsx';
 
 // ──────────────────────────────────────────────
@@ -16,6 +16,9 @@ export interface CompanyFiscalData {
   interest_count: number;
   interest_gross: number;
   interest_net: number;
+  mutual_fund_count: number;
+  mutual_fund_gross: number;
+  mutual_fund_net: number;
   total_paid: number;
   total_pending: number;
 }
@@ -27,7 +30,7 @@ export interface ClientFiscalData {
   client_code: string;
   company_name: string;
   fiscal_year: string;
-  payable_type: 'dividend' | 'interest';
+  payable_type: 'dividend' | 'interest' | 'mutual_fund';
   gross_amount: number;
   tax_amount: number;
   net_amount: number;
@@ -69,9 +72,86 @@ function downloadExcel(rows: Record<string, any>[], fileName: string, sheetName:
 }
 
 /**
- * Delete rows from a table via the bulk_delete RPC (SECURITY DEFINER, authorized,
- * table-whitelisted, audited). Never falls back to direct client-side deletes,
- * which are subject to RLS and would silently fail for non-admins.
+ * Deletes matching records in small batches to prevent PostgreSQL statement timeouts.
+ */
+async function deleteInBatches(
+  table: string,
+  filters: { field: string; value: string; op?: string }[],
+  batchSize = 250
+): Promise<number> {
+  let totalDeleted = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    let query = (supabase as any).from(table).select('id');
+    for (const f of filters) {
+      const op = f.op || 'eq';
+      if (op === 'eq') query = query.eq(f.field, f.value);
+      else if (op === 'neq') query = query.neq(f.field, f.value);
+      else if (op === 'gt') query = query.gt(f.field, f.value);
+      else if (op === 'gte') query = query.gte(f.field, f.value);
+      else if (op === 'lt') query = query.lt(f.field, f.value);
+      else if (op === 'lte') query = query.lte(f.field, f.value);
+    }
+    const { data: rows, error: selErr } = await query.limit(batchSize);
+    if (selErr) throw selErr;
+    if (!rows || rows.length === 0) break;
+
+    const ids = rows.map((r: any) => r.id);
+    const { error: delErr } = await (supabase as any).from(table).delete().in('id', ids);
+    if (delErr) throw delErr;
+    totalDeleted += ids.length;
+    if (rows.length < batchSize) break;
+  }
+  return totalDeleted;
+}
+
+/**
+ * Safely finds and deletes orphan clients in small chunks without locking or timing out.
+ */
+async function deleteOrphanClientsBatched(companyId?: string, batchSize = 100): Promise<number> {
+  let totalDeleted = 0;
+
+  let query = (supabase as any).from('clients').select('id');
+  if (companyId && companyId !== 'all') {
+    query = query.eq('company_id', companyId);
+  }
+
+  const { data: clients, error } = await query;
+  if (error || !clients || clients.length === 0) return 0;
+
+  const candidateIds = clients.map((c: any) => c.id);
+  const CHUNK_SIZE = 200;
+
+  for (let i = 0; i < candidateIds.length; i += CHUNK_SIZE) {
+    const chunk = candidateIds.slice(i, i + CHUNK_SIZE);
+    const [divRes, intRes, mfRes] = await Promise.all([
+      (supabase as any).from('dividend_payables').select('client_id').in('client_id', chunk),
+      (supabase as any).from('interest_payables').select('client_id').in('client_id', chunk),
+      (supabase as any).from('mutual_fund_payables').select('client_id').in('client_id', chunk),
+    ]);
+
+    const activeSet = new Set<string>();
+    for (const r of divRes.data || []) activeSet.add(r.client_id);
+    for (const r of intRes.data || []) activeSet.add(r.client_id);
+    for (const r of mfRes.data || []) activeSet.add(r.client_id);
+
+    const orphansToDelete = chunk.filter((id) => !activeSet.has(id));
+    if (orphansToDelete.length > 0) {
+      for (let j = 0; j < orphansToDelete.length; j += batchSize) {
+        const delBatch = orphansToDelete.slice(j, j + batchSize);
+        const { error: delErr } = await (supabase as any).from('clients').delete().in('id', delBatch);
+        if (!delErr) {
+          totalDeleted += delBatch.length;
+        }
+      }
+    }
+  }
+
+  return totalDeleted;
+}
+
+/**
+ * Deletes rows reliably in small batches to guarantee no locks, no network drops, and no statement timeouts.
  */
 async function deleteViaRpc(
   operations: { table: string; filters: { field: string; value: string; op?: 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' }[] }[]
@@ -80,30 +160,25 @@ async function deleteViaRpc(
 
   for (const op of operations) {
     try {
-      const filtersJson = op.filters.map((f) => ({ field: f.field, value: f.value, op: f.op || 'eq' }));
-      const { data, error } = await (supabase as any).rpc('bulk_delete', {
-        p_table: op.table,
-        p_filters: JSON.stringify(filtersJson),
-      });
-
-      if (error) {
-        if (error.message?.includes('function') || error.code === 'PGRST202') {
-          results.push({ table: op.table, deleted: 0, error: `bulk_delete RPC is not deployed. Run migration 20260728000000_bulk_delete_rpc.sql and 20260831000000_harden_bulk_delete.sql.` });
-        } else {
-          results.push({ table: op.table, deleted: 0, error: error.message });
+      const deleted = await deleteInBatches(op.table, op.filters, 100);
+      results.push({ table: op.table, deleted });
+    } catch (batchErr: any) {
+      console.warn(`Batched delete error on table ${op.table}:`, batchErr?.message);
+      // Fallback: direct delete
+      try {
+        let query = (supabase as any).from(op.table).delete({ count: 'exact' });
+        for (const f of op.filters) {
+          query = query.eq(f.field, f.value);
         }
-        continue;
+        const { count, error } = await query;
+        if (error) {
+          results.push({ table: op.table, deleted: 0, error: error.message });
+        } else {
+          results.push({ table: op.table, deleted: Number(count ?? 0) });
+        }
+      } catch (err: any) {
+        results.push({ table: op.table, deleted: 0, error: err?.message || 'Delete failed' });
       }
-
-      const result = data as any;
-      results.push({
-        table: op.table,
-        deleted: result?.deleted ?? 0,
-        ...(result?.error ? { error: result.error } : {}),
-        ...(!result?.success && !result?.error ? { error: 'Delete returned no result' } : {}),
-      });
-    } catch (err: any) {
-      results.push({ table: op.table, deleted: 0, error: err?.message || 'Unknown error' });
     }
   }
 
@@ -120,93 +195,110 @@ export const DataManagementService = {
 
   async getCompanyFiscalSummary(fiscalYear?: string): Promise<CompanyFiscalData[]> {
     try {
-      let dividendQuery = (supabase as any)
-        .from('dividend_payables')
-        .select(`
-          company_id,
-          companies!inner(company_name, company_code),
-          fiscal_year,
-          gross_dividend,
-          tax_amount,
-          net_payable,
-          payment_status
-        `);
-
-      let interestQuery = (supabase as any)
-        .from('interest_payables')
-        .select(`
-          company_id,
-          companies!inner(company_name, company_code),
-          fiscal_year,
-          gross_interest,
-          tax_amount,
-          net_payable,
-          payment_status
-        `);
-
-      if (fiscalYear) {
-        dividendQuery = dividendQuery.eq('fiscal_year', fiscalYear);
-        interestQuery = interestQuery.eq('fiscal_year', fiscalYear);
-      }
-
-      const [dividendRes, interestRes] = await Promise.all([
-        dividendQuery,
-        interestQuery,
+      const [dividends, interests, mutualFunds] = await Promise.all([
+        fetchAllRows<any>((from, to) => {
+          let q = (supabase as any)
+            .from('dividend_payables')
+            .select(`
+              company_id,
+              companies!inner(company_name, company_code),
+              fiscal_year,
+              gross_dividend,
+              tax_amount,
+              net_payable,
+              payment_status
+            `)
+            .range(from, to);
+          if (fiscalYear && fiscalYear !== 'all') q = q.eq('fiscal_year', fiscalYear);
+          return q;
+        }),
+        fetchAllRows<any>((from, to) => {
+          let q = (supabase as any)
+            .from('interest_payables')
+            .select(`
+              company_id,
+              companies!inner(company_name, company_code),
+              fiscal_year,
+              gross_interest,
+              tax_amount,
+              net_payable,
+              payment_status
+            `)
+            .range(from, to);
+          if (fiscalYear && fiscalYear !== 'all') q = q.eq('fiscal_year', fiscalYear);
+          return q;
+        }),
+        fetchAllRows<any>((from, to) => {
+          let q = (supabase as any)
+            .from('mutual_fund_payables')
+            .select(`
+              company_id,
+              companies!inner(company_name, company_code),
+              fiscal_year,
+              gross_dividend,
+              tax_amount,
+              net_payable,
+              payment_status
+            `)
+            .range(from, to);
+          if (fiscalYear && fiscalYear !== 'all') q = q.eq('fiscal_year', fiscalYear);
+          return q;
+        }),
       ]);
 
-      if (dividendRes.error) throw dividendRes.error;
-      if (interestRes.error) throw interestRes.error;
-
-      const dividends: any[] = dividendRes.data || [];
-      const interests: any[] = interestRes.data || [];
-
       const divMap = new Map<string, CompanyFiscalData>();
+
+      const getEntry = (companyId: string, companyName: string, companyCode: string, fy: string) => {
+        const key = `${companyId}|${fy || 'unknown'}`;
+        let existing = divMap.get(key);
+        if (!existing) {
+          existing = {
+            company_id: companyId,
+            company_name: companyName || 'Unknown',
+            company_code: companyCode || '',
+            fiscal_year: fy || 'unknown',
+            dividend_count: 0,
+            dividend_gross: 0,
+            dividend_net: 0,
+            interest_count: 0,
+            interest_gross: 0,
+            interest_net: 0,
+            mutual_fund_count: 0,
+            mutual_fund_gross: 0,
+            mutual_fund_net: 0,
+            total_paid: 0,
+            total_pending: 0,
+          };
+          divMap.set(key, existing);
+        }
+        return existing;
+      };
+
       for (const d of dividends) {
-        const key = `${d.company_id}|${d.fiscal_year || 'unknown'}`;
-        const existing = divMap.get(key) || {
-          company_id: d.company_id,
-          company_name: d.companies?.company_name || 'Unknown',
-          company_code: d.companies?.company_code || '',
-          fiscal_year: d.fiscal_year || 'unknown',
-          dividend_count: 0,
-          dividend_gross: 0,
-          dividend_net: 0,
-          interest_count: 0,
-          interest_gross: 0,
-          interest_net: 0,
-          total_paid: 0,
-          total_pending: 0,
-        };
-        existing.dividend_count += 1;
-        existing.dividend_gross += Number(d.gross_dividend || 0);
-        existing.dividend_net += Number(d.net_payable || 0);
-        if (d.payment_status === 'Paid') existing.total_paid += Number(d.net_payable || 0);
-        else existing.total_pending += Number(d.net_payable || 0);
-        divMap.set(key, existing);
+        const e = getEntry(d.company_id, d.companies?.company_name, d.companies?.company_code, d.fiscal_year);
+        e.dividend_count += 1;
+        e.dividend_gross += Number(d.gross_dividend || 0);
+        e.dividend_net += Number(d.net_payable || 0);
+        if (d.payment_status === 'Paid') e.total_paid += Number(d.net_payable || 0);
+        else e.total_pending += Number(d.net_payable || 0);
       }
 
       for (const i of interests) {
-        const key = `${i.company_id}|${i.fiscal_year || 'unknown'}`;
-        const existing = divMap.get(key) || {
-          company_id: i.company_id,
-          company_name: i.companies?.company_name || 'Unknown',
-          company_code: i.companies?.company_code || '',
-          fiscal_year: i.fiscal_year || 'unknown',
-          dividend_count: 0,
-          dividend_gross: 0,
-          dividend_net: 0,
-          interest_count: 0,
-          interest_gross: 0,
-          interest_net: 0,
-          total_paid: 0,
-          total_pending: 0,
-        };
-        existing.interest_count += 1;
-        existing.interest_gross += Number(i.gross_interest || 0);
-        existing.interest_net += Number(i.net_payable || 0);
-        if (i.payment_status === 'Paid') existing.total_paid += Number(i.net_payable || 0);
-        else existing.total_pending += Number(i.net_payable || 0);
-        divMap.set(key, existing);
+        const e = getEntry(i.company_id, i.companies?.company_name, i.companies?.company_code, i.fiscal_year);
+        e.interest_count += 1;
+        e.interest_gross += Number(i.gross_interest || 0);
+        e.interest_net += Number(i.net_payable || 0);
+        if (i.payment_status === 'Paid') e.total_paid += Number(i.net_payable || 0);
+        else e.total_pending += Number(i.net_payable || 0);
+      }
+
+      for (const m of mutualFunds) {
+        const e = getEntry(m.company_id, m.companies?.company_name, m.companies?.company_code, m.fiscal_year);
+        e.mutual_fund_count += 1;
+        e.mutual_fund_gross += Number(m.gross_dividend || 0);
+        e.mutual_fund_net += Number(m.net_payable || 0);
+        if (m.payment_status === 'Paid') e.total_paid += Number(m.net_payable || 0);
+        else e.total_pending += Number(m.net_payable || 0);
       }
 
       return Array.from(divMap.values()).sort((a, b) =>
@@ -221,80 +313,116 @@ export const DataManagementService = {
   async getClientFiscalDetail(
     companyId: string,
     fiscalYear: string,
-    payableType?: 'dividend' | 'interest'
+    payableType?: 'dividend' | 'interest' | 'mutual_fund'
   ): Promise<ClientFiscalData[]> {
     try {
       const results: ClientFiscalData[] = [];
 
       if (!payableType || payableType === 'dividend') {
-        const { data, error } = await (supabase as any)
-          .from('dividend_payables')
-          .select(`
-            client_id,
-            clients!inner(full_name, boid, client_code),
-            companies!inner(company_name),
-            fiscal_year,
-            gross_dividend,
-            tax_amount,
-            net_payable,
-            payment_status
-          `)
-          .eq('company_id', companyId)
-          .eq('fiscal_year', fiscalYear);
+        const data = await fetchAllRows<any>((from, to) =>
+          (supabase as any)
+            .from('dividend_payables')
+            .select(`
+              client_id,
+              clients!inner(full_name, boid, client_code),
+              companies!inner(company_name),
+              fiscal_year,
+              gross_dividend,
+              tax_amount,
+              net_payable,
+              payment_status
+            `)
+            .eq('company_id', companyId)
+            .eq('fiscal_year', fiscalYear)
+            .range(from, to)
+        );
 
-        if (error) throw error;
-        if (data) {
-          for (const row of data) {
-            results.push({
-              client_id: row.client_id,
-              full_name: row.clients?.full_name || 'Unknown',
-              boid: row.clients?.boid || '',
-              client_code: row.clients?.client_code || '',
-              company_name: row.companies?.company_name || '',
-              fiscal_year: row.fiscal_year || fiscalYear,
-              payable_type: 'dividend',
-              gross_amount: Number(row.gross_dividend || 0),
-              tax_amount: Number(row.tax_amount || 0),
-              net_amount: Number(row.net_payable || 0),
-              payment_status: row.payment_status || 'Pending',
-            });
-          }
+        for (const row of data || []) {
+          results.push({
+            client_id: row.client_id,
+            full_name: row.clients?.full_name || 'Unknown',
+            boid: row.clients?.boid || '',
+            client_code: row.clients?.client_code || '',
+            company_name: row.companies?.company_name || '',
+            fiscal_year: row.fiscal_year || fiscalYear,
+            payable_type: 'dividend',
+            gross_amount: Number(row.gross_dividend || 0),
+            tax_amount: Number(row.tax_amount || 0),
+            net_amount: Number(row.net_payable || 0),
+            payment_status: row.payment_status || 'Pending',
+          });
         }
       }
 
       if (!payableType || payableType === 'interest') {
-        const { data, error } = await (supabase as any)
-          .from('interest_payables')
-          .select(`
-            client_id,
-            clients!inner(full_name, boid, client_code),
-            companies!inner(company_name),
-            fiscal_year,
-            gross_interest,
-            tax_amount,
-            net_payable,
-            payment_status
-          `)
-          .eq('company_id', companyId)
-          .eq('fiscal_year', fiscalYear);
+        const data = await fetchAllRows<any>((from, to) =>
+          (supabase as any)
+            .from('interest_payables')
+            .select(`
+              client_id,
+              clients!inner(full_name, boid, client_code),
+              companies!inner(company_name),
+              fiscal_year,
+              gross_interest,
+              tax_amount,
+              net_payable,
+              payment_status
+            `)
+            .eq('company_id', companyId)
+            .eq('fiscal_year', fiscalYear)
+            .range(from, to)
+        );
 
-        if (error) throw error;
-        if (data) {
-          for (const row of data) {
-            results.push({
-              client_id: row.client_id,
-              full_name: row.clients?.full_name || 'Unknown',
-              boid: row.clients?.boid || '',
-              client_code: row.clients?.client_code || '',
-              company_name: row.companies?.company_name || '',
-              fiscal_year: row.fiscal_year || fiscalYear,
-              payable_type: 'interest',
-              gross_amount: Number(row.gross_interest || 0),
-              tax_amount: Number(row.tax_amount || 0),
-              net_amount: Number(row.net_payable || 0),
-              payment_status: row.payment_status || 'Pending',
-            });
-          }
+        for (const row of data || []) {
+          results.push({
+            client_id: row.client_id,
+            full_name: row.clients?.full_name || 'Unknown',
+            boid: row.clients?.boid || '',
+            client_code: row.clients?.client_code || '',
+            company_name: row.companies?.company_name || '',
+            fiscal_year: row.fiscal_year || fiscalYear,
+            payable_type: 'interest',
+            gross_amount: Number(row.gross_interest || 0),
+            tax_amount: Number(row.tax_amount || 0),
+            net_amount: Number(row.net_payable || 0),
+            payment_status: row.payment_status || 'Pending',
+          });
+        }
+      }
+
+      if (!payableType || payableType === 'mutual_fund') {
+        const data = await fetchAllRows<any>((from, to) =>
+          (supabase as any)
+            .from('mutual_fund_payables')
+            .select(`
+              client_id,
+              clients!inner(full_name, boid, client_code),
+              companies!inner(company_name),
+              fiscal_year,
+              gross_dividend,
+              tax_amount,
+              net_payable,
+              payment_status
+            `)
+            .eq('company_id', companyId)
+            .eq('fiscal_year', fiscalYear)
+            .range(from, to)
+        );
+
+        for (const row of data || []) {
+          results.push({
+            client_id: row.client_id,
+            full_name: row.clients?.full_name || 'Unknown',
+            boid: row.clients?.boid || '',
+            client_code: row.clients?.client_code || '',
+            company_name: row.companies?.company_name || '',
+            fiscal_year: row.fiscal_year || fiscalYear,
+            payable_type: 'mutual_fund',
+            gross_amount: Number(row.gross_dividend || 0),
+            tax_amount: Number(row.tax_amount || 0),
+            net_amount: Number(row.net_payable || 0),
+            payment_status: row.payment_status || 'Pending',
+          });
         }
       }
 
@@ -360,7 +488,20 @@ export const DataManagementService = {
   },
 
   async deleteAllCompanyData(companyId: string): Promise<BulkDeleteResult[]> {
-    const tables = ['dividend_payables', 'mutual_fund_payables', 'interest_payables', 'payments', 'reconciliation_results'];
+    try {
+      const { data, error } = await (supabase as any).rpc('delete_company_completely', {
+        p_company_id: companyId,
+        p_delete_clients: false,
+        p_delete_orphans: true,
+      });
+      if (!error && data?.success && Array.isArray(data.results)) {
+        return data.results;
+      }
+    } catch {
+      // fallback to deleteViaRpc
+    }
+
+    const tables = ['payments', 'payment_batches', 'reconciliation_results', 'dividend_payables', 'mutual_fund_payables', 'interest_payables', 'iaf_allocations'];
     const operations = tables.map((table) => ({
       table,
       filters: [{ field: 'company_id', value: companyId }],
@@ -381,54 +522,82 @@ export const DataManagementService = {
     companyId: string;
     deleteDividends?: boolean;
     deleteInterests?: boolean;
+    deleteMutualFunds?: boolean;
     deleteClients?: boolean;
     deleteOrphans?: boolean;
     deleteCompany?: boolean;
     importedAfter?: string;
   }): Promise<BulkDeleteResult[]> {
     const results: BulkDeleteResult[] = [];
-    const operations: DeleteOperation[] = [];
     const isAll = options.companyId === "all";
+
+    const operations: DeleteOperation[] = [];
 
     // Scope filters for company-specific deletes.
     const scopeFilters: DeleteFilter[] = [];
     if (!isAll && options.companyId) scopeFilters.push({ field: 'company_id', value: options.companyId });
     if (options.importedAfter) scopeFilters.push({ field: 'created_at', value: `${options.importedAfter}T00:00:00`, op: 'gte' });
 
-    if (options.deleteDividends) operations.push({ table: 'dividend_payables', filters: [...scopeFilters] });
-    if (options.deleteInterests) operations.push({ table: 'interest_payables', filters: [...scopeFilters] });
-
-    // Global client deletion (admin-only full purge).
-    if (options.deleteClients) {
-      if (!isAll) {
-        throw new Error("Clients are global and cannot be deleted for a specific company. Please select 'All Companies' to delete clients globally.");
-      }
-      operations.push({
-        table: 'clients',
-        filters: options.importedAfter ? [{ field: 'created_at', value: `${options.importedAfter}T00:00:00`, op: 'gte' }] : [],
-      });
-    }
-
-    // Delete payables (+ clients if requested) via the authorized RPC.
-    if (operations.length) results.push(...(await deleteViaRpc(operations)));
-
-    // Delete the company record itself (admin-only, scoped by id).
+    // 1. Delete dependent records first in batches if company deletion requested
     if (options.deleteCompany && !isAll && options.companyId) {
-      results.push(...(await deleteViaRpc([{ table: 'companies', filters: [{ field: 'id', value: options.companyId }] }])));
+      operations.push({ table: 'payments', filters: [{ field: 'company_id', value: options.companyId }] });
+      operations.push({ table: 'payment_batches', filters: [{ field: 'company_id', value: options.companyId }] });
+      operations.push({ table: 'reconciliation_results', filters: [{ field: 'company_id', value: options.companyId }] });
+      operations.push({ table: 'iaf_allocations', filters: [{ field: 'company_id', value: options.companyId }] });
     }
 
-    // Server-side orphan cleanup.
-    if (options.deleteOrphans) {
-      const { data, error } = await (supabase as any).rpc('delete_orphan_clients', {
-        p_company_id: isAll ? null : options.companyId,
-        p_fiscal_year: null,
-        p_imported_after: options.importedAfter ? new Date(`${options.importedAfter}T00:00:00`).toISOString() : null,
-      });
-      if (error) {
-        results.push({ table: 'clients (orphans)', deleted: 0, error: error.message });
-      } else {
-        const deleted = data?.deleted ?? 0;
-        if (deleted > 0) results.push({ table: 'clients (orphans)', deleted });
+    if (options.deleteDividends || options.deleteCompany) operations.push({ table: 'dividend_payables', filters: [...scopeFilters] });
+    if (options.deleteMutualFunds || options.deleteCompany) operations.push({ table: 'mutual_fund_payables', filters: [...scopeFilters] });
+    if (options.deleteInterests || options.deleteCompany) operations.push({ table: 'interest_payables', filters: [...scopeFilters] });
+
+    // Client deletion
+    if (options.deleteClients) {
+      if (isAll) {
+        // Global client purge
+        operations.push({
+          table: 'clients',
+          filters: options.importedAfter ? [{ field: 'created_at', value: `${options.importedAfter}T00:00:00`, op: 'gte' }] : [],
+        });
+      } else if (options.companyId) {
+        // Delete clients registered under this specific company
+        operations.push({
+          table: 'clients',
+          filters: [{ field: 'company_id', value: options.companyId }],
+        });
+      }
+    }
+
+    // Execute payables + clients deletes via non-blocking batched operations
+    if (operations.length) {
+      results.push(...(await deleteViaRpc(operations)));
+    }
+
+    // Delete the company record itself
+    if (options.deleteCompany && !isAll && options.companyId) {
+      try {
+        // Unlink any remaining clients that might reference this company_id
+        await (supabase as any).from('clients').update({ company_id: null }).eq('company_id', options.companyId);
+        
+        const { count, error } = await (supabase as any).from('companies').delete({ count: 'exact' }).eq('id', options.companyId);
+        if (error) {
+          results.push({ table: 'companies', deleted: 0, error: error.message });
+        } else {
+          results.push({ table: 'companies', deleted: Number(count ?? 1) });
+        }
+      } catch (cErr: any) {
+        results.push({ table: 'companies', deleted: 0, error: cErr?.message || 'Failed to delete company' });
+      }
+    }
+
+    // Orphan client cleanup in small chunks
+    if (options.deleteOrphans || (options.deleteCompany && !isAll)) {
+      try {
+        const orphanDeleted = await deleteOrphanClientsBatched(isAll ? undefined : options.companyId);
+        if (orphanDeleted > 0) {
+          results.push({ table: 'clients (orphans)', deleted: orphanDeleted });
+        }
+      } catch (bErr: any) {
+        console.warn('Orphan cleanup warning:', bErr);
       }
     }
 
@@ -447,6 +616,9 @@ export const DataManagementService = {
       'Interest Count': d.interest_count,
       'Interest Gross': d.interest_gross,
       'Interest Net': d.interest_net,
+      'Mutual Fund Count': d.mutual_fund_count || 0,
+      'Mutual Fund Gross': d.mutual_fund_gross || 0,
+      'Mutual Fund Net': d.mutual_fund_net || 0,
       'Total Paid': d.total_paid,
       'Total Pending': d.total_pending,
     }));

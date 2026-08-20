@@ -9,8 +9,14 @@ services:
     container_name: rtarts-frontend
     ports:
       - "3000:80"
+    # Allow the container's server-side Supabase client to reach the host's
+    # local Supabase instance. Inside the container 127.0.0.1 points to the
+    # container itself, so we use host.docker.internal here. The browser bundle
+    # still uses VITE_SUPABASE_URL (127.0.0.1) which is correct from the host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
-      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_URL=http://host.docker.internal:54321
       - SUPABASE_PUBLISHABLE_KEY=${SUPABASE_PUBLISHABLE_KEY}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
       - VITE_SUPABASE_URL=${VITE_SUPABASE_URL}

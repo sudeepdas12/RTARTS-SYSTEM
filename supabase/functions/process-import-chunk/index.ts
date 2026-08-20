@@ -101,10 +101,10 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
   ).trim().toUpperCase();
 
   if (rawType) {
-    if (/PROMOT/i.test(rawType)) return "PROMOTER";
-    if (/INSTIT/i.test(rawType)) return "INSTITUTION";
     if (/MUTUAL|MF|FUND/i.test(rawType)) return "MUTUAL_FUND";
     if (/TAX.?EXEMPT|EXEMPT/i.test(rawType)) return "TAX_EXEMPT";
+    if (/PROMOT/i.test(rawType)) return "PROMOTER";
+    if (/INSTIT/i.test(rawType)) return "INSTITUTION";
     if (/LOCAL/i.test(rawType)) return "LOCAL";
     if (/PUBLIC|GENERAL|INDIVIDUAL/i.test(rawType)) return "PUBLIC";
     if (/FOREIGN|NRN/i.test(rawType)) return "FOREIGN";
@@ -112,13 +112,38 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
     if (/D-PUBLIC|P-PUBLIC/.test(rawType)) return "PUBLIC";
     // D-PROMOTER pattern
     if (/D-PROMOT/.test(rawType)) return "PROMOTER";
-    if (rawType.length > 1) return rawType;
   }
 
-  // Check for Natural Person indicators.
+  const legalPersonName = String(
+    row.full_name || row.fullName || row.name || row.NAME || row.client_name || row.clientName ||
+    row.company_name || row.companyName || row.company || ""
+  ).trim();
+
+  // 1. Tax Exempted / Mutual Fund detection from name
+  const taxExemptSignals = /(MUTUAL\s*FUND|RETIREMENT\s*FUND|PENSION\s*FUND|PROVIDENT\s*FUND|KOSH\b|SANCHAYA\s*KOSH|NAGARIK\s*LAGANI|\bCIT\b|\bEPF\b|SAMRIDDHI\s*FUND|EQUITY\s*FUND|GROWTH\s*FUND|SCHEME\b)/i;
+  if (legalPersonName && taxExemptSignals.test(legalPersonName)) {
+    return "TAX_EXEMPT";
+  }
+
+  // 2. Legal Person / Institutional signals from name
+  const legalPersonSignals = /(PVT\.?LTD|PRIVATE LIMITED|\bLIMITED\b|\bLTD\.?\b|\bCOMPANY\b|CORPORATION|ASSOCIATES|FOUNDATION|\bGROUP\b|HOLDINGS|\bTRUST\b|\bBANK\b|FINANCE|MICROFINANCE|HYDROPOWER|INSURANCE|INSTITUTE|SOCIETY|COOPERATIVE|SAHAKARI|ENTERPRISES|VENTURES|INVESTMENT|CAPITAL|SECURITIES)/i;
+  if (legalPersonName && legalPersonSignals.test(legalPersonName)) {
+    return "INSTITUTION";
+  }
+
+  // 3. Sheet Type
+  if (sheetType) {
+    const upper = sheetType.toUpperCase();
+    if (upper.includes("MUTUAL") || upper.includes("MF")) return "MUTUAL_FUND";
+    if (upper.includes("TAX") && upper.includes("EXEMPT")) return "TAX_EXEMPT";
+    if (upper.includes("PROMOT")) return "PROMOTER";
+    if (upper.includes("INSTIT")) return "INSTITUTION";
+    if (upper.includes("LOCAL")) return "LOCAL";
+    if (upper.includes("PUBLIC")) return "PUBLIC";
+  }
+
+  // 4. Natural Person indicators.
   // Companies do NOT have father/grandfather names or citizenship numbers.
-  // Note: PAN is NOT used — both individuals and companies have identical
-  // 9-digit numeric PANs in Nepal (issued by IRD), so it cannot distinguish.
   const fatherName = String(
     row.father_name || row.fatherName || row.FATHER_NAME || row["FATHER'S NAME"] || ""
   ).trim();
@@ -130,24 +155,28 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
   if (fatherName || grandfatherName) {
     return "PUBLIC"; // Has family names → Natural Person
   }
-  // Citizenship numbers contain dashes or letters (e.g. "25-01-77-12345" or "KA-12345")
-  if (citizenship && /[-a-zA-Z]/.test(citizenship)) {
+  if (citizenship && /[-a-zA-Z0-9]/.test(citizenship)) {
     return "PUBLIC"; // Has citizenship format → Natural Person
   }
 
-  if (sheetType) {
-    const upper = sheetType.toUpperCase();
-    if (upper.includes("PROMOT")) return "PROMOTER";
-    if (upper.includes("INSTIT")) return "INSTITUTION";
-    if (upper.includes("MUTUAL") || upper.includes("MF")) return "MUTUAL_FUND";
-    if (upper.includes("TAX") && upper.includes("EXEMPT")) return "TAX_EXEMPT";
-    if (upper.includes("LOCAL")) return "LOCAL";
-    if (upper.includes("PUBLIC")) return "PUBLIC";
-  }
-
-  // Never invent a tax-bearing category for an ambiguous row.  It will be
-  // retained in the master data as review-required until an operator confirms it.
   return "UNKNOWN";
+}
+
+function payableClassification(category: string): string {
+  const upper = String(category || "").trim().toUpperCase();
+  if (upper === "INSTITUTION" || upper === "FOREIGN" || upper === "COMPANY_INSTITUTION") return "COMPANY_INSTITUTION";
+  if (upper === "MUTUAL_FUND" || upper === "TAX_EXEMPT" || upper === "TAX_EXEMPTED") return "TAX_EXEMPT";
+  if (upper === "PUBLIC" || upper === "NATURAL_PERSON" || upper === "PUBLIC_LEGAL_PERSON") return "NATURAL_PERSON";
+  if (upper === "PROMOTER" || upper === "LOCAL") return "NATURAL_PERSON";
+  return "UNCLASSIFIED";
+}
+
+function payableSegment(category: string): string | null {
+  const upper = String(category || "").trim().toUpperCase();
+  if (upper === "PROMOTER") return "PROMOTER";
+  if (upper === "LOCAL") return "LOCAL";
+  if (upper === "PUBLIC") return "PUBLIC";
+  return null;
 }
 
 /**
@@ -441,50 +470,206 @@ serve(async (req) => {
         const investorCategory = detectInvestorCategory(row, sheetType);
         const holderType = mapToHolderType(investorCategory);
 
+        function extractRowField(r: any, keys: string[]): string {
+          if (!r || typeof r !== "object") return "";
+          for (const k of keys) {
+            if (r[k] !== undefined && r[k] !== null && String(r[k]).trim() !== "") {
+              return String(r[k]).trim();
+            }
+          }
+          const rowKeys = Object.keys(r);
+          for (const targetKey of keys) {
+            const cleanTarget = targetKey.toUpperCase().replace(/[_\s\-\.\/]/g, "");
+            for (const rk of rowKeys) {
+              const cleanRk = rk.toUpperCase().replace(/[_\s\-\.\/]/g, "");
+              if (
+                cleanRk === cleanTarget &&
+                r[rk] !== undefined &&
+                r[rk] !== null &&
+                String(r[rk]).trim() !== ""
+              ) {
+                return String(r[rk]).trim();
+              }
+            }
+          }
+          return "";
+        }
+
+        const fullName =
+          extractRowField(row, [
+            "full_name",
+            "name",
+            "NAME",
+            "SHAREHOLDER NAME",
+            "HOLDER NAME",
+            "UNIT HOLDER NAME",
+            "DEBENTURE HOLDER",
+            "INVESTOR NAME",
+            "ACCOUNT HOLDER",
+            "APPLICANT_NAME",
+            "ApplicantName",
+          ]) || "Unknown Investor";
+
+        const dob = extractRowField(row, [
+          "date_of_birth",
+          "dob",
+          "DATE OF BIRTH",
+          "DATE_OF_BIRTH",
+          "BIRTH DATE",
+          "BIRTH_DATE",
+          "D.O.B",
+          "D.O.B.",
+          "DOB (BS)",
+          "DOB (AD)",
+          "BIRTHDATE",
+        ]);
+
+        const bankName = extractRowField(row, [
+          "bank_name",
+          "bank",
+          "BANK NAME",
+          "BANK",
+          "NAME OF BANK",
+          "BANK/FINANCIAL INSTITUTION",
+          "BANK DETAILS",
+        ]);
+
+        const bankBranch = extractRowField(row, [
+          "bank_branch",
+          "branch",
+          "BANK BRANCH",
+          "BRANCH NAME",
+          "BRANCH",
+          "BANK_BRANCH",
+        ]);
+
+        const bankAccountNo = extractRowField(row, [
+          "bank_account_no",
+          "bank_account",
+          "account_number",
+          "account_no",
+          "acc_no",
+          "ac_no",
+          "BANK A/C NO.",
+          "BANK A/C NO",
+          "BANK ACCOUNT NO",
+          "BANK ACCOUNT NO.",
+          "ACCOUNT NUMBER",
+          "ACCOUNT NO",
+          "A/C NO",
+          "ACC NO",
+          "BANK ACC NO",
+          "BANK ACC NO.",
+        ]);
+
+        const accountType = extractRowField(row, [
+          "account_type",
+          "ACCOUNT TYPE",
+          "A/C TYPE",
+          "ACC TYPE",
+        ]);
+
+        const panOrCitizenship = extractRowField(row, [
+          "pan_or_citizenship",
+          "pan",
+          "citizenship",
+          "pan_no",
+          "citizenship_no",
+          "PAN",
+          "CITIZENSHIP",
+          "PAN NO",
+          "PAN NO.",
+          "CITIZENSHIP NO",
+          "CITIZENSHIP NO.",
+          "REGISTRATION NO",
+        ]);
+
+        const fatherName = extractRowField(row, [
+          "father_name",
+          "fatherName",
+          "FATHER'S NAME",
+          "FATHERS NAME",
+          "FATHER_NAME",
+          "FATHER NAME",
+          "FATHER",
+        ]);
+
+        const grandfatherName = extractRowField(row, [
+          "grandfather_name",
+          "grandfatherName",
+          "GRANDFATHER'S NAME",
+          "GRANDFATHERS NAME",
+          "GRANDFATHER_NAME",
+          "GRANDFATHER NAME",
+          "GRAND FATHER NAME",
+        ]);
+
+        const gender = extractRowField(row, ["gender", "GENDER", "SEX"]);
+        const occupation = extractRowField(row, ["occupation", "OCCUPATION", "PROFESSION"]);
+        const address = extractRowField(row, [
+          "address",
+          "ADDRESS",
+          "FULL ADDRESS",
+          "PERMANENT ADDRESS",
+          "LOCATION",
+        ]);
+        const province = extractRowField(row, ["province", "PROVINCE", "STATE"]);
+        const district = extractRowField(row, ["district", "DISTRICT"]);
+        const municipality = extractRowField(row, [
+          "municipality",
+          "MUNICIPALITY",
+          "VDC",
+          "MUNICIPALITY / VDC",
+          "LOCAL BODY",
+        ]);
+        const phone = extractRowField(row, [
+          "phone",
+          "mobile",
+          "contact",
+          "PHONE",
+          "MOBILE",
+          "CONTACT",
+          "MOBILE NO",
+          "PHONE NO",
+        ]);
+        const email = extractRowField(row, [
+          "email",
+          "EMAIL",
+          "EMAIL ADDRESS",
+          "E-MAIL",
+          "E-MAIL ADDRESS",
+        ]);
+        const clientId = extractRowField(row, [
+          "client_id",
+          "clientId",
+          "CLIENT ID",
+          "CLIENT NO",
+          "MEMBER ID",
+        ]);
+
         newClients.push({
           id: tempId,
           boid,
           company_id: companyId,
-          full_name: String(
-            row.full_name ||
-              row.name ||
-              row.NAME ||
-              row["SHAREHOLDER NAME"] ||
-              row.APPLICANT_NAME ||
-              row.ApplicantName ||
-              "Unknown Investor"
-          ),
+          full_name: fullName,
           client_code: buildClientCode(row, boid),
-          father_name:
-            row.father_name || row.fatherName || row.FATHER_NAME || row["FATHER'S NAME"] || "",
-          grandfather_name:
-            row.grandfather_name ||
-            row.grandfatherName ||
-            row.GRANDFATHER_NAME ||
-            row["GRANDFATHER'S NAME"] ||
-            "",
-          pan_or_citizenship:
-            row.pan_or_citizenship ||
-            row.citizenship ||
-            row.pan ||
-            row.PAN ||
-            row.CITIZENSHIP ||
-            "",
-          address: row.address || row.ADDRESS || "",
-          district: row.district || row.DISTRICT || "",
-          phone:
-            row.phone || row.contact || row.CONTACT || row.phone_number || "",
-          bank_name:
-            row.bank_name || row.bankName || row.bank || row.BANK || row["BANK NAME"] || "",
-          bank_account_no:
-            row.bank_account_no ||
-            row.bank_account ||
-            row.bankAccount ||
-            row.ACCOUNT_NUMBER ||
-            row.account_number ||
-            row["BANK A/C NO."] ||
-            row["BANK A/C NO"] ||
-            "",
+          client_id: clientId || null,
+          father_name: fatherName || null,
+          grandfather_name: grandfatherName || null,
+          pan_or_citizenship: panOrCitizenship || null,
+          date_of_birth: dob || null,
+          gender: gender || null,
+          occupation: occupation || null,
+          address: address || null,
+          province: province || null,
+          district: district || null,
+          municipality: municipality || null,
+          phone: phone || null,
+          email: email || null,
+          bank_name: bankName || null,
+          bank_branch: bankBranch || null,
+          bank_account_no: bankAccountNo || null,
+          account_type: accountType || null,
           holder_type: holderType,
           payee_classification: payableClassification(investorCategory),
           payee_segment: payableSegment(investorCategory),
@@ -574,46 +759,33 @@ serve(async (req) => {
         continue; // Skip if client creation failed
       }
 
-      // Read raw values from Excel (may be 0 or NaN if formula failed)
+      // Read raw values from Excel — aliases cover CDS, Mutual Fund AMC and Debenture export formats
       const sharesHeld = Number(
-        row.shares_held ||
-          row.kitta ||
-          row.KITTA ||
-          row["TOTA KITTA"] ||
-          row.alloted_quantity ||
-          row.ALLOTED_QUANTITY ||
-          0
+        row.shares_held || row.kitta || row.KITTA || row["TOTA KITTA"] || row["TOTAL KITTA"] ||
+          row.alloted_quantity || row.ALLOTED_QUANTITY ||
+          row["UNITS HELD"] || row["UNIT HELD"] || row["UNITS"] || row["UNIT"] ||
+          row["NO OF UNITS"] || row["NO. OF UNITS"] || row["NUMBER OF UNITS"] ||
+          row["UNIT BALANCE"] || row["BALANCE UNITS"] || row["FREE BALANCE"] ||
+          row["UNIT HOLDING"] || row["CURRENT HOLDING"] || row["HOLDINGS"] ||
+          row["QTY"] || row["QUANTITY"] || row["DEBENTURE UNITS"] || row["FACE VALUE UNITS"] || 0
       );
       const rawGross = Number(
-        row.gross_amount ||
-          row.amount ||
-          row.AMOUNT ||
-          row.payable_amount ||
-          row.cash_dividend ||
-          0
+        row.gross_amount || row.amount || row.AMOUNT || row.payable_amount || row.cash_dividend ||
+          row["INTEREST AMOUNT"] || row["GROSS INTEREST"] || row["GROSS AMOUNT"] ||
+          row["DISTRIBUTION AMOUNT"] || row["INT AMOUNT"] || row["COUPON AMOUNT"] || 0
       );
       const rawTax = Number(
-        row.tax_amount || row.tax || row.TAX || row.bon_tax || row.div_tax || 0
+        row.tax_amount || row.tax || row.TAX || row.bon_tax || row.div_tax ||
+          row["TDS"] || row["TDS AMOUNT"] || row["WITHHOLDING TAX"] || row["TAX DEDUCTED"] || 0
       );
       const rawNet = Number(
-        row.net_payable ||
-          row.net ||
-          row.NET ||
-          row.ROUNDUP ||
-          row.ROUND_UP_DIV ||
-          0
+        row.net_payable || row.net || row.NET || row.ROUNDUP || row.ROUND_UP_DIV ||
+          row["NET INT"] || row["NET AMOUNT"] || row["NET INTEREST"] || row["NET DISTRIBUTION"] || 0
       );
-      const bankName =
-        row.bank_name || row.bankName || row.bank || row.BANK || row["BANK NAME"] || "";
+      const bankName = row.bank_name || row.bankName || row.bank || row.BANK || row["BANK NAME"] || "";
       const bankAccountNo =
-        row.bank_account_no ||
-        row.bank_account ||
-        row.bankAccount ||
-        row.ACCOUNT_NUMBER ||
-        row.account_number ||
-        row["BANK A/C NO."] ||
-        row["BANK A/C NO"] ||
-        "";
+        row.bank_account_no || row.bank_account || row.bankAccount ||
+        row.ACCOUNT_NUMBER || row.account_number || row["BANK A/C NO."] || row["BANK A/C NO"] || "";
       const lotName = row.lot_name || row.lot || row.LOT || "";
       const status = row.status || row.STATUS || "Pending";
 
@@ -666,6 +838,9 @@ serve(async (req) => {
           bank_account_no: bankAccountNo || null,
           lot_name: lotName || null,
           payment_status: status === "SUCCESS" ? "Paid" : "Pending",
+          payee_classification: payableClassification(investorCategory),
+          payee_segment: payableSegment(investorCategory),
+          classification_status: investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
         });
       } else if (targetTable === "interest_payables") {
         // Auto-calculate from shares × rate if gross missing
@@ -692,7 +867,13 @@ serve(async (req) => {
           tds_rate: rowTdsRate,
           due_date: new Date().toISOString().split("T")[0],
           fiscal_year: fiscalYear ?? null,
+          bank_name: bankName || null,
+          bank_account_no: bankAccountNo || null,
+          lot_name: lotName || null,
           payment_status: status === "SUCCESS" ? "Paid" : "Pending",
+          payee_classification: payableClassification(investorCategory),
+          payee_segment: payableSegment(investorCategory),
+          classification_status: investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
         });
       }
     }

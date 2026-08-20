@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState, useRef, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { useMemo, useState, useRef, useEffect, useCallback } from "react";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { supabase, fetchAllRows } from "@/lib/services/database";
 import { useAuth } from "@/hooks/use-auth";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -18,11 +18,12 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Pencil, Plus, Trash2, Download, Upload, CheckCircle2, Calculator, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
+import { Pencil, Plus, Trash2, Download, Upload, CheckCircle2, Calculator, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FileSpreadsheet, FileText, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import { SettingsService } from "@/lib/services/settings.service";
 import { exportToExcel, importFromExcel } from "@/lib/xlsx-utils";
 import { InterestCalculator, type InterestResult } from "@/lib/interest-calculator";
+import { DebentureSummaryReportService } from "@/lib/services/debenture-summary-report.service";
 
 export const Route = createFileRoute("/_authenticated/interest")({
   component: InterestPage,
@@ -45,7 +46,7 @@ interface Payable {
   fiscal_year: string | null;
   upload_id?: string | null;
   created_at: string;
-  client?: { id: string; client_code: string; full_name: string; boid: string | null; father_name: string | null; grandfather_name: string | null; pan_or_citizenship: string | null; address: string | null; district: string | null; phone: string | null; bank_name: string | null; bank_account_no: string | null } | null;
+  client?: { id: string; client_code: string; full_name: string; boid: string | null; father_name: string | null; grandfather_name: string | null; pan_no?: string | null; citizenship_no?: string | null; pan_or_citizenship: string | null; nid_number?: string | null; address: string | null; district: string | null; phone: string | null; bank_name: string | null; bank_account_no: string | null } | null;
   company?: { id: string; company_code: string; company_name: string } | null;
 }
 
@@ -59,6 +60,8 @@ const emptyForm = {
   client_father_name: "",
   client_grandfather_name: "",
   client_pan: "",
+  client_citizenship: "",
+  client_nid: "",
   client_address: "",
   client_district: "",
   client_phone: "",
@@ -163,10 +166,22 @@ function InterestPage() {
   const { data: clients = [] } = useQuery({
     queryKey: ["clients-lookup"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("clients").select("id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no").order("full_name").limit(100000);
+      const { data, error } = await supabase
+        .from("clients")
+        .select("id, client_code, full_name, boid, bank_name, bank_account_no")
+        .order("full_name")
+        .limit(5000);
       if (error) throw error;
-      return data as { id: string; client_code: string; full_name: string; boid: string | null; father_name: string | null; grandfather_name: string | null; pan_or_citizenship: string | null; address: string | null; district: string | null; phone: string | null; bank_name: string | null; bank_account_no: string | null }[];
+      return (data || []) as {
+        id: string;
+        client_code: string;
+        full_name: string;
+        boid: string | null;
+        bank_name: string | null;
+        bank_account_no: string | null;
+      }[];
     },
+    staleTime: 5 * 60 * 1000,
   });
 
   const companyMap = useMemo(() => Object.fromEntries(companies.map((c) => [c.id, c])), [companies]);
@@ -175,66 +190,134 @@ function InterestPage() {
   const clientByCode = useMemo(() => Object.fromEntries(clients.map((c) => [c.client_code.toLowerCase(), c.id])), [clients]);
   const clientByBoid = useMemo(() => Object.fromEntries(clients.filter(c => c.boid).map((c) => [c.boid!.toLowerCase(), c.id])), [clients]);
 
-  const { data = [], isLoading } = useQuery({
-    queryKey: ["interest_payables"],
+  // Debounced search — wait 400ms before firing server query
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 400);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Reset to page 1 whenever filters change
+  useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, companyFilter, fyFilter]);
+
+  // Fetch fiscal years for filter dropdown
+  const { data: fiscalYears = [] } = useQuery({
+    queryKey: ["interest_fiscal_years"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("interest_payables")
-        .select("*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no), company:companies(id, company_code, company_name)")
-        .order("due_date", { ascending: false, nullsFirst: false });
-      if (error) throw error;
-      return data as Payable[];
+      const { data } = await supabase.from("interest_payables").select("fiscal_year").order("fiscal_year", { ascending: false });
+      return Array.from(new Set((data || []).map(r => r.fiscal_year).filter(Boolean))) as string[];
     },
+    staleTime: 5 * 60 * 1000,
   });
 
-  const fiscalYears = useMemo(() => {
-    const set = new Set<string>();
-    data.forEach((p) => { if (p.fiscal_year) set.add(p.fiscal_year); });
-    return Array.from(set).sort().reverse();
-  }, [data]);
-
-  const filtered = useMemo(() => {
-    const q = search.toLowerCase();
-    return data.filter((p) => {
-      if (statusFilter !== "all" && p.payment_status !== statusFilter) return false;
-      if (companyFilter !== "all" && p.company_id !== companyFilter) return false;
-      if (fyFilter !== "all" && p.fiscal_year !== fyFilter) return false;
-      if (!q) return true;
-      const c = p.company ?? null;
-      const cl = p.client ?? null;
-      return (
-        (c?.company_name.toLowerCase().includes(q) ?? false) ||
-        (c?.company_code.toLowerCase().includes(q) ?? false) ||
-        (cl?.full_name.toLowerCase().includes(q) ?? false) ||
-        (cl?.client_code.toLowerCase().includes(q) ?? false) ||
-        (cl?.boid?.toLowerCase().includes(q) ?? false) ||
-        (cl?.bank_name?.toLowerCase().includes(q) ?? false) ||
-        (cl?.bank_account_no?.toLowerCase().includes(q) ?? false) ||
-        (cl?.pan_or_citizenship?.toLowerCase().includes(q) ?? false) ||
-        (p.fiscal_year ?? "").toLowerCase().includes(q) ||
-        (p.instrument_ref ?? "").toLowerCase().includes(q) ||
-        (p.payment_reference ?? "").toLowerCase().includes(q)
+  // Server-side totals for KPI cards
+  const { data: totals = { count: 0, paidCount: 0, pendingCount: 0, gross: 0, tax: 0, net: 0 } } = useQuery({
+    queryKey: ["interest_payables_totals", statusFilter, companyFilter, fyFilter],
+    queryFn: async () => {
+      let q = supabase.from("interest_payables").select("payment_status, gross_interest, tax_amount, net_payable");
+      if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
+      if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
+      if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+      const { data } = await q;
+      return (data || []).reduce(
+        (a, p) => ({
+          count: a.count + 1,
+          paidCount: a.paidCount + (p.payment_status === "Paid" ? 1 : 0),
+          pendingCount: a.pendingCount + (p.payment_status === "Pending" ? 1 : 0),
+          gross: a.gross + Number(p.gross_interest ?? 0),
+          tax: a.tax + Number(p.tax_amount ?? 0),
+          net: a.net + Number(p.net_payable ?? 0),
+        }),
+        { count: 0, paidCount: 0, pendingCount: 0, gross: 0, tax: 0, net: 0 }
       );
-    });
-  }, [data, search, statusFilter, companyFilter, fyFilter]);
+    },
+    staleTime: 60_000,
+  });
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  // Main server-side paginated query
+  const { data: pageResult = { rows: [], count: 0 }, isLoading } = useQuery({
+    queryKey: ["interest_payables", page, pageSize, debouncedSearch, statusFilter, companyFilter, fyFilter],
+    queryFn: async () => {
+      let q = supabase
+        .from("interest_payables")
+        .select("*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no), company:companies(id, company_code, company_name)", { count: "exact" })
+        .order("due_date", { ascending: false, nullsFirst: false })
+        .range((page - 1) * pageSize, page * pageSize - 1);
+
+      if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
+      if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
+      if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+
+      if (debouncedSearch) {
+        q = q.or(
+          `instrument_ref.ilike.%${debouncedSearch}%,payment_reference.ilike.%${debouncedSearch}%,fiscal_year.ilike.%${debouncedSearch}%`
+        );
+      }
+
+      const { data, count, error } = await q;
+      if (error) throw error;
+      return { rows: (data || []) as Payable[], count: count || 0 };
+    },
+    placeholderData: keepPreviousData,
+  });
+
+  const data = pageResult.rows;
+  const totalPages = Math.max(1, Math.ceil(pageResult.count / pageSize));
   const safePage = Math.min(page, totalPages);
-  const pageItems = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const pageItems = data;
 
-  const totals = useMemo(() => {
-    return filtered.reduce(
-      (a, p) => ({
-        count: a.count + 1,
-        paidCount: a.paidCount + (p.payment_status === 'Paid' ? 1 : 0),
-        pendingCount: a.pendingCount + (p.payment_status === 'Pending' ? 1 : 0),
-        gross: a.gross + Number(p.gross_interest ?? 0),
-        tax: a.tax + Number(p.tax_amount ?? 0),
-        net: a.net + Number(p.net_payable ?? 0),
-      }),
-      { count: 0, paidCount: 0, pendingCount: 0, gross: 0, tax: 0, net: 0 },
-    );
-  }, [filtered]);
+  // Helper to fetch all filtered rows for export/summary
+  const fetchAllFiltered = useCallback(async (): Promise<Payable[]> => {
+    return fetchAllRows<Payable>((from, to) => {
+      let q = supabase
+        .from("interest_payables")
+        .select("*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no), company:companies(id, company_code, company_name)")
+        .order("due_date", { ascending: false, nullsFirst: false })
+        .range(from, to);
+      if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
+      if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
+      if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+      return q;
+    });
+  }, [statusFilter, companyFilter, fyFilter]);
+
+  const [summaryReportOpen, setSummaryReportOpen] = useState(true);
+  const [summaryCouponRate, setSummaryCouponRate] = useState<string>("");
+  const [summaryFaceValue, setSummaryFaceValue] = useState<string>("1000");
+  const [summaryDays, setSummaryDays] = useState<string>("");
+
+  const selectedCompany = useMemo(() => companies.find((c) => c.id === companyFilter), [companies, companyFilter]);
+
+  // Automatically fetch summary data with React Query
+  const { data: summaryAllRows = [], isLoading: summaryLoading, refetch: loadSummary } = useQuery({
+    queryKey: ["interest_summary_rows", companyFilter, fyFilter],
+    queryFn: async () => {
+      return fetchAllRows<Payable>((from, to) => {
+        let q = supabase
+          .from("interest_payables")
+          .select("id, client_id, company_id, instrument_ref, gross_interest, tax_amount, net_payable, due_date, payment_status, fiscal_year, payee_classification, payee_segment, client:clients(id, full_name, holder_type, payee_classification, payee_segment)")
+          .range(from, to);
+        if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
+        if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+        return q;
+      });
+    },
+    staleTime: 60_000,
+  });
+
+  const debentureSummaryReport = useMemo(
+    () =>
+      DebentureSummaryReportService.generateReportFromPayables(
+        summaryAllRows,
+        selectedCompany?.company_name || (companyFilter === "all" ? "All Debentures" : "Selected Company"),
+        selectedCompany?.company_code || "",
+        fyFilter !== "all" ? fyFilter : "",
+        summaryCouponRate ? Number(summaryCouponRate) : undefined,
+        summaryFaceValue ? Number(summaryFaceValue) : 1000,
+        summaryDays ? Number(summaryDays) : undefined,
+      ),
+    [summaryAllRows, selectedCompany, companyFilter, fyFilter, summaryCouponRate, summaryFaceValue, summaryDays],
+  );
 
   const upsert = useMutation({
     mutationFn: async () => {
@@ -262,7 +345,14 @@ function InterestPage() {
         if (form.client_full_name !== undefined) clientPayload.full_name = form.client_full_name || null;
         if (form.client_father_name !== undefined) clientPayload.father_name = form.client_father_name || null;
         if (form.client_grandfather_name !== undefined) clientPayload.grandfather_name = form.client_grandfather_name || null;
-        if (form.client_pan !== undefined) clientPayload.pan_or_citizenship = form.client_pan || null;
+        if (form.client_pan !== undefined) {
+          clientPayload.pan_no = form.client_pan || null;
+        }
+        if (form.client_citizenship !== undefined) {
+          clientPayload.citizenship_no = form.client_citizenship || null;
+        }
+        clientPayload.pan_or_citizenship = form.client_pan || form.client_citizenship || null;
+        if (form.client_nid !== undefined) clientPayload.nid_number = form.client_nid || null;
         if (form.client_address !== undefined) clientPayload.address = form.client_address || null;
         if (form.client_district !== undefined) clientPayload.district = form.client_district || null;
         if (form.client_phone !== undefined) clientPayload.phone = form.client_phone || null;
@@ -282,9 +372,10 @@ function InterestPage() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["interest_payables"] });
-      qc.invalidateQueries({ queryKey: ["clients-lookup"] });
-      qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
-      toast.success(editing ? "Payable updated" : "Payable created");
+      qc.invalidateQueries({ queryKey: ["interest_payables_totals"] });
+      qc.invalidateQueries({ queryKey: ["interest_summary_rows"] });
+      qc.invalidateQueries({ queryKey: ["clients"] });
+      toast.success(editing ? "Payable & client updated" : "Payable created");
       setOpen(false); setEditing(null); setForm(emptyForm);
     },
     onError: (e: Error) => toast.error(e.message),
@@ -334,7 +425,9 @@ function InterestPage() {
       client_full_name: cl?.full_name ?? "",
       client_father_name: cl?.father_name ?? "",
       client_grandfather_name: cl?.grandfather_name ?? "",
-      client_pan: cl?.pan_or_citizenship ?? "",
+      client_pan: cl?.pan_no ?? (cl?.pan_or_citizenship && String(cl.pan_or_citizenship).length === 9 ? cl.pan_or_citizenship : ""),
+      client_citizenship: cl?.citizenship_no ?? (cl?.pan_or_citizenship && String(cl.pan_or_citizenship).length !== 9 ? cl.pan_or_citizenship : ""),
+      client_nid: cl?.nid_number ?? "",
       client_address: cl?.address ?? "",
       client_district: cl?.district ?? "",
       client_phone: cl?.phone ?? "",
@@ -354,9 +447,10 @@ function InterestPage() {
     setOpen(true);
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
+    const rows = await fetchAllFiltered();
     exportToExcel(
-      filtered.map((p) => {
+      rows.map((p) => {
         const cl = p.client ?? null;
         const c = p.company ?? null;
         return {
@@ -481,8 +575,16 @@ function InterestPage() {
                             <Input value={form.client_grandfather_name} onChange={(e) => setForm({ ...form, client_grandfather_name: e.target.value })} />
                           </div>
                           <div className="space-y-1.5">
-                            <Label>PAN/Citizenship</Label>
-                            <Input value={form.client_pan} onChange={(e) => setForm({ ...form, client_pan: e.target.value })} />
+                            <Label>PAN Number</Label>
+                            <Input value={form.client_pan} onChange={(e) => setForm({ ...form, client_pan: e.target.value })} placeholder="9-digit PAN" className="font-mono" />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>Citizenship Number</Label>
+                            <Input value={form.client_citizenship} onChange={(e) => setForm({ ...form, client_citizenship: e.target.value })} placeholder="Citizenship No." />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>NID Number (National ID)</Label>
+                            <Input value={form.client_nid} onChange={(e) => setForm({ ...form, client_nid: e.target.value })} placeholder="10-digit NID" className="font-mono" />
                           </div>
                           <div className="space-y-1.5">
                             <Label>Address</Label>
@@ -702,11 +804,189 @@ function InterestPage() {
       )}
 
       <div className="mb-4 grid gap-3 grid-cols-2 md:grid-cols-4">
-        <Card><CardContent className="p-4"><div className="text-xs text-muted-foreground">Total Records</div><div className="text-xl font-semibold">{totals.count.toLocaleString()}</div><div className="text-[11px] text-muted-foreground mt-0.5">{totals.paidCount} Paid · {totals.pendingCount} Pending</div></CardContent></Card>
+        <Card><CardContent className="p-4"><div className="text-xs text-muted-foreground">Total Records</div><div className="text-xl font-semibold">{(totals.count ?? 0).toLocaleString()}</div><div className="text-[11px] text-muted-foreground mt-0.5">{totals.paidCount ?? 0} Paid · {totals.pendingCount ?? 0} Pending</div></CardContent></Card>
         <Card><CardContent className="p-4"><div className="text-xs text-muted-foreground">Gross Interest</div><div className="text-xl font-semibold">NPR {fmt(totals.gross)}</div></CardContent></Card>
         <Card><CardContent className="p-4"><div className="text-xs text-muted-foreground">TDS Tax</div><div className="text-xl font-semibold text-destructive">NPR {fmt(totals.tax)}</div></CardContent></Card>
         <Card><CardContent className="p-4"><div className="text-xs text-muted-foreground">Net Interest Payable</div><div className="text-xl font-semibold text-emerald-600">NPR {fmt(totals.net)}</div></CardContent></Card>
       </div>
+
+      {/* ─── Debenture Interest Distribution Summary Card (Pumori / CDS Format) ─── */}
+      <Card className="mb-4 border-primary/20 shadow-sm">
+        <CardHeader className="py-3 px-4 bg-muted/40 border-b flex flex-row items-center justify-between">
+          <div className="space-y-0.5">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <BarChart3 className="h-4 w-4 text-primary" />
+              Debenture Interest Distribution Summary (Pumori / CDS Format)
+              <Badge variant="outline" className="font-mono text-[11px] ml-1">
+                {debentureSummaryReport?.companyCode || "All"} {debentureSummaryReport?.fiscalYear ? `— FY ${debentureSummaryReport.fiscalYear}` : ""}
+              </Badge>
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Holder-wise debenture capital & coupon breakdown (Public 6% TDS, Institution 15% TDS, Tax Exempted 0% TDS)
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={companyFilter} onValueChange={(v) => { setCompanyFilter(v); setPage(1); }}>
+              <SelectTrigger className="h-8 w-44 text-xs bg-background">
+                <SelectValue placeholder="Company: All" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Debentures</SelectItem>
+                {companies.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>{c.company_code} — {c.company_name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="flex items-center gap-1 bg-background border rounded px-2 py-0.5 h-8">
+              <span className="text-[11px] text-muted-foreground whitespace-nowrap">Coupon %:</span>
+              <input
+                type="number"
+                step="0.01"
+                placeholder={String(debentureSummaryReport?.couponRate || 7)}
+                value={summaryCouponRate}
+                onChange={(e) => setSummaryCouponRate(e.target.value)}
+                className="w-12 text-xs font-mono bg-transparent outline-none text-right font-medium text-foreground"
+                title="Annual Coupon Rate % (e.g. 7)"
+              />
+            </div>
+            <div className="flex items-center gap-1 bg-background border rounded px-2 py-0.5 h-8">
+              <span className="text-[11px] text-muted-foreground whitespace-nowrap">Face Value:</span>
+              <input
+                type="number"
+                step="100"
+                placeholder="1000"
+                value={summaryFaceValue}
+                onChange={(e) => setSummaryFaceValue(e.target.value)}
+                className="w-14 text-xs font-mono bg-transparent outline-none text-right font-medium text-foreground"
+                title="Debenture Face Value (Rs. 1000)"
+              />
+            </div>
+            <div className="flex items-center gap-1 bg-background border rounded px-2 py-0.5 h-8">
+              <span className="text-[11px] text-muted-foreground whitespace-nowrap">Days:</span>
+              <input
+                type="number"
+                placeholder="365"
+                value={summaryDays}
+                onChange={(e) => setSummaryDays(e.target.value)}
+                className="w-12 text-xs font-mono bg-transparent outline-none text-right font-medium text-foreground"
+                title="Coupon Period Days (e.g. 74, 182, 365)"
+              />
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={loadSummary}
+              disabled={summaryLoading}
+            >
+              {summaryLoading ? "Loading…" : debentureSummaryReport ? "Refresh" : "Load Summary"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => debentureSummaryReport && DebentureSummaryReportService.exportToExcel(debentureSummaryReport)}
+              disabled={!debentureSummaryReport?.rows.length}
+            >
+              <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
+              Export Excel
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => debentureSummaryReport && DebentureSummaryReportService.exportToPdf(debentureSummaryReport)}
+              disabled={!debentureSummaryReport?.rows.length}
+            >
+              <FileText className="mr-1.5 h-3.5 w-3.5 text-rose-600" />
+              Export PDF
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setSummaryReportOpen((v) => !v)}
+              title={summaryReportOpen ? "Collapse Summary" : "Expand Summary"}
+            >
+              {summaryReportOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </Button>
+          </div>
+        </CardHeader>
+        {summaryReportOpen && (
+          <CardContent className="p-0 overflow-x-auto">
+            {summaryLoading ? (
+              <div className="py-12 text-center text-muted-foreground text-sm flex flex-col items-center justify-center gap-2">
+                <BarChart3 className="h-8 w-8 animate-pulse text-primary opacity-60" />
+                <p className="font-medium">Calculating Debenture Interest Distribution Summary…</p>
+                <p className="text-xs text-muted-foreground">Aggregating coupon rates, days, and tax categories</p>
+              </div>
+            ) : (
+            <table className="w-full text-xs text-left border-collapse">
+              <thead>
+                <tr className="bg-muted/80 text-foreground font-semibold border-b border-border divide-x border-border">
+                  <th className="py-2.5 px-3 uppercase text-[11px]">NAME</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">KITTA</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">AMOUNT</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">INT. @ {debentureSummaryReport.couponRate}%</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">INT. PER DAY</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">INTEREST PUMORI</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">TAX</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200">
+                    NET INTEREST PAYABLE
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border font-mono">
+                {debentureSummaryReport.rows.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-8 text-center text-muted-foreground font-sans text-xs">
+                      No debenture interest payables found for the selected filter.
+                    </td>
+                  </tr>
+                ) : (
+                  debentureSummaryReport.rows.map((row) => (
+                    <tr key={row.name} className="hover:bg-muted/30 transition-colors divide-x divide-border">
+                      <td className="py-2 px-3 font-semibold font-sans">{row.name}</td>
+                      <td className="py-2 px-3 text-right">{fmt(row.kitta)}</td>
+                      <td className="py-2 px-3 text-right">{fmt(row.principalAmount)}</td>
+                      <td className="py-2 px-3 text-right">{fmt(row.annualInterest)}</td>
+                      <td className="py-2 px-3 text-right">{fmt(row.interestPerDay)}</td>
+                      <td className="py-2 px-3 text-right font-medium">{fmt(row.grossInterest)}</td>
+                      <td className="py-2 px-3 text-right">
+                        {row.taxAmount > 0 ? (
+                          <span>{fmt(row.taxAmount)} <span className="text-[10px] text-muted-foreground font-sans">({row.taxRatePercent}%)</span></span>
+                        ) : (
+                          <span className="text-muted-foreground font-sans">—</span>
+                        )}
+                      </td>
+                      <td className="py-2 px-3 text-right font-bold bg-emerald-50/70 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-200">
+                        {fmt(row.netInterestPayable)}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+              {debentureSummaryReport.rows.length > 0 && (
+                <tfoot>
+                  <tr className="bg-muted/90 font-bold border-t-2 border-b-2 border-foreground/30 divide-x divide-border font-mono">
+                    <td className="py-2.5 px-3 font-sans uppercase">TOTAL</td>
+                    <td className="py-2.5 px-3 text-right">{fmt(debentureSummaryReport.total.kitta)}</td>
+                    <td className="py-2.5 px-3 text-right">{fmt(debentureSummaryReport.total.principalAmount)}</td>
+                    <td className="py-2.5 px-3 text-right">{fmt(debentureSummaryReport.total.annualInterest)}</td>
+                    <td className="py-2.5 px-3 text-right">{fmt(debentureSummaryReport.total.interestPerDay)}</td>
+                    <td className="py-2.5 px-3 text-right">{fmt(debentureSummaryReport.total.grossInterest)}</td>
+                    <td className="py-2.5 px-3 text-right">{fmt(debentureSummaryReport.total.taxAmount)}</td>
+                    <td className="py-2.5 px-3 text-right bg-emerald-100 text-emerald-950 dark:bg-emerald-900/60 dark:text-emerald-200">
+                      {fmt(debentureSummaryReport.total.netInterestPayable)}
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+            )}
+          </CardContent>
+        )}
+      </Card>
 
       <Card>
         <CardContent className="p-4">
@@ -802,10 +1082,10 @@ function InterestPage() {
                 })}
               </TableBody>
             </Table>
-            {filtered.length > pageSize && (
+            {pageResult.count > 0 && (
               <div className="flex items-center justify-between border-t px-4 py-3">
                 <div className="text-sm text-muted-foreground">
-                  Showing {(safePage - 1) * pageSize + 1} to {Math.min(safePage * pageSize, filtered.length)} of {filtered.length} records
+                  Showing {(safePage - 1) * pageSize + 1} to {Math.min(safePage * pageSize, pageResult.count)} of {pageResult.count} records
                 </div>
                 <div className="flex items-center gap-2">
                   <select

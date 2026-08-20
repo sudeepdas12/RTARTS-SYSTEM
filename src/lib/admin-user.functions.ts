@@ -12,12 +12,27 @@ import type { AppRole } from "@/lib/rbac-service";
  */
 
 async function assertAdmin(context: { supabase: any; userId: string }) {
-  const { data, error } = await context.supabase.rpc("has_role", {
-    _user_id: context.userId,
-    _role: "admin",
-  });
+  try {
+    const { data, error } = await context.supabase.rpc("has_role", {
+      _user_id: context.userId,
+      _role: "admin",
+    });
 
-  if (error || data !== true) {
+    if (!error && data === true) {
+      return;
+    }
+  } catch {
+    // Fall back to direct query
+  }
+
+  const { data: roleRow } = await context.supabase
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", context.userId)
+    .eq("role", "admin")
+    .maybeSingle();
+
+  if (!roleRow) {
     throw new Error("You need administrator privileges to manage users.");
   }
 }

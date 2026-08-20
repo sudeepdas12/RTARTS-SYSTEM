@@ -1,4 +1,4 @@
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, fetchAllRows } from './database';
 import { getInvestorDemographicGroup } from './investor-category';
 
 export interface ReportFilters {
@@ -161,18 +161,19 @@ export const ReportService = {
   // 1. Dividend Register
   async getDividendRegister(filters: ReportFilters = {}): Promise<DividendRegisterRow[]> {
     try {
-      let query = supabase
-        .from('dividend_payables')
-        .select('id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, payment_status, payment_date, payment_reference, fiscal_year, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)')
-        .order('created_at', { ascending: false });
+      const data = await fetchAllRows<any>((from, to) => {
+        let query = supabase
+          .from('dividend_payables')
+          .select('id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, payment_status, payment_date, payment_reference, fiscal_year, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)')
+          .order('created_at', { ascending: false })
+          .range(from, to);
 
-      if (filters.companyId && filters.companyId !== 'all') query = query.eq('company_id', filters.companyId);
-      if (filters.fiscalYear && filters.fiscalYear !== 'all') query = query.eq('fiscal_year', filters.fiscalYear);
-      if (filters.status && filters.status !== 'all') query = (query as any).eq('payment_status', filters.status as any);
-      query = applyDateFilter(query, 'payment_date', filters.startDate, filters.endDate);
-
-      const { data, error } = await query;
-      if (error) throw error;
+        if (filters.companyId && filters.companyId !== 'all') query = query.eq('company_id', filters.companyId);
+        if (filters.fiscalYear && filters.fiscalYear !== 'all') query = query.eq('fiscal_year', filters.fiscalYear);
+        if (filters.status && filters.status !== 'all') query = (query as any).eq('payment_status', filters.status as any);
+        query = applyDateFilter(query, 'payment_date', filters.startDate, filters.endDate);
+        return query;
+      });
 
       return (data || []).map((row: any) => ({
         id: row.id,
@@ -202,18 +203,19 @@ export const ReportService = {
   // 1b. Mutual Fund Register
   async getMutualFundRegister(filters: ReportFilters = {}): Promise<DividendRegisterRow[]> {
     try {
-      let query = (supabase as any)
-        .from('mutual_fund_payables')
-        .select('id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, payment_status, payment_date, payment_reference, fiscal_year, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)')
-        .order('created_at', { ascending: false });
+      const data = await fetchAllRows<any>((from, to) => {
+        let query = (supabase as any)
+          .from('mutual_fund_payables')
+          .select('id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, payment_status, payment_date, payment_reference, fiscal_year, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)')
+          .order('created_at', { ascending: false })
+          .range(from, to);
 
-      if (filters.companyId && filters.companyId !== 'all') query = query.eq('company_id', filters.companyId);
-      if (filters.fiscalYear && filters.fiscalYear !== 'all') query = query.eq('fiscal_year', filters.fiscalYear);
-      if (filters.status && filters.status !== 'all') query = (query as any).eq('payment_status', filters.status as any);
-      query = applyDateFilter(query, 'payment_date', filters.startDate, filters.endDate);
-
-      const { data, error } = await query;
-      if (error) throw error;
+        if (filters.companyId && filters.companyId !== 'all') query = query.eq('company_id', filters.companyId);
+        if (filters.fiscalYear && filters.fiscalYear !== 'all') query = query.eq('fiscal_year', filters.fiscalYear);
+        if (filters.status && filters.status !== 'all') query = (query as any).eq('payment_status', filters.status as any);
+        query = applyDateFilter(query, 'payment_date', filters.startDate, filters.endDate);
+        return query;
+      });
 
       return (data || []).map((row: any) => ({
         id: row.id,
@@ -243,18 +245,19 @@ export const ReportService = {
   // 2. Interest Register
   async getInterestRegister(filters: ReportFilters = {}): Promise<InterestRegisterRow[]> {
     try {
-      let query = supabase
-        .from('interest_payables')
-        .select('id, instrument_ref, gross_interest, tax_amount, net_payable, payment_status, due_date, payment_date, payment_reference, fiscal_year, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)')
-        .order('due_date', { ascending: false });
+      const data = await fetchAllRows<any>((from, to) => {
+        let query = supabase
+          .from('interest_payables')
+          .select('id, instrument_ref, gross_interest, tax_amount, net_payable, payment_status, due_date, payment_date, payment_reference, fiscal_year, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)')
+          .order('due_date', { ascending: false })
+          .range(from, to);
 
-      if (filters.companyId && filters.companyId !== 'all') query = query.eq('company_id', filters.companyId);
-      if (filters.fiscalYear && filters.fiscalYear !== 'all') query = query.eq('fiscal_year', filters.fiscalYear);
-      if (filters.status && filters.status !== 'all') query = (query as any).eq('payment_status', filters.status as any);
-      query = applyDateFilter(query, 'due_date', filters.startDate, filters.endDate);
-
-      const { data, error } = await query;
-      if (error) throw error;
+        if (filters.companyId && filters.companyId !== 'all') query = query.eq('company_id', filters.companyId);
+        if (filters.fiscalYear && filters.fiscalYear !== 'all') query = query.eq('fiscal_year', filters.fiscalYear);
+        if (filters.status && filters.status !== 'all') query = (query as any).eq('payment_status', filters.status as any);
+        query = applyDateFilter(query, 'due_date', filters.startDate, filters.endDate);
+        return query;
+      });
 
       return (data || []).map((row: any) => ({
         id: row.id,
@@ -281,32 +284,45 @@ export const ReportService = {
   },
 
   // 3. TDS / Tax Register (combined dividend + interest)
+  // 3. TDS / Tax Register (combined dividend + interest + mutual fund)
   async getTaxRegister(filters: ReportFilters = {}): Promise<TaxRegisterRow[]> {
     try {
-      const [divRes, intRes, mutualFundRes] = await Promise.all([
-        (() => {
-          let q = supabase.from('dividend_payables').select('id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)').order('created_at', { ascending: false });
+      const [divData, intData, mutualFundData] = await Promise.all([
+        fetchAllRows<any>((from, to) => {
+          let q = supabase
+            .from('dividend_payables')
+            .select('id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)')
+            .order('created_at', { ascending: false })
+            .range(from, to);
           if (filters.companyId && filters.companyId !== 'all') q = q.eq('company_id', filters.companyId);
           if (filters.fiscalYear && filters.fiscalYear !== 'all') q = q.eq('fiscal_year', filters.fiscalYear);
           return applyDateFilter(q, 'payment_date', filters.startDate, filters.endDate);
-        })(),
-        (() => {
-          let q = supabase.from('interest_payables').select('id, gross_interest, tax_amount, net_payable, fiscal_year, payment_date, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)').order('created_at', { ascending: false });
+        }),
+        fetchAllRows<any>((from, to) => {
+          let q = supabase
+            .from('interest_payables')
+            .select('id, gross_interest, tax_amount, net_payable, fiscal_year, payment_date, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)')
+            .order('created_at', { ascending: false })
+            .range(from, to);
           if (filters.companyId && filters.companyId !== 'all') q = q.eq('company_id', filters.companyId);
           if (filters.fiscalYear && filters.fiscalYear !== 'all') q = q.eq('fiscal_year', filters.fiscalYear);
           return applyDateFilter(q, 'payment_date', filters.startDate, filters.endDate);
-        })(),
-        (() => {
-          let q = (supabase as any).from('mutual_fund_payables').select('id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)').order('created_at', { ascending: false });
+        }),
+        fetchAllRows<any>((from, to) => {
+          let q = (supabase as any)
+            .from('mutual_fund_payables')
+            .select('id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)')
+            .order('created_at', { ascending: false })
+            .range(from, to);
           if (filters.companyId && filters.companyId !== 'all') q = q.eq('company_id', filters.companyId);
           if (filters.fiscalYear && filters.fiscalYear !== 'all') q = q.eq('fiscal_year', filters.fiscalYear);
           return applyDateFilter(q, 'payment_date', filters.startDate, filters.endDate);
-        })(),
+        }),
       ]);
 
       const rows: TaxRegisterRow[] = [];
 
-      (divRes.data || []).forEach((row: any) => {
+      (divData || []).forEach((row: any) => {
         const gross = nr(row.gross_dividend);
         const tax = nr(row.tax_amount);
         rows.push({
@@ -325,7 +341,7 @@ export const ReportService = {
         });
       });
 
-      (intRes.data || []).forEach((row: any) => {
+      (intData || []).forEach((row: any) => {
         const gross = nr(row.gross_interest);
         const tax = nr(row.tax_amount);
         rows.push({
@@ -344,14 +360,22 @@ export const ReportService = {
         });
       });
 
-      (mutualFundRes.data || []).forEach((row: any) => {
+      (mutualFundData || []).forEach((row: any) => {
         const gross = nr(row.gross_dividend);
         const tax = nr(row.tax_amount);
         rows.push({
-          id: row.id, boid: row.client?.boid ?? null, full_name: row.client?.full_name ?? 'Unknown',
-          pan_or_citizenship: row.client?.pan_or_citizenship ?? null, company_name: row.company?.company_name ?? 'Unknown',
-          payable_type: 'Mutual Fund', gross_amount: gross, tds_rate: gross > 0 ? Math.round((tax / gross) * 100 * 100) / 100 : 0,
-          tax_amount: tax, net_payable: nr(row.net_payable), fiscal_year: row.fiscal_year ?? null, payment_date: row.payment_date ?? null,
+          id: row.id,
+          boid: row.client?.boid ?? null,
+          full_name: row.client?.full_name ?? 'Unknown',
+          pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
+          company_name: row.company?.company_name ?? 'Unknown',
+          payable_type: 'Mutual Fund',
+          gross_amount: gross,
+          tds_rate: gross > 0 ? Math.round((tax / gross) * 100 * 100) / 100 : 0,
+          tax_amount: tax,
+          net_payable: nr(row.net_payable),
+          fiscal_year: row.fiscal_year ?? null,
+          payment_date: row.payment_date ?? null,
         });
       });
 
@@ -365,29 +389,44 @@ export const ReportService = {
   // 4. Pending Payments
   async getPendingPayments(filters: ReportFilters = {}): Promise<PendingPaymentRow[]> {
     try {
-      const [divRes, intRes, mutualFundRes] = await Promise.all([
-        (() => {
-          let q = supabase.from('dividend_payables').select('id, gross_dividend, tax_amount, net_payable, fiscal_year, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)').eq('payment_status', 'Pending').order('created_at', { ascending: false });
+      const [divData, mfData, intData] = await Promise.all([
+        fetchAllRows<any>((from, to) => {
+          let q = supabase
+            .from('dividend_payables')
+            .select('id, gross_dividend, tax_amount, net_payable, fiscal_year, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)')
+            .eq('payment_status', 'Pending')
+            .order('created_at', { ascending: false })
+            .range(from, to);
           if (filters.companyId && filters.companyId !== 'all') q = q.eq('company_id', filters.companyId);
           if (filters.fiscalYear && filters.fiscalYear !== 'all') q = q.eq('fiscal_year', filters.fiscalYear);
           return q;
-        })(),
-        (() => {
-          let q = (supabase as any).from('mutual_fund_payables').select('id, gross_dividend, tax_amount, net_payable, fiscal_year, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)').eq('payment_status', 'Pending').order('created_at', { ascending: false });
+        }),
+        fetchAllRows<any>((from, to) => {
+          let q = (supabase as any)
+            .from('mutual_fund_payables')
+            .select('id, gross_dividend, tax_amount, net_payable, fiscal_year, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)')
+            .eq('payment_status', 'Pending')
+            .order('created_at', { ascending: false })
+            .range(from, to);
           if (filters.companyId && filters.companyId !== 'all') q = q.eq('company_id', filters.companyId);
           if (filters.fiscalYear && filters.fiscalYear !== 'all') q = q.eq('fiscal_year', filters.fiscalYear);
           return q;
-        })(),
-        (() => {
-          let q = supabase.from('interest_payables').select('id, gross_interest, tax_amount, net_payable, fiscal_year, due_date, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)').eq('payment_status', 'Pending').order('due_date', { ascending: true });
+        }),
+        fetchAllRows<any>((from, to) => {
+          let q = supabase
+            .from('interest_payables')
+            .select('id, gross_interest, tax_amount, net_payable, fiscal_year, due_date, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)')
+            .eq('payment_status', 'Pending')
+            .order('due_date', { ascending: true })
+            .range(from, to);
           if (filters.companyId && filters.companyId !== 'all') q = q.eq('company_id', filters.companyId);
           if (filters.fiscalYear && filters.fiscalYear !== 'all') q = q.eq('fiscal_year', filters.fiscalYear);
           return q;
-        })(),
+        }),
       ]);
 
       const rows: PendingPaymentRow[] = [];
-      (divRes.data || []).forEach((row: any) => {
+      (divData || []).forEach((row: any) => {
         rows.push({
           id: row.id,
           boid: row.client?.boid ?? null,
@@ -403,7 +442,7 @@ export const ReportService = {
           bank_account_no: row.client?.bank_account_no ?? null,
         });
       });
-      (intRes.data || []).forEach((row: any) => {
+      (intData || []).forEach((row: any) => {
         rows.push({
           id: row.id,
           boid: row.client?.boid ?? null,
@@ -419,8 +458,21 @@ export const ReportService = {
           bank_account_no: row.client?.bank_account_no ?? null,
         });
       });
-      (mutualFundRes.data || []).forEach((row: any) => {
-        rows.push({ id: row.id, boid: row.client?.boid ?? null, full_name: row.client?.full_name ?? 'Unknown', company_name: row.company?.company_name ?? 'Unknown', payable_type: 'Mutual Fund', gross_amount: nr(row.gross_dividend), tax_amount: nr(row.tax_amount), net_payable: nr(row.net_payable), fiscal_year: row.fiscal_year ?? null, due_date: null, bank_name: row.client?.bank_name ?? null, bank_account_no: row.client?.bank_account_no ?? null });
+      (mfData || []).forEach((row: any) => {
+        rows.push({
+          id: row.id,
+          boid: row.client?.boid ?? null,
+          full_name: row.client?.full_name ?? 'Unknown',
+          company_name: row.company?.company_name ?? 'Unknown',
+          payable_type: 'Mutual Fund',
+          gross_amount: nr(row.gross_dividend),
+          tax_amount: nr(row.tax_amount),
+          net_payable: nr(row.net_payable),
+          fiscal_year: row.fiscal_year ?? null,
+          due_date: null,
+          bank_name: row.client?.bank_name ?? null,
+          bank_account_no: row.client?.bank_account_no ?? null,
+        });
       });
 
       return rows;
@@ -433,17 +485,18 @@ export const ReportService = {
   // 5. Payment Batch Register
   async getPaymentRegister(filters: ReportFilters = {}): Promise<PaymentRegisterRow[]> {
     try {
-      let query = (supabase as any)
-        .from('payment_batches')
-        .select('id, batch_name, payment_method, status, total_payments, total_amount, fiscal_year, created_at, approved_at, processed_at')
-        .order('created_at', { ascending: false });
+      const data = await fetchAllRows<any>((from, to) => {
+        let query = (supabase as any)
+          .from('payment_batches')
+          .select('id, batch_name, payment_method, status, total_payments, total_amount, fiscal_year, created_at, approved_at, processed_at')
+          .order('created_at', { ascending: false })
+          .range(from, to);
 
-      if (filters.companyId && filters.companyId !== 'all') query = query.eq('company_id', filters.companyId);
-      if (filters.status && filters.status !== 'all') query = (query as any).eq('status', filters.status as any);
-      query = applyDateFilter(query, 'created_at', filters.startDate, filters.endDate);
-
-      const { data, error } = await query;
-      if (error) throw error;
+        if (filters.companyId && filters.companyId !== 'all') query = query.eq('company_id', filters.companyId);
+        if (filters.status && filters.status !== 'all') query = (query as any).eq('status', filters.status as any);
+        query = applyDateFilter(query, 'created_at', filters.startDate, filters.endDate);
+        return query;
+      });
 
       return (data || []).map((row: any) => ({
         id: row.id,

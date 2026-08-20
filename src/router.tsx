@@ -5,6 +5,14 @@ import { toast } from "sonner";
 
 export const getRouter = () => {
   const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        staleTime: 60_000, // 1 minute fresh cache for instant page switches
+        gcTime: 10 * 60_000, // 10 minutes cache retention
+        refetchOnWindowFocus: false, // Prevent aggressive background refetches
+        retry: 1,
+      },
+    },
     queryCache: new QueryCache({
       onError: (error) => {
         if (typeof document !== "undefined") {

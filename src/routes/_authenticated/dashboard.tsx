@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, fetchAllRows } from "@/lib/services/database";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -86,28 +86,38 @@ function Dashboard() {
   const { data, isLoading } = useQuery({
     queryKey: ["dashboard-kpis", selectedCompanyId, selectedFiscalYear],
     queryFn: async () => {
-      let intQuery = supabase.from("interest_payables").select("net_payable, payment_status");
-      let divQuery = supabase.from("dividend_payables").select("net_payable, payment_status");
-      let mfQuery = (supabase as any).from("mutual_fund_payables").select("net_payable, payment_status");
+      type Row = { net_payable: number | null; payment_status: string };
 
-      if (selectedCompanyId !== "all") {
-        intQuery = intQuery.eq("company_id", selectedCompanyId);
-        divQuery = divQuery.eq("company_id", selectedCompanyId);
-        mfQuery = mfQuery.eq("company_id", selectedCompanyId);
-      }
-      if (selectedFiscalYear !== "all") {
-        intQuery = intQuery.eq("fiscal_year", selectedFiscalYear);
-        divQuery = divQuery.eq("fiscal_year", selectedFiscalYear);
-        mfQuery = mfQuery.eq("fiscal_year", selectedFiscalYear);
-      }
+      const [interestRows, dividendRows, mutualFundRows] = await Promise.all([
+        fetchAllRows<Row>((from, to) => {
+          let q = supabase.from("interest_payables").select("net_payable, payment_status").range(from, to);
+          if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
+          if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
+          return q;
+        }),
+        fetchAllRows<Row>((from, to) => {
+          let q = supabase.from("dividend_payables").select("net_payable, payment_status").range(from, to);
+          if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
+          if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
+          return q;
+        }),
+        fetchAllRows<Row>((from, to) => {
+          let q = (supabase as any).from("mutual_fund_payables").select("net_payable, payment_status").range(from, to);
+          if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
+          if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
+          return q;
+        }),
+      ]);
 
       const requests = [
         supabase.from("companies").select("id", { count: "exact", head: true }),
         supabase.from("clients").select("id", { count: "exact", head: true }),
-        intQuery,
-        divQuery,
-        mfQuery,
-        supabase.from("bank_transactions").select("id, is_reconciled"),
+        (supabase as any)
+          .from("clients")
+          .select("id", { count: "exact", head: true })
+          .or("classification_status.eq.REVIEW_REQUIRED,payee_classification.eq.UNCLASSIFIED"),
+        supabase.from("bank_transactions").select("id", { count: "exact", head: true }),
+        supabase.from("bank_transactions").select("id", { count: "exact", head: true }).eq("is_reconciled", true),
         supabase.from("pending_approvals").select("id", { count: "exact", head: true }).eq("status", "Pending"),
         (supabase as any).from("payments").select("id, net_amount, status, created_at").order("created_at", { ascending: false }).limit(5),
         (supabase as any).from("upload_history").select("id, file_name, status, created_at").order("created_at", { ascending: false }).limit(5),
@@ -115,17 +125,12 @@ function Dashboard() {
         (supabase as any).from("payment_batches").select("id, batch_name, status, total_amount, created_at").order("created_at", { ascending: false }).limit(5),
       ];
 
-      const [companies, clients, interest, dividend, mutualFund, bank, approvals, payments, uploads, reconciliations, batches] = await Promise.all(requests);
+      const [companies, clients, reviewPending, bankTotal, bankReconciled, approvals, payments, uploads, reconciliations, batches] = await Promise.all(requests);
 
-      type Row = { net_payable: number | null; payment_status: string };
       const sum = (rows: Row[] | null, status: string) =>
         (rows ?? [])
           .filter((r) => r.payment_status === status)
           .reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
-
-      const interestRows = (interest.data as Row[] | null) || [];
-      const dividendRows = (dividend.data as Row[] | null) || [];
-      const mutualFundRows = (mutualFund.data as Row[] | null) || [];
 
       const totalInterest = interestRows.reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
       const totalDividend = dividendRows.reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
@@ -146,9 +151,10 @@ function Dashboard() {
         totalInterest,
         totalDividend,
         totalMutualFund,
-        bankTotal: bank.data?.length ?? 0,
-        bankReconciled: ((bank.data as any[]) ?? []).filter((b: any) => b.is_reconciled).length,
+        bankTotal: bankTotal.count ?? 0,
+        bankReconciled: bankReconciled.count ?? 0,
         approvals: approvals.count ?? 0,
+        reviewPending: reviewPending.count ?? 0,
         recentPayments: (payments.data as any[]) || [],
         recentUploads: (uploads.data as any[]) || [],
         recentReconciliations: (reconciliations.data as any[]) || [],
@@ -170,55 +176,71 @@ function Dashboard() {
       title: "Companies",
       value: data?.companies ?? 0,
       icon: Building2,
-      color: "text-blue-600",
-      bg: "bg-blue-50",
+      color: "text-blue-600 dark:text-blue-400",
+      bg: "bg-blue-500/10 dark:bg-blue-950/40",
       trend: `${data?.companies ?? 0} registered`,
       trendUp: true,
+      href: "/companies",
     },
     {
       title: "Clients",
       value: data?.clients ?? 0,
       icon: Users,
-      color: "text-violet-600",
-      bg: "bg-violet-50",
+      color: "text-violet-600 dark:text-violet-400",
+      bg: "bg-violet-500/10 dark:bg-violet-950/40",
       trend: `${data?.clients ?? 0} shareholders`,
       trendUp: true,
+      href: "/clients",
     },
     {
       title: "Total Payables",
       value: `₨ ${fmtCurrency(totalAll)}`,
       icon: Wallet,
-      color: "text-emerald-600",
-      bg: "bg-emerald-50",
+      color: "text-emerald-600 dark:text-emerald-400",
+      bg: "bg-emerald-500/10 dark:bg-emerald-950/40",
       trend: `${paymentProgress}% paid`,
       trendUp: true,
+      href: "/analytics",
     },
     {
       title: "Pending Payments",
       value: `₨ ${fmtCurrency(totalPending)}`,
       icon: Clock,
-      color: "text-amber-600",
-      bg: "bg-amber-50",
+      color: "text-amber-600 dark:text-amber-400",
+      bg: "bg-amber-500/10 dark:bg-amber-950/40",
       trend: `${totalPending > 0 ? "Needs attention" : "All clear"}`,
       trendUp: totalPending === 0,
+      href: "/payments",
     },
     {
       title: "Bank Reconciled",
       value: `${data?.bankReconciled ?? 0}/${data?.bankTotal ?? 0}`,
       icon: ArrowLeftRight,
-      color: "text-cyan-600",
-      bg: "bg-cyan-50",
+      color: "text-cyan-600 dark:text-cyan-400",
+      bg: "bg-cyan-500/10 dark:bg-cyan-950/40",
       trend: `${bankReconciledPct}% complete`,
       trendUp: bankReconciledPct > 50,
+      href: "/reconciliation",
+    },
+    {
+      title: "Classification Review",
+      value: data?.reviewPending ?? 0,
+      icon: ShieldCheck,
+      color: "text-orange-600 dark:text-orange-400",
+      bg: "bg-orange-500/10 dark:bg-orange-950/40",
+      trend: data?.reviewPending ? "Needs classification" : "All classified",
+      trendUp: (data?.reviewPending ?? 0) === 0,
+      href: "/classification-review",
     },
     {
       title: "Pending Approvals",
       value: data?.approvals ?? 0,
       icon: ClipboardCheck,
-      color: "text-rose-600",
-      bg: "bg-rose-50",
+      color: "text-rose-600 dark:text-rose-400",
+      bg: "bg-rose-500/10 dark:bg-rose-950/40",
       trend: data?.approvals ? "Action required" : "No pending",
       trendUp: (data?.approvals ?? 0) === 0,
+      href: "/approvals",
     },
   ];
 
@@ -240,10 +262,10 @@ function Dashboard() {
       case "Paid":
       case "Matched":
       case "Approved":
-        return <Badge className="bg-emerald-500/15 text-emerald-700 border-emerald-300">{status}</Badge>;
+        return <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">{status}</Badge>;
       case "Pending":
       case "Processing":
-        return <Badge className="bg-amber-500/15 text-amber-700 border-amber-300">{status}</Badge>;
+        return <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800">{status}</Badge>;
       case "Failed":
       case "Rejected":
       case "Missing":
@@ -254,7 +276,7 @@ function Dashboard() {
   };
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-6 p-6 animate-fade-in">
       <div className="flex items-start justify-between flex-wrap gap-3">
         <PageHeader
           title="Dashboard"
@@ -304,27 +326,116 @@ function Dashboard() {
         </div>
       </div>
 
+      {/* Quick Access Modules */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+        <Link
+          to="/dividend"
+          className="group flex items-center gap-2.5 p-2.5 rounded-lg border bg-card/60 hover:bg-accent/40 transition-all hover-lift"
+        >
+          <div className="p-2 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 group-hover:bg-emerald-500 group-hover:text-white transition-colors">
+            <TrendingUp className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold truncate">Stock Dividends</p>
+            <p className="text-[10px] text-muted-foreground truncate">Cash & Bonus Shares</p>
+          </div>
+        </Link>
+        <Link
+          to="/interest"
+          className="group flex items-center gap-2.5 p-2.5 rounded-lg border bg-card/60 hover:bg-accent/40 transition-all hover-lift"
+        >
+          <div className="p-2 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 group-hover:bg-blue-500 group-hover:text-white transition-colors">
+            <Wallet className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold truncate">Debentures</p>
+            <p className="text-[10px] text-muted-foreground truncate">Coupon & Interest</p>
+          </div>
+        </Link>
+        <Link
+          to="/mutual-fund"
+          className="group flex items-center gap-2.5 p-2.5 rounded-lg border bg-card/60 hover:bg-accent/40 transition-all hover-lift"
+        >
+          <div className="p-2 rounded-md bg-violet-500/10 text-violet-600 dark:text-violet-400 group-hover:bg-violet-500 group-hover:text-white transition-colors">
+            <BarChart3 className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold truncate">Mutual Funds</p>
+            <p className="text-[10px] text-muted-foreground truncate">Scheme Distributions</p>
+          </div>
+        </Link>
+        <Link
+          to="/reports"
+          className="group flex items-center gap-2.5 p-2.5 rounded-lg border bg-card/60 hover:bg-accent/40 transition-all hover-lift"
+        >
+          <div className="p-2 rounded-md bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 group-hover:bg-cyan-500 group-hover:text-white transition-colors">
+            <FileSpreadsheet className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold truncate">Regulatory Reports</p>
+            <p className="text-[10px] text-muted-foreground truncate">CDS & AGM Summaries</p>
+          </div>
+        </Link>
+        <Link
+          to="/classification-review"
+          className="group flex items-center gap-2.5 p-2.5 rounded-lg border bg-card/60 hover:bg-accent/40 transition-all hover-lift"
+        >
+          <div className="p-2 rounded-md bg-orange-500/10 text-orange-600 dark:text-orange-400 group-hover:bg-orange-500 group-hover:text-white transition-colors">
+            <ShieldCheck className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold truncate">Tax Review</p>
+            <p className="text-[10px] text-muted-foreground truncate">
+              {data?.reviewPending ? `${data.reviewPending} pending` : "TDS Verified"}
+            </p>
+          </div>
+        </Link>
+        <Link
+          to="/audit-logs"
+          className="group flex items-center gap-2.5 p-2.5 rounded-lg border bg-card/60 hover:bg-accent/40 transition-all hover-lift"
+        >
+          <div className="p-2 rounded-md bg-rose-500/10 text-rose-600 dark:text-rose-400 group-hover:bg-rose-500 group-hover:text-white transition-colors">
+            <Activity className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold truncate">Audit Trail</p>
+            <p className="text-[10px] text-muted-foreground truncate">Compliance & Logs</p>
+          </div>
+        </Link>
+      </div>
+
       {/* KPI Cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
-        {kpis.map((k) => (
-          <Card key={k.title} className="glass-card hover-lift">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">{k.title}</CardTitle>
-              <div className={`p-2 rounded-lg ${k.bg}`}>
-                <k.icon className={`h-4 w-4 ${k.color}`} />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {isLoading ? "—" : k.value}
-              </div>
-              <div className={`flex items-center gap-1 mt-1 text-xs ${k.trendUp ? "text-emerald-600" : "text-amber-600"}`}>
-                {k.trendUp ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                {k.trend}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+      <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-7">
+        {kpis.map((k) => {
+          const card = (
+            <Card className="glass-card hover-lift h-full border border-border/80">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{k.title}</CardTitle>
+                <div className={`p-2 rounded-lg ${k.bg}`}>
+                  <k.icon className={`h-4 w-4 ${k.color}`} />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl font-bold tabular-nums">
+                  {isLoading ? "—" : k.value}
+                </div>
+                <div className={`flex items-center gap-1 mt-1 text-[11px] ${k.trendUp ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+                  {k.trendUp ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                  {k.trend}
+                </div>
+              </CardContent>
+            </Card>
+          );
+          return k.href ? (
+            <Link key={k.title} to={k.href} className="block h-full cursor-pointer">
+              {card}
+            </Link>
+          ) : (
+            <div key={k.title} className="h-full">
+              {card}
+            </div>
+          );
+        })}
       </div>
 
       {/* Charts Row */}

@@ -34,6 +34,7 @@ export function ReconciliationRoute() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
+  const [historyVisibleCount, setHistoryVisibleCount] = useState(15);
 
   const canApply = hasAny(['admin', 'finance_operator', 'reconciliation_officer']);
 
@@ -460,7 +461,7 @@ export function ReconciliationRoute() {
                     <SelectContent>
                       <SelectItem value="all">All Sources</SelectItem>
                       <SelectItem value="excel">Excel Files</SelectItem>
-                      <SelectItem value="bank">Bank Statements</SelectItem>
+                      <SelectItem value="bank_statement">Bank Statements</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -569,13 +570,19 @@ export function ReconciliationRoute() {
       )}
 
       <Card className="border mt-4">
-        <CardHeader>
-          <CardTitle>Reconciliation History</CardTitle>
-          <CardDescription>
-            {isLoadingHistory
-              ? 'Loading latest saved reconciliation records...'
-              : `${savedResults.length.toLocaleString()} saved record${savedResults.length === 1 ? '' : 's'} loaded.`}
-          </CardDescription>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>Reconciliation History</CardTitle>
+            <CardDescription>
+              {isLoadingHistory
+                ? 'Loading latest saved reconciliation records...'
+                : `${savedResults.length.toLocaleString()} saved record${savedResults.length === 1 ? '' : 's'} loaded.`}
+            </CardDescription>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => loadHistory()} disabled={isLoadingHistory}>
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isLoadingHistory ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
         </CardHeader>
         <CardContent>
           {isLoadingHistory ? (
@@ -584,24 +591,33 @@ export function ReconciliationRoute() {
             <p className="text-sm text-muted-foreground">No saved reconciliation history is available yet.</p>
           ) : (
             <div className="space-y-3">
-              {savedResults.slice(0, 10).map(result => (
-                <div key={result.id} className="rounded-lg border p-3 bg-background">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-sm font-medium">{result.reconciliation_date}</span>
-                    <Badge variant={result.result === 'Matched' ? 'default' : 'outline'} className="text-xs">
-                      {result.result}
-                    </Badge>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {savedResults.slice(0, historyVisibleCount).map(result => (
+                  <div key={result.id} className="rounded-lg border p-3 bg-background">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">{result.reconciliation_date}</span>
+                      <Badge variant={result.result === 'Matched' ? 'default' : 'outline'} className="text-xs">
+                        {result.result}
+                      </Badge>
+                    </div>
+                    <div className="mt-2 text-xs text-muted-foreground space-y-1">
+                      <div className="flex justify-between"><span>Payable Type:</span> <strong className="text-foreground capitalize">{result.payable_type ?? 'N/A'}</strong></div>
+                      <div className="flex justify-between"><span>Expected:</span> <span>NPR {result.expected_amount?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) ?? '0.00'}</span></div>
+                      <div className="flex justify-between"><span>Actual:</span> <span className="font-semibold text-foreground">NPR {result.actual_amount?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) ?? '0.00'}</span></div>
+                      {result.difference !== 0 && (
+                        <div className="flex justify-between text-destructive"><span>Difference:</span> <span>NPR {result.difference?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) ?? '0.00'}</span></div>
+                      )}
+                    </div>
                   </div>
-                  <div className="mt-2 text-sm text-muted-foreground grid gap-1">
-                    <span>Client: {result.client_id ?? 'Unknown'}</span>
-                    <span>Company: {result.company_id ?? 'Unknown'}</span>
-                    <span>Payable: {result.payable_type ?? 'Unknown'}</span>
-                    <span>Expected: {result.expected_amount?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) ?? '0.00'}</span>
-                    <span>Actual: {result.actual_amount?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) ?? '0.00'}</span>
-                    <span>Diff: {result.difference?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) ?? '0.00'}</span>
-                  </div>
+                ))}
+              </div>
+              {savedResults.length > historyVisibleCount && (
+                <div className="pt-2 flex justify-center">
+                  <Button variant="outline" size="sm" onClick={() => setHistoryVisibleCount(prev => prev + 15)}>
+                    Load More ({savedResults.length - historyVisibleCount} remaining)
+                  </Button>
                 </div>
-              ))}
+              )}
             </div>
           )}
         </CardContent>

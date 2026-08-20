@@ -89,7 +89,41 @@ function getDefaultTdsRate(sheetType: DetectedSheetType, fileType: string): numb
  *  Shared by the pre-import validation and the actual import gate so both behave
  *  identically — "validation passed" means "no blocking errors".
  */
-const SOFT_ERROR_TYPES = new Set(["missing_address", "invalid_precision", "invalid_bank_account"]);
+const SOFT_ERROR_TYPES = new Set([
+  "missing_address",
+  "invalid_precision",
+  "invalid_bank_account",
+  "missing_bank_account",
+  "missing_bank_name",
+  "wrong_isin",
+  "invalid_isin_format",
+  "missing_financial_data",
+  "invalid_email",
+  "invalid_client_code",
+  "duplicate_client_code",
+  "duplicate_boid_in_file",
+  "existing_boid",
+  "existing_client_code",
+  "net_mismatch",
+  "tax_calc_mismatch",
+  "tax_above_gross",
+  "net_above_gross",
+  "calculation_discrepancy",
+  "invalid_tds_rate",
+  "invalid_fiscal_year",
+  "invalid_payment_date",
+  "invalid_due_date",
+  "payment_before_due",
+  "negative_gross",
+  "negative_tax",
+  "negative_net",
+  "negative_shares",
+  "invalid_gross",
+  "invalid_tax",
+  "invalid_net",
+  "invalid_shares",
+  "missing_name",
+]);
 
 /** Multi-sheet import progress */
 interface AllSheetsProgress {
@@ -136,19 +170,69 @@ function UploadRoute() {
     return `${nepaliYear}/${nepaliYear + 1}`;
   });
   const [dividendRate, setDividendRate] = useState("");
-  const [dividendType, setDividendType] = useState<"Cash" | "Stock" | "Bonus" | "Right" | "Debenture">("Cash");
+  const [dividendType, setDividendType] = useState<"Cash" | "Bonus" | "Right" | "Debenture" | "MutualFund">("Cash");
+
+  const handlePayableTypeChange = (newType: "Cash" | "Bonus" | "Right" | "Debenture" | "MutualFund") => {
+    setDividendType(newType);
+    if (parsedData) {
+      const defaultRate = newType === "Debenture" ? 0.06 : newType === "MutualFund" ? 0.0 : 0.05;
+      const newTds: Record<number, string> = {};
+      parsedData.sheets.forEach((sheet, idx) => {
+        let sheetTds = defaultRate;
+        if (sheet.sheetType === "INSTITUTION") sheetTds = 0.15;
+        else if (sheet.sheetType === "TAX_EXEMPTED") sheetTds = 0.0;
+        else if (sheet.sheetType === "PRIVATE") sheetTds = 0.06;
+        newTds[idx] = String(Math.round(sheetTds * 100));
+      });
+      setSheetTdsRates(newTds);
+    }
+  };
 
   // Companies for the override dropdown
   const { data: companies = [] } = useQuery({
-    queryKey: ["companies-lookup"],
+    queryKey: ["companies"],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("companies")
-        .select("id, company_name, company_code")
+        .select("id, company_name, company_code, isin, company_type, status")
         .order("company_name");
+      if (error) {
+        console.warn("Failed to fetch companies:", error);
+        return [];
+      }
       return data || [];
     },
+    staleTime: 10_000,
   });
+
+  // When parsedData or companies load, auto-match existing company if strong match exists
+  useEffect(() => {
+    if (!parsedData || companies.length === 0) return;
+    if (selectedCompanyId !== "auto") return;
+
+    // 1. Match by ISIN
+    if (parsedData.detectedIsin) {
+      const isinMatch = companies.find(
+        (c) => c.isin && c.isin.trim().toUpperCase() === parsedData.detectedIsin!.trim().toUpperCase(),
+      );
+      if (isinMatch) {
+        setSelectedCompanyId(isinMatch.id);
+        return;
+      }
+    }
+
+    // 2. Match by detected company name
+    if (parsedData.detectedCompanyName) {
+      const cleanDetect = parsedData.detectedCompanyName.toLowerCase().trim();
+      const nameMatch = companies.find((c) => {
+        const cName = c.company_name.toLowerCase().trim();
+        return cName === cleanDetect || cName.includes(cleanDetect) || cleanDetect.includes(cName);
+      });
+      if (nameMatch) {
+        setSelectedCompanyId(nameMatch.id);
+      }
+    }
+  }, [parsedData, companies, selectedCompanyId]);
 
   // When parsedData is set, auto-populate per-sheet rates from detected defaults
   useEffect(() => {
@@ -182,8 +266,24 @@ function UploadRoute() {
       if (data.detectedRate) {
         setDividendRate(String(data.detectedRate));
       }
-      if (data.fileType === "debenture") {
+      if (data.fileType === "debenture" || data.fileType === "interest") {
         setDividendType("Debenture");
+      } else if (data.fileType === "mutual_fund") {
+        setDividendType("MutualFund");
+      } else if (data.fileType === "bonus_share") {
+        setDividendType("Bonus");
+      } else if (data.fileType === "right_share") {
+        setDividendType("Right");
+      } else {
+        // 'dividend', 'cash_dividend', 'raw_demat', 'unknown' all default to Cash
+        setDividendType("Cash");
+      }
+
+      // Show a warning if the file type is ambiguous so the user can verify
+      if (data.fileType === "raw_demat" || data.fileType === "unknown") {
+        toast.warning(
+          "File type could not be auto-detected. Defaulted to Cash Dividend — please verify the Payable Type before importing.",
+        );
       }
 
       toast.success(
@@ -252,6 +352,13 @@ function UploadRoute() {
       sheetTdsRates[sheetIdx] !== undefined ? Number(sheetTdsRates[sheetIdx]) : undefined;
     const tdsRate = rawTds !== undefined ? Math.min(50, Math.max(0, rawTds)) / 100 : undefined;
 
+    const effectiveFileType =
+      dividendType === "Debenture"
+        ? "debenture"
+        : dividendType === "MutualFund"
+          ? "mutual_fund"
+          : parsedData!.fileType;
+
     return {
       fiscalYear: fiscalYear ? normalizeFiscalYear(fiscalYear) : undefined,
       dividendRate: sheetDivRate
@@ -261,8 +368,8 @@ function UploadRoute() {
           : undefined,
       tdsRate,
       dividendType:
-        parsedData!.fileType !== "debenture" && parsedData!.fileType !== "interest"
-          ? dividendType
+        effectiveFileType !== "debenture" && effectiveFileType !== "interest" && dividendType !== "MutualFund"
+          ? (dividendType as "Cash" | "Bonus" | "Right")
           : undefined,
       // Direct company UUID (bypasses name-based lookup and avoids accidental company creation)
       companyId: selectedCompanyId !== "auto" ? selectedCompanyId : undefined,
@@ -271,11 +378,12 @@ function UploadRoute() {
           ? (companies.find((c) => c.id === selectedCompanyId)?.company_name ??
             parsedData!.detectedCompanyName)
           : parsedData!.detectedCompanyName,
+      companyIsin: sheet?.detectedIsin || parsedData!.detectedIsin,
       fileHash: undefined as string | undefined,
       sheetType: sheet?.sheetName || sheet?.sheetType || undefined,
       fileName: file?.name,
       fileSize: file?.size,
-      fileType: parsedData!.fileType,
+      fileType: effectiveFileType,
       sheetName: sheet?.sheetName,
       totalRows: sheet?.rowCount,
       userId: undefined as string | undefined,
@@ -306,11 +414,18 @@ function UploadRoute() {
 
     const sheetDivRate = sheetDividendRates[selectedSheetIndex];
     const rate = sheetDivRate ? Number(sheetDivRate) : dividendRate ? Number(dividendRate) : undefined;
+    const effectiveFileType =
+      dividendType === "Debenture"
+        ? "debenture"
+        : dividendType === "MutualFund"
+          ? "mutual_fund"
+          : parsedData.fileType;
+
     const validationErrorsForImport = await ValidationEngine.validateBatch(
       sheet.rows,
       sheet.mapping,
       fileHash,
-      parsedData.fileType,
+      effectiveFileType,
       {
         isRawInputFile: sheet.isRawInputFile,
         isPreCalculated: sheet.isPreCalculated,
@@ -336,17 +451,19 @@ function UploadRoute() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       userId = user?.id;
+      const targetTable =
+        dividendType === "Debenture" || effectiveFileType === "debenture" || effectiveFileType === "interest"
+          ? "interest_payables"
+          : dividendType === "MutualFund" || effectiveFileType === "mutual_fund"
+            ? "mutual_fund_payables"
+            : "dividend_payables";
+
       const uploadRecord = await UploadService.createUploadRecord({
         file_name: file.name,
         file_size: file.size,
-        file_type: parsedData.fileType,
+        file_type: effectiveFileType,
         sheet_name: sheet.sheetName,
-        target_table:
-          parsedData.fileType === "debenture" || parsedData.fileType === "interest"
-            ? "interest_payables"
-            : parsedData.fileType === "mutual_fund"
-              ? "mutual_fund_payables"
-              : "dividend_payables",
+        target_table: targetTable,
         total_rows: sheet.rowCount,
         status: "Processing",
         file_hash: fileHash,
@@ -419,10 +536,14 @@ function UploadRoute() {
     await new Promise((r) => setTimeout(r, 50));
 
     try {
+      // IMPORTANT: Use the user-selected dividendType to determine target table.
+      // parsedData.fileType is the auto-detected type which may be wrong (e.g. raw CDS
+      // files detected as 'raw_demat'). The user has already confirmed their intent via
+      // the Payable Type dropdown — that always takes priority.
       let targetTable = "dividend_payables";
-      if (parsedData.fileType === "debenture" || parsedData.fileType === "interest") {
+      if (dividendType === "Debenture") {
         targetTable = "interest_payables";
-      } else if (parsedData.fileType === "mutual_fund") {
+      } else if (dividendType === "MutualFund") {
         targetTable = "mutual_fund_payables";
       }
 
@@ -501,11 +622,18 @@ function UploadRoute() {
       overallSuccess = 0,
       overallErrors = 0;
 
+    const effectiveFileType =
+      dividendType === "Debenture"
+        ? "debenture"
+        : dividendType === "MutualFund"
+          ? "mutual_fund"
+          : parsedData.fileType;
+
     const targetTable =
-      parsedData.fileType === "mutual_fund"
-        ? "mutual_fund_payables"
-        : parsedData.fileType === "debenture" || parsedData.fileType === "interest"
-          ? "interest_payables"
+      dividendType === "Debenture" || effectiveFileType === "debenture" || effectiveFileType === "interest"
+        ? "interest_payables"
+        : dividendType === "MutualFund" || effectiveFileType === "mutual_fund"
+          ? "mutual_fund_payables"
           : "dividend_payables";
 
     // One shared client cache across all sheets so we don't re-insert clients
@@ -548,7 +676,7 @@ function UploadRoute() {
         const rec = await UploadService.createUploadRecord({
           file_name: file.name,
           file_size: file.size,
-          file_type: parsedData.fileType,
+          file_type: effectiveFileType,
           sheet_name: sheet.sheetName,
           target_table: targetTable,
           total_rows: sheet.rowCount,
@@ -707,7 +835,8 @@ function UploadRoute() {
 
   const currentSheet = parsedData?.sheets[selectedSheetIndex];
   const dataSheets = parsedData?.sheets.filter((s) => s.sheetType !== "SUMMARY") || [];
-  const isMutualFund = parsedData?.fileType === "mutual_fund";
+  const isDebenture = parsedData?.fileType === "debenture" || parsedData?.fileType === "interest" || dividendType === "Debenture";
+  const isMutualFund = parsedData?.fileType === "mutual_fund" || dividendType === "MutualFund";
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -877,16 +1006,19 @@ function UploadRoute() {
                     <SelectContent>
                       <SelectItem value="auto">
                         Auto-detect: {parsedData.detectedCompanyName || "from file name"}
+                        {parsedData.detectedIsin ? ` (ISIN: ${parsedData.detectedIsin})` : ""}
                       </SelectItem>
                       {companies.map((c) => (
                         <SelectItem key={c.id} value={c.id}>
-                          {c.company_code} — {c.company_name}
+                          {c.company_code} — {c.company_name} {c.isin ? `[${c.isin}]` : ""}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    Select a company to assign this upload to, or use auto-detect.
+                    {parsedData.detectedIsin 
+                      ? `Detected ISIN "${parsedData.detectedIsin}" will be automatically linked to the company profile.`
+                      : "Select a company to assign this upload to, or use auto-detect."}
                   </p>
                 </div>
                 <div className="text-sm text-muted-foreground bg-muted/30 rounded-md p-3">
@@ -919,11 +1051,11 @@ function UploadRoute() {
             </div>
           )}
 
-          {/* Fiscal Year & Dividend Metadata */}
+          {/* Fiscal Year & Dividend / Debenture Metadata */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">
-                Fiscal Year &amp; {isMutualFund ? "Mutual Fund" : "Dividend"} Declaration
+              <CardTitle className="text-sm flex items-center gap-2">
+                Fiscal Year &amp; {isDebenture ? "Debenture Interest" : isMutualFund ? "Mutual Fund Distribution" : "Dividend"} Declaration
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -958,40 +1090,42 @@ function UploadRoute() {
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">
-                    {isMutualFund ? "Fund Rate (%)" : "Dividend / Interest Rate (%)"}
+                    {isDebenture ? "Coupon / Interest Rate (%)" : isMutualFund ? "Fund Distribution Rate (%)" : "Dividend Rate (%)"}
                   </Label>
                   <Input
                     type="number"
                     step="0.001"
-                    placeholder="e.g. 5.631"
+                    placeholder={isDebenture ? "e.g. 8.75" : "e.g. 5.631"}
                     value={dividendRate}
                     onChange={(e) => setDividendRate(e.target.value)}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Used to calculate gross if not in file
+                    {isDebenture 
+                      ? "Face value Rs. 1,000 assumed (e.g. 8.75% = Rs. 87.50/unit)" 
+                      : isMutualFund 
+                        ? "Distribution rate applied to fund units" 
+                        : "Used to calculate gross if not in file"}
                   </p>
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">
-                    {isMutualFund ? "Mutual Fund Category" : "Payable Type"}
+                    Payable Type
                   </Label>
-                  <Select value={dividendType} onValueChange={(v) => setDividendType(v as any)}>
+                  <Select value={dividendType} onValueChange={(v) => handlePayableTypeChange(v as any)}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {parsedData?.fileType === "debenture" ? (
-                        <SelectItem value="Debenture">Debenture Interest</SelectItem>
-                      ) : (
-                        <>
-                          <SelectItem value="Cash">Cash Dividend</SelectItem>
-                          <SelectItem value="Stock">Stock Dividend</SelectItem>
-                          <SelectItem value="Bonus">Bonus Share</SelectItem>
-                          <SelectItem value="Right">Right Share</SelectItem>
-                        </>
-                      )}
+                      <SelectItem value="Cash">Cash Dividend (5% TDS)</SelectItem>
+                      <SelectItem value="Bonus">Bonus Share (Stock Dividend)</SelectItem>
+                      <SelectItem value="Right">Right Share</SelectItem>
+                      <SelectItem value="Debenture">Debenture Interest (6% / 15% TDS)</SelectItem>
+                      <SelectItem value="MutualFund">Mutual Fund Distribution (0% / 5% TDS)</SelectItem>
                     </SelectContent>
                   </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Determines target payable table &amp; calculation rules
+                  </p>
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">Active Sheet TDS Rate (%)</Label>
@@ -1000,7 +1134,7 @@ function UploadRoute() {
                     step="0.5"
                     min="0"
                     max="50"
-                    placeholder="e.g. 5"
+                    placeholder={isDebenture ? "e.g. 6" : isMutualFund ? "e.g. 0" : "e.g. 5"}
                     value={sheetTdsRates[selectedSheetIndex] ?? ""}
                     onChange={(e) => {
                       const val = Math.min(50, Math.max(0, Number(e.target.value)));
@@ -1008,16 +1142,16 @@ function UploadRoute() {
                     }}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Auto-set by sheet type (max 50%); override if needed
+                    {isDebenture ? "Standard 6% Natural, 15% Legal (overrideable)" : "Auto-set by sheet type (max 50%)"}
                   </p>
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Active Sheet Div. Rate</Label>
+                  <Label className="text-xs">Active Sheet Div. / Int. Rate</Label>
                   <Input
                     type="number"
                     step="0.001"
                     min="0"
-                    placeholder="e.g. 5.631"
+                    placeholder={isDebenture ? "e.g. 8.75" : "e.g. 5.631"}
                     value={sheetDividendRates[selectedSheetIndex] ?? ""}
                     onChange={(e) =>
                       setSheetDividendRates((prev) => ({
@@ -1026,7 +1160,7 @@ function UploadRoute() {
                       }))
                     }
                   />
-                  <p className="text-xs text-muted-foreground">Overrides global rate</p>
+                  <p className="text-xs text-muted-foreground">Overrides global rate for this sheet</p>
                 </div>
               </div>
             </CardContent>

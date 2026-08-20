@@ -33,7 +33,19 @@ export const CompanyService = {
   },
   
   async deleteCompany(id: string): Promise<void> {
-    const { error } = await supabase.from('companies').delete().eq('id', id);
-    throwIfError(error, 'Failed to delete company');
+    const { DataManagementService } = await import('./data-management.service');
+    const results = await DataManagementService.customBulkDelete({
+      companyId: id,
+      deleteDividends: true,
+      deleteMutualFunds: true,
+      deleteInterests: true,
+      deleteClients: true,
+      deleteCompany: true,
+      deleteOrphans: true,
+    });
+    const errors = results.filter((r) => r.error);
+    if (errors.length > 0) {
+      throw new Error(errors.map((e) => `${e.table}: ${e.error}`).join(", "));
+    }
   }
 };

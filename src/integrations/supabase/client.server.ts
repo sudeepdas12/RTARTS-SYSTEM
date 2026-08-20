@@ -30,10 +30,14 @@ function createSupabaseFetch(supabaseKey: string): typeof fetch {
 }
 
 function createSupabaseAdminClient() {
+  // Server-side code runs inside the Docker container, so it must reach the
+  // host's local Supabase via SUPABASE_URL (e.g. host.docker.internal). The
+  // browser-facing VITE_* values (127.0.0.1) are baked into the client bundle
+  // and are NOT valid from inside the container, so prefer SUPABASE_URL.
   const SUPABASE_URL =
+    process.env.SUPABASE_URL ||
     process.env.NEXT_PUBLIC_SUPABASE_URL ||
     process.env.VITE_SUPABASE_URL ||
-    process.env.SUPABASE_URL ||
     "http://127.0.0.1:54321";
 
   const SUPABASE_SERVICE_ROLE_KEY =
