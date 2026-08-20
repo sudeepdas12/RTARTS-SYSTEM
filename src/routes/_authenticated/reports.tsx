@@ -179,8 +179,8 @@ function ReportsRoute() {
     setActiveExport(`${id}-${kind}`);
     try {
       const data = await fetchReport(id);
-      if (!data.length) {
-        toast.info("No records found matching the selected company.");
+      if (!data || !data.length) {
+        toast.info(companyId !== "all" ? "No records found matching the selected company." : "No records currently found in the system for this register.");
         return;
       }
       const title =
@@ -643,7 +643,7 @@ function ReportsRoute() {
                       <TableHead>Holder Category</TableHead>
                       <TableHead className="text-right">Kitta</TableHead>
                       <TableHead className="text-right">Principal Amount</TableHead>
-                      <TableHead className="text-right">Annual Int. @ {debentureSummary.couponRate}%</TableHead>
+                      <TableHead className="text-right">Annual Interest</TableHead>
                       <TableHead className="text-right">Int. Per Day</TableHead>
                       <TableHead className="text-right">Gross Interest</TableHead>
                       <TableHead className="text-right">Tax Withheld</TableHead>
@@ -660,7 +660,9 @@ function ReportsRoute() {
                         <TableCell className="text-right">{format(row.interestPerDay)}</TableCell>
                         <TableCell className="text-right">{format(row.grossInterest)}</TableCell>
                         <TableCell className="text-right text-amber-600">
-                          {row.taxAmount > 0 ? `${format(row.taxAmount)} (${row.taxRatePercent}%)` : "—"}
+                          {row.taxAmount > 0
+                            ? `${format(row.taxAmount)} (${row.grossInterest > 0 ? (Math.round((row.taxAmount / row.grossInterest) * 100 * 10) / 10).toFixed(1).replace(/\.0$/, '') : row.taxRatePercent}%)`
+                            : "—"}
                         </TableCell>
                         <TableCell className="text-right font-bold text-emerald-600">{format(row.netInterestPayable)}</TableCell>
                       </TableRow>

@@ -214,11 +214,17 @@ function InterestPage() {
   const { data: totals = { count: 0, paidCount: 0, pendingCount: 0, gross: 0, tax: 0, net: 0 } } = useQuery({
     queryKey: ["interest_payables_totals", statusFilter, companyFilter, fyFilter],
     queryFn: async () => {
-      let q = supabase.from("interest_payables").select("payment_status, gross_interest, tax_amount, net_payable");
-      if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
-      if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
-      if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
-      const { data } = await q;
+      const data = await fetchAllRows<any>((from, to) => {
+        let q = (supabase as any)
+          .from("interest_payables")
+          .select("payment_status, gross_interest, tax_amount, net_payable")
+          .range(from, to);
+        if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
+        if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
+        if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+        return q;
+      });
+
       return (data || []).reduce(
         (a, p) => ({
           count: a.count + 1,

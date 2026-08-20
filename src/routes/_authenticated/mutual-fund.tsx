@@ -231,15 +231,21 @@ function MutualFundPage() {
     staleTime: 5 * 60 * 1000,
   });
 
-  // Server-side totals for KPI cards
+  // Server-side totals for KPI cards (using fetchAllRows to support datasets > 1,000 records)
   const { data: totals = { count: 0, paidCount: 0, pendingCount: 0, units: 0, gross: 0, tax: 0, net: 0 } } = useQuery({
     queryKey: ["mutual_fund_payables_totals", statusFilter, companyFilter, fyFilter],
     queryFn: async () => {
-      let q = supabase.from("mutual_fund_payables").select("payment_status, shares_held, gross_dividend, tax_amount, net_payable");
-      if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
-      if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
-      if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
-      const { data } = await q;
+      const data = await fetchAllRows<any>((from, to) => {
+        let q = (supabase as any)
+          .from("mutual_fund_payables")
+          .select("payment_status, shares_held, gross_dividend, tax_amount, net_payable")
+          .range(from, to);
+        if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
+        if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
+        if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+        return q;
+      });
+
       return (data || []).reduce(
         (acc: { count: number; paidCount: number; pendingCount: number; units: number; gross: number; tax: number; net: number }, p: { payment_status: string; shares_held: number | null; gross_dividend: number | null; tax_amount: number | null; net_payable: number | null }) => ({
           count: acc.count + 1,

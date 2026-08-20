@@ -570,28 +570,28 @@ export const ReportService = {
   // 9. Reconciliation Report
   async getReconciliationReport(filters: ReportFilters = {}): Promise<ReconciliationReportRow[]> {
     try {
-      let query = (supabase as any)
-        .from('reconciliation_results')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(1000);
+      const data = await fetchAllRows<any>((from, to) => {
+        let query = (supabase as any)
+          .from('reconciliation_results')
+          .select('id, expected_amount, actual_amount, difference, result, notes, created_at, reconciliation_date, client:clients(boid, full_name), company:companies(company_name)')
+          .order('created_at', { ascending: false })
+          .range(from, to);
 
-      if (filters.status && filters.status !== 'all') query = (query as any).eq('result', filters.status as any);
-      query = applyDateFilter(query, 'created_at', filters.startDate, filters.endDate);
-
-      const { data, error } = await query;
-      if (error) throw error;
+        if (filters.companyId && filters.companyId !== 'all') query = query.eq('company_id', filters.companyId);
+        if (filters.status && filters.status !== 'all') query = query.eq('result', filters.status);
+        return applyDateFilter(query, 'created_at', filters.startDate, filters.endDate);
+      });
 
       return (data || []).map((row: any) => ({
         id: row.id,
-        boid: row.boid ?? null,
-        shareholder_name: row.shareholder_name ?? null,
-        category: row.category ?? null,
-        excel_amount: nr(row.excel_amount),
-        system_amount: nr(row.system_amount),
+        boid: row.client?.boid ?? null,
+        shareholder_name: row.client?.full_name ?? row.notes?.split('/')[0]?.replace('Category:', '').trim() ?? 'Shareholder',
+        category: row.notes?.split('/')[0]?.replace('Category:', '').trim() ?? 'General',
+        excel_amount: nr(row.actual_amount),
+        system_amount: nr(row.expected_amount),
         difference: nr(row.difference),
         status: row.result ?? 'Pending',
-        created_at: row.created_at,
+        created_at: row.reconciliation_date || row.created_at,
       }));
     } catch (err) {
       console.error('getReconciliationReport error:', err);
@@ -602,27 +602,69 @@ export const ReportService = {
   // 10. Upload History Report
   async getUploadHistoryReport(filters: ReportFilters = {}): Promise<UploadHistoryRow[]> {
     try {
-      let query = (supabase as any)
-        .from('upload_history')
-        .select('id, file_name, file_type, status, rows_processed, rows_failed, created_at')
-        .order('created_at', { ascending: false })
-        .limit(500);
+      const data = await fetchAllRows<any>((from, to) => {
+        let query = (supabase as any)
+          .from('upload_history')
+          .select('id, file_name, file_type, status, total_rows, success_rows, error_rows, rows_processed, rows_failed, created_at')
+          .order('created_at', { ascending: false })
+          .range(from, to);
 
-      if (filters.status && filters.status !== 'all') query = (query as any).eq('status', filters.status as any);
-      query = applyDateFilter(query, 'created_at', filters.startDate, filters.endDate);
+        if (filters.status && filters.status !== 'all') query = query.eq('status', filters.status);
+        return applyDateFilter(query, 'created_at', filters.startDate, filters.endDate);
+      });
 
-      const { data, error } = await query;
-      if (error) throw error;
+      if (data && data.length > 0) {
+        return data.map((row: any) => ({
+          id: row.id,
+          file_name: row.file_name ?? '',
+          file_type: row.file_type ?? null,
+          status: row.status ?? '',
+          rows_processed: nr(row.success_rows ?? row.rows_processed ?? row.total_rows),
+          rows_failed: nr(row.error_rows ?? row.rows_failed),
+          created_at: row.created_at,
+        }));
+      }
 
-      return (data || []).map((row: any) => ({
-        id: row.id,
-        file_name: row.file_name ?? '',
-        file_type: row.file_type ?? null,
-        status: row.status ?? '',
-        rows_processed: nr(row.rows_processed),
-        rows_failed: nr(row.rows_failed),
-        created_at: row.created_at,
-      }));
+      // Fallback: Query audit_logs for bulk import transactions
+      const { data: auditData } = await (supabase as any)
+        .from('audit_logs')
+        .select('id, user_id, action, table_name, action_time')
+        .eq('action', 'INSERT')
+        .order('action_time', { ascending: false })
+        .limit(2000);
+
+      if (!auditData || auditData.length === 0) return [];
+
+      const map = new Map<string, { key: string; file_name: string; file_type: string; when: string; count: number }>();
+      for (const r of auditData) {
+        const minute = (r.action_time || '').slice(0, 16);
+        const key = `${r.table_name}|${minute}`;
+        const cur = map.get(key);
+        if (cur) {
+          cur.count++;
+        } else {
+          const typeName = (r.table_name || '').replace(/_/g, ' ').toUpperCase();
+          map.set(key, {
+            key,
+            file_name: `Bulk Insert: ${typeName}`,
+            file_type: r.table_name,
+            when: r.action_time,
+            count: 1,
+          });
+        }
+      }
+
+      return Array.from(map.values())
+        .sort((a, b) => (a.when < b.when ? 1 : -1))
+        .map((b, idx) => ({
+          id: `audit-batch-${idx + 1}`,
+          file_name: b.file_name,
+          file_type: b.file_type,
+          status: 'Completed',
+          rows_processed: b.count,
+          rows_failed: 0,
+          created_at: b.when,
+        }));
     } catch (err) {
       console.error('getUploadHistoryReport error:', err);
       return [];

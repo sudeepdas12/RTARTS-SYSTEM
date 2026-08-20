@@ -240,16 +240,22 @@ function DividendPage() {
     staleTime: 5 * 60 * 1000,
   });
 
-  // Server-side totals for KPI cards (count query — near-instant)
+  // Server-side totals for KPI cards (using fetchAllRows to support datasets > 1,000 records)
   const { data: totals = { count: 0, paidCount: 0, pendingCount: 0, gross: 0, tax: 0, bonusTax: 0, net: 0, totalShares: 0, bonusIssued: 0 } } = useQuery({
     queryKey: ["dividend_payables_totals", statusFilter, companyFilter, fyFilter, typeFilter],
     queryFn: async () => {
-      let q = supabase.from("dividend_payables").select("payment_status, gross_dividend, tax_amount, bonus_tax, net_payable, shares_held, bonus_issued");
-      if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
-      if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
-      if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
-      if (typeFilter !== "all") q = q.eq("dividend_type", typeFilter);
-      const { data } = await q;
+      const data = await fetchAllRows<any>((from, to) => {
+        let q = (supabase as any)
+          .from("dividend_payables")
+          .select("payment_status, gross_dividend, tax_amount, bonus_tax, net_payable, shares_held, bonus_issued")
+          .range(from, to);
+        if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
+        if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
+        if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+        if (typeFilter !== "all") q = q.eq("dividend_type", typeFilter);
+        return q;
+      });
+
       return (data || []).reduce(
         (a, p) => ({
           count: a.count + 1,

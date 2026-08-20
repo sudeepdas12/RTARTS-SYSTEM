@@ -260,9 +260,8 @@ export const DebentureSummaryReportService = {
    * Export debenture summary report to Excel in exact Pumori / CDS tabular format
    */
   exportToExcel(report: DebentureSummaryReport): void {
-    const rateHeader = 'INT. @ ' + report.couponRate + '%';
     const aoa: (string | number)[][] = [
-      ['NAME', 'KITTA', 'AMOUNT', rateHeader, 'INT. PER DAY', 'INTEREST PUMORI', 'TAX', 'NET INTEREST PAYABLE'],
+      ['NAME', 'KITTA', 'AMOUNT', 'ANNUAL INTEREST', 'INT. PER DAY', 'INTEREST PUMORI', 'TAX', 'NET INTEREST PAYABLE'],
       ...report.rows.map((r) => [
         r.name,
         r.kitta,
@@ -290,7 +289,7 @@ export const DebentureSummaryReportService = {
       { wch: 22 }, // NAME
       { wch: 18 }, // KITTA
       { wch: 22 }, // AMOUNT
-      { wch: 18 }, // INT @ RATE
+      { wch: 18 }, // ANNUAL INTEREST
       { wch: 16 }, // INT PER DAY
       { wch: 20 }, // INTEREST PUMORI
       { wch: 16 }, // TAX
@@ -318,19 +317,20 @@ export const DebentureSummaryReportService = {
    */
   exportToPdf(report: DebentureSummaryReport): void {
     const fmtNr = (n: number) =>
-      n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-    const rateHeader = 'INT. @ ' + report.couponRate + '%';
+      Number(n || 0).toLocaleString('en-IN', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
 
     const columns = [
-      { header: 'NAME', dataKey: 'name' },
-      { header: 'KITTA', dataKey: 'kitta' },
-      { header: 'AMOUNT', dataKey: 'principalAmount' },
-      { header: rateHeader, dataKey: 'annualInterest' },
-      { header: 'INT. PER DAY', dataKey: 'interestPerDay' },
-      { header: 'INTEREST PUMORI', dataKey: 'grossInterest' },
-      { header: 'TAX', dataKey: 'taxAmount' },
-      { header: 'NET INTEREST PAYABLE', dataKey: 'netInterestPayable' },
+      { header: 'Holder Category', dataKey: 'name' },
+      { header: 'Kitta', dataKey: 'kitta' },
+      { header: 'Principal Amount', dataKey: 'principalAmount' },
+      { header: 'Annual Interest', dataKey: 'annualInterest' },
+      { header: 'Int. Per Day', dataKey: 'interestPerDay' },
+      { header: 'Gross Interest', dataKey: 'grossInterest' },
+      { header: 'Tax Withheld', dataKey: 'taxAmount' },
+      { header: 'Net Payable', dataKey: 'netInterestPayable' },
     ];
 
     const tableData = report.rows.map((r) => ({
