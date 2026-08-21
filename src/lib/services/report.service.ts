@@ -162,7 +162,7 @@ export const ReportService = {
   async getDividendRegister(filters: ReportFilters = {}): Promise<DividendRegisterRow[]> {
     try {
       const data = await fetchAllRows<any>((from, to) => {
-        let query = supabase
+        let query = (supabase as any)
           .from('dividend_payables')
           .select('id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, payment_status, payment_date, payment_reference, fiscal_year, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)')
           .order('created_at', { ascending: false })
@@ -246,7 +246,7 @@ export const ReportService = {
   async getInterestRegister(filters: ReportFilters = {}): Promise<InterestRegisterRow[]> {
     try {
       const data = await fetchAllRows<any>((from, to) => {
-        let query = supabase
+        let query = (supabase as any)
           .from('interest_payables')
           .select('id, instrument_ref, gross_interest, tax_amount, net_payable, payment_status, due_date, payment_date, payment_reference, fiscal_year, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)')
           .order('due_date', { ascending: false })
@@ -391,7 +391,7 @@ export const ReportService = {
     try {
       const [divData, mfData, intData] = await Promise.all([
         fetchAllRows<any>((from, to) => {
-          let q = supabase
+          let q = (supabase as any)
             .from('dividend_payables')
             .select('id, gross_dividend, tax_amount, net_payable, fiscal_year, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)')
             .eq('payment_status', 'Pending')
@@ -413,7 +413,7 @@ export const ReportService = {
           return q;
         }),
         fetchAllRows<any>((from, to) => {
-          let q = supabase
+          let q = (supabase as any)
             .from('interest_payables')
             .select('id, gross_interest, tax_amount, net_payable, fiscal_year, due_date, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)')
             .eq('payment_status', 'Pending')

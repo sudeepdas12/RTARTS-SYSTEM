@@ -18,7 +18,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Download, Plus, CheckCircle2, FileSpreadsheet, Trash2, Eye } from 'lucide-react';
+import { Download, Plus, CheckCircle2, FileSpreadsheet, Trash2, Eye, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ApprovalBar } from '@/components/workflow/approval-bar';
@@ -58,6 +58,14 @@ function PaymentsRoute() {
     },
   });
 
+  const { data: fiscalYears = [] } = useQuery({
+    queryKey: ['payments-fiscal-years'],
+    queryFn: async () => {
+      const { data } = await supabase.from('fiscal_years').select('fiscal_year').order('fiscal_year', { ascending: false });
+      return (data || []).map(f => f.fiscal_year);
+    },
+  });
+
   const { data: activeBatchData } = useQuery({
     queryKey: ['payment-batch', activeBatchId],
     queryFn: () => PaymentService.getBatchById(activeBatchId!),
@@ -76,6 +84,7 @@ function PaymentsRoute() {
       selectedCompany !== 'all' ? selectedCompany : undefined,
       selectedPayableType !== 'all' ? selectedPayableType : undefined
     ),
+    enabled: createOpen || !!activeBatchId,
   });
 
   const { mutate: createBatch, isPending } = useMutation({
@@ -159,6 +168,7 @@ function PaymentsRoute() {
 
   const { mutate: updateBatchStatus } = useMutation({
     mutationFn: async ({ batchId, status }: { batchId: string; status: PaymentBatch['status'] }) => {
+      const batchData = payments?.find((p: any) => p.id === batchId) || activeBatchData;
       const action = status === 'Approved' ? 'approve' : status === 'Processed' ? 'process' : status === 'Completed' ? 'complete' : 'submit';
       const result = await WorkflowEngine.processAction(batchId, 'payment_batches', action, undefined, currentUser);
       if (!result.success) throw new Error(result.error || 'Failed to update status');
@@ -167,8 +177,8 @@ function PaymentsRoute() {
         currentUser?.id || null,
         batchId.slice(0, 8),
         result.success,
-        0,
-        0
+        batchData?.total_amount || 0,
+        batchData?.total_payments || 0
       );
     },
     onSuccess: () => {
@@ -317,11 +327,16 @@ function PaymentsRoute() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Fiscal Year</Label>
-                  <Input
-                    placeholder="2081/82"
-                    value={fiscalYear}
-                    onChange={(e) => setFiscalYear(e.target.value)}
-                  />
+                  <Select value={fiscalYear} onValueChange={setFiscalYear}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select fiscal year" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {fiscalYears.map((fy) => (
+                        <SelectItem key={fy} value={fy}>{fy}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-2">
                   <Label>Payment Method</Label>
@@ -342,7 +357,7 @@ function PaymentsRoute() {
                 <p className="text-muted-foreground">
                   {availablePayables.length} payables found matching your criteria.
                   {availablePayables.length > 0 && (
-                    <span className="ml-2 text-primary">
+                    <span className="ml-2 text-primary font-medium">
                       Total: NPR {availablePayables.reduce((sum, p) => sum + (p.net_payable || 0), 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                     </span>
                   )}
@@ -461,8 +476,8 @@ function PaymentsRoute() {
                         className="h-7 text-xs text-primary"
                         onClick={() => setActiveBatchId(batch.id === activeBatchId ? null : batch.id)}
                       >
-                        <CheckCircle2 className="w-3 h-3 mr-1" />
-                        Approve
+                        <Eye className="w-3 h-3 mr-1" />
+                        Manage
                       </Button>
                     )}
                   </div>
@@ -519,6 +534,10 @@ function PaymentsRoute() {
                     size="sm"
                     variant="default"
                     onClick={() => {
+                      if (!lineItems || lineItems.length === 0) {
+                        toast.error('Cannot approve an empty batch. Please add payables first.');
+                        return;
+                      }
                       if (activeBatchId) {
                         updateBatchStatus({ batchId: activeBatchId, status: 'Approved' });
                       }
@@ -535,6 +554,10 @@ function PaymentsRoute() {
                     size="sm"
                     variant="default"
                     onClick={() => {
+                      if (!lineItems || lineItems.length === 0) {
+                        toast.error('Cannot process an empty batch.');
+                        return;
+                      }
                       if (activeBatchId) {
                         updateBatchStatus({ batchId: activeBatchId, status: 'Processed' });
                       }

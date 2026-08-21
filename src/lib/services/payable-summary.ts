@@ -1,3 +1,5 @@
+import { smartClassify } from './smart-classifier';
+
 export type PayeeCategory =
   | 'PUBLIC'
   | 'PROMOTER'
@@ -13,8 +15,8 @@ export function normalizePayeeCategory(value?: string | null): PayeeCategory {
   if (!raw) return 'UNKNOWN';
 
   // 1. Tax exempt and mutual funds must be matched before generic institutions
-  if (/MUTUAL|MF\b|SAMRIDDHI|EQUITY\s*FUND|GROWTH\s*FUND|SCHEME\b/i.test(raw)) return 'MUTUAL_FUND';
-  if (/TAX.?EXEMPT|EXEMPT|RETIREMENT\s*FUND|PENSION|PROVIDENT|SANCHAYA\s*KOSH|NAGARIK|\bCIT\b|\bEPF\b/i.test(raw)) return 'TAX_EXEMPT';
+  if (/\bMUTUAL|\bMF\b|FOCUS\s*(40|30)|SELECT\s*30|SUPER\s*30|SAMRIDDHI|SAMUNNAT|PRAGATI|SAHABHAGITA|DHANABRIDDHI|SABAL|EQUITY\s*(FUND|SCHEME|ORIENTED)|GROWTH\s*(FUND|SCHEME)|BALANCED\s*(FUND|SCHEME)|BLUECHIP|LARGE\s*CAP|FLEXI\s*CAP|VALUE\s*FUND|DEBT\s*FUND|FIXED\s*INCOME|DYNAMIC\s*DEBT|SYSTEMATIC\s*INVESTMENT|YOJANA\b|SCHEME\b/i.test(raw)) return 'MUTUAL_FUND';
+  if (/TAX.?EXEMPT|EXEMPT|RETIREMENT\s*FUND|PENSION|PROVIDENT|SANCHAYA\s*KOSH|NAGARIK|CITIZEN\s*INVESTMENT|\bCIT\b|\bEPF\b|\bSSF\b|SOCIAL\s*SECURITY|AWAKASH\s*KOSH|AWAKASH|GRATUITY|KALYAN\s*KOSH/i.test(raw)) return 'TAX_EXEMPT';
   
   // 2. Promoter & Local segments
   if (/PROMOT/i.test(raw)) return 'PROMOTER';
@@ -32,27 +34,27 @@ export function normalizePayeeCategory(value?: string | null): PayeeCategory {
 
 export function getPayeeCategoryLabel(category?: string | null): string {
   switch (String(category ?? '').toUpperCase()) {
-    case 'NATURAL_PERSON': return 'Natural Person';
-    case 'PUBLIC_LEGAL_PERSON': return 'Public Legal Person';
-    case 'COMPANY_INSTITUTION': return 'Company / Institution';
-    case 'TAX_EXEMPT': return 'Tax Exempted';
-    case 'MUTUAL_FUND': return 'Mutual Fund';
+    case 'NATURAL_PERSON': return 'Natural Person (Public)';
+    case 'PUBLIC_LEGAL_PERSON': return 'Natural Person (Public)';
+    case 'COMPANY_INSTITUTION': return 'Legal Person (Institution / Company)';
+    case 'TAX_EXEMPT': return 'Tax Exempted (Mutual Fund / Retirement Fund)';
+    case 'MUTUAL_FUND': return 'Mutual Fund (Tax Exempt)';
     case 'FOREIGN': return 'Foreign';
     case 'UNCLASSIFIED': return 'Review Required';
     case 'PROMOTER': return 'Promoter';
     case 'LOCAL': return 'Local';
-    case 'PUBLIC': return 'Public';
+    case 'PUBLIC': return 'Public (Natural Person)';
   }
   switch (normalizePayeeCategory(category)) {
     case 'PUBLIC':
     case 'PROMOTER':
     case 'LOCAL':
-      return 'Person / Public';
+      return 'Natural Person (Public)';
     case 'INSTITUTION':
     case 'FOREIGN':
-      return 'Company / Institution';
+      return 'Legal Person (Institution / Company)';
     case 'MUTUAL_FUND':
-      return 'Mutual Fund';
+      return 'Mutual Fund (Tax Exempt)';
     case 'TAX_EXEMPT':
       return 'Tax Exempt';
     default:
@@ -74,7 +76,8 @@ export interface PayableTotalsResult {
   taxAmount: number;
   netPayable: number;
   taxRate: number;
-  category: PayeeCategory;
+  difference?: number;
+  category?: PayeeCategory;
 }
 
 export interface CategoryTotalsRow {
@@ -95,71 +98,15 @@ export interface CategorySummaryResult {
   netPayable: number;
 }
 
-export function detectPayeeCategory(row: Record<string, any> = {}, sheetType?: string): PayeeCategory {
-  const rawType = String(
-    row.investor_type || row.type || row.TYPE || row.CATEGORY || row.category ||
-    row.holder_type || row.HOLDER_TYPE || row.shareholder_type || row.SHAREHOLDER_TYPE || ''
-  ).trim();
+export function detectPayeeCategory(row: any, sheetType?: string | null): PayeeCategory {
+  if (!row || typeof row !== 'object') return 'UNKNOWN';
 
-  const normalizedRaw = normalizePayeeCategory(rawType);
-  if (normalizedRaw !== 'UNKNOWN') return normalizedRaw;
+  const result = smartClassify({
+    ...row,
+    sheetType,
+  });
 
-  if (rawType) {
-    const upper = rawType.toUpperCase();
-    if (/MUTUAL|MF|FUND/i.test(upper)) return 'MUTUAL_FUND';
-    if (/TAX.?EXEMPT|EXEMPT/i.test(upper)) return 'TAX_EXEMPT';
-    if (/PROMOT/i.test(upper)) return 'PROMOTER';
-    if (/INSTIT/i.test(upper)) return 'INSTITUTION';
-    if (/LOCAL/i.test(upper)) return 'LOCAL';
-    if (/PUBLIC|GENERAL|INDIVIDUAL/i.test(upper)) return 'PUBLIC';
-    if (/FOREIGN|NRN/i.test(upper)) return 'FOREIGN';
-    if (/D-PUBLIC|P-PUBLIC/.test(upper)) return 'PUBLIC';
-    if (/D-PROMOT/.test(upper)) return 'PROMOTER';
-  }
-
-  const legalPersonName = String(
-    row.full_name || row.fullName || row.name || row.NAME || row.client_name || row.clientName ||
-    row.company_name || row.companyName || row.company || ''
-  ).trim();
-
-  // 1. Tax Exempted / Mutual Fund detection from name
-  const taxExemptSignals = /(MUTUAL\s*FUND|RETIREMENT\s*FUND|PENSION\s*FUND|PROVIDENT\s*FUND|KOSH\b|SANCHAYA\s*KOSH|NAGARIK\s*LAGANI|\bCIT\b|\bEPF\b|SAMRIDDHI\s*FUND|EQUITY\s*FUND|GROWTH\s*FUND|SCHEME\b)/i;
-  if (legalPersonName && taxExemptSignals.test(legalPersonName)) {
-    return 'TAX_EXEMPT';
-  }
-
-  // 2. Legal Person / Institutional signals from name
-  const legalPersonSignals = /(PVT\.?LTD|PRIVATE LIMITED|\bLIMITED\b|\bLTD\.?\b|\bCOMPANY\b|CORPORATION|ASSOCIATES|FOUNDATION|\bGROUP\b|HOLDINGS|\bTRUST\b|\bBANK\b|FINANCE|MICROFINANCE|HYDROPOWER|INSURANCE|INSTITUTE|SOCIETY|COOPERATIVE|SAHAKARI|ENTERPRISES|VENTURES|INVESTMENT|CAPITAL|SECURITIES)/i;
-  if (legalPersonName && legalPersonSignals.test(legalPersonName)) {
-    return 'INSTITUTION';
-  }
-
-  // 3. Sheet Type takes priority over generic family names
-  if (sheetType) {
-    const upper = sheetType.toUpperCase();
-    if (upper.includes('PROMOT')) return 'PROMOTER';
-    if (upper.includes('INSTIT')) return 'INSTITUTION';
-    if (upper.includes('MUTUAL') || upper.includes('MF')) return 'MUTUAL_FUND';
-    if (upper.includes('TAX') && upper.includes('EXEMPT')) return 'TAX_EXEMPT';
-    if (upper.includes('LOCAL')) return 'LOCAL';
-    if (upper.includes('PUBLIC')) return 'PUBLIC';
-  }
-
-  // 4. Natural person signals (Family names or citizenship)
-  const fatherName = String(row.father_name || row.fatherName || row.FATHER_NAME || row["FATHER'S NAME"] || row['FATHER_NAME_MOTHER_NAME'] || '').trim();
-  const grandfatherName = String(row.grandfather_name || row.grandfatherName || row.GRANDFATHER_NAME || row["GRANDFATHER'S NAME"] || row['GRANDFATHER_NAME_SPOUSE_NAME'] || '').trim();
-  const citizenship = String(row.citizenship || row.CITIZENSHIP || '').trim();
-
-  if (fatherName || grandfatherName) return 'PUBLIC';
-  if (citizenship && /[-a-zA-Z0-9]/.test(citizenship)) return 'PUBLIC';
-
-  // A bare name with no corroborating signal (TYPE column, sheet name,
-  // father/grandfather/citizenship) is genuinely ambiguous: a 2-word name can be
-  // a natural person OR a company lacking a standard suffix. Auto-guessing PUBLIC
-  // here would under-deduct TDS for a company on debenture interest (6% vs 15%).
-  // We deliberately leave it UNKNOWN for operator review rather than risk a tax
-  // error, matching the conservative behaviour of the edge-function importer.
-  return 'UNKNOWN';
+  return result.payee_category;
 }
 
 export function getPayeeTaxRate(

@@ -106,6 +106,7 @@ function DividendPage() {
   const [companyFilter, setCompanyFilter] = useState<string>("all");
   const [fyFilter, setFyFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [classFilter, setClassFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   
@@ -228,7 +229,7 @@ function DividendPage() {
   }, [search]);
 
   // Reset to page 1 whenever filters change
-  useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, companyFilter, fyFilter, typeFilter]);
+  useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, companyFilter, fyFilter, typeFilter, classFilter]);
 
   // Fetch fiscal years for filter dropdown (lightweight)
   const { data: fiscalYears = [] } = useQuery({
@@ -242,17 +243,30 @@ function DividendPage() {
 
   // Server-side totals for KPI cards (using fetchAllRows to support datasets > 1,000 records)
   const { data: totals = { count: 0, paidCount: 0, pendingCount: 0, gross: 0, tax: 0, bonusTax: 0, net: 0, totalShares: 0, bonusIssued: 0 } } = useQuery({
-    queryKey: ["dividend_payables_totals", statusFilter, companyFilter, fyFilter, typeFilter],
+    queryKey: ["dividend_payables_totals", statusFilter, companyFilter, fyFilter, typeFilter, classFilter],
     queryFn: async () => {
       const data = await fetchAllRows<any>((from, to) => {
         let q = (supabase as any)
           .from("dividend_payables")
-          .select("payment_status, gross_dividend, tax_amount, bonus_tax, net_payable, shares_held, bonus_issued")
+          .select("payment_status, gross_dividend, tax_amount, bonus_tax, net_payable, shares_held, bonus_issued, payee_classification, payee_segment, lot_name")
           .range(from, to);
         if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
         if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
         if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
         if (typeFilter !== "all") q = q.eq("dividend_type", typeFilter);
+        if (classFilter !== "all") {
+          if (classFilter === "PROMOTER") {
+            q = q.or("payee_segment.eq.PROMOTER,lot_name.ilike.%PROMOT%");
+          } else if (classFilter === "LOCAL") {
+            q = q.or("payee_segment.eq.LOCAL,lot_name.ilike.%LOCAL%");
+          } else if (classFilter === "TAX_EXEMPT") {
+            q = q.or("payee_classification.eq.TAX_EXEMPT,lot_name.ilike.%MUTUAL%,lot_name.ilike.%EXEMPT%");
+          } else if (classFilter === "INSTITUTION") {
+            q = q.or("payee_classification.eq.COMPANY_INSTITUTION,lot_name.ilike.%INSTITUT%,lot_name.ilike.%COMPANY%");
+          } else if (classFilter === "PUBLIC") {
+            q = q.or("payee_classification.eq.NATURAL_PERSON,payee_classification.eq.PUBLIC_LEGAL_PERSON,lot_name.ilike.%PUBLIC%");
+          }
+        }
         return q;
       });
 
@@ -276,9 +290,9 @@ function DividendPage() {
 
   // Main server-side paginated query
   const { data: pageResult = { rows: [], count: 0 }, isLoading } = useQuery({
-    queryKey: ["dividend_payables", page, pageSize, debouncedSearch, statusFilter, companyFilter, fyFilter, typeFilter],
+    queryKey: ["dividend_payables", page, pageSize, debouncedSearch, statusFilter, companyFilter, fyFilter, typeFilter, classFilter],
     queryFn: async () => {
-      let q = supabase
+      let q = (supabase as any)
         .from("dividend_payables")
         .select("*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no), company:companies(id, company_code, company_name)", { count: "exact" })
         .order("created_at", { ascending: false })
@@ -288,6 +302,19 @@ function DividendPage() {
       if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
       if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
       if (typeFilter !== "all") q = q.eq("dividend_type", typeFilter);
+      if (classFilter !== "all") {
+        if (classFilter === "PROMOTER") {
+          q = q.or("payee_segment.eq.PROMOTER,lot_name.ilike.%PROMOT%");
+        } else if (classFilter === "LOCAL") {
+          q = q.or("payee_segment.eq.LOCAL,lot_name.ilike.%LOCAL%");
+        } else if (classFilter === "TAX_EXEMPT") {
+          q = q.or("payee_classification.eq.TAX_EXEMPT,lot_name.ilike.%MUTUAL%,lot_name.ilike.%EXEMPT%");
+        } else if (classFilter === "INSTITUTION") {
+          q = q.or("payee_classification.eq.COMPANY_INSTITUTION,lot_name.ilike.%INSTITUT%,lot_name.ilike.%COMPANY%");
+        } else if (classFilter === "PUBLIC") {
+          q = q.or("payee_classification.eq.NATURAL_PERSON,payee_classification.eq.PUBLIC_LEGAL_PERSON,lot_name.ilike.%PUBLIC%");
+        }
+      }
 
       if (debouncedSearch) {
         // Search on joined columns via ilike (PostgREST supports filtering on embedded columns)
@@ -311,7 +338,7 @@ function DividendPage() {
   // For summary report: fetch only required lightweight columns (runs fast without heavy nested client fields)
   const fetchAllFiltered = useCallback(async (): Promise<Payable[]> => {
     return fetchAllRows<Payable>((from, to) => {
-      let q = supabase
+      let q = (supabase as any)
         .from("dividend_payables")
         .select("id, client_id, company_id, shares_held, dividend_rate, gross_dividend, tax_amount, net_payable, fiscal_year, dividend_type, bonus_actual, bonus_issued, bonus_fraction, after_bonus_kitta, bonus_tax, lot_name, payee_classification, payee_segment, client:clients(id, full_name, holder_type, payee_classification, payee_segment)")
         .range(from, to);
@@ -335,7 +362,7 @@ function DividendPage() {
     queryKey: ["dividend_summary_rows", companyFilter, fyFilter, typeFilter],
     queryFn: async () => {
       return fetchAllRows<Payable>((from, to) => {
-        let q = supabase
+        let q = (supabase as any)
           .from("dividend_payables")
           .select("id, client_id, company_id, shares_held, dividend_rate, gross_dividend, tax_amount, net_payable, fiscal_year, dividend_type, bonus_actual, bonus_issued, bonus_fraction, after_bonus_kitta, bonus_tax, lot_name, payee_classification, payee_segment, client:clients(id, full_name, holder_type, payee_classification, payee_segment)")
           .range(from, to);
@@ -1007,7 +1034,7 @@ function DividendPage() {
               variant="outline"
               size="sm"
               className="h-8 text-xs"
-              onClick={loadSummary}
+              onClick={() => loadSummary()}
               disabled={summaryLoading}
             >
               {summaryLoading ? "Loading…" : agmSummaryReport ? "Refresh" : "Load Summary"}
@@ -1166,6 +1193,17 @@ function DividendPage() {
                 <SelectItem value="Stock">Stock Dividend</SelectItem>
                 <SelectItem value="Bonus">Bonus Share</SelectItem>
                 <SelectItem value="Right">Right Share</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={classFilter} onValueChange={(v) => { setClassFilter(v); setPage(1); }}>
+              <SelectTrigger className="w-48"><SelectValue placeholder="All Classes" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Classes / Categories</SelectItem>
+                <SelectItem value="PUBLIC">Public (Natural Person)</SelectItem>
+                <SelectItem value="INSTITUTION">Institution (Legal Person)</SelectItem>
+                <SelectItem value="TAX_EXEMPT">Tax Exempted (Mutual Fund)</SelectItem>
+                <SelectItem value="PROMOTER">Promoter</SelectItem>
+                <SelectItem value="LOCAL">Local</SelectItem>
               </SelectContent>
             </Select>
             <Select value={companyFilter} onValueChange={(v) => { setCompanyFilter(v); setPage(1); }}>

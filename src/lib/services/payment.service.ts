@@ -228,6 +228,47 @@ export const PaymentService = {
         console.warn('Failed to update batch status:', error.message);
         return false;
       }
+
+      // When a batch is Completed, synchronize linked line items and underlying payables
+      if (status === 'Completed') {
+        try {
+          const { data: lineItems } = await (supabase as any)
+            .from('payments')
+            .select('id, payable_type, payable_id, status')
+            .eq('batch_id', batchId);
+
+          const today = new Date().toISOString().split('T')[0];
+
+          // Update pending payments in this batch to Completed
+          await (supabase as any)
+            .from('payments')
+            .update({ status: 'Completed', payment_date: today, updated_at: new Date().toISOString() })
+            .eq('batch_id', batchId)
+            .eq('status', 'Pending');
+
+          // Update underlying payables to Paid
+          for (const item of lineItems || []) {
+            if (!item.payable_id) continue;
+            const tableName = item.payable_type === 'dividend'
+              ? 'dividend_payables'
+              : item.payable_type === 'interest'
+                ? 'interest_payables'
+                : item.payable_type === 'mutual_fund'
+                  ? 'mutual_fund_payables'
+                  : null;
+
+            if (tableName) {
+              await (supabase as any)
+                .from(tableName)
+                .update({ payment_status: 'Paid', payment_date: today })
+                .eq('id', item.payable_id);
+            }
+          }
+        } catch (syncErr) {
+          console.warn('Failed to cascade batch completion to payables:', syncErr);
+        }
+      }
+
       return true;
     } catch (err: any) {
       console.warn('Failed to update batch status:', err?.message || err);
@@ -370,6 +411,21 @@ export const PaymentService = {
 
   async getPayablesForPayment(companyId?: string, payableType?: string): Promise<any[]> {
     try {
+      // 1. Fetch payable IDs that are already present in existing active payment records (not Reversed / Failed)
+      let batchedPayableIds = new Set<string>();
+      try {
+        const { data: existingPayments } = await (supabase as any)
+          .from('payments')
+          .select('payable_id')
+          .not('status', 'in', '("Reversed","Failed")');
+
+        if (existingPayments && Array.isArray(existingPayments)) {
+          batchedPayableIds = new Set(existingPayments.map((p: any) => p.payable_id).filter(Boolean));
+        }
+      } catch (checkErr) {
+        console.warn('Could not check existing batched payments:', checkErr);
+      }
+
       const payables: any[] = [];
       const fetchDividends = !payableType || payableType === 'dividend' || payableType === 'all';
       const fetchInterest = !payableType || payableType === 'interest' || payableType === 'all';
@@ -429,7 +485,8 @@ export const PaymentService = {
         }
       }
       
-      return payables;
+      // Filter out payables that are already part of an active payment batch
+      return payables.filter(p => !batchedPayableIds.has(p.id));
     } catch (err: any) {
       console.warn('Failed to fetch payables:', err?.message || err);
       return [];

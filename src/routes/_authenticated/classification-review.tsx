@@ -44,6 +44,7 @@ import {
   adminConfirmClientClassification,
   adminListTaxExceptions,
   adminRecomputePayable,
+  adminFixMisclassifiedNaturalPersons,
   type PayeeClassification,
 } from "@/lib/classification-review.functions";
 import { exportToExcel } from "@/lib/xlsx-utils";
@@ -53,10 +54,9 @@ export const Route = createFileRoute("/_authenticated/classification-review")({
 });
 
 const CLASSIFICATION_OPTIONS: { value: PayeeClassification; label: string }[] = [
-  { value: "NATURAL_PERSON", label: "Natural Person (Individual)" },
-  { value: "PUBLIC_LEGAL_PERSON", label: "Public / Legal Person" },
-  { value: "COMPANY_INSTITUTION", label: "Company / Institution" },
-  { value: "TAX_EXEMPT", label: "Tax Exempt (Mutual Fund)" },
+  { value: "NATURAL_PERSON", label: "Natural Person (Public / Individual)" },
+  { value: "COMPANY_INSTITUTION", label: "Legal Person (Institution / Company)" },
+  { value: "TAX_EXEMPT", label: "Tax Exempted (Mutual Fund / Retirement Fund)" },
 ];
 
 const SEGMENT_OPTIONS = [
@@ -71,33 +71,28 @@ const PAGE_SIZE = 25;
 const classBadge = (c: string | null | undefined) => {
   switch (c) {
     case "NATURAL_PERSON":
-      return (
-        <Badge variant="secondary" className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border-0">
-          Natural Person
-        </Badge>
-      );
     case "PUBLIC_LEGAL_PERSON":
       return (
-        <Badge variant="secondary" className="bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 border-0">
-          Public / Legal
+        <Badge variant="secondary" className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border-0">
+          Natural Person (Public)
         </Badge>
       );
     case "COMPANY_INSTITUTION":
       return (
         <Badge variant="secondary" className="bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300 border-0">
-          Institution
+          Legal Person (Institution)
         </Badge>
       );
     case "TAX_EXEMPT":
       return (
         <Badge variant="secondary" className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-0">
-          Tax Exempt
+          Tax Exempted (Mutual Fund)
         </Badge>
       );
     case "UNCLASSIFIED":
       return (
         <Badge variant="outline" className="text-red-600 border-red-300 bg-red-50 dark:bg-red-950/30">
-          UNCLASSIFIED
+          Review Required
         </Badge>
       );
     default:
@@ -233,6 +228,17 @@ function ClassificationReviewPage() {
       qc.invalidateQueries({ queryKey: ["classification-tax-exceptions"] });
     },
     onError: (err: any) => toast.error(err?.message ?? "Failed to recompute payable"),
+  });
+
+  const fixLineageMutation = useMutation({
+    mutationFn: () => adminFixMisclassifiedNaturalPersons({ data: undefined }),
+    onSuccess: (res: any) => {
+      toast.success(res.message);
+      qc.invalidateQueries({ queryKey: ["classification-review-clients"] });
+      qc.invalidateQueries({ queryKey: ["classification-tax-exceptions"] });
+      qc.invalidateQueries({ queryKey: ["clients"] });
+    },
+    onError: (err: any) => toast.error(err?.message ?? "Failed to auto-correct shareholders"),
   });
 
   const onConfirmed = (
@@ -381,6 +387,17 @@ function ClassificationReviewPage() {
                   </CardDescription>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-emerald-600/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                    onClick={() => fixLineageMutation.mutate()}
+                    disabled={fixLineageMutation.isPending}
+                    title="Automatically detect and correct natural persons with family names who were misclassified as tax-exempt"
+                  >
+                    <Sparkles className={`h-3.5 w-3.5 mr-1.5 ${fixLineageMutation.isPending ? "animate-spin" : "text-emerald-600"}`} />
+                    {fixLineageMutation.isPending ? "Correcting..." : "Auto-Fix Natural Persons"}
+                  </Button>
                   <Button
                     variant="outline"
                     size="sm"

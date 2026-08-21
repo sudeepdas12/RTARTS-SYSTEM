@@ -1,6 +1,6 @@
 import { supabase, throwIfError } from "./database";
 import { mapToHolderType } from "./investor-category";
-import { calculatePayableTotals, detectPayeeCategory, getPayeeTaxRate } from "./payable-summary";
+import { calculatePayableTotals, detectPayeeCategory, getPayeeTaxRate, normalizePayeeCategory } from "./payable-summary";
 import {
   getTaxRateFromRules,
   investorCategoryToClassification,
@@ -648,7 +648,7 @@ function extractRowField(row: any, keys: string[]): string {
           "BANK_TITLE",
         ]);
 
-        const bankBranch = extractRowField(row, [
+        let bankBranch = extractRowField(row, [
           "bank_branch",
           "branch",
           "BANK BRANCH",
@@ -656,7 +656,21 @@ function extractRowField(row: any, keys: string[]): string {
           "BRANCH",
           "BANK_BRANCH",
           "BANK BRANCH NAME",
+          "BRANCH ",
+          "CREDITOR BRANCH",
+          "CREDITORBRANCH",
+          "BRANCH_TITLE",
         ]);
+
+        // Auto-extract branch from combined Bank Name (e.g. "Prime Commercial Bank Ltd.-New Road Branch")
+        if (!bankBranch && bankName) {
+          if (bankName.includes(" - ") || bankName.includes(".-") || (bankName.includes("-") && bankName.toLowerCase().includes("branch"))) {
+            const parts = bankName.split(/-\s*|\.-\s*/);
+            if (parts.length > 1 && parts[parts.length - 1].toLowerCase().includes("branch")) {
+              bankBranch = parts[parts.length - 1].trim();
+            }
+          }
+        }
 
         const bankAccountNo = extractRowField(row, [
           "bank_account_no",
@@ -681,13 +695,27 @@ function extractRowField(row: any, keys: string[]): string {
           "BANK ACCOUNT NUMBER",
         ]);
 
-        const accountType = extractRowField(row, [
+        const rawAccountType = extractRowField(row, [
           "account_type",
           "ACCOUNT TYPE",
           "A/C TYPE",
           "ACC TYPE",
           "A/C_TYPE",
+          "AC_TYPE",
+          "ACCOUNT_TYPE",
+          "ACC_TYPE",
+          "SCHEME_TYPE",
+          "TYPE OF ACCOUNT",
+          "ACCOUNT_TITLE",
         ]);
+
+        let accountType = rawAccountType || null;
+        if (rawAccountType) {
+          const upperAcc = rawAccountType.toUpperCase().trim();
+          if (upperAcc === "01" || upperAcc === "SB" || upperAcc.includes("SAVING")) accountType = "Savings";
+          else if (upperAcc === "02" || upperAcc === "CA" || upperAcc.includes("CURRENT")) accountType = "Current";
+          else if (upperAcc === "03" || upperAcc.includes("CALL")) accountType = "Call";
+        }
 
         const panNo = extractRowField(row, [
           "pan_no",
@@ -756,8 +784,29 @@ function extractRowField(row: any, keys: string[]): string {
           "GRAND FATHER'S NAME",
         ]);
 
-        const gender = extractRowField(row, ["gender", "GENDER", "SEX"]);
-        const occupation = extractRowField(row, ["occupation", "OCCUPATION", "PROFESSION"]);
+        const rawGender = extractRowField(row, ["gender", "GENDER", "SEX", "M/F", "GENDER (M/F)", "GENDER(M/F)"]);
+        let gender: string | null = null;
+        if (rawGender) {
+          const upperGen = rawGender.toUpperCase().trim();
+          if (upperGen === "M" || upperGen === "MALE" || upperGen === "M." || upperGen.startsWith("M /") || upperGen === "PURUSH") {
+            gender = "Male";
+          } else if (upperGen === "F" || upperGen === "FEMALE" || upperGen === "F." || upperGen.startsWith("F /") || upperGen === "MAHILA") {
+            gender = "Female";
+          } else if (upperGen === "O" || upperGen === "OTHER" || upperGen === "OTHERS" || upperGen === "T" || upperGen === "THIRD" || upperGen === "ENTITY") {
+            gender = "Other";
+          } else {
+            gender = rawGender.trim();
+          }
+        }
+
+        const occupation = extractRowField(row, [
+          "occupation",
+          "OCCUPATION",
+          "PROFESSION",
+          "OCCUPATION / PROFESSION",
+          "OCCUPATION/PROFESSION",
+          "DESIGNATION",
+        ]);
         const address = extractRowField(row, [
           "address",
           "ADDRESS",
@@ -1040,7 +1089,7 @@ function extractRowField(row: any, keys: string[]): string {
         "BANK ACC NO.",
         "BANK A/C NUMBER",
       ]);
-      const bankBranch = extractRowField(row, [
+      let bankBranch = extractRowField(row, [
         "bank_branch",
         "branch",
         "BANK BRANCH",
@@ -1048,7 +1097,20 @@ function extractRowField(row: any, keys: string[]): string {
         "BRANCH",
         "BANK_BRANCH",
         "BANK BRANCH NAME",
+        "BRANCH ",
+        "CREDITOR BRANCH",
+        "CREDITORBRANCH",
+        "BRANCH_TITLE",
       ]);
+
+      if (!bankBranch && bankName) {
+        if (bankName.includes(" - ") || bankName.includes(".-") || (bankName.includes("-") && bankName.toLowerCase().includes("branch"))) {
+          const parts = bankName.split(/-\s*|\.-\s*/);
+          if (parts.length > 1 && parts[parts.length - 1].toLowerCase().includes("branch")) {
+            bankBranch = parts[parts.length - 1].trim();
+          }
+        }
+      }
       const lotName = extractRowField(row, ["lot_name", "lot", "LOT", "LOT NAME"]);
       const status = extractRowField(row, ["status", "STATUS"]) || "Pending";
 

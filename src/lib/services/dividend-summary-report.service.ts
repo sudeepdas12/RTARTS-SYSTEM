@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import { supabase, fetchAllRows } from './database';
 import { PdfGenerator } from '@/lib/pdf-generator';
+import { smartClassify } from './smart-classifier';
 
 export interface AgmDividendSummaryRow {
   sn: number;
@@ -43,44 +44,29 @@ export interface AgmDividendSummaryReport {
 }
 
 export function determineParticular(p: any): string {
-  // 1. Explicit payee segment on payable or client
-  const segment = String(p.payee_segment || p.client?.payee_segment || '').trim().toUpperCase();
-  if (segment === 'PROMOTER') return 'PROMOTER';
-  if (segment === 'LOCAL') return 'LOCAL UNVERIFIED';
+  return determineAgmCategory(p);
+}
 
-  // 2. Explicit Lot name / Sheet name
+export function determineAgmCategory(p: any): 'PROMOTER' | 'LOCAL UNVERIFIED' | 'TAX EXEMPTED' | 'INSTITUTION' | 'PUBLIC' {
+  // Check explicit lot segment first
   const lot = String(p.lot_name || '').trim().toUpperCase();
   if (lot.includes('PROMOTER') || lot.includes('PROMOT')) return 'PROMOTER';
   if (lot.includes('LOCAL') || lot.includes('UNVERIFIED')) return 'LOCAL UNVERIFIED';
-  if (lot.includes('TAX EXEMPT') || lot.includes('EXEMPT') || lot.includes('MUTUAL')) return 'TAX EXEMPTED';
-  if (lot.includes('INSTITUT') || lot.includes('COMPANY') || lot.includes('LEGAL')) return 'INSTITUTION';
-  if (lot.includes('PUBLIC')) return 'PUBLIC';
 
-  // 3. Payee classification on payable or client
-  const payeeCls = String(p.payee_classification || p.client?.payee_classification || '').trim().toUpperCase();
-  if (payeeCls.includes('PROMOTER')) return 'PROMOTER';
-  if (payeeCls.includes('LOCAL')) return 'LOCAL UNVERIFIED';
-  if (payeeCls.includes('TAX_EXEMPT') || payeeCls.includes('MUTUAL_FUND')) return 'TAX EXEMPTED';
-  if (payeeCls.includes('INSTITUTION') || payeeCls.includes('COMPANY')) return 'INSTITUTION';
-  if (payeeCls.includes('NATURAL_PERSON') || payeeCls.includes('PUBLIC')) return 'PUBLIC';
+  const result = smartClassify({
+    full_name: p.client?.full_name || p.full_name,
+    father_name: p.client?.father_name || p.father_name,
+    grandfather_name: p.client?.grandfather_name || p.grandfather_name,
+    citizenship: p.client?.citizenship || p.citizenship,
+    holder_type: p.client?.holder_type || p.holder_type,
+    payee_classification: p.payee_classification || p.client?.payee_classification,
+    lot_name: p.lot_name,
+  });
 
-  // 4. Client holder type
-  const holder = String(p.client?.holder_type || '').trim().toUpperCase();
-  if (holder.includes('PROMOTER')) return 'PROMOTER';
-  if (holder.includes('LOCAL')) return 'LOCAL UNVERIFIED';
-  if (holder.includes('EXEMPT') || holder.includes('MUTUAL')) return 'TAX EXEMPTED';
-  if (holder.includes('LEGAL') || holder.includes('INSTITUTION')) return 'INSTITUTION';
-  if (holder.includes('PUBLIC')) return 'PUBLIC';
-
-  // 5. Client Name heuristics (for institutional & funds)
-  const clientName = String(p.client?.full_name || p.full_name || '').trim().toUpperCase();
-  if (/(MUTUAL\s*FUND|RETIREMENT\s*FUND|PENSION\s*FUND|PROVIDENT\s*FUND|KOSH\b|SANCHAYA\s*KOSH|NAGARIK\s*LAGANI|\bCIT\b|\bEPF\b|SAMRIDDHI\s*FUND|EQUITY\s*FUND|GROWTH\s*FUND|SCHEME\b)/i.test(clientName)) {
-    return 'TAX EXEMPTED';
-  }
-  if (/(PVT\.?LTD|PRIVATE LIMITED|\bLIMITED\b|\bLTD\.?\b|\bCOMPANY\b|CORPORATION|ASSOCIATES|FOUNDATION|\bGROUP\b|HOLDINGS|\bTRUST\b|\bBANK\b|FINANCE|MICROFINANCE|HYDROPOWER|INSURANCE|INSTITUTE|SOCIETY|COOPERATIVE|SAHAKARI|ENTERPRISES|VENTURES|INVESTMENT|CAPITAL|SECURITIES)/i.test(clientName)) {
-    return 'INSTITUTION';
-  }
-
+  if (result.payee_category === 'PROMOTER') return 'PROMOTER';
+  if (result.payee_category === 'LOCAL') return 'LOCAL UNVERIFIED';
+  if (result.payee_classification === 'TAX_EXEMPT') return 'TAX EXEMPTED';
+  if (result.payee_classification === 'COMPANY_INSTITUTION') return 'INSTITUTION';
   return 'PUBLIC';
 }
 
@@ -341,7 +327,7 @@ export const AgmDividendSummaryReportService = {
    */
   async getCompanySummary(companyId?: string, fiscalYear?: string): Promise<AgmDividendSummaryReport> {
     const data = await fetchAllRows<any>((from, to) => {
-      let query = supabase
+      let query = (supabase as any)
         .from('dividend_payables')
         .select('id, client_id, company_id, shares_held, dividend_rate, gross_dividend, tax_amount, net_payable, fiscal_year, dividend_type, bonus_actual, bonus_issued, bonus_fraction, after_bonus_kitta, bonus_tax, lot_name, payee_classification, payee_segment, client:clients(id, full_name, holder_type, payee_classification, payee_segment), company:companies(id, company_code, company_name)')
         .range(from, to);

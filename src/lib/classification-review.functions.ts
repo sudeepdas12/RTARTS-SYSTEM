@@ -282,3 +282,78 @@ export const adminRecomputePayable = createServerFn({ method: "POST" })
 
     return { ok: true };
   });
+
+/**
+ * One-click fix for existing clients: Finds any natural person who has father/grandfather
+ * lineage but was misclassified as TAX_EXEMPT, restores them to NATURAL_PERSON, and
+ * updates their linked payables.
+ */
+export const adminFixMisclassifiedNaturalPersons = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await assertAdmin(context);
+    const { supabaseAdmin }: any = await import("@/integrations/supabase/client.server");
+
+    // 1. Fetch misclassified clients with family lineage
+    const { data: clients, error: fetchErr } = await supabaseAdmin
+      .from("clients")
+      .select("id, full_name, father_name, grandfather_name")
+      .or("payee_classification.eq.TAX_EXEMPT,holder_type.eq.Tax Exempt,holder_type.eq.Mutual Fund")
+      .or("father_name.neq.'',grandfather_name.neq.''");
+
+    if (fetchErr) throw new Error(fetchErr.message);
+
+    const eligible = (clients || []).filter((c: any) => {
+      const hasFather = Boolean(c.father_name && String(c.father_name).trim());
+      const hasGrandfather = Boolean(c.grandfather_name && String(c.grandfather_name).trim());
+      const name = String(c.full_name || "").toUpperCase();
+      const isRealFund = /(MUTUAL\s*FUND|\bMF\b|FOCUS\s*(40|30)|SELECT\s*30|SUPER\s*30|SAMRIDDHI|SAMUNNAT|PRAGATI|SAHABHAGITA|DHANABRIDDHI|SABAL|EQUITY\s*(FUND|SCHEME|ORIENTED)|GROWTH\s*(FUND|SCHEME)|BALANCED\s*(FUND|SCHEME)|BLUECHIP|LARGE\s*CAP|FLEXI\s*CAP|VALUE\s*FUND|DEBT\s*FUND|FIXED\s*INCOME|DYNAMIC\s*DEBT|SYSTEMATIC\s*INVESTMENT|SANCHAYA\s*KOSH|NAGARIK\s*LAGANI|CITIZEN\s*INVESTMENT|\bCIT\b|\bEPF\b|\bSSF\b|SOCIAL\s*SECURITY\s*FUND|AWAKASH\s*KOSH|AWAKASH\s*FUND|KALYAN\s*KOSH|KOSH\s*BYAWASTHAPAN)/i.test(name);
+      return (hasFather || hasGrandfather) && !isRealFund;
+    });
+
+    if (eligible.length === 0) {
+      return { count: 0, message: "No misclassified individual shareholders found." };
+    }
+
+    const clientIds = eligible.map((c: any) => c.id);
+
+    // 2. Update clients table
+    const { error: updateClientErr } = await supabaseAdmin
+      .from("clients")
+      .update({
+        payee_classification: "NATURAL_PERSON",
+        holder_type: "Natural Person - Public",
+        payee_segment: "PUBLIC",
+        classification_status: "AUTO_CLASSIFIED",
+        classification_source: "Family Lineage Verification",
+      })
+      .in("id", clientIds);
+
+    if (updateClientErr) throw new Error(updateClientErr.message);
+
+    // 3. Update linked dividend payables (5% TDS)
+    await supabaseAdmin
+      .from("dividend_payables")
+      .update({
+        payee_classification: "NATURAL_PERSON",
+        payee_category: "PUBLIC",
+      })
+      .in("client_id", clientIds)
+      .eq("payee_classification", "TAX_EXEMPT");
+
+    // 4. Update linked interest payables (6% TDS)
+    await supabaseAdmin
+      .from("interest_payables")
+      .update({
+        payee_classification: "NATURAL_PERSON",
+        payee_category: "PUBLIC",
+      })
+      .in("client_id", clientIds)
+      .eq("payee_classification", "TAX_EXEMPT");
+
+    return {
+      count: eligible.length,
+      message: `Successfully corrected ${eligible.length} individual shareholder(s) to Natural Person (Public).`,
+    };
+  });
+

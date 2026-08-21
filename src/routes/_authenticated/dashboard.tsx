@@ -90,13 +90,13 @@ function Dashboard() {
 
       const [interestRows, dividendRows, mutualFundRows] = await Promise.all([
         fetchAllRows<Row>((from, to) => {
-          let q = supabase.from("interest_payables").select("net_payable, payment_status").range(from, to);
+          let q = (supabase as any).from("interest_payables").select("net_payable, payment_status").range(from, to);
           if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
           if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
           return q;
         }),
         fetchAllRows<Row>((from, to) => {
-          let q = supabase.from("dividend_payables").select("net_payable, payment_status").range(from, to);
+          let q = (supabase as any).from("dividend_payables").select("net_payable, payment_status").range(from, to);
           if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
           if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
           return q;

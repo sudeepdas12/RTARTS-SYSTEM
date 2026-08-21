@@ -84,7 +84,7 @@ function ApprovalsPage() {
   const { data: pendingBatches = [] } = useQuery({
     queryKey: ["pending_batches_count"],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data } = await (supabase as any)
         .from("payment_batches")
         .select("id, batch_name, total_amount, status, created_at, created_by")
         .eq("status", "Pending");

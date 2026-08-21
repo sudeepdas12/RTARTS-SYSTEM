@@ -168,15 +168,16 @@ function verificationBadge(v: Verification) {
 function classificationBadge(c: PayeeClassification | null | undefined) {
   switch (c) {
     case "NATURAL_PERSON":
-      return <Badge variant="secondary" className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border-0 text-[10px]">Natural (5%)</Badge>;
     case "PUBLIC_LEGAL_PERSON":
-      return <Badge variant="secondary" className="bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 border-0 text-[10px]">Public / Legal</Badge>;
+      return <Badge variant="secondary" className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border-0 text-[10px]">Natural Person (Public)</Badge>;
     case "COMPANY_INSTITUTION":
-      return <Badge variant="secondary" className="bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300 border-0 text-[10px]">Institution</Badge>;
+      return <Badge variant="secondary" className="bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300 border-0 text-[10px]">Legal Person (Institution)</Badge>;
     case "TAX_EXEMPT":
-      return <Badge variant="secondary" className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-0 text-[10px]">Tax Exempt (0%)</Badge>;
+      return <Badge variant="secondary" className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-0 text-[10px]">Tax Exempted (Mutual Fund)</Badge>;
+    case "UNCLASSIFIED":
+      return <Badge variant="outline" className="text-red-600 border-red-300 bg-red-50 dark:bg-red-950/30 text-[10px]">Review Required</Badge>;
     default:
-      return null;
+      return <Badge variant="outline" className="text-muted-foreground border-muted text-[10px]">Unclassified</Badge>;
   }
 }
 
@@ -248,11 +249,11 @@ function ClientsPage() {
     queryKey: ["clients-stats"],
     queryFn: async () => {
       const [totalRes, verifiedRes, pendingRes, naturalRes, instRes] = await Promise.all([
-        supabase.from("clients").select("id", { count: "exact", head: true }),
-        supabase.from("clients").select("id", { count: "exact", head: true }).eq("verification_status", "Verified"),
-        supabase.from("clients").select("id", { count: "exact", head: true }).eq("verification_status", "Pending"),
-        supabase.from("clients").select("id", { count: "exact", head: true }).eq("payee_classification", "NATURAL_PERSON"),
-        supabase.from("clients").select("id", { count: "exact", head: true }).in("payee_classification", ["COMPANY_INSTITUTION", "PUBLIC_LEGAL_PERSON"]),
+        (supabase as any).from("clients").select("id", { count: "exact", head: true }),
+        (supabase as any).from("clients").select("id", { count: "exact", head: true }).eq("verification_status", "Verified"),
+        (supabase as any).from("clients").select("id", { count: "exact", head: true }).eq("verification_status", "Pending"),
+        (supabase as any).from("clients").select("id", { count: "exact", head: true }).eq("payee_classification", "NATURAL_PERSON"),
+        (supabase as any).from("clients").select("id", { count: "exact", head: true }).in("payee_classification", ["COMPANY_INSTITUTION", "PUBLIC_LEGAL_PERSON"]),
       ]);
       return {
         total: totalRes.count || 0,
@@ -267,7 +268,7 @@ function ClientsPage() {
   const { data: pageData = { rows: [], count: 0 }, isLoading } = useQuery({
     queryKey: ["clients", page, pageSize, debouncedSearch, companyFilter, holderFilter, classFilter, statusFilter, verFilter],
     queryFn: async () => {
-      let query = supabase
+      let query = (supabase as any)
         .from("clients")
         .select("*, company:companies(company_name, company_code)", { count: "exact" })
         .order("created_at", { ascending: false })
@@ -423,7 +424,7 @@ function ClientsPage() {
       const numBatches = Math.ceil(pageData.count / batchSize);
 
       for (let i = 0; i < numBatches; i++) {
-        let query = supabase
+        let query = (supabase as any)
           .from("clients")
           .select("*, company:companies(company_name, company_code)")
           .order("created_at", { ascending: false })
@@ -621,15 +622,14 @@ function ClientsPage() {
             </Select>
 
             <Select value={classFilter} onValueChange={(v) => { setClassFilter(v); setPage(1); }}>
-              <SelectTrigger className="w-36 h-9">
+              <SelectTrigger className="w-44 h-9">
                 <SelectValue placeholder="Classification" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Classes</SelectItem>
-                <SelectItem value="NATURAL_PERSON">Natural Person</SelectItem>
-                <SelectItem value="PUBLIC_LEGAL_PERSON">Public / Legal</SelectItem>
-                <SelectItem value="COMPANY_INSTITUTION">Institution</SelectItem>
-                <SelectItem value="TAX_EXEMPT">Tax Exempt</SelectItem>
+                <SelectItem value="NATURAL_PERSON">Natural Person (Public)</SelectItem>
+                <SelectItem value="COMPANY_INSTITUTION">Legal Person (Institution)</SelectItem>
+                <SelectItem value="TAX_EXEMPT">Tax Exempted (Mutual Fund)</SelectItem>
               </SelectContent>
             </Select>
 
@@ -915,10 +915,9 @@ function ClientsPage() {
                 <Select value={form.payee_classification} onValueChange={(v) => setF("payee_classification", v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="NATURAL_PERSON">Natural Person (5% Dividend / 6% Debenture)</SelectItem>
-                    <SelectItem value="PUBLIC_LEGAL_PERSON">Public Legal Person (5% / 15%)</SelectItem>
-                    <SelectItem value="COMPANY_INSTITUTION">Company / Institution (5% / 15%)</SelectItem>
-                    <SelectItem value="TAX_EXEMPT">Tax Exempt / Mutual Fund (0% TDS)</SelectItem>
+                    <SelectItem value="NATURAL_PERSON">Natural Person (Public) — 5% Div / 6% Deb</SelectItem>
+                    <SelectItem value="COMPANY_INSTITUTION">Legal Person (Institution / Company) — 5% Div / 15% Deb</SelectItem>
+                    <SelectItem value="TAX_EXEMPT">Tax Exempted (Mutual Fund / Retirement) — 0% TDS</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

@@ -138,6 +138,7 @@ function MutualFundPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [companyFilter, setCompanyFilter] = useState<string>("all");
   const [fyFilter, setFyFilter] = useState<string>("all");
+  const [classFilter, setClassFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [open, setOpen] = useState(false);
@@ -219,30 +220,43 @@ function MutualFundPage() {
   }, [search]);
 
   // Reset to page 1 whenever filters change
-  useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, companyFilter, fyFilter]);
+  useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, companyFilter, fyFilter, classFilter]);
 
   // Fetch fiscal years for filter dropdown
   const { data: fiscalYears = [] } = useQuery({
     queryKey: ["mutual_fund_fiscal_years"],
     queryFn: async () => {
-      const { data } = await supabase.from("mutual_fund_payables").select("fiscal_year").order("fiscal_year", { ascending: false });
-      return Array.from(new Set((data || []).map((r: { fiscal_year: string | null }) => r.fiscal_year).filter(Boolean))) as string[];
+      const { data } = await (supabase as any).from("mutual_fund_payables").select("fiscal_year").order("fiscal_year", { ascending: false });
+      return Array.from(new Set((data || []).map((r: any) => r.fiscal_year).filter(Boolean))) as string[];
     },
     staleTime: 5 * 60 * 1000,
   });
 
   // Server-side totals for KPI cards (using fetchAllRows to support datasets > 1,000 records)
   const { data: totals = { count: 0, paidCount: 0, pendingCount: 0, units: 0, gross: 0, tax: 0, net: 0 } } = useQuery({
-    queryKey: ["mutual_fund_payables_totals", statusFilter, companyFilter, fyFilter],
+    queryKey: ["mutual_fund_payables_totals", statusFilter, companyFilter, fyFilter, classFilter],
     queryFn: async () => {
       const data = await fetchAllRows<any>((from, to) => {
         let q = (supabase as any)
           .from("mutual_fund_payables")
-          .select("payment_status, shares_held, gross_dividend, tax_amount, net_payable")
+          .select("payment_status, shares_held, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, lot_name")
           .range(from, to);
         if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
         if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
         if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+        if (classFilter !== "all") {
+          if (classFilter === "PROMOTER") {
+            q = q.or("payee_segment.eq.PROMOTER,lot_name.ilike.%PROMOT%");
+          } else if (classFilter === "LOCAL") {
+            q = q.or("payee_segment.eq.LOCAL,lot_name.ilike.%LOCAL%");
+          } else if (classFilter === "TAX_EXEMPT") {
+            q = q.or("payee_classification.eq.TAX_EXEMPT,lot_name.ilike.%MUTUAL%,lot_name.ilike.%EXEMPT%");
+          } else if (classFilter === "INSTITUTION") {
+            q = q.or("payee_classification.eq.COMPANY_INSTITUTION,lot_name.ilike.%INSTITUT%,lot_name.ilike.%COMPANY%");
+          } else if (classFilter === "PUBLIC") {
+            q = q.or("payee_classification.eq.NATURAL_PERSON,payee_classification.eq.PUBLIC_LEGAL_PERSON,lot_name.ilike.%PUBLIC%");
+          }
+        }
         return q;
       });
 
@@ -264,7 +278,7 @@ function MutualFundPage() {
 
   // Main server-side paginated query
   const { data: pageResult = { rows: [], count: 0 }, isLoading } = useQuery({
-    queryKey: ["mutual_fund_payables", page, pageSize, debouncedSearch, statusFilter, companyFilter, fyFilter],
+    queryKey: ["mutual_fund_payables", page, pageSize, debouncedSearch, statusFilter, companyFilter, fyFilter, classFilter],
     queryFn: async () => {
       let q = (supabase as any)
         .from("mutual_fund_payables")
@@ -278,6 +292,19 @@ function MutualFundPage() {
       if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
       if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
       if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+      if (classFilter !== "all") {
+        if (classFilter === "PROMOTER") {
+          q = q.or("payee_segment.eq.PROMOTER,lot_name.ilike.%PROMOT%");
+        } else if (classFilter === "LOCAL") {
+          q = q.or("payee_segment.eq.LOCAL,lot_name.ilike.%LOCAL%");
+        } else if (classFilter === "TAX_EXEMPT") {
+          q = q.or("payee_classification.eq.TAX_EXEMPT,lot_name.ilike.%MUTUAL%,lot_name.ilike.%EXEMPT%");
+        } else if (classFilter === "INSTITUTION") {
+          q = q.or("payee_classification.eq.COMPANY_INSTITUTION,lot_name.ilike.%INSTITUT%,lot_name.ilike.%COMPANY%");
+        } else if (classFilter === "PUBLIC") {
+          q = q.or("payee_classification.eq.NATURAL_PERSON,payee_classification.eq.PUBLIC_LEGAL_PERSON,lot_name.ilike.%PUBLIC%");
+        }
+      }
 
       if (debouncedSearch) {
         q = q.or(
@@ -674,7 +701,7 @@ function MutualFundPage() {
             >
               <FileSpreadsheet className="mr-2 h-4 w-4" /> Summary
             </Button>
-            <Button variant="outline" size="sm" onClick={() => exportToExcel(filtered as unknown as Record<string, unknown>[], "mutual_fund_payables")}>
+            <Button variant="outline" size="sm" onClick={handleExport}>
               <Download className="mr-2 h-4 w-4" /> Export
             </Button>
             <Button variant="outline" size="sm" onClick={() => setCalcOpen((v) => !v)}>
@@ -1105,7 +1132,7 @@ function MutualFundPage() {
       <Card>
         <CardContent>
           <div className="mb-4 flex flex-col gap-3">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
               <Input placeholder="Search company, client, reference..." value={search} onChange={(e) => setSearch(e.target.value)} />
               <Select value={statusFilter} onValueChange={setStatusFilter}>
                 <SelectTrigger>
@@ -1116,6 +1143,19 @@ function MutualFundPage() {
                   <SelectItem value="Pending">Pending</SelectItem>
                   <SelectItem value="Partial">Partial</SelectItem>
                   <SelectItem value="Paid">Paid</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={classFilter} onValueChange={setClassFilter}>
+                <SelectTrigger>
+                  <SelectValue placeholder="All Classes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Classes / Categories</SelectItem>
+                  <SelectItem value="PUBLIC">Public (Natural Person)</SelectItem>
+                  <SelectItem value="INSTITUTION">Institution (Legal Person)</SelectItem>
+                  <SelectItem value="TAX_EXEMPT">Tax Exempted (Mutual Fund)</SelectItem>
+                  <SelectItem value="PROMOTER">Promoter</SelectItem>
+                  <SelectItem value="LOCAL">Local</SelectItem>
                 </SelectContent>
               </Select>
               <Select value={companyFilter} onValueChange={setCompanyFilter}>

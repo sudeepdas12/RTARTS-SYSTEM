@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { PdfGenerator } from '@/lib/pdf-generator';
+import { smartClassify } from './smart-classifier';
 
 export interface DebentureSummaryRow {
   name: string;
@@ -38,33 +39,18 @@ export interface DebentureSummaryReport {
 }
 
 export function determineDebentureCategory(p: any): 'PUBLIC' | 'PRIVATE' | 'MUTUAL_FUND' {
-  // 1. Lot name / Sheet name
-  const lot = String(p.lot_name || '').trim().toUpperCase();
-  if (lot.includes('MUTUAL') || lot.includes('EXEMPT') || lot.includes('RETIREMENT')) return 'MUTUAL_FUND';
-  if (lot.includes('PRIVATE') || lot.includes('INSTITUT') || lot.includes('COMPANY') || lot.includes('LEGAL')) return 'PRIVATE';
-  if (lot.includes('PUBLIC')) return 'PUBLIC';
+  const result = smartClassify({
+    full_name: p.client?.full_name || p.full_name,
+    father_name: p.client?.father_name || p.father_name,
+    grandfather_name: p.client?.grandfather_name || p.grandfather_name,
+    citizenship: p.client?.citizenship || p.citizenship,
+    holder_type: p.client?.holder_type || p.holder_type,
+    payee_classification: p.payee_classification || p.client?.payee_classification,
+    lot_name: p.lot_name,
+  });
 
-  // 2. Classification
-  const cls = String(p.payee_classification || p.client?.payee_classification || '').trim().toUpperCase();
-  if (cls.includes('TAX_EXEMPT') || cls.includes('MUTUAL_FUND')) return 'MUTUAL_FUND';
-  if (cls.includes('INSTITUTION') || cls.includes('COMPANY') || cls.includes('PRIVATE')) return 'PRIVATE';
-  if (cls.includes('NATURAL') || cls.includes('PUBLIC')) return 'PUBLIC';
-
-  // 3. Holder type
-  const holder = String(p.client?.holder_type || '').trim().toUpperCase();
-  if (holder.includes('EXEMPT') || holder.includes('MUTUAL')) return 'MUTUAL_FUND';
-  if (holder.includes('LEGAL') || holder.includes('INSTITUT') || holder.includes('PRIVATE')) return 'PRIVATE';
-  if (holder.includes('PUBLIC')) return 'PUBLIC';
-
-  // 4. Name heuristics
-  const name = String(p.client?.full_name || p.full_name || '').trim().toUpperCase();
-  if (/(MUTUAL\s*FUND|RETIREMENT\s*FUND|PENSION\s*FUND|PROVIDENT\s*FUND|KOSH\b|SANCHAYA\s*KOSH|NAGARIK\s*LAGANI|\bCIT\b|\bEPF\b|SAMRIDDHI\s*FUND|EQUITY\s*FUND|GROWTH\s*FUND|SCHEME\b)/i.test(name)) {
-    return 'MUTUAL_FUND';
-  }
-  if (/(PVT\.?LTD|PRIVATE LIMITED|\bLIMITED\b|\bLTD\.?\b|\bCOMPANY\b|CORPORATION|ASSOCIATES|FOUNDATION|\bGROUP\b|HOLDINGS|\bTRUST\b|\bBANK\b|FINANCE|MICROFINANCE|HYDROPOWER|INSURANCE|INSTITUTE|SOCIETY|COOPERATIVE|SAHAKARI|ENTERPRISES|VENTURES|INVESTMENT|CAPITAL|SECURITIES)/i.test(name)) {
-    return 'PRIVATE';
-  }
-
+  if (result.payee_classification === 'TAX_EXEMPT') return 'MUTUAL_FUND';
+  if (result.payee_classification === 'COMPANY_INSTITUTION') return 'PRIVATE';
   return 'PUBLIC';
 }
 

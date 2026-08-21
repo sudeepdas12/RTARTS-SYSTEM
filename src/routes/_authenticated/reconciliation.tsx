@@ -41,7 +41,7 @@ export function ReconciliationRoute() {
   const loadHistory = async () => {
     setIsLoadingHistory(true);
     try {
-      const results = await ReconciliationService.getResults(50, 0);
+      const results = await ReconciliationService.getResults(200, 0);
       setSavedResults(results);
     } catch (error) {
       console.warn('Could not load reconciliation history:', error);

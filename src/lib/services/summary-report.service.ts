@@ -1,6 +1,8 @@
 import * as XLSX from 'xlsx';
 import { supabase, fetchAllRows } from './database';
 import { normalizePayeeCategory, validatePayableConsistency } from './payable-summary';
+import { PdfGenerator } from '@/lib/pdf-generator';
+import { smartClassify } from './smart-classifier';
 
 export interface CompanySummaryRow {
   company_id: string;
@@ -39,7 +41,7 @@ type SummarySourceRow = {
   holder_type?: string | null;
   payee_classification?: string | null;
   payee_segment?: string | null;
-  client?: { holder_type?: string | null; payee_classification?: string | null } | null;
+  client?: { full_name?: string | null; holder_type?: string | null; payee_classification?: string | null; father_name?: string | null; grandfather_name?: string | null; citizenship?: string | null } | null;
   companies?: { company_name?: string | null; company_code?: string | null } | null;
 };
 
@@ -148,48 +150,25 @@ export interface MutualFundSummaryRow {
   composition?: number;
 }
 
-export function mfSummaryType(row: {
-  payee_classification?: string | null;
-  payee_segment?: string | null;
-  lot_name?: string | null;
-  client?: {
-    full_name?: string | null;
-    holder_type?: string | null;
-    payee_classification?: string | null;
-  } | null;
-}): string {
-  const lot = (row.lot_name || '').toUpperCase();
-  if (lot.includes('PROMOT')) return 'PROMOTER';
-  if (lot.includes('INSTITUT')) return 'INSTITUTION';
-  if (lot.includes('TAX EXEMPT') || lot.includes('MUTUAL')) return 'TAX EXEMPTED';
-  if (lot.includes('LOCAL')) return 'LOCAL UNVERIFIED';
-  if (lot.includes('PUBLIC')) return 'PUBLIC';
+export function mfSummaryType(row: any): string {
+  return determinePayeeCategory(row);
+}
 
-  const cls = (row.payee_classification || row.client?.payee_classification || '').trim().toUpperCase();
-  if (cls === 'COMPANY_INSTITUTION' || cls.includes('INSTITUTION')) return 'INSTITUTION';
-  if (cls === 'TAX_EXEMPT' || cls.includes('TAX_EXEMPT') || cls.includes('MUTUAL_FUND')) return 'TAX EXEMPTED';
-  if (cls === 'NATURAL_PERSON' || cls === 'PUBLIC_LEGAL_PERSON' || (cls.includes('PUBLIC') && cls !== 'UNCLASSIFIED')) {
-    if (row.payee_segment === 'PROMOTER') return 'PROMOTER';
-    if (row.payee_segment === 'LOCAL') return 'LOCAL UNVERIFIED';
-    return 'PUBLIC';
-  }
-  if (cls === 'UNCLASSIFIED') return 'OTHERS';
+function determinePayeeCategory(row: SummarySourceRow): 'PROMOTER' | 'LOCAL UNVERIFIED' | 'TAX EXEMPTED' | 'INSTITUTION' | 'PUBLIC' | 'OTHERS' {
+  const result = smartClassify({
+    full_name: row.client?.full_name,
+    father_name: (row.client as any)?.father_name,
+    grandfather_name: (row.client as any)?.grandfather_name,
+    citizenship: (row.client as any)?.citizenship,
+    holder_type: row.client?.holder_type,
+    payee_classification: row.payee_classification || row.client?.payee_classification,
+  });
 
-  const holder = (row.client?.holder_type || '').toUpperCase();
-  if (holder.includes('PROMOT')) return 'PROMOTER';
-  if (holder.includes('LEGAL') || holder.includes('INSTITUT')) return 'INSTITUTION';
-  if (holder.includes('EXEMPT') || holder.includes('MUTUAL')) return 'TAX EXEMPTED';
-  if (holder.includes('LOCAL')) return 'LOCAL UNVERIFIED';
-  if (holder.includes('PUBLIC')) return 'PUBLIC';
-
-  const clientName = (row.client?.full_name || '').toUpperCase();
-  if (/(MUTUAL\s*FUND|RETIREMENT\s*FUND|PENSION\s*FUND|PROVIDENT\s*FUND|KOSH\b|SANCHAYA\s*KOSH|NAGARIK\s*LAGANI|\bCIT\b|\bEPF\b|SAMRIDDHI\s*FUND|EQUITY\s*FUND|GROWTH\s*FUND|SCHEME\b)/i.test(clientName)) {
-    return 'TAX EXEMPTED';
-  }
-  if (/(PVT\.?LTD|PRIVATE LIMITED|\bLIMITED\b|\bLTD\.?\b|\bCOMPANY\b|CORPORATION|ASSOCIATES|FOUNDATION|\bGROUP\b|HOLDINGS|\bTRUST\b|\bBANK\b|FINANCE|MICROFINANCE|HYDROPOWER|INSURANCE|INSTITUTE|SOCIETY|COOPERATIVE|SAHAKARI|ENTERPRISES|VENTURES|INVESTMENT|CAPITAL|SECURITIES)/i.test(clientName)) {
-    return 'INSTITUTION';
-  }
-
+  if (row.payee_segment === 'PROMOTER' || result.payee_category === 'PROMOTER') return 'PROMOTER';
+  if (row.payee_segment === 'LOCAL' || result.payee_category === 'LOCAL') return 'LOCAL UNVERIFIED';
+  if (result.payee_classification === 'TAX_EXEMPT') return 'TAX EXEMPTED';
+  if (result.payee_classification === 'COMPANY_INSTITUTION') return 'INSTITUTION';
+  if (result.payee_classification === 'NATURAL_PERSON') return 'PUBLIC';
   return 'OTHERS';
 }
 

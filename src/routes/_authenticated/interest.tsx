@@ -87,6 +87,7 @@ function InterestPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [companyFilter, setCompanyFilter] = useState<string>("all");
   const [fyFilter, setFyFilter] = useState<string>("all");
+  const [classFilter, setClassFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [open, setOpen] = useState(false);
@@ -138,9 +139,9 @@ function InterestPage() {
     const fv = Number(calcFaceValue);
     const rate = Number(calcRate);
     if (!kitta || kitta <= 0) { toast.error('Enter a valid number of debentures (Kitta)'); return; }
-    if (!fv || fv <= 0) { toast.error('Enter a valid face value'); return; }
-    if (!rate || rate <= 0) { toast.error('Enter a valid annual interest rate'); return; }
-    if (!calcDays || calcDays <= 0) { toast.error('Select valid From and To dates'); return; }
+    if (!rate || rate <= 0) { toast.error('Enter a valid coupon rate (%)'); return; }
+    if (calcDays <= 0) { toast.error('Check Date From and Date To range'); return; }
+
     const result = InterestCalculator.calculate({
       debentureKitta: kitta,
       unitFaceValue: fv,
@@ -156,27 +157,33 @@ function InterestPage() {
   const fmtNr = (n: number) => n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const { data: companies = [] } = useQuery({
-    queryKey: ["companies-lookup"],
+    queryKey: ["companies"],
     queryFn: async () => {
       const { data, error } = await supabase.from("companies").select("id, company_code, company_name").order("company_name");
       if (error) throw error;
-      return data as { id: string; company_code: string; company_name: string }[];
+      return data;
     },
   });
   const { data: clients = [] } = useQuery({
-    queryKey: ["clients-lookup"],
+    queryKey: ["clients_selector"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("clients")
-        .select("id, client_code, full_name, boid, bank_name, bank_account_no")
+        .select("id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no")
         .order("full_name")
-        .limit(5000);
+        .limit(2000);
       if (error) throw error;
-      return (data || []) as {
+      return data as {
         id: string;
         client_code: string;
         full_name: string;
         boid: string | null;
+        father_name: string | null;
+        grandfather_name: string | null;
+        pan_or_citizenship: string | null;
+        address: string | null;
+        district: string | null;
+        phone: string | null;
         bank_name: string | null;
         bank_account_no: string | null;
       }[];
@@ -198,7 +205,7 @@ function InterestPage() {
   }, [search]);
 
   // Reset to page 1 whenever filters change
-  useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, companyFilter, fyFilter]);
+  useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, companyFilter, fyFilter, classFilter]);
 
   // Fetch fiscal years for filter dropdown
   const { data: fiscalYears = [] } = useQuery({
@@ -212,16 +219,29 @@ function InterestPage() {
 
   // Server-side totals for KPI cards
   const { data: totals = { count: 0, paidCount: 0, pendingCount: 0, gross: 0, tax: 0, net: 0 } } = useQuery({
-    queryKey: ["interest_payables_totals", statusFilter, companyFilter, fyFilter],
+    queryKey: ["interest_payables_totals", statusFilter, companyFilter, fyFilter, classFilter],
     queryFn: async () => {
       const data = await fetchAllRows<any>((from, to) => {
         let q = (supabase as any)
           .from("interest_payables")
-          .select("payment_status, gross_interest, tax_amount, net_payable")
+          .select("payment_status, gross_interest, tax_amount, net_payable, payee_classification, payee_segment, instrument_ref")
           .range(from, to);
         if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
         if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
         if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+        if (classFilter !== "all") {
+          if (classFilter === "PROMOTER") {
+            q = q.or("payee_segment.eq.PROMOTER,instrument_ref.ilike.%PROMOT%");
+          } else if (classFilter === "LOCAL") {
+            q = q.or("payee_segment.eq.LOCAL,instrument_ref.ilike.%LOCAL%");
+          } else if (classFilter === "TAX_EXEMPT") {
+            q = q.or("payee_classification.eq.TAX_EXEMPT,instrument_ref.ilike.%MUTUAL%,instrument_ref.ilike.%EXEMPT%");
+          } else if (classFilter === "INSTITUTION") {
+            q = q.or("payee_classification.eq.COMPANY_INSTITUTION,instrument_ref.ilike.%INSTITUT%,instrument_ref.ilike.%COMPANY%");
+          } else if (classFilter === "PUBLIC") {
+            q = q.or("payee_classification.eq.NATURAL_PERSON,payee_classification.eq.PUBLIC_LEGAL_PERSON,instrument_ref.ilike.%PUBLIC%");
+          }
+        }
         return q;
       });
 
@@ -242,9 +262,9 @@ function InterestPage() {
 
   // Main server-side paginated query
   const { data: pageResult = { rows: [], count: 0 }, isLoading } = useQuery({
-    queryKey: ["interest_payables", page, pageSize, debouncedSearch, statusFilter, companyFilter, fyFilter],
+    queryKey: ["interest_payables", page, pageSize, debouncedSearch, statusFilter, companyFilter, fyFilter, classFilter],
     queryFn: async () => {
-      let q = supabase
+      let q = (supabase as any)
         .from("interest_payables")
         .select("*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no), company:companies(id, company_code, company_name)", { count: "exact" })
         .order("due_date", { ascending: false, nullsFirst: false })
@@ -253,6 +273,19 @@ function InterestPage() {
       if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
       if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
       if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+      if (classFilter !== "all") {
+        if (classFilter === "PROMOTER") {
+          q = q.or("payee_segment.eq.PROMOTER,instrument_ref.ilike.%PROMOT%");
+        } else if (classFilter === "LOCAL") {
+          q = q.or("payee_segment.eq.LOCAL,instrument_ref.ilike.%LOCAL%");
+        } else if (classFilter === "TAX_EXEMPT") {
+          q = q.or("payee_classification.eq.TAX_EXEMPT,instrument_ref.ilike.%MUTUAL%,instrument_ref.ilike.%EXEMPT%");
+        } else if (classFilter === "INSTITUTION") {
+          q = q.or("payee_classification.eq.COMPANY_INSTITUTION,instrument_ref.ilike.%INSTITUT%,instrument_ref.ilike.%COMPANY%");
+        } else if (classFilter === "PUBLIC") {
+          q = q.or("payee_classification.eq.NATURAL_PERSON,payee_classification.eq.PUBLIC_LEGAL_PERSON,instrument_ref.ilike.%PUBLIC%");
+        }
+      }
 
       if (debouncedSearch) {
         q = q.or(
@@ -275,7 +308,7 @@ function InterestPage() {
   // Helper to fetch all filtered rows for export/summary
   const fetchAllFiltered = useCallback(async (): Promise<Payable[]> => {
     return fetchAllRows<Payable>((from, to) => {
-      let q = supabase
+      let q = (supabase as any)
         .from("interest_payables")
         .select("*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no), company:companies(id, company_code, company_name)")
         .order("due_date", { ascending: false, nullsFirst: false })
@@ -299,7 +332,7 @@ function InterestPage() {
     queryKey: ["interest_summary_rows", companyFilter, fyFilter],
     queryFn: async () => {
       return fetchAllRows<Payable>((from, to) => {
-        let q = supabase
+        let q = (supabase as any)
           .from("interest_payables")
           .select("id, client_id, company_id, instrument_ref, gross_interest, tax_amount, net_payable, due_date, payment_status, fiscal_year, payee_classification, payee_segment, client:clients(id, full_name, holder_type, payee_classification, payee_segment)")
           .range(from, to);
@@ -882,7 +915,7 @@ function InterestPage() {
               variant="outline"
               size="sm"
               className="h-8 text-xs"
-              onClick={loadSummary}
+              onClick={() => loadSummary()}
               disabled={summaryLoading}
             >
               {summaryLoading ? "Loading…" : debentureSummaryReport ? "Refresh" : "Load Summary"}
@@ -1005,6 +1038,17 @@ function InterestPage() {
                 <SelectItem value="Pending">Pending</SelectItem>
                 <SelectItem value="Partial">Partial</SelectItem>
                 <SelectItem value="Paid">Paid</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={classFilter} onValueChange={(v) => { setClassFilter(v); setPage(1); }}>
+              <SelectTrigger className="w-48"><SelectValue placeholder="All Classes" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Classes / Categories</SelectItem>
+                <SelectItem value="PUBLIC">Public (Natural Person)</SelectItem>
+                <SelectItem value="INSTITUTION">Institution (Legal Person)</SelectItem>
+                <SelectItem value="TAX_EXEMPT">Tax Exempted (Mutual Fund)</SelectItem>
+                <SelectItem value="PROMOTER">Promoter</SelectItem>
+                <SelectItem value="LOCAL">Local</SelectItem>
               </SelectContent>
             </Select>
             <Select value={companyFilter} onValueChange={(v) => { setCompanyFilter(v); setPage(1); }}>

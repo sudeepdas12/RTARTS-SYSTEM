@@ -40,10 +40,10 @@ export const TAX_CATEGORY_LABEL: Record<TaxPayableCategory, string> = {
 };
 
 export const TAX_CLASSIFICATION_LABEL: Record<TaxClassification, string> = {
-  NATURAL_PERSON: "Natural Person (Individual)",
-  PUBLIC_LEGAL_PERSON: "Public / Legal Person",
-  COMPANY_INSTITUTION: "Company / Institution",
-  TAX_EXEMPT: "Tax Exempt (Mutual Fund)",
+  NATURAL_PERSON: "Natural Person (Public / Individual)",
+  PUBLIC_LEGAL_PERSON: "Natural Person (Public)",
+  COMPANY_INSTITUTION: "Legal Person (Company / Institution)",
+  TAX_EXEMPT: "Tax Exempt (Mutual Fund / Retirement Fund)",
 };
 
 const CACHE_TTL_MS = 60_000;

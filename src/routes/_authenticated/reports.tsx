@@ -121,7 +121,7 @@ function ReportsRoute() {
     queryKey: ["debenture-interest-summary-report", companyId],
     queryFn: async () => {
       const data = await fetchAllRows<any>((from, to) => {
-        let q = supabase
+        let q = (supabase as any)
           .from("interest_payables")
           .select("*, client:clients(id, full_name, holder_type, payee_classification), company:companies(id, company_code, company_name)")
           .range(from, to);

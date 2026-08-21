@@ -135,7 +135,7 @@ async function deleteOrphanClientsBatched(companyId?: string, batchSize = 100): 
     for (const r of intRes.data || []) activeSet.add(r.client_id);
     for (const r of mfRes.data || []) activeSet.add(r.client_id);
 
-    const orphansToDelete = chunk.filter((id) => !activeSet.has(id));
+    const orphansToDelete = chunk.filter((id: string) => !activeSet.has(id));
     if (orphansToDelete.length > 0) {
       for (let j = 0; j < orphansToDelete.length; j += batchSize) {
         const delBatch = orphansToDelete.slice(j, j + batchSize);

@@ -64,7 +64,10 @@ export const ReconciliationService = {
    *
    * Creates a tracking batch for the reconciliation payments and includes idempotency protection.
    */
-  async applyReconciliation(results: ReconciliationResultRow[]): Promise<{ updated: number; paymentsCreated: number; errors: string[] }> {
+  async applyReconciliation(
+    results: ReconciliationResultRow[],
+    paymentMethod: string = 'ConnectIPS'
+  ): Promise<{ updated: number; paymentsCreated: number; errors: string[] }> {
     const matchedResults = results.filter(r => r.result === 'Matched' || r.result === 'Over_Paid' || r.result === 'Under_Paid');
     if (!matchedResults.length) {
       return { updated: 0, paymentsCreated: 0, errors: [] };
@@ -74,7 +77,15 @@ export const ReconciliationService = {
     let paymentsCreated = 0;
     const errors: string[] = [];
 
-    // 1. Group by company to create clean reconciliation batches
+    // 1. Determine dominant payable type across matched results
+    const typeCounts = matchedResults.reduce((acc, r) => {
+      const t = r.payable_type || 'dividend';
+      acc[t] = (acc[t] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    const dominantPayableType = Object.entries(typeCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'dividend';
+
+    // 2. Group by company to create clean reconciliation batches
     const companyId = matchedResults.find(r => r.company_id)?.company_id || null;
     let reconBatchId: string | null = null;
 
@@ -85,8 +96,8 @@ export const ReconciliationService = {
         .insert({
           batch_name: `Reconciliation Auto-Batch ${todayStr}`,
           company_id: companyId,
-          payable_type: 'dividend',
-          payment_method: 'ConnectIPS',
+          payable_type: dominantPayableType,
+          payment_method: paymentMethod,
           total_records: matchedResults.length,
           total_gross: matchedResults.reduce((acc, r) => acc + Number(r.expected_amount || 0), 0),
           total_tax: 0,
@@ -105,9 +116,13 @@ export const ReconciliationService = {
       console.warn('Could not create reconciliation tracking batch:', bErr);
     }
 
+    let batchTotalGross = 0;
+    let batchTotalTax = 0;
+    let batchTotalNet = 0;
+
     for (const result of matchedResults) {
       try {
-        const payableType = result.payable_type || 'dividend';
+        const payableType = result.payable_type || dominantPayableType || 'dividend';
         const payableId = result.payable_id;
         if (!payableId) continue;
 
@@ -122,6 +137,24 @@ export const ReconciliationService = {
         if (!tableName) {
           errors.push(`Unknown payable type: ${payableType}`);
           continue;
+        }
+
+        // Fetch payable details for accurate tax and gross numbers
+        let payableTax = 0;
+        let payableGross = Number(result.expected_amount ?? 0);
+        try {
+          const { data: pRow } = await (supabase as any)
+            .from(tableName)
+            .select('tax_amount, gross_dividend, gross_interest, net_payable')
+            .eq('id', payableId)
+            .maybeSingle();
+
+          if (pRow) {
+            payableTax = Number(pRow.tax_amount || 0);
+            payableGross = Number(pRow.gross_dividend ?? pRow.gross_interest ?? (Number(pRow.net_payable || 0) + payableTax));
+          }
+        } catch {
+          // fallback to expected amount
         }
 
         // Determine the new payment status
@@ -164,9 +197,18 @@ export const ReconciliationService = {
           continue;
         }
 
-        // Create a payment record
+        // Create a payment record with accurate gross, tax, and net
         const actualAmount = Number(result.actual_amount ?? 0);
         const expectedAmount = Number(result.expected_amount ?? 0);
+        const netAmount = expectedAmount;
+        const grossAmount = payableGross || netAmount;
+        const taxAmount = payableTax;
+        const paidAmount = actualAmount || expectedAmount;
+
+        batchTotalGross += grossAmount;
+        batchTotalTax += taxAmount;
+        batchTotalNet += paidAmount;
+
         const { error: paymentError } = await (supabase as any)
           .from('payments')
           .insert({
@@ -175,11 +217,11 @@ export const ReconciliationService = {
             client_id: result.client_id,
             payable_type: payableType,
             payable_id: payableId,
-            gross_amount: expectedAmount,
-            tax_amount: 0,
-            net_amount: expectedAmount,
-            paid_amount: actualAmount || expectedAmount,
-            payment_method: 'ConnectIPS',
+            gross_amount: grossAmount,
+            tax_amount: taxAmount,
+            net_amount: netAmount,
+            paid_amount: paidAmount,
+            payment_method: paymentMethod,
             payment_date: new Date().toISOString().split('T')[0],
             payment_reference: `RECON-${result.id ? String(result.id).slice(0, 8) : 'auto'}`,
             status: 'Completed',
@@ -193,6 +235,24 @@ export const ReconciliationService = {
         }
       } catch (err: any) {
         errors.push(`Exception for result ${result.id}: ${err?.message || String(err)}`);
+      }
+    }
+
+    // Update batch totals with computed tax & gross if batch was created
+    if (reconBatchId && paymentsCreated > 0) {
+      try {
+        await (supabase as any)
+          .from('payment_batches')
+          .update({
+            total_gross: batchTotalGross,
+            total_tax: batchTotalTax,
+            total_net: batchTotalNet,
+            total_amount: batchTotalNet,
+            total_payments: paymentsCreated,
+          })
+          .eq('id', reconBatchId);
+      } catch {
+        // non-blocking
       }
     }
 

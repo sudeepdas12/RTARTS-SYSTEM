@@ -1,19 +1,44 @@
+import { ExcelExporter } from '@/lib/excel-exporter';
+import { PdfGenerator, PdfColumn } from '@/lib/pdf-generator';
+
 export const ExportService = {
   /**
-   * Stub for exporting data to Excel format.
-   * This might use a library like xlsx on the client or an Edge Function.
+   * Exports data to Excel format.
    */
-  async exportToExcel(data: any[], fileName: string) {
-    console.log(`Preparing to export ${data.length} rows to ${fileName}.xlsx`);
-    // Implementation for Excel export logic goes here
+  async exportToExcel(data: any[], fileName: string, sheetName = 'Data'): Promise<void> {
+    if (!data || data.length === 0) {
+      console.warn('No data provided to exportToExcel');
+      return;
+    }
+    ExcelExporter.exportToExcel(data, fileName, sheetName);
   },
 
   /**
-   * Stub for exporting data to PDF format.
-   * This might use a library like jspdf on the client or an Edge Function.
+   * Exports data to PDF format.
    */
-  async exportToPDF(data: any[], fileName: string) {
-    console.log(`Preparing to export ${data.length} rows to ${fileName}.pdf`);
-    // Implementation for PDF export logic goes here
+  async exportToPDF(
+    data: Record<string, unknown>[],
+    fileName: string,
+    title?: string
+  ): Promise<void> {
+    if (!data || data.length === 0) {
+      console.warn('No data provided to exportToPDF');
+      return;
+    }
+
+    const sample = data[0];
+    const columns: PdfColumn[] = Object.keys(sample).map(key => ({
+      header: key.replace(/_/g, ' ').toUpperCase(),
+      dataKey: key,
+    }));
+
+    PdfGenerator.generate(
+      {
+        title: title || fileName.replace(/_/g, ' '),
+        companyName: 'RTARTS System',
+      },
+      columns,
+      data
+    );
   }
 };

@@ -114,24 +114,49 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
     if (/D-PROMOT/.test(rawType)) return "PROMOTER";
   }
 
+  // 1. Natural Person indicators MUST take precedence over name heuristics.
+  // Humans have father/grandfather names or citizenship; companies & mutual funds NEVER do.
+  const fatherName = String(
+    row.father_name || row.fatherName || row.FATHER_NAME || row["FATHER'S NAME"] || ""
+  ).trim();
+  const grandfatherName = String(
+    row.grandfather_name || row.grandfatherName || row.GRANDFATHER_NAME || row["GRANDFATHER'S NAME"] || ""
+  ).trim();
+  const citizenship = String(row.citizenship || row.CITIZENSHIP || row.citizenship_no || row.CITIZENSHIP_NO || "").trim();
+
+  if (fatherName || grandfatherName) {
+    return "PUBLIC";
+  }
+  if (citizenship && /[-a-zA-Z0-9]/.test(citizenship)) {
+    return "PUBLIC";
+  }
+
   const legalPersonName = String(
     row.full_name || row.fullName || row.name || row.NAME || row.client_name || row.clientName ||
     row.company_name || row.companyName || row.company || ""
   ).trim();
 
-  // 1. Tax Exempted / Mutual Fund detection from name
-  const taxExemptSignals = /(MUTUAL\s*FUND|RETIREMENT\s*FUND|PENSION\s*FUND|PROVIDENT\s*FUND|KOSH\b|SANCHAYA\s*KOSH|NAGARIK\s*LAGANI|\bCIT\b|\bEPF\b|SAMRIDDHI\s*FUND|EQUITY\s*FUND|GROWTH\s*FUND|SCHEME\b)/i;
+  // 2. Private Limited companies (PVT LTD / PRIVATE LIMITED) are incorporated corporate entities (Legal Person).
+  const isPvtLtd = /PVT\.?\s*LTD|PRIVATE\s*LIMITED/i.test(legalPersonName);
+  const isMutualFundScheme = /(MUTUAL\s*FUND|\bMF\b|FOCUS\s*(40|30)|SELECT\s*30|SUPER\s*30|SAMRIDDHI|SAMUNNAT|PRAGATI|SAHABHAGITA|DHANABRIDDHI|SABAL|EQUITY\s*(FUND|SCHEME|ORIENTED)|GROWTH\s*(FUND|SCHEME)|BALANCED\s*(FUND|SCHEME)|BLUECHIP|LARGE\s*CAP|FLEXI\s*CAP|VALUE\s*FUND|DEBT\s*FUND|FIXED\s*INCOME|DYNAMIC\s*DEBT|SYSTEMATIC\s*INVESTMENT|YOJANA\b)/i.test(legalPersonName);
+
+  if (isPvtLtd && !isMutualFundScheme) {
+    return "INSTITUTION";
+  }
+
+  // 3. Tax Exempted / Mutual Fund detection from compound institutional name
+  const taxExemptSignals = /(MUTUAL\s*FUND|\bMF\b|FOCUS\s*(40|30)|SELECT\s*30|SUPER\s*30|SAMRIDDHI|SAMUNNAT|PRAGATI|SAHABHAGITA|DHANABRIDDHI|SABAL|EQUITY\s*(FUND|SCHEME|ORIENTED)|GROWTH\s*(FUND|SCHEME)|BALANCED\s*(FUND|SCHEME)|BLUECHIP|LARGE\s*CAP|FLEXI\s*CAP|VALUE\s*FUND|DEBT\s*FUND|FIXED\s*INCOME|DYNAMIC\s*DEBT|SYSTEMATIC\s*INVESTMENT|YOJANA\b|RETIREMENT\s*FUND|PENSION\s*FUND|PROVIDENT\s*FUND|SANCHAYA\s*KOSH|NAGARIK\s*LAGANI\s*KOSH|CITIZEN\s*INVESTMENT|\bCIT\b|\bEPF\b|\bSSF\b|SOCIAL\s*SECURITY\s*FUND|AWAKASH\s*KOSH|AWAKASH\s*FUND|KALYAN\s*KOSH)/i;
   if (legalPersonName && taxExemptSignals.test(legalPersonName)) {
     return "TAX_EXEMPT";
   }
 
-  // 2. Legal Person / Institutional signals from name
+  // 4. Legal Person / Institutional signals from name
   const legalPersonSignals = /(PVT\.?LTD|PRIVATE LIMITED|\bLIMITED\b|\bLTD\.?\b|\bCOMPANY\b|CORPORATION|ASSOCIATES|FOUNDATION|\bGROUP\b|HOLDINGS|\bTRUST\b|\bBANK\b|FINANCE|MICROFINANCE|HYDROPOWER|INSURANCE|INSTITUTE|SOCIETY|COOPERATIVE|SAHAKARI|ENTERPRISES|VENTURES|INVESTMENT|CAPITAL|SECURITIES)/i;
   if (legalPersonName && legalPersonSignals.test(legalPersonName)) {
     return "INSTITUTION";
   }
 
-  // 3. Sheet Type
+  // 4. Sheet Type
   if (sheetType) {
     const upper = sheetType.toUpperCase();
     if (upper.includes("MUTUAL") || upper.includes("MF")) return "MUTUAL_FUND";
@@ -140,23 +165,6 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
     if (upper.includes("INSTIT")) return "INSTITUTION";
     if (upper.includes("LOCAL")) return "LOCAL";
     if (upper.includes("PUBLIC")) return "PUBLIC";
-  }
-
-  // 4. Natural Person indicators.
-  // Companies do NOT have father/grandfather names or citizenship numbers.
-  const fatherName = String(
-    row.father_name || row.fatherName || row.FATHER_NAME || row["FATHER'S NAME"] || ""
-  ).trim();
-  const grandfatherName = String(
-    row.grandfather_name || row.grandfatherName || row.GRANDFATHER_NAME || row["GRANDFATHER'S NAME"] || ""
-  ).trim();
-  const citizenship = String(row.citizenship || row.CITIZENSHIP || "").trim();
-
-  if (fatherName || grandfatherName) {
-    return "PUBLIC"; // Has family names → Natural Person
-  }
-  if (citizenship && /[-a-zA-Z0-9]/.test(citizenship)) {
-    return "PUBLIC"; // Has citizenship format → Natural Person
   }
 
   return "UNKNOWN";
