@@ -1,5 +1,4 @@
 import { defineConfig, loadEnv, type PluginOption, type UserConfig } from "vite";
-import { devtools } from "@tanstack/devtools-vite";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import { nitro } from "nitro/vite";
@@ -10,19 +9,6 @@ export default defineConfig(({ mode }) => {
   const nitroPreset = process.env.NITRO_PRESET || "cloudflare-module";
 
   const plugins: PluginOption[] = [];
-
-  if (mode === "development") {
-    plugins.push(
-      devtools({
-        logging: false,
-        eventBusConfig: { enabled: false },
-        enhancedLogs: { enabled: false },
-        consolePiping: { enabled: false },
-        removeDevtoolsOnBuild: false,
-        injectSource: { enabled: true },
-      }),
-    );
-  }
 
   plugins.push(
     tailwindcss(),
