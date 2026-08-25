@@ -26,6 +26,7 @@ import { SettingsService } from "@/lib/services/settings.service";
 import { exportToExcel, importFromExcel } from "@/lib/xlsx-utils";
 import { DividendCalculator, type DividendResult } from "@/lib/dividend-calculator";
 import { AgmDividendSummaryReportService } from "@/lib/services/dividend-summary-report.service";
+import { STANDARD_PERIODS, type PeriodPreset } from "@/lib/services/period-calculator";
 
 export const Route = createFileRoute("/_authenticated/dividend")({
   component: DividendPage,
@@ -55,9 +56,11 @@ interface Payable {
   lot_name?: string | null;
   bank_name?: string | null;
   bank_account_no?: string | null;
+  tds_rate?: number | null;
+  payee_classification?: string | null;
   upload_id?: string | null;
   created_at: string;
-  client?: { id: string; client_code: string; full_name: string; boid: string | null; father_name: string | null; grandfather_name: string | null; pan_no?: string | null; citizenship_no?: string | null; pan_or_citizenship: string | null; nid_number?: string | null; address: string | null; district: string | null; phone: string | null; bank_name: string | null; bank_account_no: string | null } | null;
+  client?: { id: string; client_code: string; full_name: string; boid: string | null; holder_type?: string | null; payee_classification?: string | null; father_name: string | null; grandfather_name: string | null; pan_no?: string | null; citizenship_no?: string | null; pan_or_citizenship: string | null; nid_number?: string | null; address: string | null; district: string | null; phone: string | null; bank_name: string | null; bank_account_no: string | null } | null;
   company?: { id: string; company_code: string; company_name: string } | null;
 }
 
@@ -98,8 +101,9 @@ const emptyForm = {
 };
 
 function DividendPage() {
-  const { hasAny } = useAuth();
+  const { hasAny, isAdmin } = useAuth();
   const canWrite = hasAny(["admin", "finance_operator"]);
+  const canDelete = isAdmin;
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -107,6 +111,9 @@ function DividendPage() {
   const [fyFilter, setFyFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [classFilter, setClassFilter] = useState<string>("all");
+  const [fromDateFilter, setFromDateFilter] = useState<string>("");
+  const [toDateFilter, setToDateFilter] = useState<string>("");
+  const [periodPreset, setPeriodPreset] = useState<PeriodPreset | "ALL">("ALL");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   
@@ -229,7 +236,7 @@ function DividendPage() {
   }, [search]);
 
   // Reset to page 1 whenever filters change
-  useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, companyFilter, fyFilter, typeFilter, classFilter]);
+  useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, companyFilter, fyFilter, typeFilter, classFilter, fromDateFilter, toDateFilter]);
 
   // Fetch fiscal years for filter dropdown (lightweight)
   const { data: fiscalYears = [] } = useQuery({
@@ -243,17 +250,19 @@ function DividendPage() {
 
   // Server-side totals for KPI cards (using fetchAllRows to support datasets > 1,000 records)
   const { data: totals = { count: 0, paidCount: 0, pendingCount: 0, gross: 0, tax: 0, bonusTax: 0, net: 0, totalShares: 0, bonusIssued: 0 } } = useQuery({
-    queryKey: ["dividend_payables_totals", statusFilter, companyFilter, fyFilter, typeFilter, classFilter],
+    queryKey: ["dividend_payables_totals", statusFilter, companyFilter, fyFilter, typeFilter, classFilter, fromDateFilter, toDateFilter],
     queryFn: async () => {
       const data = await fetchAllRows<any>((from, to) => {
         let q = (supabase as any)
           .from("dividend_payables")
-          .select("payment_status, gross_dividend, tax_amount, bonus_tax, net_payable, shares_held, bonus_issued, payee_classification, payee_segment, lot_name")
+          .select("payment_status, gross_dividend, tax_amount, bonus_tax, net_payable, shares_held, bonus_issued, payee_classification, payee_segment, lot_name, created_at, payment_date")
           .range(from, to);
         if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
         if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
         if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
         if (typeFilter !== "all") q = q.eq("dividend_type", typeFilter);
+        if (fromDateFilter) q = q.gte("created_at", fromDateFilter);
+        if (toDateFilter) q = q.lte("created_at", `${toDateFilter}T23:59:59Z`);
         if (classFilter !== "all") {
           if (classFilter === "PROMOTER") {
             q = q.or("payee_segment.eq.PROMOTER,lot_name.ilike.%PROMOT%");
@@ -290,7 +299,7 @@ function DividendPage() {
 
   // Main server-side paginated query
   const { data: pageResult = { rows: [], count: 0 }, isLoading } = useQuery({
-    queryKey: ["dividend_payables", page, pageSize, debouncedSearch, statusFilter, companyFilter, fyFilter, typeFilter, classFilter],
+    queryKey: ["dividend_payables", page, pageSize, debouncedSearch, statusFilter, companyFilter, fyFilter, typeFilter, classFilter, fromDateFilter, toDateFilter],
     queryFn: async () => {
       let q = (supabase as any)
         .from("dividend_payables")
@@ -302,6 +311,8 @@ function DividendPage() {
       if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
       if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
       if (typeFilter !== "all") q = q.eq("dividend_type", typeFilter);
+      if (fromDateFilter) q = q.gte("created_at", fromDateFilter);
+      if (toDateFilter) q = q.lte("created_at", `${toDateFilter}T23:59:59Z`);
       if (classFilter !== "all") {
         if (classFilter === "PROMOTER") {
           q = q.or("payee_segment.eq.PROMOTER,lot_name.ilike.%PROMOT%");
@@ -317,7 +328,6 @@ function DividendPage() {
       }
 
       if (debouncedSearch) {
-        // Search on joined columns via ilike (PostgREST supports filtering on embedded columns)
         q = q.or(
           `lot_name.ilike.%${debouncedSearch}%,payment_reference.ilike.%${debouncedSearch}%,dividend_type.ilike.%${debouncedSearch}%`
         );
@@ -335,20 +345,41 @@ function DividendPage() {
   const safePage = Math.min(page, totalPages);
   const pageItems = data;
 
-  // For summary report: fetch only required lightweight columns (runs fast without heavy nested client fields)
+  // For summary report & export: fetch all matching filtered rows
   const fetchAllFiltered = useCallback(async (): Promise<Payable[]> => {
     return fetchAllRows<Payable>((from, to) => {
       let q = (supabase as any)
         .from("dividend_payables")
-        .select("id, client_id, company_id, shares_held, dividend_rate, gross_dividend, tax_amount, net_payable, fiscal_year, dividend_type, bonus_actual, bonus_issued, bonus_fraction, after_bonus_kitta, bonus_tax, lot_name, payee_classification, payee_segment, client:clients(id, full_name, holder_type, payee_classification, payee_segment)")
+        .select("*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no, holder_type, payee_classification, payee_segment), company:companies(id, company_code, company_name)")
+        .order("created_at", { ascending: false })
         .range(from, to);
       if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
       if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
       if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
       if (typeFilter !== "all") q = q.eq("dividend_type", typeFilter);
+      if (fromDateFilter) q = q.gte("created_at", fromDateFilter);
+      if (toDateFilter) q = q.lte("created_at", `${toDateFilter}T23:59:59Z`);
+      if (classFilter !== "all") {
+        if (classFilter === "PROMOTER") {
+          q = q.or("payee_segment.eq.PROMOTER,lot_name.ilike.%PROMOT%");
+        } else if (classFilter === "LOCAL") {
+          q = q.or("payee_segment.eq.LOCAL,lot_name.ilike.%LOCAL%");
+        } else if (classFilter === "TAX_EXEMPT") {
+          q = q.or("payee_classification.eq.TAX_EXEMPT,lot_name.ilike.%MUTUAL%,lot_name.ilike.%EXEMPT%");
+        } else if (classFilter === "INSTITUTION") {
+          q = q.or("payee_classification.eq.COMPANY_INSTITUTION,lot_name.ilike.%INSTITUT%,lot_name.ilike.%COMPANY%");
+        } else if (classFilter === "PUBLIC") {
+          q = q.or("payee_classification.eq.NATURAL_PERSON,payee_classification.eq.PUBLIC_LEGAL_PERSON,lot_name.ilike.%PUBLIC%");
+        }
+      }
+      if (debouncedSearch) {
+        q = q.or(
+          `lot_name.ilike.%${debouncedSearch}%,payment_reference.ilike.%${debouncedSearch}%,dividend_type.ilike.%${debouncedSearch}%`
+        );
+      }
       return q;
     });
-  }, [statusFilter, companyFilter, fyFilter, typeFilter]);
+  }, [statusFilter, companyFilter, fyFilter, typeFilter, classFilter, debouncedSearch]);
 
   // Summary report data — only loaded when summary section is open and company is selected
   const selectedCompany = useMemo(() => companies.find((c) => c.id === companyFilter), [companies, companyFilter]);
@@ -359,16 +390,18 @@ function DividendPage() {
 
   // Automatically fetch summary data with React Query
   const { data: summaryAllRows = [], isLoading: summaryLoading, refetch: loadSummary } = useQuery({
-    queryKey: ["dividend_summary_rows", companyFilter, fyFilter, typeFilter],
+    queryKey: ["dividend_summary_rows", companyFilter, fyFilter, typeFilter, fromDateFilter, toDateFilter],
     queryFn: async () => {
       return fetchAllRows<Payable>((from, to) => {
         let q = (supabase as any)
           .from("dividend_payables")
-          .select("id, client_id, company_id, shares_held, dividend_rate, gross_dividend, tax_amount, net_payable, fiscal_year, dividend_type, bonus_actual, bonus_issued, bonus_fraction, after_bonus_kitta, bonus_tax, lot_name, payee_classification, payee_segment, client:clients(id, full_name, holder_type, payee_classification, payee_segment)")
+          .select("id, client_id, company_id, shares_held, dividend_rate, gross_dividend, tax_amount, net_payable, fiscal_year, dividend_type, bonus_actual, bonus_issued, bonus_fraction, after_bonus_kitta, bonus_tax, lot_name, payee_classification, payee_segment, created_at, payment_date, client:clients(id, full_name, holder_type, payee_classification, payee_segment)")
           .range(from, to);
         if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
         if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
         if (typeFilter !== "all") q = q.eq("dividend_type", typeFilter);
+        if (fromDateFilter) q = q.gte("created_at", fromDateFilter);
+        if (toDateFilter) q = q.lte("created_at", `${toDateFilter}T23:59:59Z`);
         return q;
       });
     },
@@ -546,6 +579,11 @@ function DividendPage() {
           client_code: cl?.client_code ?? "",
           client_name: cl?.full_name ?? "",
           boid: cl?.boid ?? "",
+          holder_type: cl?.holder_type ?? "",
+          classification: p.payee_classification || cl?.payee_classification || "",
+          pan_or_citizenship: cl?.pan_or_citizenship ?? "",
+          bank_name: cl?.bank_name ?? "",
+          bank_account_no: cl?.bank_account_no ?? "",
           shares_held: p.shares_held,
           dividend_rate: p.dividend_rate,
           dividend_type: p.dividend_type ?? "Cash",
@@ -1006,6 +1044,89 @@ function DividendPage() {
                 ))}
               </SelectContent>
             </Select>
+
+            <Select value={fyFilter} onValueChange={(v) => { setFyFilter(v); setPage(1); }}>
+              <SelectTrigger className="h-8 w-28 text-xs bg-background">
+                <SelectValue placeholder="All FY" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All FY</SelectItem>
+                {fiscalYears.map((fy) => (
+                  <SelectItem key={fy} value={fy}>{fy}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Period Quick Presets */}
+            <div className="flex items-center gap-1 bg-background border rounded px-1.5 py-0.5 h-8">
+              <span className="text-[11px] text-muted-foreground whitespace-nowrap mr-0.5">Period:</span>
+              {(["3M", "6M", "9M", "12M"] as PeriodPreset[]).map((p) => {
+                const days = STANDARD_PERIODS[p].days;
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => {
+                      setPeriodPreset(p);
+                      const end = new Date();
+                      const start = new Date();
+                      start.setDate(end.getDate() - days);
+                      setFromDateFilter(start.toISOString().slice(0, 10));
+                      setToDateFilter(end.toISOString().slice(0, 10));
+                      setPage(1);
+                    }}
+                    className={`text-[11px] font-medium px-1.5 py-0.5 rounded transition-colors ${
+                      periodPreset === p
+                        ? "bg-primary text-primary-foreground font-semibold"
+                        : "text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {p}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Date Range Search */}
+            <div className="flex items-center gap-1 bg-background border rounded px-2 py-0.5 h-8 text-xs">
+              <span className="text-[11px] text-muted-foreground">From:</span>
+              <input
+                type="date"
+                value={fromDateFilter}
+                onChange={(e) => {
+                  setFromDateFilter(e.target.value);
+                  setPeriodPreset("CUSTOM");
+                  setPage(1);
+                }}
+                className="bg-transparent text-xs outline-none"
+              />
+              <span className="text-[11px] text-muted-foreground ml-1">To:</span>
+              <input
+                type="date"
+                value={toDateFilter}
+                onChange={(e) => {
+                  setToDateFilter(e.target.value);
+                  setPeriodPreset("CUSTOM");
+                  setPage(1);
+                }}
+                className="bg-transparent text-xs outline-none"
+              />
+              {(fromDateFilter || toDateFilter) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFromDateFilter("");
+                    setToDateFilter("");
+                    setPeriodPreset("ALL");
+                    setPage(1);
+                  }}
+                  className="ml-1 text-[11px] text-destructive hover:underline font-medium"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
             <div className="flex items-center gap-1 bg-background border rounded px-2 py-0.5 h-8">
               <span className="text-[11px] text-muted-foreground whitespace-nowrap">Bonus %:</span>
               <input
@@ -1014,7 +1135,7 @@ function DividendPage() {
                 placeholder={agmSummaryReport?.detectedBonusRate ? String(agmSummaryReport.detectedBonusRate) : "0"}
                 value={summaryBonusRate}
                 onChange={(e) => setSummaryBonusRate(e.target.value)}
-                className="w-14 text-xs font-mono bg-transparent outline-none text-right font-medium text-foreground"
+                className="w-12 text-xs font-mono bg-transparent outline-none text-right font-medium text-foreground"
                 title="Override/Set Bonus Share % to calculate Actual Bonus, Issued, Fraction & Bonus Tax"
               />
             </div>
@@ -1026,7 +1147,7 @@ function DividendPage() {
                 placeholder={agmSummaryReport?.detectedDividendRate ? String(agmSummaryReport.detectedDividendRate) : "0"}
                 value={summaryCashRate}
                 onChange={(e) => setSummaryCashRate(e.target.value)}
-                className="w-14 text-xs font-mono bg-transparent outline-none text-right font-medium text-foreground"
+                className="w-12 text-xs font-mono bg-transparent outline-none text-right font-medium text-foreground"
                 title="Override/Set Cash Dividend Rate to calculate Gross Dividend, Tax & Net Dividend"
               />
             </div>
@@ -1267,9 +1388,17 @@ function DividendPage() {
                       <TableCell className="text-right font-medium">{fmt(p.net_payable)}</TableCell>
                       <TableCell className="text-xs">{p.fiscal_year ?? "—"}</TableCell>
                       <TableCell>
-                        <Badge variant={p.payment_status === "Paid" ? "default" : p.payment_status === "Partial" ? "secondary" : "outline"}>
+                        <Badge variant={p.payment_status === "Paid" ? "default" : p.payment_status === "Partial" ? "secondary" : (p as any).remarks?.includes("Rejected") ? "destructive" : "outline"}>
                           {p.payment_status}
                         </Badge>
+                        {(p as any).remarks && (
+                          <span
+                            className={`block text-[10px] max-w-[160px] truncate mt-0.5 ${(p as any).remarks.includes("Rejected") ? "text-destructive font-medium" : "text-muted-foreground"}`}
+                            title={(p as any).remarks}
+                          >
+                            {(p as any).remarks}
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
                         {canWrite && (
@@ -1280,9 +1409,11 @@ function DividendPage() {
                               </Button>
                             )}
                             <Button size="icon" variant="ghost" onClick={() => startEdit(p)} className="hover:bg-blue-50"><Pencil className="h-4 w-4" /></Button>
-                            <Button size="icon" variant="ghost" onClick={() => { if (confirm("Delete this payable?")) del.mutate(p.id); }} className="hover:bg-red-50">
-                              <Trash2 className="h-4 w-4 text-destructive" />
-                            </Button>
+                            {canDelete && (
+                              <Button size="icon" variant="ghost" onClick={() => { if (confirm("Delete this payable?")) del.mutate(p.id); }} className="hover:bg-red-50" title="Delete Payable (Admin Only)">
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            )}
                           </div>
                         )}
                       </TableCell>

@@ -36,6 +36,7 @@ import { Pencil, Plus, Trash2, Download, Upload, CheckCircle2, Calculator, Chevr
 import { toast } from "sonner";
 import { exportToExcel, importFromExcel } from "@/lib/xlsx-utils";
 import { SummaryReportService } from "@/lib/services/summary-report.service";
+import { STANDARD_PERIODS, type PeriodPreset } from "@/lib/services/period-calculator";
 import {
   getTaxRateFromRules,
   investorCategoryToClassification,
@@ -131,14 +132,18 @@ const emptyForm = {
 };
 
 function MutualFundPage() {
-  const { hasAny } = useAuth();
+  const { hasAny, isAdmin } = useAuth();
   const canWrite = hasAny(["admin", "finance_operator"]);
+  const canDelete = isAdmin;
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [companyFilter, setCompanyFilter] = useState<string>("all");
   const [fyFilter, setFyFilter] = useState<string>("all");
   const [classFilter, setClassFilter] = useState<string>("all");
+  const [fromDateFilter, setFromDateFilter] = useState<string>("");
+  const [toDateFilter, setToDateFilter] = useState<string>("");
+  const [periodPreset, setPeriodPreset] = useState<PeriodPreset | "ALL">("ALL");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [open, setOpen] = useState(false);
@@ -220,7 +225,7 @@ function MutualFundPage() {
   }, [search]);
 
   // Reset to page 1 whenever filters change
-  useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, companyFilter, fyFilter, classFilter]);
+  useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, companyFilter, fyFilter, classFilter, fromDateFilter, toDateFilter]);
 
   // Fetch fiscal years for filter dropdown
   const { data: fiscalYears = [] } = useQuery({
@@ -234,16 +239,18 @@ function MutualFundPage() {
 
   // Server-side totals for KPI cards (using fetchAllRows to support datasets > 1,000 records)
   const { data: totals = { count: 0, paidCount: 0, pendingCount: 0, units: 0, gross: 0, tax: 0, net: 0 } } = useQuery({
-    queryKey: ["mutual_fund_payables_totals", statusFilter, companyFilter, fyFilter, classFilter],
+    queryKey: ["mutual_fund_payables_totals", statusFilter, companyFilter, fyFilter, classFilter, fromDateFilter, toDateFilter],
     queryFn: async () => {
       const data = await fetchAllRows<any>((from, to) => {
         let q = (supabase as any)
           .from("mutual_fund_payables")
-          .select("payment_status, shares_held, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, lot_name")
+          .select("payment_status, shares_held, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, lot_name, created_at, payment_date")
           .range(from, to);
         if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
         if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
         if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+        if (fromDateFilter) q = q.gte("created_at", fromDateFilter);
+        if (toDateFilter) q = q.lte("created_at", `${toDateFilter}T23:59:59Z`);
         if (classFilter !== "all") {
           if (classFilter === "PROMOTER") {
             q = q.or("payee_segment.eq.PROMOTER,lot_name.ilike.%PROMOT%");
@@ -278,7 +285,7 @@ function MutualFundPage() {
 
   // Main server-side paginated query
   const { data: pageResult = { rows: [], count: 0 }, isLoading } = useQuery({
-    queryKey: ["mutual_fund_payables", page, pageSize, debouncedSearch, statusFilter, companyFilter, fyFilter, classFilter],
+    queryKey: ["mutual_fund_payables", page, pageSize, debouncedSearch, statusFilter, companyFilter, fyFilter, classFilter, fromDateFilter, toDateFilter],
     queryFn: async () => {
       let q = (supabase as any)
         .from("mutual_fund_payables")
@@ -292,6 +299,8 @@ function MutualFundPage() {
       if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
       if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
       if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+      if (fromDateFilter) q = q.gte("created_at", fromDateFilter);
+      if (toDateFilter) q = q.lte("created_at", `${toDateFilter}T23:59:59Z`);
       if (classFilter !== "all") {
         if (classFilter === "PROMOTER") {
           q = q.or("payee_segment.eq.PROMOTER,lot_name.ilike.%PROMOT%");
@@ -337,17 +346,21 @@ function MutualFundPage() {
       if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
       if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
       if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+      if (fromDateFilter) q = q.gte("created_at", fromDateFilter);
+      if (toDateFilter) q = q.lte("created_at", `${toDateFilter}T23:59:59Z`);
       return q;
     });
-  }, [statusFilter, companyFilter, fyFilter]);
+  }, [statusFilter, companyFilter, fyFilter, fromDateFilter, toDateFilter]);
 
   // Category-wise distribution summary in the CDS "SUMMARY" sheet layout.
   const mfSummary = useQuery({
-    queryKey: ["mf-summary", companyFilter, fyFilter],
+    queryKey: ["mf-summary", companyFilter, fyFilter, fromDateFilter, toDateFilter],
     queryFn: () =>
       SummaryReportService.getMutualFundSummary({
         companyId: companyFilter,
         fiscalYear: fyFilter,
+        startDate: fromDateFilter || undefined,
+        endDate: toDateFilter || undefined,
       }),
   });
   const mfTotal = useMemo(
@@ -1049,6 +1062,89 @@ function MutualFundPage() {
                 ))}
               </SelectContent>
             </Select>
+
+            <Select value={fyFilter} onValueChange={(v) => { setFyFilter(v); setPage(1); }}>
+              <SelectTrigger className="h-8 w-28 text-xs bg-background">
+                <SelectValue placeholder="All FY" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All FY</SelectItem>
+                {fiscalYears.map((fy) => (
+                  <SelectItem key={fy} value={fy}>{fy}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Period Quick Presets */}
+            <div className="flex items-center gap-1 bg-background border rounded px-1.5 py-0.5 h-8">
+              <span className="text-[11px] text-muted-foreground whitespace-nowrap mr-0.5">Period:</span>
+              {(["3M", "6M", "9M", "12M"] as PeriodPreset[]).map((p) => {
+                const days = STANDARD_PERIODS[p].days;
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => {
+                      setPeriodPreset(p);
+                      const end = new Date();
+                      const start = new Date();
+                      start.setDate(end.getDate() - days);
+                      setFromDateFilter(start.toISOString().slice(0, 10));
+                      setToDateFilter(end.toISOString().slice(0, 10));
+                      setPage(1);
+                    }}
+                    className={`text-[11px] font-medium px-1.5 py-0.5 rounded transition-colors ${
+                      periodPreset === p
+                        ? "bg-primary text-primary-foreground font-semibold"
+                        : "text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {p}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Date Range Search */}
+            <div className="flex items-center gap-1 bg-background border rounded px-2 py-0.5 h-8 text-xs">
+              <span className="text-[11px] text-muted-foreground">From:</span>
+              <input
+                type="date"
+                value={fromDateFilter}
+                onChange={(e) => {
+                  setFromDateFilter(e.target.value);
+                  setPeriodPreset("CUSTOM");
+                  setPage(1);
+                }}
+                className="bg-transparent text-xs outline-none"
+              />
+              <span className="text-[11px] text-muted-foreground ml-1">To:</span>
+              <input
+                type="date"
+                value={toDateFilter}
+                onChange={(e) => {
+                  setToDateFilter(e.target.value);
+                  setPeriodPreset("CUSTOM");
+                  setPage(1);
+                }}
+                className="bg-transparent text-xs outline-none"
+              />
+              {(fromDateFilter || toDateFilter) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFromDateFilter("");
+                    setToDateFilter("");
+                    setPeriodPreset("ALL");
+                    setPage(1);
+                  }}
+                  className="ml-1 text-[11px] text-destructive hover:underline font-medium"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
             <Button
               variant="outline"
               size="sm"
@@ -1218,9 +1314,17 @@ function MutualFundPage() {
                       <TableCell className="text-right">{fmt(payable.tax_amount)}</TableCell>
                       <TableCell className="text-right font-medium">{fmt(payable.net_payable)}</TableCell>
                       <TableCell>
-                        <Badge variant={payable.payment_status === "Paid" ? "default" : payable.payment_status === "Partial" ? "secondary" : "outline"}>
+                        <Badge variant={payable.payment_status === "Paid" ? "default" : payable.payment_status === "Partial" ? "secondary" : (payable as any).remarks?.includes("Rejected") ? "destructive" : "outline"}>
                           {payable.payment_status}
                         </Badge>
+                        {(payable as any).remarks && (
+                          <span
+                            className={`block text-[10px] max-w-[160px] truncate mt-0.5 ${(payable as any).remarks.includes("Rejected") ? "text-destructive font-medium" : "text-muted-foreground"}`}
+                            title={(payable as any).remarks}
+                          >
+                            {(payable as any).remarks}
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell>{payable.payment_date ?? "—"}</TableCell>
                       <TableCell>{payable.fiscal_year ?? "—"}</TableCell>
@@ -1235,9 +1339,11 @@ function MutualFundPage() {
                             <Button size="icon" variant="ghost" onClick={() => startEdit(payable)} className="hover:bg-blue-50">
                               <Pencil className="h-4 w-4" />
                             </Button>
-                            <Button size="icon" variant="ghost" onClick={() => del.mutate(payable.id)} className="hover:bg-red-50">
-                              <Trash2 className="h-4 w-4 text-destructive" />
-                            </Button>
+                            {canDelete && (
+                              <Button size="icon" variant="ghost" onClick={() => del.mutate(payable.id)} className="hover:bg-red-50" title="Delete Payable (Admin Only)">
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            )}
                           </div>
                         )}
                       </TableCell>

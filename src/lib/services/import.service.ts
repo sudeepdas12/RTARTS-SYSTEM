@@ -360,57 +360,75 @@ export const ImportService = {
 
     if (!companyId) {
       const cleanName = (options?.companyName || "NECO Insurance Ltd.").trim();
-      const code = cleanName
-        .replace(/[^A-Za-z]/g, "")
-        .substring(0, 4)
-        .toUpperCase() || "NECO";
-
-      // 1. Try bulk_upsert_company RPC
-      try {
-        const { data: rpcCompany, error: companyRpcErr } = await (supabase as any).rpc(
-          "bulk_upsert_company",
-          {
-            p_company_name: cleanName,
-            p_company_code: code,
-            p_isin: detectedIsin || null,
-          },
-        );
-        if (!companyRpcErr && rpcCompany?.success && rpcCompany?.company_id) {
-          companyId = rpcCompany.company_id;
-        }
-      } catch (companyEx: any) {
-        console.warn("bulk_upsert_company exception:", companyEx?.message);
+      
+      // Generate a distinct code for new companies (e.g., "PRIM10" or "NECO")
+      const words = cleanName.split(/\s+/).filter(Boolean);
+      let baseCode = "";
+      if (words.length >= 2) {
+        baseCode = (words[0].slice(0, 3) + words[1].replace(/[^A-Za-z0-9]/g, "").slice(0, 3)).toUpperCase();
+      } else {
+        baseCode = cleanName.replace(/[^A-Za-z0-9]/g, "").slice(0, 6).toUpperCase() || "COMP";
       }
 
-      // 2. Fallback: Query companies table directly
-      if (!companyId) {
+      // 1. If ISIN detected, try lookup by exact ISIN
+      if (detectedIsin) {
         try {
-          const { data: foundComp } = await (supabase as any)
+          const { data: isinComp } = await (supabase as any)
             .from("companies")
             .select("id")
-            .or(`company_code.ilike.%${code}%,company_name.ilike.%${cleanName}%`)
+            .eq("isin", detectedIsin)
             .limit(1);
-          if (foundComp && foundComp.length > 0) {
-            companyId = foundComp[0].id;
+          if (isinComp && isinComp.length > 0) {
+            companyId = isinComp[0].id;
           }
-        } catch (fErr) {
-          console.warn("Direct company lookup failed:", fErr);
+        } catch (isinErr) {
+          console.warn("ISIN company lookup failed:", isinErr);
         }
       }
 
-      // 3. Fallback: Direct insert into companies table
+      // 2. Lookup by exact company_name (case-insensitive)
       if (!companyId) {
         try {
+          const { data: nameComp } = await (supabase as any)
+            .from("companies")
+            .select("id")
+            .ilike("company_name", cleanName)
+            .limit(1);
+          if (nameComp && nameComp.length > 0) {
+            companyId = nameComp[0].id;
+          }
+        } catch (nameErr) {
+          console.warn("Exact name company lookup failed:", nameErr);
+        }
+      }
+
+      // 3. Fallback: Direct insert as a new company
+      if (!companyId) {
+        try {
+          // Ensure company_code is unique
+          let candidateCode = baseCode;
+          const { data: existingCode } = await (supabase as any)
+            .from("companies")
+            .select("id")
+            .eq("company_code", candidateCode)
+            .limit(1);
+          if (existingCode && existingCode.length > 0) {
+            candidateCode = `${baseCode.slice(0, 4)}${Math.floor(10 + Math.random() * 90)}`;
+          }
+
           const { data: createdComp, error: createErr } = await (supabase as any)
             .from("companies")
             .insert({
               company_name: cleanName,
-              company_code: code,
+              company_code: candidateCode,
               isin: detectedIsin || null,
               status: "Active",
+              debenture_rate: targetTable === "interest_payables" && options?.dividendRate ? Number(options.dividendRate) : null,
+              coupon_rate: targetTable === "interest_payables" && options?.dividendRate ? Number(options.dividendRate) : null,
             })
             .select("id")
             .maybeSingle();
+
           if (!createErr && createdComp?.id) {
             companyId = createdComp.id;
           }
@@ -419,7 +437,7 @@ export const ImportService = {
         }
       }
 
-      // 4. Fallback: Use first available company or default
+      // 4. Fallback if insert failed
       if (!companyId) {
         const { data: companies } = await supabase.from("companies").select("id").limit(1);
         if (companies && companies.length > 0) {

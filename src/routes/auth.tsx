@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Eye, EyeOff, Loader2, MailCheck, ShieldCheck } from "lucide-react";
+import { AuditService } from "@/lib/services/audit.service";
 
 const searchSchema = z.object({
   mode: z.enum(["signin", "forgot"]).optional(),
@@ -89,11 +90,18 @@ function AuthPage() {
     const cleanUrl = () => window.history.replaceState({}, "", "/auth");
 
     if (code) {
-      const { error } = await supabase.auth.exchangeCodeForSession(code);
+      const { data, error } = await supabase.auth.exchangeCodeForSession(code);
       if (error) {
         toast.error(error.message);
         setView("signin");
         return;
+      }
+      if (data.session?.user) {
+        void AuditService.recordLoginAttempt({
+          email: data.session.user.email || "OAuth/Code User",
+          userId: data.session.user.id,
+          status: "success",
+        });
       }
       cleanUrl();
       if (type === "recovery") return setView("reset");
@@ -104,7 +112,7 @@ function AuthPage() {
     }
 
     if (accessToken) {
-      const { error } = await supabase.auth.setSession({
+      const { data, error } = await supabase.auth.setSession({
         access_token: accessToken,
         refresh_token: refreshToken ?? "",
       });
@@ -112,6 +120,13 @@ function AuthPage() {
         toast.error(error.message);
         setView("signin");
         return;
+      }
+      if (data.session?.user) {
+        void AuditService.recordLoginAttempt({
+          email: data.session.user.email || "Token User",
+          userId: data.session.user.id,
+          status: "success",
+        });
       }
       cleanUrl();
       if (type === "recovery") return setView("reset");
@@ -134,7 +149,7 @@ function AuthPage() {
         | "email_change"
         | "signup";
 
-      const { error } = await supabase.auth.verifyOtp({
+      const { data, error } = await supabase.auth.verifyOtp({
         token_hash: tokenHash,
         type: otpType,
       });
@@ -142,6 +157,13 @@ function AuthPage() {
         toast.error(error.message);
         setView("signin");
         return;
+      }
+      if (data.session?.user) {
+        void AuditService.recordLoginAttempt({
+          email: data.session.user.email || "OTP User",
+          userId: data.session.user.id,
+          status: "success",
+        });
       }
       cleanUrl();
       if (type === "recovery") return setView("reset");
@@ -291,13 +313,19 @@ function SignInForm({
 
   const onSubmit = form.handleSubmit(async (values) => {
     setSubmitting(true);
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email: values.email,
       password: values.password,
     });
     setSubmitting(false);
 
     if (error) {
+      void AuditService.recordLoginAttempt({
+        email: values.email,
+        status: "failed",
+        failureReason: error.message,
+      });
+
       if (error.message.toLowerCase().includes("confirm")) {
         onEmailConfirmed(values.email);
         return;
@@ -308,6 +336,12 @@ function SignInForm({
       });
       return;
     }
+
+    void AuditService.recordLoginAttempt({
+      email: values.email,
+      userId: data.user?.id || null,
+      status: "success",
+    });
 
     toast.success("Welcome back");
     navigate({ to: "/dashboard", replace: true });

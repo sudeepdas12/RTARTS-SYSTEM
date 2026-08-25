@@ -221,9 +221,10 @@ function SettingsRoute() {
       </div>
 
       <Tabs defaultValue="general" className="w-full">
-        <TabsList className="grid w-full grid-cols-4 max-w-[640px]">
+        <TabsList className="grid w-full grid-cols-5 max-w-[820px]">
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="tax-rules">Tax Rules (TDS)</TabsTrigger>
+          <TabsTrigger value="banking-gateway">Banking (ConnectIPS)</TabsTrigger>
           <TabsTrigger value="workflow">Workflow</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
         </TabsList>
@@ -253,6 +254,142 @@ function SettingsRoute() {
 
         <TabsContent value="tax-rules" className="mt-6">
           <TaxRulesEditor />
+        </TabsContent>
+
+        <TabsContent value="banking-gateway" className="mt-6">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>NCHL ConnectIPS Direct Banking Gateway</CardTitle>
+                  <CardDescription>
+                    Configure credentials provided by Nepal Clearing House Ltd. (NCHL) for direct one-click batch disbursements.
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-muted-foreground">Gateway Active:</span>
+                  <Switch
+                    checked={merged.connectips_enabled}
+                    onCheckedChange={v => update('connectips_enabled', v)}
+                  />
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-6 max-w-2xl">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Gateway Environment</Label>
+                  <select
+                    value={merged.connectips_mode || 'SANDBOX'}
+                    onChange={e => {
+                      const mode = e.target.value as 'SANDBOX' | 'PRODUCTION';
+                      update('connectips_mode', mode);
+                      if (mode === 'PRODUCTION' && merged.connectips_base_url.includes('uat')) {
+                        update('connectips_base_url', 'https://login.connectips.com:7443');
+                      } else if (mode === 'SANDBOX') {
+                        update('connectips_base_url', 'https://uat.connectips.com:7443');
+                      }
+                    }}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
+                  >
+                    <option value="SANDBOX">Sandbox / UAT (Testing)</option>
+                    <option value="PRODUCTION">Production (Live Banking)</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Gateway Base URL</Label>
+                  <Input
+                    placeholder="https://uat.connectips.com:7443"
+                    value={merged.connectips_base_url || ''}
+                    onChange={e => update('connectips_base_url', e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Merchant ID</Label>
+                  <Input
+                    placeholder="e.g., M101 / NECO_MERCHANT"
+                    value={merged.connectips_merchant_id || ''}
+                    onChange={e => update('connectips_merchant_id', e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>App ID</Label>
+                  <Input
+                    placeholder="e.g., APP_RTARTS"
+                    value={merged.connectips_app_id || ''}
+                    onChange={e => update('connectips_app_id', e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>App Name / Initiator ID</Label>
+                  <Input
+                    placeholder="RTARTS System"
+                    value={merged.connectips_app_name || ''}
+                    onChange={e => update('connectips_app_name', e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>API Bearer Token / Secret Key</Label>
+                  <Input
+                    type="password"
+                    autoComplete="new-password"
+                    placeholder="Enter Secret Key / Bearer Token"
+                    value={merged.connectips_token || ''}
+                    onChange={e => update('connectips_token', e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Certificate Password / Private Key Passphrase</Label>
+                <Input
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder="Enter Certificate Password"
+                  value={merged.connectips_cert_pass || ''}
+                  onChange={e => update('connectips_cert_pass', e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Used on the backend server for cryptographic SHA-256 RSA signing of disbursement payloads.
+                </p>
+              </div>
+
+              <div className="rounded-lg border bg-muted/30 p-3.5 text-xs text-muted-foreground space-y-1.5">
+                <p className="font-semibold text-foreground">💡 How to activate direct disbursement:</p>
+                <p>1. When your bank/NCHL provides you with your Merchant ID, App ID, and Token, paste them into these fields.</p>
+                <p>2. Click <strong>Test Connection Handshake</strong> to verify credential authentication.</p>
+                <p>3. Once verified, you can click <strong>"Disburse via Direct ConnectIPS API"</strong> inside any Approved payment batch.</p>
+              </div>
+
+              <div className="pt-2 border-t flex items-center justify-between">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={async () => {
+                    const res = await (await import('@/lib/services/connectips.service')).ConnectIPSService.testConnection(merged);
+                    if (res.success) {
+                      toast.success(res.message);
+                    } else {
+                      toast.error(res.message);
+                    }
+                  }}
+                >
+                  <Send className="w-4 h-4 mr-2" />
+                  Test Connection Handshake
+                </Button>
+                <Button onClick={() => saveSettings()} disabled={isPending}>
+                  {isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                  Save Gateway Settings
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="workflow" className="mt-6">

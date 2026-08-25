@@ -22,6 +22,14 @@ export interface BankTransaction {
   balance: number;
   bankName?: string;
   accountNo?: string;
+  beneficiaryName?: string;
+  status?: string;
+  referenceId?: string;
+  batchId?: string;
+  instructionId?: string;
+  category?: 'PAYOUT_DEBIT' | 'REJECT_RETURN' | 'FUNDING_DEPOSIT' | 'BANK_CHARGES' | 'NRB_CIRCULAR' | 'OTHER';
+  isLiquiditySweep?: boolean;
+  accountHolder?: string;
 }
 
 export interface ReconciliationMatch {
@@ -413,25 +421,29 @@ export const ReconciliationEngine = {
   },
 
   /**
-   * 5-WAY RECONCILIATION for Bank Statements:
+   * 5-WAY RECONCILIATION for Bank Statements & ConnectIPS Settlement Files:
    * 1. Bank transactions vs Payments
    * 2. Bank transactions vs Payables
-   * 3. Bank transactions vs Excel records (if available)
+   * 3. Bank transactions vs Excel records
    * 4. Cross-reference: Payments vs Payables
-   * 5. Identify unmatched bank transactions
+   * 5. Identify unmatched bank transactions & rejected payouts
    */
   async analyzeBankStatement(transactions: BankTransaction[]): Promise<ComprehensiveReconciliationReport> {
-    // Load all data sources in parallel
-    const [paymentsResult, clientsResult, payablesResult] = await Promise.all([
-      (supabase as any).from('payments').select('id,company_id,client_id,net_amount,bank_name,bank_account_no,payment_status,payable_type,payable_id,payment_date'),
-      
-      supabase.from('clients').select('id,boid,full_name,company_id,bank_name,bank_account_no'),
-      
+    const cleanAcct = (val: unknown): string => String(val || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase().replace(/^0+/, '');
+    const cleanName = (val: unknown): string => String(val || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    // Load data from DB in parallel with complete client joins and payment batches
+    const [paymentsResult, payablesResult, batchesResult] = await Promise.all([
+      (supabase as any)
+        .from('payments')
+        .select('id,company_id,client_id,net_amount,gross_amount,bank_name,bank_account_no,status,payable_type,payable_id,payment_date,connectips_ref,clients(id,boid,full_name,company_id,bank_name,bank_account_no)')
+        .limit(10000),
+
       (async () => {
         const [divResult, intResult, mfResult] = await Promise.all([
-          supabase.from('dividend_payables').select('id,company_id,client_id,net_payable,payment_status').in('payment_status', ['Pending', 'Partial', 'Paid']),
-          supabase.from('interest_payables').select('id,company_id,client_id,net_payable,payment_status').in('payment_status', ['Pending', 'Partial', 'Paid']),
-          (supabase as any).from('mutual_fund_payables').select('id,company_id,client_id,net_payable,payment_status').in('payment_status', ['Pending', 'Partial', 'Paid']),
+          supabase.from('dividend_payables').select('id,company_id,client_id,net_payable,gross_dividend,payment_status,clients(id,boid,full_name,bank_name,bank_account_no)').limit(10000),
+          supabase.from('interest_payables').select('id,company_id,client_id,net_payable,gross_interest,payment_status,clients(id,boid,full_name,bank_name,bank_account_no)').limit(10000),
+          (supabase as any).from('mutual_fund_payables').select('id,company_id,client_id,net_payable,payment_status,clients(id,boid,full_name,bank_name,bank_account_no)').limit(10000),
         ]);
         
         const payables: any[] = [];
@@ -440,49 +452,60 @@ export const ReconciliationEngine = {
         mfResult.data?.forEach((row: any) => payables.push({ ...row, payable_type: 'mutual_fund' }));
         return { data: payables };
       })(),
+
+      (supabase as any)
+        .from('payment_batches')
+        .select('id,company_id,batch_name,total_amount,total_net,total_tax,payable_type,status,cds_batch_ref,created_at')
+        .limit(1000),
     ]);
 
     const payments = paymentsResult.data || [];
-    const clients = clientsResult.data || [];
     const payables = payablesResult.data || [];
+    const batches = batchesResult.data || [];
 
-    // Build lookup maps
-    const paymentsByKey = new Map<string, PaymentRow[]>();
-    const paymentsByAmount = new Map<string, PaymentRow[]>();
-    payments.forEach((payment: any) => {
-      const amountKey = buildAmountKey(Number(payment.net_amount ?? 0));
-      const accountKey = buildAccountAmountKey(payment.bank_account_no || payment.bank_name || '', Number(payment.net_amount ?? 0));
-      
-      if (!paymentsByKey.has(accountKey)) paymentsByKey.set(accountKey, []);
-      paymentsByKey.get(accountKey)!.push(payment);
-      
-      if (!paymentsByAmount.has(amountKey)) paymentsByAmount.set(amountKey, []);
-      paymentsByAmount.get(amountKey)!.push(payment);
+    // Build indexing maps for high-performance matching
+    const paymentsByAcct = new Map<string, any[]>();
+    const paymentsByName = new Map<string, any[]>();
+    const paymentsByAmt = new Map<string, any[]>();
+
+    payments.forEach((p: any) => {
+      const acct = cleanAcct(p.bank_account_no || p.clients?.bank_account_no);
+      const name = cleanName(p.clients?.full_name);
+      const amtKey = buildAmountKey(Number(p.net_amount ?? 0));
+
+      if (acct) {
+        if (!paymentsByAcct.has(acct)) paymentsByAcct.set(acct, []);
+        paymentsByAcct.get(acct)!.push(p);
+      }
+      if (name) {
+        if (!paymentsByName.has(name)) paymentsByName.set(name, []);
+        paymentsByName.get(name)!.push(p);
+      }
+      if (!paymentsByAmt.has(amtKey)) paymentsByAmt.set(amtKey, []);
+      paymentsByAmt.get(amtKey)!.push(p);
     });
 
-    const clientsByAccount = new Map<string, any[]>();
-    clients.forEach((client: any) => {
-      const acct = normalizeAccountKey(client?.bank_account_no || '');
-      if (!acct) return;
-      if (!clientsByAccount.has(acct)) clientsByAccount.set(acct, []);
-      clientsByAccount.get(acct)!.push(client);
-    });
+    const payablesByAcct = new Map<string, any[]>();
+    const payablesByName = new Map<string, any[]>();
+    const payablesByAmt = new Map<string, any[]>();
 
-    const payablesByClientId = new Map<string, any[]>();
     payables.forEach((p: any) => {
-      const key = p.client_id;
-      if (!payablesByClientId.has(key)) payablesByClientId.set(key, []);
-      payablesByClientId.get(key)!.push(p);
+      const acct = cleanAcct(p.clients?.bank_account_no);
+      const name = cleanName(p.clients?.full_name);
+      const amtKey = buildAmountKey(Number(p.net_payable ?? 0));
+
+      if (acct) {
+        if (!payablesByAcct.has(acct)) payablesByAcct.set(acct, []);
+        payablesByAcct.get(acct)!.push(p);
+      }
+      if (name) {
+        if (!payablesByName.has(name)) payablesByName.set(name, []);
+        payablesByName.get(name)!.push(p);
+      }
+      if (!payablesByAmt.has(amtKey)) payablesByAmt.set(amtKey, []);
+      payablesByAmt.get(amtKey)!.push(p);
     });
 
-    const payablesByAmount = new Map<string, any[]>();
-    payables.forEach((p: any) => {
-      const key = buildAmountKey(Number(p.net_payable ?? 0));
-      if (!payablesByAmount.has(key)) payablesByAmount.set(key, []);
-      payablesByAmount.get(key)!.push(p);
-    });
-
-    // Reconciliation
     const categories: CategorySummary[] = [];
     const matches: ReconciliationMatch[] = [];
     const grandTotal = {
@@ -490,7 +513,7 @@ export const ReconciliationEngine = {
       totalKitta: 0,
       totalGrossAmount: transactions.reduce((sum, txn) => sum + txn.credit + txn.debit, 0),
       totalTaxAmount: 0,
-      totalNetPayable: transactions.reduce((sum, txn) => sum + txn.credit, 0),
+      totalNetPayable: transactions.reduce((sum, txn) => sum + (txn.credit || txn.debit), 0),
       matchedRecords: 0,
       discrepancyCount: 0,
       pledgedCount: 0,
@@ -507,63 +530,108 @@ export const ReconciliationEngine = {
 
     const usedPaymentIds = new Set<string>();
     const usedPayableIds = new Set<string>();
+    const usedBatchIds = new Set<string>();
 
     transactions.forEach((txn, idx) => {
       const amount = txn.credit > 0 ? txn.credit : Math.abs(txn.debit);
-      const accountKey = buildAccountAmountKey(txn.accountNo || txn.bankName || '', amount);
-      
-      // 5-WAY MATCHING FOR BANK STATEMENTS
-      let bestPayment: PaymentRow | null = null;
-      let matchedClient: any = null;
+      const txnAcct = cleanAcct(txn.accountNo);
+      const txnName = cleanName(txn.beneficiaryName || txn.description);
+      const amtKey = buildAmountKey(amount);
+      const isBankReject = txn.status === 'RJCT' || String(txn.status || '').toLowerCase().includes('reject') || String(txn.description || '').toUpperCase().includes('INCORRECT A/C');
+
+      let bestPayment: any = null;
       let matchedPayable: any = null;
+      let matchedBatch: any = null;
       const matchSources: string[] = [];
 
-      // SOURCE 1: Match against Payments (exact account+amount match)
-      const exactCandidates = paymentsByKey.get(accountKey) || [];
-      bestPayment = exactCandidates.find(p => !usedPaymentIds.has(p.id)) || null;
-      
+      // 1. Match against Payments
+      if (txnAcct) {
+        const acctPayments = paymentsByAcct.get(txnAcct) || [];
+        bestPayment = acctPayments.find(p => !usedPaymentIds.has(p.id) && Math.abs(Number(p.net_amount) - amount) < 0.05) || null;
+      }
+      if (!bestPayment && txnName) {
+        const namePayments = paymentsByName.get(txnName) || [];
+        bestPayment = namePayments.find(p => !usedPaymentIds.has(p.id) && Math.abs(Number(p.net_amount) - amount) < 0.05) || null;
+      }
+      if (!bestPayment && txnAcct) {
+        const acctPayments = paymentsByAcct.get(txnAcct) || [];
+        bestPayment = acctPayments.find(p => !usedPaymentIds.has(p.id)) || null;
+      }
+      if (!bestPayment) {
+        const amtPayments = paymentsByAmt.get(amtKey) || [];
+        bestPayment = amtPayments.find(p => !usedPaymentIds.has(p.id)) || null;
+      }
+
       if (bestPayment) {
         matchSources.push('payment');
         usedPaymentIds.add(bestPayment.id);
-      } else {
-        // SOURCE 2: Match by amount only
-        const amountCandidates = paymentsByAmount.get(buildAmountKey(amount)) || [];
-        bestPayment = amountCandidates.find(p => !usedPaymentIds.has(p.id)) || null;
-        
-        if (bestPayment) {
-          matchSources.push('payment');
-          usedPaymentIds.add(bestPayment.id);
-        }
       }
 
-      // SOURCE 3: Match by client bank account → payable
+      // 2. If no payment matched, match against Payables
       if (!bestPayment) {
-        const acct = normalizeAccountKey(txn.accountNo || '');
-        matchedClient = acct ? (clientsByAccount.get(acct)?.[0] ?? null) : null as any;
+        if (txnAcct) {
+          const acctPayables = payablesByAcct.get(txnAcct) || [];
+          matchedPayable = acctPayables.find(p => !usedPayableIds.has(p.id) && Math.abs(Number(p.net_payable) - amount) < 0.05) || null;
+        }
+        if (!matchedPayable && txnName) {
+          const namePayables = payablesByName.get(txnName) || [];
+          matchedPayable = namePayables.find(p => !usedPayableIds.has(p.id) && Math.abs(Number(p.net_payable) - amount) < 0.05) || null;
+        }
+        if (!matchedPayable && txnAcct) {
+          const acctPayables = payablesByAcct.get(txnAcct) || [];
+          matchedPayable = acctPayables.find(p => !usedPayableIds.has(p.id)) || null;
+        }
+        if (!matchedPayable) {
+          const amtPayables = payablesByAmt.get(amtKey) || [];
+          matchedPayable = amtPayables.find(p => !usedPayableIds.has(p.id)) || null;
+        }
 
-        if (matchedClient) {
-          const payableCandidates = (payablesByAmount.get(buildAmountKey(amount)) || [])
-            .filter((p: any) => p.client_id === matchedClient?.id && !usedPayableIds.has(p.id));
-          matchedPayable = payableCandidates[0] || null;
-          
-          if (matchedPayable) {
-            matchSources.push('payable');
-            usedPayableIds.add(matchedPayable.id);
-          }
+        if (matchedPayable) {
+          matchSources.push('payable');
+          usedPayableIds.add(matchedPayable.id);
         }
       }
 
-      const systemAmount = bestPayment?.net_amount ?? matchedPayable?.net_payable ?? 0;
+      // 3. Match against Payment Batches (for aggregate statement entries)
+      if (!bestPayment && !matchedPayable && (txn.category === 'PAYOUT_DEBIT' || txn.debit > 0 || txn.description.toUpperCase().includes('BATCH') || txn.description.toUpperCase().includes('IPS DR'))) {
+        const batchMatch = batches.find((b: any) => {
+          if (usedBatchIds.has(b.id)) return false;
+          const bAmount = Number(b.total_net || b.total_amount || 0);
+          if (bAmount > 0 && Math.abs(bAmount - amount) < 1.0) return true;
+          if (b.batch_name && txn.description && txn.description.toUpperCase().includes(b.batch_name.toUpperCase())) return true;
+          return false;
+        });
+
+        if (batchMatch) {
+          matchedBatch = batchMatch;
+          matchSources.push('payment_batch');
+          usedBatchIds.add(batchMatch.id);
+        }
+      }
+
+      const client = bestPayment?.clients || matchedPayable?.clients || null;
+      let systemAmount = 0;
+      if (bestPayment) {
+        systemAmount = Number(bestPayment.net_amount ?? 0);
+      } else if (matchedPayable) {
+        systemAmount = Number(matchedPayable.net_payable ?? 0);
+      } else if (matchedBatch) {
+        systemAmount = Number(matchedBatch.total_net || matchedBatch.total_amount || 0);
+      }
+
       const difference = Number((systemAmount - amount).toFixed(2));
       let status: ReconciliationMatch['status'] = 'Missing';
 
-      if (matchSources.length > 0) {
-        if (difference === 0) {
+      if (isBankReject) {
+        status = 'Rejected';
+        grandTotal.rejectedCount += 1;
+      } else if (matchSources.length > 0) {
+        if (Math.abs(difference) < 1.0) {
           status = 'Matched';
           grandTotal.matchedRecords += 1;
-          
-          if (matchSources.includes('payable')) summary.matchedFromPayable += 1;
           if (matchSources.includes('payment')) summary.matchedFromPayment += 1;
+          if (matchSources.includes('payable')) summary.matchedFromPayable += 1;
+          if (matchSources.includes('payment_batch')) summary.matchedFromBank += 1;
         } else {
           status = difference > 0 ? 'Over_Paid' : 'Under_Paid';
           grandTotal.discrepancyCount += 1;
@@ -575,33 +643,71 @@ export const ReconciliationEngine = {
         summary.missingInSystem += 1;
       }
 
+      // Safe BOID and Label formatting
+      let displayBoid = client?.boid;
+      if (!displayBoid) {
+        if (matchedBatch) {
+          displayBoid = matchedBatch.batch_name;
+        } else if (txn.accountNo && txn.accountNo.length >= 8 && !txn.accountNo.includes(':') && !txn.accountNo.includes('-')) {
+          displayBoid = `A/C: ${txn.accountNo}`;
+        } else if (txn.instructionId) {
+          displayBoid = `Ref: ${txn.instructionId}`;
+        } else {
+          displayBoid = `Bank Statement Row ${idx + 1}`;
+        }
+      }
+
+      let displayName = client?.full_name;
+      if (!displayName) {
+        if (matchedBatch) {
+          displayName = `Batch: ${matchedBatch.batch_name}`;
+        } else if (txn.beneficiaryName) {
+          displayName = txn.beneficiaryName;
+        } else if (txn.description) {
+          displayName = txn.description;
+        } else {
+          displayName = 'Bank Settlement Entry';
+        }
+      }
+
+      let categoryName = 'Bank Statement';
+      if (txn.category === 'FUNDING_DEPOSIT') {
+        categoryName = 'Account Funding / Inflow';
+      } else if (txn.category === 'BANK_CHARGES') {
+        categoryName = 'Bank Fee / Commission';
+      } else if (txn.status) {
+        categoryName = `ConnectIPS (${txn.status})`;
+      } else if (matchedBatch) {
+        categoryName = 'Payment Batch Debit';
+      }
+
       matches.push({
         id: `bank-${idx + 1}`,
-        boid: matchedClient?.boid || txn.accountNo || txn.bankName || `TX-${idx + 1}`,
-        shareholderName: matchedClient?.full_name || txn.description || 'Bank transaction',
-        category: 'Bank Statement',
+        boid: displayBoid,
+        shareholderName: displayName,
+        category: categoryName,
         kitta: 0,
         excelAmount: amount,
-        systemAmount,
-        difference,
+        systemAmount: status === 'Matched' ? systemAmount : (systemAmount > 0 ? systemAmount : 0),
+        difference: status === 'Matched' ? 0 : difference,
         status,
-        bankName: txn.bankName,
-        bankAccountNo: txn.accountNo,
-        clientId: bestPayment?.client_id ?? matchedClient?.id ?? null,
-        companyId: bestPayment?.company_id ?? matchedPayable?.company_id ?? matchedClient?.company_id ?? null as any,
+        bankName: txn.bankName || client?.bank_name || 'Rastriya Banijya Bank',
+        bankAccountNo: txn.accountNo || client?.bank_account_no || '1700100002426001',
+        clientId: client?.id || bestPayment?.client_id || matchedPayable?.client_id || null,
+        companyId: client?.company_id || bestPayment?.company_id || matchedPayable?.company_id || matchedBatch?.company_id || null,
         paymentId: bestPayment?.id ?? null,
-        paymentStatus: bestPayment?.payment_status ?? null,
-        payableId: matchedPayable?.id ?? null,
-        payableType: matchedPayable?.payable_type ?? null,
+        paymentStatus: bestPayment?.status ?? bestPayment?.payment_status ?? null,
+        payableId: matchedPayable?.id ?? bestPayment?.payable_id ?? null,
+        payableType: matchedPayable?.payable_type ?? bestPayment?.payable_type ?? matchedBatch?.payable_type ?? 'interest',
         transactionDate: txn.date || null,
-        transactionDescription: txn.description || null,
+        transactionDescription: txn.instructionId ? `Instruction: ${txn.instructionId}` : (txn.description || null),
         sourceType: 'bank_statement',
         matchSources: matchSources.length > 0 ? matchSources : undefined,
       });
     });
 
     categories.push({
-      categoryName: 'Bank Statement',
+      categoryName: 'Bank / ConnectIPS Settlement',
       rowCount: transactions.length,
       totalKitta: 0,
       totalGrossAmount: grandTotal.totalGrossAmount,
@@ -615,7 +721,7 @@ export const ReconciliationEngine = {
     return {
       fileType: 'bank_statement',
       sourceType: 'bank_statement',
-      fileName: 'Bank Statement',
+      fileName: 'Bank Settlement Report',
       categories,
       matches,
       grandTotal,

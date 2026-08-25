@@ -7,6 +7,7 @@ export interface ReportFilters {
   endDate?: string;
   fiscalYear?: string;
   status?: string;
+  classification?: string;
 }
 
 // ─── Shared helpers ────────────────────────────────────────────────────────────
@@ -15,6 +16,22 @@ function applyDateFilter(query: any, field: string, startDate?: string, endDate?
   if (startDate) query = query.gte(field, startDate);
   if (endDate) query = query.lte(field, endDate + 'T23:59:59');
   return query;
+}
+
+function applyClassificationFilter(query: any, classification?: string) {
+  if (!classification || classification === 'all') return query;
+  if (classification === 'PROMOTER') {
+    return query.or('payee_segment.eq.PROMOTER,lot_name.ilike.%PROMOT%');
+  } else if (classification === 'LOCAL') {
+    return query.or('payee_segment.eq.LOCAL,lot_name.ilike.%LOCAL%');
+  } else if (classification === 'TAX_EXEMPT') {
+    return query.or('payee_classification.eq.TAX_EXEMPT,lot_name.ilike.%MUTUAL%,lot_name.ilike.%EXEMPT%,instrument_ref.ilike.%MUTUAL%,instrument_ref.ilike.%EXEMPT%');
+  } else if (classification === 'INSTITUTION') {
+    return query.or('payee_classification.eq.COMPANY_INSTITUTION,lot_name.ilike.%INSTITUT%,lot_name.ilike.%COMPANY%,instrument_ref.ilike.%INSTITUT%,instrument_ref.ilike.%COMPANY%');
+  } else if (classification === 'PUBLIC') {
+    return query.or('payee_classification.eq.NATURAL_PERSON,payee_classification.eq.PUBLIC_LEGAL_PERSON,lot_name.ilike.%PUBLIC%,instrument_ref.ilike.%PUBLIC%');
+  }
+  return query.eq('payee_classification', classification);
 }
 
 function nr(v: unknown): number {
@@ -164,13 +181,14 @@ export const ReportService = {
       const data = await fetchAllRows<any>((from, to) => {
         let query = (supabase as any)
           .from('dividend_payables')
-          .select('id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, payment_status, payment_date, payment_reference, fiscal_year, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)')
+          .select('id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, payment_status, payment_date, payment_reference, fiscal_year, payee_classification, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)')
           .order('created_at', { ascending: false })
           .range(from, to);
 
         if (filters.companyId && filters.companyId !== 'all') query = query.eq('company_id', filters.companyId);
         if (filters.fiscalYear && filters.fiscalYear !== 'all') query = query.eq('fiscal_year', filters.fiscalYear);
         if (filters.status && filters.status !== 'all') query = (query as any).eq('payment_status', filters.status as any);
+        query = applyClassificationFilter(query, filters.classification);
         query = applyDateFilter(query, 'payment_date', filters.startDate, filters.endDate);
         return query;
       });
@@ -206,13 +224,14 @@ export const ReportService = {
       const data = await fetchAllRows<any>((from, to) => {
         let query = (supabase as any)
           .from('mutual_fund_payables')
-          .select('id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, payment_status, payment_date, payment_reference, fiscal_year, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)')
+          .select('id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, payment_status, payment_date, payment_reference, fiscal_year, payee_classification, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)')
           .order('created_at', { ascending: false })
           .range(from, to);
 
         if (filters.companyId && filters.companyId !== 'all') query = query.eq('company_id', filters.companyId);
         if (filters.fiscalYear && filters.fiscalYear !== 'all') query = query.eq('fiscal_year', filters.fiscalYear);
         if (filters.status && filters.status !== 'all') query = (query as any).eq('payment_status', filters.status as any);
+        query = applyClassificationFilter(query, filters.classification);
         query = applyDateFilter(query, 'payment_date', filters.startDate, filters.endDate);
         return query;
       });
@@ -248,13 +267,14 @@ export const ReportService = {
       const data = await fetchAllRows<any>((from, to) => {
         let query = (supabase as any)
           .from('interest_payables')
-          .select('id, instrument_ref, gross_interest, tax_amount, net_payable, payment_status, due_date, payment_date, payment_reference, fiscal_year, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)')
+          .select('id, instrument_ref, gross_interest, tax_amount, net_payable, payment_status, due_date, payment_date, payment_reference, fiscal_year, payee_classification, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)')
           .order('due_date', { ascending: false })
           .range(from, to);
 
         if (filters.companyId && filters.companyId !== 'all') query = query.eq('company_id', filters.companyId);
         if (filters.fiscalYear && filters.fiscalYear !== 'all') query = query.eq('fiscal_year', filters.fiscalYear);
         if (filters.status && filters.status !== 'all') query = (query as any).eq('payment_status', filters.status as any);
+        query = applyClassificationFilter(query, filters.classification);
         query = applyDateFilter(query, 'due_date', filters.startDate, filters.endDate);
         return query;
       });
@@ -283,7 +303,6 @@ export const ReportService = {
     }
   },
 
-  // 3. TDS / Tax Register (combined dividend + interest)
   // 3. TDS / Tax Register (combined dividend + interest + mutual fund)
   async getTaxRegister(filters: ReportFilters = {}): Promise<TaxRegisterRow[]> {
     try {
@@ -291,31 +310,34 @@ export const ReportService = {
         fetchAllRows<any>((from, to) => {
           let q = supabase
             .from('dividend_payables')
-            .select('id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)')
+            .select('id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)')
             .order('created_at', { ascending: false })
             .range(from, to);
           if (filters.companyId && filters.companyId !== 'all') q = q.eq('company_id', filters.companyId);
           if (filters.fiscalYear && filters.fiscalYear !== 'all') q = q.eq('fiscal_year', filters.fiscalYear);
+          q = applyClassificationFilter(q, filters.classification);
           return applyDateFilter(q, 'payment_date', filters.startDate, filters.endDate);
         }),
         fetchAllRows<any>((from, to) => {
           let q = supabase
             .from('interest_payables')
-            .select('id, gross_interest, tax_amount, net_payable, fiscal_year, payment_date, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)')
+            .select('id, gross_interest, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)')
             .order('created_at', { ascending: false })
             .range(from, to);
           if (filters.companyId && filters.companyId !== 'all') q = q.eq('company_id', filters.companyId);
           if (filters.fiscalYear && filters.fiscalYear !== 'all') q = q.eq('fiscal_year', filters.fiscalYear);
+          q = applyClassificationFilter(q, filters.classification);
           return applyDateFilter(q, 'payment_date', filters.startDate, filters.endDate);
         }),
         fetchAllRows<any>((from, to) => {
           let q = (supabase as any)
             .from('mutual_fund_payables')
-            .select('id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)')
+            .select('id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)')
             .order('created_at', { ascending: false })
             .range(from, to);
           if (filters.companyId && filters.companyId !== 'all') q = q.eq('company_id', filters.companyId);
           if (filters.fiscalYear && filters.fiscalYear !== 'all') q = q.eq('fiscal_year', filters.fiscalYear);
+          q = applyClassificationFilter(q, filters.classification);
           return applyDateFilter(q, 'payment_date', filters.startDate, filters.endDate);
         }),
       ]);

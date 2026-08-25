@@ -39,13 +39,18 @@ export interface DebentureSummaryReport {
 }
 
 export function determineDebentureCategory(p: any): 'PUBLIC' | 'PRIVATE' | 'MUTUAL_FUND' {
+  const explicitClass = p.payee_classification || p.client?.payee_classification;
+  if (explicitClass === 'TAX_EXEMPT') return 'MUTUAL_FUND';
+  if (explicitClass === 'COMPANY_INSTITUTION') return 'PRIVATE';
+  if (explicitClass === 'NATURAL_PERSON' || explicitClass === 'PUBLIC_LEGAL_PERSON') return 'PUBLIC';
+
   const result = smartClassify({
     full_name: p.client?.full_name || p.full_name,
     father_name: p.client?.father_name || p.father_name,
     grandfather_name: p.client?.grandfather_name || p.grandfather_name,
     citizenship: p.client?.citizenship || p.citizenship,
     holder_type: p.client?.holder_type || p.holder_type,
-    payee_classification: p.payee_classification || p.client?.payee_classification,
+    payee_classification: explicitClass,
     lot_name: p.lot_name,
   });
 
@@ -95,15 +100,27 @@ export const DebentureSummaryReportService = {
     // Detect coupon rate if not overridden
     let detectedCouponRate = overrideCouponRate || 0;
     if (!detectedCouponRate) {
+      // 1. Try to extract coupon rate from company name (e.g. "8.5% RBB", "8 5%", "8.75% PRIME", "10% DEBENTURE")
+      const nameMatch = (companyName || '').match(/(\d+(?:[.\s]\d+)?)\s*%/);
+      if (nameMatch) {
+        detectedCouponRate = parseFloat(nameMatch[1].replace(/\s+/, '.'));
+      }
+    }
+    if (!detectedCouponRate) {
       for (const p of payables) {
-        const rate = Number(p.interest_rate_value || p.tds_rate || p.interest_rate || 0);
+        const refMatch = (p.instrument_ref || '').match(/(\d+(?:[.\s]\d+)?)\s*%/);
+        if (refMatch) {
+          detectedCouponRate = parseFloat(refMatch[1].replace(/\s+/, '.'));
+          break;
+        }
+        const rate = Number(p.interest_rate_value || p.interest_rate || 0);
         if (rate > 0 && rate <= 30) {
           detectedCouponRate = rate;
           break;
         }
       }
     }
-    if (!detectedCouponRate) detectedCouponRate = 7; // Standard default 7%
+    if (!detectedCouponRate) detectedCouponRate = 8.5; // Standard default
 
     const groups: Record<
       'PUBLIC' | 'PRIVATE' | 'MUTUAL_FUND',
@@ -129,47 +146,19 @@ export const DebentureSummaryReportService = {
       // Units held / kitta
       let kitta = Number(p.shares_held || p.kitta || 0);
       let gross = Number(p.gross_interest || 0);
-      let tax = Number(p.tax_amount || 0);
-      let net = Number(p.net_payable || (gross - tax));
 
-      // If kitta is 0 but gross exists, derive kitta approximately or vice versa
+      // If kitta is 0 but gross exists, derive exact kitta from annual coupon
       if (kitta === 0 && gross > 0 && detectedCouponRate > 0) {
-        if (overrideDays && overrideDays > 0) {
-          kitta = Math.round((gross * 365) / (fv * (detectedCouponRate / 100) * overrideDays));
-        } else {
-          kitta = Math.round(gross / (fv * (detectedCouponRate / 100)));
-        }
+        kitta = Math.round(gross / (fv * (detectedCouponRate / 100)));
       }
 
-      // If gross is 0 but kitta exists, calculate gross
+      // If gross is 0 but kitta exists, calculate annual gross
       if (gross === 0 && kitta > 0) {
-        const annual = kitta * fv * (detectedCouponRate / 100);
-        if (overrideDays && overrideDays > 0) {
-          gross = Math.round((annual / 365) * overrideDays * 100) / 100;
-        } else {
-          gross = annual;
-        }
-      }
-
-      // Calculate TDS based on category: Public 6%, Private 15%, Mutual Fund 0%
-      if (tax === 0 && gross > 0) {
-        if (cat === 'PUBLIC') {
-          tax = Math.round(gross * 0.06 * 100) / 100;
-        } else if (cat === 'PRIVATE') {
-          tax = Math.round(gross * 0.15 * 100) / 100;
-        } else {
-          tax = 0;
-        }
-      }
-
-      if (net === 0 && gross > 0) {
-        net = gross - tax;
+        gross = kitta * fv * (detectedCouponRate / 100);
       }
 
       groups[cat].kitta += kitta;
       groups[cat].gross += gross;
-      groups[cat].tax += tax;
-      groups[cat].net += net;
       groups[cat].unitholders.add(clientId);
 
       grandKitta += kitta;
@@ -180,9 +169,9 @@ export const DebentureSummaryReportService = {
       label: string;
       taxRatePercent: number;
     }> = [
-      { key: 'PUBLIC', label: 'Public', taxRatePercent: 6 },
-      { key: 'PRIVATE', label: 'Institution', taxRatePercent: 15 },
-      { key: 'MUTUAL_FUND', label: 'Tax Exempted', taxRatePercent: 0 },
+      { key: 'PUBLIC', label: 'PUBLIC TOTAL', taxRatePercent: 6 },
+      { key: 'PRIVATE', label: 'PRIVATE TOTAL', taxRatePercent: 15 },
+      { key: 'MUTUAL_FUND', label: 'MUTUAL FUND TOTAL', taxRatePercent: 0 },
     ];
 
     const rows: DebentureSummaryRow[] = [];
@@ -202,8 +191,12 @@ export const DebentureSummaryReportService = {
       const g = groups[cfg.key];
       const principal = g.kitta * fv;
       const annualInt = principal * (detectedCouponRate / 100);
-      const intPerDay = Math.round((annualInt / 365) * 100) / 100;
+      const intPerDay = annualInt / 365;
       const comp = grandKitta > 0 ? Math.round((g.kitta / grandKitta) * 10000) / 100 : 0;
+
+      const periodGross = overrideDays && overrideDays > 0 ? Math.round(intPerDay * overrideDays * 100) / 100 : annualInt;
+      const periodTax = Math.round(periodGross * (cfg.taxRatePercent / 100) * 100) / 100;
+      const periodNet = Math.round((periodGross - periodTax) * 100) / 100;
 
       rows.push({
         name: cfg.label,
@@ -211,10 +204,10 @@ export const DebentureSummaryReportService = {
         kitta: g.kitta,
         principalAmount: principal,
         annualInterest: annualInt,
-        interestPerDay: intPerDay,
-        grossInterest: g.gross,
-        taxAmount: g.tax,
-        netInterestPayable: g.net,
+        interestPerDay: Math.round(intPerDay * 100) / 100,
+        grossInterest: periodGross,
+        taxAmount: periodTax,
+        netInterestPayable: periodNet,
         taxRatePercent: cfg.taxRatePercent,
         unitholderCount: g.unitholders.size,
         composition: comp,
@@ -223,10 +216,10 @@ export const DebentureSummaryReportService = {
       total.kitta += g.kitta;
       total.principalAmount += principal;
       total.annualInterest += annualInt;
-      total.interestPerDay += intPerDay;
-      total.grossInterest += g.gross;
-      total.taxAmount += g.tax;
-      total.netInterestPayable += g.net;
+      total.interestPerDay += Math.round(intPerDay * 100) / 100;
+      total.grossInterest += periodGross;
+      total.taxAmount += periodTax;
+      total.netInterestPayable += periodNet;
       total.unitholderCount += g.unitholders.size;
     }
 

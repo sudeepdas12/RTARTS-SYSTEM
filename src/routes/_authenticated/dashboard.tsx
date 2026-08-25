@@ -83,6 +83,8 @@ function Dashboard() {
     },
   });
 
+  const selectedCompany = companies.find((c: any) => c.id === selectedCompanyId);
+
   const { data, isLoading } = useQuery({
     queryKey: ["dashboard-kpis", selectedCompanyId, selectedFiscalYear],
     queryFn: async () => {
@@ -109,6 +111,24 @@ function Dashboard() {
         }),
       ]);
 
+      let paymentsQ = (supabase as any).from("payments").select("id, net_amount, status, created_at").order("created_at", { ascending: false }).limit(5);
+      if (selectedCompanyId !== "all") paymentsQ = paymentsQ.eq("company_id", selectedCompanyId);
+
+      let uploadsQ = (supabase as any).from("upload_history").select("id, file_name, status, created_at").order("created_at", { ascending: false }).limit(5);
+
+      let reconciliationsQ = (supabase as any).from("reconciliation_results").select("id, result, created_at").order("created_at", { ascending: false }).limit(5);
+      if (selectedCompanyId !== "all") reconciliationsQ = reconciliationsQ.eq("company_id", selectedCompanyId);
+
+      let batchesQ = (supabase as any).from("payment_batches").select("id, batch_name, status, total_amount, created_at").order("created_at", { ascending: false }).limit(5);
+      if (selectedCompanyId !== "all") batchesQ = batchesQ.eq("company_id", selectedCompanyId);
+
+      let bankTotalQ = (supabase as any).from("reconciliation_results").select("id", { count: "exact", head: true });
+      let bankReconciledQ = (supabase as any).from("reconciliation_results").select("id", { count: "exact", head: true }).eq("result", "Matched");
+      if (selectedCompanyId !== "all") {
+        bankTotalQ = bankTotalQ.eq("company_id", selectedCompanyId);
+        bankReconciledQ = bankReconciledQ.eq("company_id", selectedCompanyId);
+      }
+
       const requests = [
         supabase.from("companies").select("id", { count: "exact", head: true }),
         supabase.from("clients").select("id", { count: "exact", head: true }),
@@ -116,13 +136,13 @@ function Dashboard() {
           .from("clients")
           .select("id", { count: "exact", head: true })
           .or("classification_status.eq.REVIEW_REQUIRED,payee_classification.eq.UNCLASSIFIED"),
-        supabase.from("bank_transactions").select("id", { count: "exact", head: true }),
-        supabase.from("bank_transactions").select("id", { count: "exact", head: true }).eq("is_reconciled", true),
+        bankTotalQ,
+        bankReconciledQ,
         supabase.from("pending_approvals").select("id", { count: "exact", head: true }).eq("status", "Pending"),
-        (supabase as any).from("payments").select("id, net_amount, status, created_at").order("created_at", { ascending: false }).limit(5),
-        (supabase as any).from("upload_history").select("id, file_name, status, created_at").order("created_at", { ascending: false }).limit(5),
-        (supabase as any).from("reconciliation_results").select("id, result, created_at").order("created_at", { ascending: false }).limit(5),
-        (supabase as any).from("payment_batches").select("id, batch_name, status, total_amount, created_at").order("created_at", { ascending: false }).limit(5),
+        paymentsQ,
+        uploadsQ,
+        reconciliationsQ,
+        batchesQ,
       ];
 
       const [companies, clients, reviewPending, bankTotal, bankReconciled, approvals, payments, uploads, reconciliations, batches] = await Promise.all(requests);
@@ -528,11 +548,14 @@ function Dashboard() {
               <TrendingUp className="h-4 w-4 text-emerald-600" />
               Payment Completion
             </CardTitle>
+            <CardDescription className="text-xs">
+              {selectedCompany ? selectedCompany.company_name : "System-wide all companies"}
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
               <div className="flex justify-between text-sm mb-1.5">
-                <span className="text-muted-foreground">Overall</span>
+                <span className="text-muted-foreground">{selectedCompany ? `${selectedCompany.company_code} Payout` : "Overall System"}</span>
                 <span className="font-medium">{paymentProgress}%</span>
               </div>
               <Progress value={paymentProgress} className="h-2" />

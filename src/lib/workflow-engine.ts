@@ -161,6 +161,32 @@ export const WorkflowEngine = {
       console.warn('Failed to write approval log:', logErr);
     }
 
+    // Sync pending_approvals table for maker-checker review
+    try {
+      if (action === 'submit') {
+        await (supabase as any).from('pending_approvals').insert({
+          entity_type: table,
+          entity_id: recordId,
+          action: 'Batch Submission',
+          payload: { recordId, table, previousStatus: currentStatus, status: newStatus, remarks: remarks || null },
+          status: 'Pending',
+          requested_by: user?.id || null,
+        });
+      } else if (action === 'approve' || action === 'reject' || action === 'return') {
+        await (supabase as any).from('pending_approvals')
+          .update({
+            status: action === 'approve' ? 'Approved' : 'Rejected',
+            review_notes: remarks || null,
+            reviewed_by: user?.id || null,
+            reviewed_at: new Date().toISOString(),
+          })
+          .eq('entity_id', recordId)
+          .eq('status', 'Pending');
+      }
+    } catch (paErr) {
+      console.warn('Failed to sync pending_approvals record:', paErr);
+    }
+
     // Send notification
     try {
       await NotificationService.sendNotification({

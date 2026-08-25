@@ -134,6 +134,30 @@ describe('Smart Shareholder Classification Engine (Ultra-Smart & Multi-Tier)', (
       const siddharthaSys = smartClassify({ full_name: 'SIDDHARTHA SYSTEMATIC INVESTMENT SCHEME' });
       expect(siddharthaSys.payee_classification).toBe('TAX_EXEMPT');
 
+      const himalayan8020 = smartClassify({ full_name: 'HIMALAYAN 80-20' });
+      expect(himalayan8020.payee_classification).toBe('TAX_EXEMPT');
+      expect(himalayan8020.payee_category).toBe('MUTUAL_FUND');
+      expect(himalayan8020.tds_rate_dividend).toBe(0.0);
+      expect(himalayan8020.tds_rate_debenture).toBe(0.0);
+
+      const himalayanColon = smartClassify({ full_name: 'HIMALAYAN 80:20' });
+      expect(himalayanColon.payee_classification).toBe('TAX_EXEMPT');
+      expect(himalayanColon.tds_rate_debenture).toBe(0.0);
+
+      const prabhuSelect = smartClassify({ full_name: 'PRABHU SELECT FUND' });
+      expect(prabhuSelect.payee_classification).toBe('TAX_EXEMPT');
+      expect(prabhuSelect.tds_rate_debenture).toBe(0.0);
+
+      const prabhuSmart = smartClassify({ full_name: 'PRABHU SMART FUND' });
+      expect(prabhuSmart.payee_classification).toBe('TAX_EXEMPT');
+      expect(prabhuSmart.tds_rate_debenture).toBe(0.0);
+
+      const sunriseBlue = smartClassify({ full_name: 'SUNRISE BLUECHIP FUND' });
+      expect(sunriseBlue.payee_classification).toBe('TAX_EXEMPT');
+
+      const laxmiUnnati = smartClassify({ full_name: 'LAXMI UNNATI KOSH' });
+      expect(laxmiUnnati.payee_classification).toBe('TAX_EXEMPT');
+
       const kumariDhan = smartClassify({ full_name: 'KUMARI DHANABRIDDHI YOJANA' });
       expect(kumariDhan.payee_classification).toBe('TAX_EXEMPT');
 

@@ -397,20 +397,22 @@ function CompaniesPage() {
             >
               <Pencil className="h-3.5 w-3.5" />
             </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-8 w-8 text-destructive hover:bg-destructive/10"
-              onClick={() => setDeleteTarget(row.original)}
-              title="Delete Company"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
+            {isAdmin && (
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                onClick={() => setDeleteTarget(row.original)}
+                title="Delete Company (Admin Only)"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            )}
           </div>
         )
       ),
     },
-  ], [canWrite, startEdit]);
+  ], [canWrite, isAdmin, startEdit]);
 
   const startNew = () => {
     setEditing(null);

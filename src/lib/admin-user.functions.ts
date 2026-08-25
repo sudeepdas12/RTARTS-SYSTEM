@@ -221,3 +221,37 @@ export const adminDeleteUser = createServerFn({ method: "POST" })
 
     return { ok: true };
   });
+
+/**
+ * Direct user creation (creates user with email, password, role, and auto-confirms email).
+ * Essential for offline/LAN/intranet deployments where SMTP is not active.
+ */
+export const adminCreateUserDirect = createServerFn({ method: "POST" })
+  .validator(
+    (d: { email: string; password: string; role: AppRole; fullName?: string }) => d,
+  )
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context);
+
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    const { data: userData, error } = await supabaseAdmin.auth.admin.createUser({
+      email: data.email.trim(),
+      password: data.password,
+      email_confirm: true,
+      user_metadata: { full_name: data.fullName?.trim() || null },
+    });
+
+    if (error) throw new Error(error.message);
+    if (!userData.user) throw new Error("Could not create user account.");
+
+    await supabaseAdmin.from("user_roles").delete().eq("user_id", userData.user.id);
+    const { error: roleError } = await supabaseAdmin.from("user_roles").insert({
+      user_id: userData.user.id,
+      role: data.role,
+    });
+    if (roleError) throw new Error(roleError.message);
+
+    return { id: userData.user.id, email: userData.user.email };
+  });

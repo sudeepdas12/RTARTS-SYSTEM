@@ -71,12 +71,49 @@ function ApprovalsPage() {
   const { data: allRows = [], isLoading } = useQuery({
     queryKey: ["pending_approvals_all"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("pending_approvals")
-        .select("*")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return (data ?? []) as Row[];
+      const [pendingApprovalsRes, paymentBatchesRes] = await Promise.all([
+        supabase.from("pending_approvals").select("*").order("created_at", { ascending: false }),
+        (supabase as any).from("payment_batches").select("id, batch_name, total_amount, total_payments, status, created_at, created_by, payment_method").order("created_at", { ascending: false }),
+      ]);
+
+      const rows: Row[] = [...((pendingApprovalsRes.data ?? []) as Row[])];
+      const existingEntityIds = new Set(rows.map(r => r.entity_id).filter(Boolean));
+
+      // Synthesize payment batches so batches in workflow are always visible
+      (paymentBatchesRes.data || []).forEach((batch: any) => {
+        if (!existingEntityIds.has(batch.id)) {
+          let rowStatus: Status = "Pending";
+          if (batch.status === "Approved" || batch.status === "Processed" || batch.status === "Completed") {
+            rowStatus = "Approved";
+          } else if (batch.status === "Rejected") {
+            rowStatus = "Rejected";
+          } else if (batch.status === "Draft") {
+            return; // Drafts stay in Payments until submitted
+          }
+
+          rows.push({
+            id: `batch-${batch.id}`,
+            entity_type: "payment_batches",
+            entity_id: batch.id,
+            action: `Payment Batch (${batch.payment_method || "ConnectIPS"})`,
+            payload: {
+              batch_name: batch.batch_name,
+              total_amount: batch.total_amount,
+              total_payments: batch.total_payments,
+              payment_method: batch.payment_method,
+              batch_status: batch.status,
+            },
+            status: rowStatus,
+            review_notes: null,
+            requested_by: batch.created_by || null,
+            reviewed_by: null,
+            reviewed_at: null,
+            created_at: batch.created_at || new Date().toISOString(),
+          });
+        }
+      });
+
+      return rows.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
     },
   });
 
@@ -129,10 +166,12 @@ function ApprovalsPage() {
     }) => {
       if (!viewing) return;
 
+      const entityId = viewing.entity_id || (id.startsWith("batch-") ? id.replace("batch-", "") : null);
+
       // If this is a payment batch workflow, invoke the WorkflowEngine
-      if (viewing.entity_type === "payment_batches" && viewing.entity_id) {
+      if (viewing.entity_type === "payment_batches" && entityId) {
         const res = await WorkflowEngine.processAction(
-          viewing.entity_id,
+          entityId,
           "payment_batches",
           decision === "Approved" ? "approve" : "reject",
           notes || undefined,
@@ -143,18 +182,20 @@ function ApprovalsPage() {
         }
       }
 
-      // Update pending_approvals record
-      const { error } = await supabase
-        .from("pending_approvals")
-        .update({
-          status: decision,
-          review_notes: notes || null,
-          reviewed_by: user?.id ?? null,
-          reviewed_at: new Date().toISOString(),
-        })
-        .eq("id", id);
+      // Update pending_approvals record if not synthetic
+      if (!id.startsWith("batch-")) {
+        const { error } = await supabase
+          .from("pending_approvals")
+          .update({
+            status: decision,
+            review_notes: notes || null,
+            reviewed_by: user?.id ?? null,
+            reviewed_at: new Date().toISOString(),
+          })
+          .eq("id", id);
 
-      if (error) throw error;
+        if (error) throw error;
+      }
     },
     onSuccess: (_, variables) => {
       toast.success(`Request ${variables.decision.toLowerCase()} successfully`);

@@ -43,11 +43,34 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Shield, UserPlus, Key, Trash2, Users, UserCheck, ShieldAlert, Clock, Search, X } from "lucide-react";
+import {
+  Shield,
+  UserPlus,
+  Key,
+  Trash2,
+  Users,
+  UserCheck,
+  ShieldAlert,
+  Clock,
+  Search,
+  X,
+  Eye,
+  EyeOff,
+  Copy,
+  Sparkles,
+  Lock,
+  ExternalLink,
+  Mail,
+  UserCheck2,
+} from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
+import { format } from "date-fns";
+import { Link } from "@tanstack/react-router";
 import {
   adminListUsers,
   adminInviteUser,
+  adminCreateUserDirect,
   adminSetUserRole,
   adminResetUserPassword,
   adminDeleteUser,
@@ -85,11 +108,36 @@ const roleColor: Record<string, string> = {
   read_only: "bg-muted text-muted-foreground",
 };
 
+function generatePassword(): string {
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lower = "abcdefghijkmnopqrstuvwxyz";
+  const digits = "23456789";
+  const symbols = "!@#$%^&*";
+  const all = upper + lower + digits + symbols;
+
+  let pwd = "";
+  pwd += upper[Math.floor(Math.random() * upper.length)];
+  pwd += lower[Math.floor(Math.random() * lower.length)];
+  pwd += digits[Math.floor(Math.random() * digits.length)];
+  pwd += symbols[Math.floor(Math.random() * symbols.length)];
+
+  for (let i = 4; i < 14; i++) {
+    pwd += all[Math.floor(Math.random() * all.length)];
+  }
+  return pwd;
+}
+
 function UsersRoute() {
   const qc = useQueryClient();
+  const { user: currentUser, isAdmin, loading: authLoading } = useAuth();
+
+  // Invite / Direct Create state
+  const [createMode, setCreateMode] = useState<"invite" | "direct">("invite");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteName, setInviteName] = useState("");
   const [inviteRole, setInviteRole] = useState<AppRole>("operator");
+  const [directPassword, setDirectPassword] = useState("");
+  const [showDirectPassword, setShowDirectPassword] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
 
   const [searchTerm, setSearchTerm] = useState("");
@@ -99,6 +147,7 @@ function UsersRoute() {
   const [resetOpen, setResetOpen] = useState(false);
   const [userToReset, setUserToReset] = useState<AdminUser | null>(null);
   const [newPassword, setNewPassword] = useState("");
+  const [showResetPassword, setShowResetPassword] = useState(false);
 
   const {
     data: users = [],
@@ -106,6 +155,7 @@ function UsersRoute() {
   } = useQuery({
     queryKey: ["admin-users"],
     queryFn: () => adminListUsers(),
+    enabled: !!isAdmin,
   });
 
   const { mutate: inviteUser, isPending: inviting } = useMutation({
@@ -113,8 +163,8 @@ function UsersRoute() {
       const { origin } = window.location;
       await adminInviteUser({
         data: {
-          email: inviteEmail,
-          fullName: inviteName,
+          email: inviteEmail.trim(),
+          fullName: inviteName.trim(),
           role: inviteRole,
           redirectTo: `${origin}/auth`,
         },
@@ -132,6 +182,33 @@ function UsersRoute() {
     },
     onError: (e: Error) => {
       toast.error("Failed to invite user", { description: e.message });
+    },
+  });
+
+  const { mutate: createDirectUser, isPending: creatingDirect } = useMutation({
+    mutationFn: async () => {
+      await adminCreateUserDirect({
+        data: {
+          email: inviteEmail.trim(),
+          password: directPassword,
+          fullName: inviteName.trim(),
+          role: inviteRole,
+        },
+      });
+    },
+    onSuccess: () => {
+      toast.success("Account provisioned successfully", {
+        description: `Direct account created for ${inviteEmail}`,
+      });
+      setInviteOpen(false);
+      setInviteEmail("");
+      setInviteName("");
+      setDirectPassword("");
+      setInviteRole("operator");
+      qc.invalidateQueries({ queryKey: ["admin-users"] });
+    },
+    onError: (e: Error) => {
+      toast.error("Failed to create user", { description: e.message });
     },
   });
 
@@ -180,8 +257,6 @@ function UsersRoute() {
     },
   });
 
-  const { user: currentUser } = useAuth();
-
   const filteredUsers = useMemo(() => {
     let list = users as AdminUser[];
     if (roleFilter !== "all") {
@@ -216,83 +291,203 @@ function UsersRoute() {
       .toUpperCase();
   };
 
+  if (!authLoading && !isAdmin) {
+    return (
+      <div className="flex min-h-[70vh] flex-col items-center justify-center p-6 text-center">
+        <div className="h-14 w-14 rounded-full bg-rose-100 dark:bg-rose-950/50 flex items-center justify-center text-rose-600 dark:text-rose-400 mb-4">
+          <Lock className="h-7 w-7" />
+        </div>
+        <h2 className="text-xl font-bold tracking-tight">Administrator Access Required</h2>
+        <p className="text-sm text-muted-foreground mt-1.5 max-w-md">
+          User account provisioning, privilege assignments, and credential management require the <span className="font-semibold text-foreground">admin</span> role.
+        </p>
+        <Button asChild variant="outline" className="mt-5">
+          <Link to="/dashboard">Return to Dashboard</Link>
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-6 p-6 animate-fade-in">
       <div className="flex items-start justify-between flex-wrap gap-3">
         <PageHeader
-          title="User Management"
-          description="Manage administrators, operators, and viewers across the platform."
+          title="User & Identity Management"
+          description="Manage platform administrators, operational roles, credentials, and access privileges."
         />
 
+        {/* User Provisioning Modal */}
         <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
           <DialogTrigger asChild>
-            <Button size="sm" className="hover-lift">
-              <UserPlus className="w-4 h-4 mr-2" />
-              Invite User
+            <Button size="sm" className="hover-lift cursor-pointer gap-1.5">
+              <UserPlus className="w-4 h-4" />
+              Add / Invite User
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>Invite new user</DialogTitle>
+              <DialogTitle className="flex items-center gap-2">
+                <UserCheck2 className="h-5 w-5 text-primary" />
+                Provision Platform User
+              </DialogTitle>
               <DialogDescription>
-                Send an email invitation to add a new team member.
+                Invite a colleague via email or provision an account directly for intranet/offline environments.
               </DialogDescription>
             </DialogHeader>
-            <div className="grid gap-4 py-4">
-              <div className="grid gap-2">
-                <Label htmlFor="email">Email address</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="name@company.com"
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="name">Full Name</Label>
-                <Input
-                  id="name"
-                  placeholder="Optional"
-                  value={inviteName}
-                  onChange={(e) => setInviteName(e.target.value)}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label>Role</Label>
-                <Select value={inviteRole} onValueChange={(val) => setInviteRole(val as AppRole)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a role" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ROLES.map((role) => (
-                      <SelectItem key={role} value={role}>
-                        <div className="flex flex-col">
+
+            <Tabs value={createMode} onValueChange={(v) => setCreateMode(v as any)} className="mt-2">
+              <TabsList className="grid grid-cols-2 h-9">
+                <TabsTrigger value="invite" className="text-xs gap-1.5">
+                  <Mail className="h-3.5 w-3.5" /> Email Invitation
+                </TabsTrigger>
+                <TabsTrigger value="direct" className="text-xs gap-1.5">
+                  <Key className="h-3.5 w-3.5" /> Direct Account (Offline)
+                </TabsTrigger>
+              </TabsList>
+
+              {/* TAB 1: EMAIL INVITATION */}
+              <TabsContent value="invite" className="space-y-3 pt-2">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="email" className="text-xs">Email Address *</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="name@company.com"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="name" className="text-xs">Full Name</Label>
+                  <Input
+                    id="name"
+                    placeholder="e.g. Sudeep Das"
+                    value={inviteName}
+                    onChange={(e) => setInviteName(e.target.value)}
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label className="text-xs">Assigned Privilege Role *</Label>
+                  <Select value={inviteRole} onValueChange={(val) => setInviteRole(val as AppRole)}>
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue placeholder="Select a role" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ROLES.map((role) => (
+                        <SelectItem key={role} value={role} className="text-xs">
                           <span className="capitalize">{role.replace(/_/g, " ")}</span>
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setInviteOpen(false)} disabled={inviting}>
-                Cancel
-              </Button>
-              <Button onClick={() => inviteUser()} disabled={!inviteEmail || inviting}>
-                {inviting ? "Sending..." : "Send Invite"}
-              </Button>
-            </DialogFooter>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <DialogFooter className="pt-2">
+                  <Button variant="outline" size="sm" onClick={() => setInviteOpen(false)} disabled={inviting}>
+                    Cancel
+                  </Button>
+                  <Button size="sm" onClick={() => inviteUser()} disabled={!inviteEmail || inviting}>
+                    {inviting ? "Sending..." : "Send Invite"}
+                  </Button>
+                </DialogFooter>
+              </TabsContent>
+
+              {/* TAB 2: DIRECT ACCOUNT CREATION */}
+              <TabsContent value="direct" className="space-y-3 pt-2">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="direct-email" className="text-xs">Email Address *</Label>
+                  <Input
+                    id="direct-email"
+                    type="email"
+                    placeholder="name@company.com"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="direct-name" className="text-xs">Full Name</Label>
+                  <Input
+                    id="direct-name"
+                    placeholder="e.g. Sudeep Das"
+                    value={inviteName}
+                    onChange={(e) => setInviteName(e.target.value)}
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label className="text-xs">Assigned Privilege Role *</Label>
+                  <Select value={inviteRole} onValueChange={(val) => setInviteRole(val as AppRole)}>
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue placeholder="Select a role" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ROLES.map((role) => (
+                        <SelectItem key={role} value={role} className="text-xs">
+                          <span className="capitalize">{role.replace(/_/g, " ")}</span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="direct-pwd" className="text-xs">Initial Password *</Label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-5 px-1.5 text-[10px] text-primary gap-1"
+                      onClick={() => setDirectPassword(generatePassword())}
+                    >
+                      <Sparkles className="h-2.5 w-2.5" /> Generate
+                    </Button>
+                  </div>
+                  <div className="relative">
+                    <Input
+                      id="direct-pwd"
+                      type={showDirectPassword ? "text" : "password"}
+                      placeholder="Minimum 8 characters"
+                      value={directPassword}
+                      onChange={(e) => setDirectPassword(e.target.value)}
+                      className="h-8 text-xs pr-8 font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowDirectPassword(!showDirectPassword)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      {showDirectPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    </button>
+                  </div>
+                </div>
+
+                <DialogFooter className="pt-2">
+                  <Button variant="outline" size="sm" onClick={() => setInviteOpen(false)} disabled={creatingDirect}>
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => createDirectUser()}
+                    disabled={!inviteEmail || !directPassword || directPassword.length < 6 || creatingDirect}
+                  >
+                    {creatingDirect ? "Provisioning..." : "Provision Account"}
+                  </Button>
+                </DialogFooter>
+              </TabsContent>
+            </Tabs>
           </DialogContent>
         </Dialog>
       </div>
 
+      {/* KPI Overview */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card className="glass-card hover-lift border border-border/80">
+        <Card className="border border-border/80 shadow-sm">
           <CardContent className="p-4 flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium uppercase text-muted-foreground">Total Users</p>
+              <p className="text-[11px] font-medium uppercase text-muted-foreground">Total Users</p>
               <p className="text-2xl font-bold mt-1 tabular-nums">{kpis.total}</p>
               <p className="text-[11px] text-muted-foreground mt-0.5">Platform accounts</p>
             </div>
@@ -301,10 +496,10 @@ function UsersRoute() {
             </div>
           </CardContent>
         </Card>
-        <Card className="glass-card hover-lift border border-border/80">
+        <Card className="border border-border/80 shadow-sm">
           <CardContent className="p-4 flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium uppercase text-muted-foreground">Administrators</p>
+              <p className="text-[11px] font-medium uppercase text-muted-foreground">Administrators</p>
               <p className="text-2xl font-bold text-red-600 dark:text-red-400 mt-1 tabular-nums">{kpis.admins}</p>
               <p className="text-[11px] text-muted-foreground mt-0.5">Full privilege access</p>
             </div>
@@ -313,10 +508,10 @@ function UsersRoute() {
             </div>
           </CardContent>
         </Card>
-        <Card className="glass-card hover-lift border border-border/80">
+        <Card className="border border-border/80 shadow-sm">
           <CardContent className="p-4 flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium uppercase text-muted-foreground">Active Signed-In</p>
+              <p className="text-[11px] font-medium uppercase text-muted-foreground">Active Signed-In</p>
               <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1 tabular-nums">{kpis.active}</p>
               <p className="text-[11px] text-muted-foreground mt-0.5">Confirmed credentials</p>
             </div>
@@ -325,10 +520,10 @@ function UsersRoute() {
             </div>
           </CardContent>
         </Card>
-        <Card className="glass-card hover-lift border border-border/80">
+        <Card className="border border-border/80 shadow-sm">
           <CardContent className="p-4 flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium uppercase text-muted-foreground">Pending Invites</p>
+              <p className="text-[11px] font-medium uppercase text-muted-foreground">Pending Invites</p>
               <p className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1 tabular-nums">{kpis.pending}</p>
               <p className="text-[11px] text-muted-foreground mt-0.5">Awaiting initial login</p>
             </div>
@@ -339,6 +534,7 @@ function UsersRoute() {
         </Card>
       </div>
 
+      {/* Search & Filter Bar */}
       <div className="flex flex-wrap gap-2 items-center">
         <div className="relative flex-1 min-w-[220px]">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -346,7 +542,7 @@ function UsersRoute() {
             placeholder="Search user name or email…"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-8 h-8 text-sm"
+            className="pl-8 h-8 text-xs"
           />
           {searchTerm && (
             <button
@@ -364,7 +560,7 @@ function UsersRoute() {
           <SelectContent>
             <SelectItem value="all">All Roles</SelectItem>
             {ROLES.map((r) => (
-              <SelectItem key={r} value={r}>
+              <SelectItem key={r} value={r} className="text-xs">
                 <span className="capitalize">{r.replace(/_/g, " ")}</span>
               </SelectItem>
             ))}
@@ -372,145 +568,199 @@ function UsersRoute() {
         </Select>
       </div>
 
-      <div className="border rounded-lg bg-card overflow-hidden">
+      {/* Users Table */}
+      <div className="border rounded-lg bg-card overflow-hidden shadow-sm">
         <Table>
           <TableHeader>
-            <TableRow>
-              <TableHead>User</TableHead>
-              <TableHead>Role</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Last Active</TableHead>
-              <TableHead className="text-center">Actions</TableHead>
+            <TableRow className="bg-muted/40 text-xs hover:bg-transparent">
+              <TableHead className="pl-6 w-[280px]">User & Identity</TableHead>
+              <TableHead className="w-[180px]">Assigned Role</TableHead>
+              <TableHead className="w-[120px]">Status</TableHead>
+              <TableHead className="w-[180px]">Last Sign-In</TableHead>
+              <TableHead className="pr-6 text-right w-[140px]">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow>
-                <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                  Loading users...
-                </TableCell>
-              </TableRow>
+              Array.from({ length: 4 }).map((_, i) => (
+                <TableRow key={i}>
+                  {Array.from({ length: 5 }).map((_, j) => (
+                    <TableCell key={j}>
+                      <div className="h-4 rounded bg-muted animate-pulse" />
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))
             ) : filteredUsers.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                  No users matching filter criteria.
+                <TableCell colSpan={5} className="text-center py-12 text-muted-foreground">
+                  <Users className="h-8 w-8 mx-auto mb-2 opacity-30 text-muted-foreground" />
+                  <p className="text-sm font-medium">No users match your criteria.</p>
                 </TableCell>
               </TableRow>
             ) : (
-              filteredUsers.map((user) => (
-                <TableRow key={user.id} className="hover:bg-muted/30">
-                  <TableCell>
-                    <div className="flex items-center gap-3">
-                      <Avatar className="h-8 w-8">
-                        <AvatarFallback className="text-xs font-semibold">{initials(user.full_name, user.email)}</AvatarFallback>
-                      </Avatar>
-                      <div className="flex flex-col">
-                        <span className="font-medium text-sm">{user.full_name || "Unknown"}</span>
-                        <span className="text-xs text-muted-foreground font-mono">{user.email}</span>
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Select
-                      value={user.role || ""}
-                      onValueChange={(val) => updateRole({ userId: user.id, role: val as AppRole })}
-                      disabled={updating}
-                    >
-                      <SelectTrigger className="w-44 h-8 text-xs border-transparent hover:border-border">
-                        <div className="flex items-center gap-2">
-                          <Shield className="w-3 h-3 text-muted-foreground" />
-                          <SelectValue placeholder="No role" />
+              filteredUsers.map((user) => {
+                const isSelf = user.id === currentUser?.id;
+                return (
+                  <TableRow key={user.id} className="hover:bg-muted/40 transition-colors">
+                    {/* User Identity */}
+                    <TableCell className="pl-6 text-xs">
+                      <div className="flex items-center gap-3">
+                        <Avatar className="h-8 w-8">
+                          <AvatarFallback className="text-[11px] font-semibold bg-primary/10 text-primary">
+                            {initials(user.full_name, user.email)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex flex-col truncate">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold text-xs text-foreground truncate">
+                              {user.full_name || "Unassigned Name"}
+                            </span>
+                            {isSelf && (
+                              <Badge variant="secondary" className="text-[9px] px-1 py-0 font-normal">
+                                You
+                              </Badge>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-muted-foreground font-mono truncate">{user.email}</span>
                         </div>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {ROLES.map((role) => (
-                          <SelectItem key={role} value={role}>
-                            <span className="capitalize text-xs">{role.replace(/_/g, " ")}</span>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </TableCell>
-                  <TableCell>
-                    {user.last_sign_in_at ? (
-                      <Badge
-                        variant="outline"
-                        className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800 text-[11px]"
+                      </div>
+                    </TableCell>
+
+                    {/* Role Selection */}
+                    <TableCell>
+                      <Select
+                        value={user.role || ""}
+                        onValueChange={(val) => updateRole({ userId: user.id, role: val as AppRole })}
+                        disabled={updating || isSelf}
                       >
-                        Active
-                      </Badge>
-                    ) : user.invited_at ? (
-                      <Badge
-                        variant="outline"
-                        className="bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border-amber-200 dark:border-amber-800 text-[11px]"
-                      >
-                        Invited
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="text-[11px]">Pending</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground font-mono">
-                    {user.last_sign_in_at
-                      ? new Date(user.last_sign_in_at).toLocaleDateString()
-                      : "Never"}
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 w-7 p-0"
-                        title="Reset Password"
-                        onClick={() => {
-                          setUserToReset(user);
-                          setNewPassword("");
-                          setResetOpen(true);
-                        }}
-                      >
-                        <Key className="w-4 h-4" />
-                      </Button>
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 w-7 p-0"
-                            disabled={user.id === currentUser?.id}
-                            title={
-                              user.id === currentUser?.id
-                                ? "You cannot delete your own account"
-                                : "Delete user"
-                            }
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Delete User?</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              This will permanently remove <strong>{user.email}</strong> and all
-                              their associated data (profile, role assignments). This action cannot
-                              be undone.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                              onClick={() => deleteUser(user.id)}
-                              disabled={deleting}
-                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        <SelectTrigger className="w-40 h-7 text-xs border border-border/60">
+                          <div className="flex items-center gap-1.5">
+                            <Shield className="w-3 h-3 text-muted-foreground" />
+                            <SelectValue placeholder="No role" />
+                          </div>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ROLES.map((role) => (
+                            <SelectItem key={role} value={role} className="text-xs">
+                              <span className="capitalize">{role.replace(/_/g, " ")}</span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+
+                    {/* Status Badge */}
+                    <TableCell>
+                      {user.last_sign_in_at ? (
+                        <Badge
+                          variant="outline"
+                          className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800 text-[10px]"
+                        >
+                          Active
+                        </Badge>
+                      ) : user.invited_at ? (
+                        <Badge
+                          variant="outline"
+                          className="bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border-amber-200 dark:border-amber-800 text-[10px]"
+                        >
+                          Invited
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px]">Pending</Badge>
+                      )}
+                    </TableCell>
+
+                    {/* Last Sign-In */}
+                    <TableCell className="text-xs text-muted-foreground font-mono whitespace-nowrap">
+                      {user.last_sign_in_at ? (
+                        <div>
+                          <div className="font-medium text-foreground">
+                            {format(new Date(user.last_sign_in_at), "dd MMM yyyy")}
+                          </div>
+                          <div className="text-[10px] opacity-70">
+                            {format(new Date(user.last_sign_in_at), "HH:mm")}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="italic text-[11px] opacity-60">Never</span>
+                      )}
+                    </TableCell>
+
+                    {/* Actions */}
+                    <TableCell className="pr-6 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        {/* Audit Logs Link */}
+                        <Button
+                          asChild
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0"
+                          title="View user activity in Audit Logs"
+                        >
+                          <Link to="/audit-logs">
+                            <ExternalLink className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground" />
+                          </Link>
+                        </Button>
+
+                        {/* Reset Password */}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 cursor-pointer"
+                          title="Reset Password"
+                          onClick={() => {
+                            setUserToReset(user);
+                            setNewPassword("");
+                            setShowResetPassword(false);
+                            setResetOpen(true);
+                          }}
+                        >
+                          <Key className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground" />
+                        </Button>
+
+                        {/* Delete User */}
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0 cursor-pointer text-muted-foreground hover:text-rose-600"
+                              disabled={isSelf}
+                              title={
+                                isSelf
+                                  ? "You cannot delete your own account"
+                                  : "Delete user"
+                              }
                             >
-                              {deleting ? "Deleting..." : "Delete User"}
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Delete User Account?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                This will permanently remove <strong>{user.email}</strong> and all
+                                associated credentials, profile attributes, and role assignments.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => deleteUser(user.id)}
+                                disabled={deleting}
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                              >
+                                {deleting ? "Deleting..." : "Delete Account"}
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>
@@ -518,47 +768,72 @@ function UsersRoute() {
 
       {/* Password Reset Dialog */}
       <Dialog open={resetOpen} onOpenChange={setResetOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Reset Password</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <Key className="h-5 w-5 text-primary" />
+              Reset User Password
+            </DialogTitle>
             <DialogDescription>
-              Set a new password for <strong>{userToReset?.email}</strong>. The user will be able to
-              sign in with this password immediately.
+              Set a new password for <strong className="text-foreground">{userToReset?.email}</strong>. The user will be able to sign in with this password immediately.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3">
+          <div className="space-y-3 pt-2">
             <div>
-              <Label htmlFor="new-password">New Password</Label>
-              <Input
-                id="new-password"
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="Enter a new password"
-              />
+              <div className="flex items-center justify-between mb-1.5">
+                <Label htmlFor="new-password" className="text-xs">New Password *</Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-5 px-1.5 text-[10px] text-primary gap-1"
+                  onClick={() => setNewPassword(generatePassword())}
+                >
+                  <Sparkles className="h-2.5 w-2.5" /> Generate Secure Password
+                </Button>
+              </div>
+              <div className="relative">
+                <Input
+                  id="new-password"
+                  type={showResetPassword ? "text" : "password"}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Enter a new password"
+                  className="h-8 text-xs pr-8 font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowResetPassword(!showResetPassword)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  {showResetPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                </button>
+              </div>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                const chars =
-                  "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*";
-                let pwd = "";
-                for (let i = 0; i < 16; i++) {
-                  pwd += chars.charAt(Math.floor(Math.random() * chars.length));
-                }
-                setNewPassword(pwd);
-              }}
-            >
-              Generate Secure Password
-            </Button>
+
+            {newPassword && (
+              <div className="flex items-center justify-between bg-muted/40 p-2 rounded text-xs">
+                <span className="font-mono text-[11px] truncate mr-2">{newPassword}</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-6 text-[10px] gap-1 shrink-0"
+                  onClick={() => {
+                    navigator.clipboard.writeText(newPassword);
+                    toast.success("Password copied to clipboard.");
+                  }}
+                >
+                  <Copy className="h-2.5 w-2.5" /> Copy
+                </Button>
+              </div>
+            )}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setResetOpen(false)}>
+          <DialogFooter className="pt-2">
+            <Button variant="outline" size="sm" onClick={() => setResetOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={() => resetPassword()} disabled={resetting || !newPassword}>
-              {resetting ? "Resetting..." : "Reset Password"}
+            <Button size="sm" onClick={() => resetPassword()} disabled={resetting || !newPassword || newPassword.length < 6}>
+              {resetting ? "Resetting..." : "Save Password"}
             </Button>
           </DialogFooter>
         </DialogContent>

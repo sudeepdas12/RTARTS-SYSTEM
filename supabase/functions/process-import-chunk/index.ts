@@ -136,27 +136,49 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
     row.company_name || row.companyName || row.company || ""
   ).trim();
 
-  // 2. Private Limited companies (PVT LTD / PRIVATE LIMITED) are incorporated corporate entities (Legal Person).
-  const isPvtLtd = /PVT\.?\s*LTD|PRIVATE\s*LIMITED/i.test(legalPersonName);
-  const isMutualFundScheme = /(MUTUAL\s*FUND|\bMF\b|FOCUS\s*(40|30)|SELECT\s*30|SUPER\s*30|SAMRIDDHI|SAMUNNAT|PRAGATI|SAHABHAGITA|DHANABRIDDHI|SABAL|EQUITY\s*(FUND|SCHEME|ORIENTED)|GROWTH\s*(FUND|SCHEME)|BALANCED\s*(FUND|SCHEME)|BLUECHIP|LARGE\s*CAP|FLEXI\s*CAP|VALUE\s*FUND|DEBT\s*FUND|FIXED\s*INCOME|DYNAMIC\s*DEBT|SYSTEMATIC\s*INVESTMENT|YOJANA\b)/i.test(legalPersonName);
+  // 2. Corporate suffixes & Partnerships
+  const isCorporateSuffix = /(PVT\.?\s*LTD|PRIVATE\s*LIMITED|P\.?\s*LTD|\bLIMITED\b|\bLTD\.?\b|\bCOMPANY\b|\bCORP\b|CORPORATION|\bINC\.?\b|\bLLC\b|\bPLC\b|\bPARTNERS\b|\bPARTNERSHIP\b)/i.test(legalPersonName);
+  const isMutualFundScheme = /(MUTUAL\s*FUND|\bMF\b|FOCUS\s*(40|30|25|\d+)|SELECT\s*(30|40|\d+)|SUPER\s*(30|40|\d+)|\bNMB\s*(50|HYBRID|SARAL|SULAV|SAMRIDDHI)|\b50\b|SAMRIDDHI\s*FUND|SAMUNNAT\s*SCHEME|PRAGATI\s*FUND|SAHABHAGITA\s*FUND|DHANABRIDDHI\s*YOJANA|SABAL\s*FUND|UNNATI\s*FUND|SARAL\s*(BACHAT|FUND)|SHUBHA\s*LAXMI\s*KOSH|EQUITY\s*(FUND|SCHEME|ORIENTED)|GROWTH\s*(FUND|SCHEME)|BALANCED\s*(FUND|SCHEME)|BLUECHIP\s*(FUND|SCHEME)|LARGE\s*CAP(\s*FUND)?|FLEXI\s*CAP(\s*FUND)?|VALUE\s*FUND|DEBT\s*FUND|FIXED\s*INCOME|DYNAMIC\s*DEBT(\s*FUND)?|SYSTEMATIC\s*INVESTMENT|DIVIDEND\s*YIELD\s*FUND|MONEY\s*MARKET\s*FUND|INDEX\s*FUND|CWEDA\s*EQUITY\s*FUND|STABLE\s*FUND|RESOURCE\s*FUND|HYBRID\s*FUND|SMART\s*FUND|\bYOJANA\b|\bSSIS\b)/i.test(legalPersonName);
 
-  if (isPvtLtd && !isMutualFundScheme) {
+  if (isCorporateSuffix && !isMutualFundScheme) {
     return "INSTITUTION";
   }
 
   // 3. Tax Exempted / Mutual Fund detection from compound institutional name
-  const taxExemptSignals = /(MUTUAL\s*FUND|\bMF\b|FOCUS\s*(40|30)|SELECT\s*30|SUPER\s*30|SAMRIDDHI|SAMUNNAT|PRAGATI|SAHABHAGITA|DHANABRIDDHI|SABAL|EQUITY\s*(FUND|SCHEME|ORIENTED)|GROWTH\s*(FUND|SCHEME)|BALANCED\s*(FUND|SCHEME)|BLUECHIP|LARGE\s*CAP|FLEXI\s*CAP|VALUE\s*FUND|DEBT\s*FUND|FIXED\s*INCOME|DYNAMIC\s*DEBT|SYSTEMATIC\s*INVESTMENT|YOJANA\b|RETIREMENT\s*FUND|PENSION\s*FUND|PROVIDENT\s*FUND|SANCHAYA\s*KOSH|NAGARIK\s*LAGANI\s*KOSH|CITIZEN\s*INVESTMENT|\bCIT\b|\bEPF\b|\bSSF\b|SOCIAL\s*SECURITY\s*FUND|AWAKASH\s*KOSH|AWAKASH\s*FUND|KALYAN\s*KOSH)/i;
-  if (legalPersonName && taxExemptSignals.test(legalPersonName)) {
-    return "TAX_EXEMPT";
+  if (fatherName || grandfatherName || (citizenship && /[-a-zA-Z0-9]/.test(citizenship))) {
+    return "PUBLIC";
   }
 
-  // 4. Legal Person / Institutional signals from name
-  const legalPersonSignals = /(PVT\.?LTD|PRIVATE LIMITED|\bLIMITED\b|\bLTD\.?\b|\bCOMPANY\b|CORPORATION|ASSOCIATES|FOUNDATION|\bGROUP\b|HOLDINGS|\bTRUST\b|\bBANK\b|FINANCE|MICROFINANCE|HYDROPOWER|INSURANCE|INSTITUTE|SOCIETY|COOPERATIVE|SAHAKARI|ENTERPRISES|VENTURES|INVESTMENT|CAPITAL|SECURITIES)/i;
-  if (legalPersonName && legalPersonSignals.test(legalPersonName)) {
-    return "INSTITUTION";
+  // 1. Tax Exempt Funds (Mutual funds & Statutory Social Funds)
+  if (
+    /\b(MUTUAL\s*FUND|MF|FOCUS\s*(40|30|\d+)|SELECT\s*(30|40|\d+)|SUPER\s*(30|40|\d+)|NMB\s*(50|HYBRID|SARAL)|\b50\b|SAMRIDDHI\s*FUND|DHANABRIDDHI|EQUITY\s*FUND|DYNAMIC\s*DEBT|LARGE\s*CAP|CITIZEN\s*INVESTMENT\s*TRUST|\bCIT\b|KARMACHARI\s*SANCHAYA\s*KOSH|\bEPF\b|SOCIAL\s*SECURITY\s*FUND|\bSSF\b)\b/i.test(
+      name
+    ) ||
+    /MUTUAL|MF\b|TAX.?EXEMPT/i.test(explicitType)
+  ) {
+    return 'TAX_EXEMPT';
   }
 
-  // 4. Sheet Type
+  // 2. Corporate Suffixes & Partnerships
+  if (
+    /\b(PVT\.?\s*LTD|PRIVATE\s*LIMITED|P\.?\s*LTD|LIMITED|LTD\.?|COMPANY|CORP|CORPORATION|INC\.?|LLC|PLC|PARTNERS|PARTNERSHIP|HOLDINGS\s*COMPANY)\b/i.test(
+      name
+    )
+  ) {
+    return 'COMPANY_INSTITUTION';
+  }
+
+  // 3. Institutional Organizations (including Army Welfare & Police Welfare trusts)
+  if (
+    /\b(BANK|FINANCE|MICROFINANCE|LAGHUBITTA|BITTIYA|BIMA|BEEMA|INSURANCE|REINSURANCE|HYDROPOWER|DOORSANCHAR|TELECOM|CLEARING\s*HOUSE|STOCK\s*EXCHANGE|CDS|COOPERATIVE|SAHAKARI|ENTERPRISES|TRADING|TRADERS|SECURITIES|BROKER|ARMY\s*WELFARE|SAINIK\s*KALYAN|POLICE\s*WELFARE|PRAHARI\s*KALYAN)\b/i.test(
+      name
+    ) ||
+    /LEGAL|INSTIT|COMPANY|CORPORAT/i.test(explicitType)
+  ) {
+    return 'COMPANY_INSTITUTION';
+  }
+
+  // 5. Sheet Type
   if (sheetType) {
     const upper = sheetType.toUpperCase();
     if (upper.includes("MUTUAL") || upper.includes("MF")) return "MUTUAL_FUND";

@@ -15,6 +15,15 @@ export interface SystemSettings {
   smtp_pass: string;
   sms_gateway_url: string;
   sms_api_key: string;
+  // ConnectIPS Banking Gateway Settings
+  connectips_enabled: boolean;
+  connectips_mode: 'SANDBOX' | 'PRODUCTION';
+  connectips_merchant_id: string;
+  connectips_app_id: string;
+  connectips_app_name: string;
+  connectips_base_url: string;
+  connectips_token: string;
+  connectips_cert_pass: string;
 }
 
 const DEFAULT_SETTINGS: SystemSettings = {
@@ -32,6 +41,14 @@ const DEFAULT_SETTINGS: SystemSettings = {
   smtp_pass: '',
   sms_gateway_url: '',
   sms_api_key: '',
+  connectips_enabled: false,
+  connectips_mode: 'SANDBOX',
+  connectips_merchant_id: '',
+  connectips_app_id: '',
+  connectips_app_name: 'RTARTS System',
+  connectips_base_url: 'https://uat.connectips.com:7443',
+  connectips_token: '',
+  connectips_cert_pass: '',
 };
 
 const SETTINGS_KEY = 'global';

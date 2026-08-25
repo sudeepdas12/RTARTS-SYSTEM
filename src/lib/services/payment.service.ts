@@ -9,7 +9,7 @@ export interface PaymentBatch {
   total_payments: number;
   total_amount: number;
   total_tax: number;
-  status: 'Draft' | 'Approved' | 'Processed' | 'Completed' | 'Failed';
+  status: 'Draft' | 'Pending' | 'Approved' | 'Rejected' | 'Returned' | 'Processed' | 'Completed' | 'Failed';
   payment_method: string;
   cds_batch_ref?: string | null;
   registrar?: string | null;
@@ -149,6 +149,39 @@ export const PaymentService = {
     } catch (err: any) {
       console.warn('Failed to create batch:', err?.message || err);
       return null;
+    }
+  },
+
+  /**
+   * Delete a draft or canceled batch and remove its line items
+   */
+  async deleteBatch(batchId: string): Promise<boolean> {
+    try {
+      // 1. Delete associated payments / line items
+      const { error: lineItemsError } = await (supabase as any)
+        .from('payments')
+        .delete()
+        .eq('batch_id', batchId);
+
+      if (lineItemsError) {
+        console.warn('Failed to delete payment line items:', lineItemsError.message);
+      }
+
+      // 2. Delete the batch header
+      const { error: batchError } = await (supabase as any)
+        .from('payment_batches')
+        .delete()
+        .eq('id', batchId);
+
+      if (batchError) {
+        console.warn('Failed to delete payment batch:', batchError.message);
+        return false;
+      }
+
+      return true;
+    } catch (err: any) {
+      console.warn('Failed to delete batch:', err?.message || err);
+      return false;
     }
   },
 
@@ -409,7 +442,17 @@ export const PaymentService = {
     }
   },
 
-  async getPayablesForPayment(companyId?: string, payableType?: string): Promise<any[]> {
+  async getPayablesForPayment(
+    companyId?: string,
+    payableType?: string,
+    options?: {
+      fiscalYear?: string;
+      periodPreset?: string;
+      periodDays?: number;
+      fromDate?: string;
+      toDate?: string;
+    }
+  ): Promise<any[]> {
     try {
       // 1. Fetch payable IDs that are already present in existing active payment records (not Reversed / Failed)
       let batchedPayableIds = new Set<string>();
@@ -441,6 +484,9 @@ export const PaymentService = {
         if (companyId && companyId !== 'all') {
           query = query.eq('company_id', companyId);
         }
+        if (options?.fiscalYear && options.fiscalYear !== 'all') {
+          query = query.eq('fiscal_year', options.fiscalYear);
+        }
         
         const { data: dividendData, error: dividendError } = await query;
         if (dividendError) console.warn('Failed to fetch dividend payables:', dividendError.message);
@@ -459,11 +505,96 @@ export const PaymentService = {
         if (companyId && companyId !== 'all') {
           interestQuery = interestQuery.eq('company_id', companyId);
         }
+        if (options?.fiscalYear && options.fiscalYear !== 'all') {
+          interestQuery = interestQuery.eq('fiscal_year', options.fiscalYear);
+        }
+        if (options?.fromDate) {
+          interestQuery = interestQuery.gte('due_date', options.fromDate);
+        }
+        if (options?.toDate) {
+          interestQuery = interestQuery.lte('due_date', options.toDate);
+        }
         
         const { data: interestData, error: interestError } = await interestQuery;
         if (interestError) console.warn('Failed to fetch interest payables:', interestError.message);
         if (interestData) {
-          payables.push(...interestData.map((p: any) => ({ ...p, payable_type: 'interest' })));
+          const days = options?.periodDays || (options?.periodPreset === '3M' ? 91 : options?.periodPreset === '6M' ? 183 : options?.periodPreset === '9M' ? 274 : 365);
+          
+          if (days > 0 && days !== 365) {
+            // High-precision proration with exact statutory paisa balancing
+            const interestItems = interestData.map((p: any) => {
+              const annualGross = Number(p.gross_interest ?? 0);
+              const gross = (annualGross / 365) * days;
+              const rate = p.payee_classification === 'COMPANY_INSTITUTION' ? 0.15 : (p.payee_classification === 'TAX_EXEMPT' ? 0 : 0.06);
+              const tax = gross * rate;
+              const net = gross - tax;
+              return {
+                ...p,
+                payable_type: 'interest',
+                period_days: days,
+                _rawGross: gross,
+                _rawTax: tax,
+                _rawNet: net,
+              };
+            });
+
+            const totalNetPaisa = Math.round(interestItems.reduce((s: number, r: any) => s + r._rawNet, 0) * 100);
+            const totalTaxPaisa = Math.round(interestItems.reduce((s: number, r: any) => s + r._rawTax, 0) * 100);
+
+            // Distribute net paisa with largest remainder method
+            let currentNetFloor = 0;
+            interestItems.forEach((r: any) => {
+              const pFloat = r._rawNet * 100;
+              r._floorNetPaisa = Math.floor(pFloat);
+              r._netRemainder = pFloat - r._floorNetPaisa;
+              currentNetFloor += r._floorNetPaisa;
+            });
+            const missingNetPaisa = totalNetPaisa - currentNetFloor;
+            const sortedByNetRem = [...interestItems].sort((a: any, b: any) => b._netRemainder - a._netRemainder);
+            for (let i = 0; i < missingNetPaisa; i++) {
+              sortedByNetRem[i]._floorNetPaisa += 1;
+            }
+
+            // Distribute tax paisa with largest remainder method
+            let currentTaxFloor = 0;
+            interestItems.forEach((r: any) => {
+              const pFloat = r._rawTax * 100;
+              r._floorTaxPaisa = Math.floor(pFloat);
+              r._taxRemainder = pFloat - r._floorTaxPaisa;
+              currentTaxFloor += r._floorTaxPaisa;
+            });
+            const missingTaxPaisa = totalTaxPaisa - currentTaxFloor;
+            const sortedByTaxRem = [...interestItems].sort((a: any, b: any) => b._taxRemainder - a._taxRemainder);
+            for (let i = 0; i < missingTaxPaisa; i++) {
+              sortedByTaxRem[i]._floorTaxPaisa += 1;
+            }
+
+            interestItems.forEach((r: any) => {
+              const net = r._floorNetPaisa / 100;
+              const tax = r._floorTaxPaisa / 100;
+              const gross = Math.round((net + tax) * 100) / 100;
+              payables.push({
+                ...r,
+                gross_interest: gross,
+                tax_amount: tax,
+                net_payable: net,
+              });
+            });
+          } else {
+            for (const p of interestData) {
+              const gross = Number(p.gross_interest ?? 0);
+              const tax = Number(p.tax_amount ?? 0);
+              const net = Number(p.net_payable ?? p.net_interest ?? (gross - tax));
+              payables.push({
+                ...p,
+                payable_type: 'interest',
+                gross_interest: gross,
+                tax_amount: tax,
+                net_payable: net,
+                period_days: 365,
+              });
+            }
+          }
         }
       }
 
@@ -476,6 +607,9 @@ export const PaymentService = {
         
         if (companyId && companyId !== 'all') {
           mfQuery = mfQuery.eq('company_id', companyId);
+        }
+        if (options?.fiscalYear && options.fiscalYear !== 'all') {
+          mfQuery = mfQuery.eq('fiscal_year', options.fiscalYear);
         }
         
         const { data: mfData, error: mfError } = await mfQuery;

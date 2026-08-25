@@ -246,45 +246,75 @@ export const UploadService = {
     }
   },
 
-  async rollbackUpload(uploadId: string, targetTable: string): Promise<void> {
-    // 1. Try direct delete via Supabase client
-    const { error: deleteError, count: deletedCount } = await (supabase as any)
-      .from(targetTable)
-      .delete({ count: "exact" })
-      .eq("upload_id", uploadId);
-
-    // 2. If direct delete failed or deleted 0 rows, try the bulk_delete RPC (bypasses RLS)
-    if (deleteError || !deletedCount) {
-      console.warn("Direct delete failed or 0 rows, trying bulk_delete RPC:", deleteError?.message);
-      try {
-        // IMPORTANT: Pass the filters array directly (NOT JSON.stringify'd).
-        // PostgREST serializes the array to a JSONB scalar, and the RPC's
-        // jsonb_array_elements() fails with "cannot extract elements from a scalar"
-        // when given a stringified JSON string.
-        const { data: rpcResult, error: rpcError } = await (supabase as any).rpc("bulk_delete", {
-          p_table: targetTable,
-          p_filters: [{ field: "upload_id", value: uploadId }],
-        });
-        if (rpcError) {
-          console.warn("bulk_delete RPC also failed:", rpcError.message);
-        } else if (rpcResult?.success) {
-          console.log("bulk_delete RPC deleted", rpcResult.deleted, "rows");
+  async rollbackUpload(uploadId: string, targetTable?: string): Promise<void> {
+    // 1. Fetch the upload record to get file_hash and target_table
+    let fileHash: string | null = null;
+    let actualTable = targetTable;
+    try {
+      const { data: rec } = await (supabase as any)
+        .from("upload_history")
+        .select("id, file_hash, target_table")
+        .eq("id", uploadId)
+        .maybeSingle();
+      if (rec) {
+        fileHash = rec.file_hash || null;
+        if (!actualTable && rec.target_table) {
+          actualTable = rec.target_table;
         }
-      } catch (rpcErr: any) {
-        console.warn("bulk_delete RPC exception:", rpcErr?.message);
+      }
+    } catch (fetchErr) {
+      console.warn("Could not fetch upload record before rollback:", fetchErr);
+    }
+
+    // 2. Delete rows from target table(s)
+    const tablesToClean = actualTable
+      ? [actualTable]
+      : ["interest_payables", "dividend_payables", "mutual_fund_payables"];
+
+    for (const table of tablesToClean) {
+      try {
+        await (supabase as any)
+          .from(table)
+          .delete()
+          .eq("upload_id", uploadId);
+      } catch (err: any) {
+        console.warn(`Could not delete from ${table}:`, err?.message);
       }
     }
 
-    // 3. Mark upload as rolled back regardless
+    // Delete errors logged for this upload
+    try {
+      await (supabase as any)
+        .from("upload_errors")
+        .delete()
+        .eq("upload_id", uploadId);
+    } catch {
+      // non-blocking
+    }
+
+    // 3. Mark upload record as RolledBack
     const { error: statusError } = await (supabase as any)
       .from("upload_history")
       .update({ status: "RolledBack", completed_at: new Date().toISOString() })
       .eq("id", uploadId);
 
     throwIfError(statusError, "Failed to update upload status to RolledBack");
-    if (deleteError) console.warn("Could not delete rows from target table:", deleteError.message);
 
-    // 4. Cleanup any orphan clients that were created during this upload but no longer have any payables
+    // 4. If there were duplicate upload history entries for the same file_hash (which would block re-upload),
+    // mark them RolledBack as well so the user can re-upload cleanly
+    if (fileHash) {
+      try {
+        await (supabase as any)
+          .from("upload_history")
+          .update({ status: "RolledBack", completed_at: new Date().toISOString() })
+          .eq("file_hash", fileHash)
+          .neq("status", "RolledBack");
+      } catch (hashErr) {
+        console.warn("Could not update duplicate file_hash upload records:", hashErr);
+      }
+    }
+
+    // 5. Cleanup any orphan clients that were created during this upload but no longer have any payables
     try {
       await (supabase as any).rpc("delete_orphan_clients");
     } catch (orphanErr: any) {

@@ -257,13 +257,13 @@ export const SummaryReportService = {
    * reproduced from the per-holder rows in `mutual_fund_payables` with client heuristic fallback.
    */
   async getMutualFundSummary(
-    filters: { companyId?: string; fiscalYear?: string } = {},
+    filters: { companyId?: string; fiscalYear?: string; startDate?: string; endDate?: string } = {},
   ): Promise<MutualFundSummaryRow[]> {
     const data = await fetchAllRows<any>((from, to) => {
       let query = (supabase as any)
         .from('mutual_fund_payables')
         .select(
-          'shares_held, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, lot_name, client:clients(id, full_name, holder_type, payee_classification)',
+          'shares_held, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, lot_name, created_at, client:clients(id, full_name, holder_type, payee_classification)',
         )
         .range(from, to);
       if (filters.companyId && filters.companyId !== 'all') {
@@ -271,6 +271,12 @@ export const SummaryReportService = {
       }
       if (filters.fiscalYear && filters.fiscalYear !== 'all') {
         query = query.eq('fiscal_year', filters.fiscalYear);
+      }
+      if (filters.startDate) {
+        query = query.gte('created_at', filters.startDate);
+      }
+      if (filters.endDate) {
+        query = query.lte('created_at', `${filters.endDate}T23:59:59Z`);
       }
       return query;
     });

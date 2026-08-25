@@ -24,6 +24,7 @@ import { SettingsService } from "@/lib/services/settings.service";
 import { exportToExcel, importFromExcel } from "@/lib/xlsx-utils";
 import { InterestCalculator, type InterestResult } from "@/lib/interest-calculator";
 import { DebentureSummaryReportService } from "@/lib/services/debenture-summary-report.service";
+import { STANDARD_PERIODS, type PeriodPreset, calculateDaysBetween } from "@/lib/services/period-calculator";
 
 export const Route = createFileRoute("/_authenticated/interest")({
   component: InterestPage,
@@ -44,9 +45,11 @@ interface Payable {
   payment_date: string | null;
   payment_reference: string | null;
   fiscal_year: string | null;
+  tds_rate?: number | null;
+  payee_classification?: string | null;
   upload_id?: string | null;
   created_at: string;
-  client?: { id: string; client_code: string; full_name: string; boid: string | null; father_name: string | null; grandfather_name: string | null; pan_no?: string | null; citizenship_no?: string | null; pan_or_citizenship: string | null; nid_number?: string | null; address: string | null; district: string | null; phone: string | null; bank_name: string | null; bank_account_no: string | null } | null;
+  client?: { id: string; client_code: string; full_name: string; boid: string | null; holder_type?: string | null; payee_classification?: string | null; father_name: string | null; grandfather_name: string | null; pan_no?: string | null; citizenship_no?: string | null; pan_or_citizenship: string | null; nid_number?: string | null; address: string | null; district: string | null; phone: string | null; bank_name: string | null; bank_account_no: string | null } | null;
   company?: { id: string; company_code: string; company_name: string } | null;
 }
 
@@ -80,8 +83,9 @@ const emptyForm = {
 };
 
 function InterestPage() {
-  const { hasAny } = useAuth();
+  const { hasAny, isAdmin } = useAuth();
   const canWrite = hasAny(["admin", "finance_operator"]);
+  const canDelete = isAdmin;
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -197,6 +201,11 @@ function InterestPage() {
   const clientByCode = useMemo(() => Object.fromEntries(clients.map((c) => [c.client_code.toLowerCase(), c.id])), [clients]);
   const clientByBoid = useMemo(() => Object.fromEntries(clients.filter(c => c.boid).map((c) => [c.boid!.toLowerCase(), c.id])), [clients]);
 
+  // Date range filters
+  const [fromDateFilter, setFromDateFilter] = useState<string>("");
+  const [toDateFilter, setToDateFilter] = useState<string>("");
+  const [periodPreset, setPeriodPreset] = useState<PeriodPreset>("12M");
+
   // Debounced search — wait 400ms before firing server query
   const [debouncedSearch, setDebouncedSearch] = useState("");
   useEffect(() => {
@@ -205,7 +214,7 @@ function InterestPage() {
   }, [search]);
 
   // Reset to page 1 whenever filters change
-  useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, companyFilter, fyFilter, classFilter]);
+  useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, companyFilter, fyFilter, classFilter, fromDateFilter, toDateFilter]);
 
   // Fetch fiscal years for filter dropdown
   const { data: fiscalYears = [] } = useQuery({
@@ -219,16 +228,18 @@ function InterestPage() {
 
   // Server-side totals for KPI cards
   const { data: totals = { count: 0, paidCount: 0, pendingCount: 0, gross: 0, tax: 0, net: 0 } } = useQuery({
-    queryKey: ["interest_payables_totals", statusFilter, companyFilter, fyFilter, classFilter],
+    queryKey: ["interest_payables_totals", statusFilter, companyFilter, fyFilter, classFilter, fromDateFilter, toDateFilter],
     queryFn: async () => {
       const data = await fetchAllRows<any>((from, to) => {
         let q = (supabase as any)
           .from("interest_payables")
-          .select("payment_status, gross_interest, tax_amount, net_payable, payee_classification, payee_segment, instrument_ref")
+          .select("payment_status, gross_interest, tax_amount, net_payable, payee_classification, payee_segment, instrument_ref, due_date")
           .range(from, to);
         if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
         if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
         if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+        if (fromDateFilter) q = q.gte("due_date", fromDateFilter);
+        if (toDateFilter) q = q.lte("due_date", toDateFilter);
         if (classFilter !== "all") {
           if (classFilter === "PROMOTER") {
             q = q.or("payee_segment.eq.PROMOTER,instrument_ref.ilike.%PROMOT%");
@@ -262,7 +273,7 @@ function InterestPage() {
 
   // Main server-side paginated query
   const { data: pageResult = { rows: [], count: 0 }, isLoading } = useQuery({
-    queryKey: ["interest_payables", page, pageSize, debouncedSearch, statusFilter, companyFilter, fyFilter, classFilter],
+    queryKey: ["interest_payables", page, pageSize, debouncedSearch, statusFilter, companyFilter, fyFilter, classFilter, fromDateFilter, toDateFilter],
     queryFn: async () => {
       let q = (supabase as any)
         .from("interest_payables")
@@ -273,6 +284,8 @@ function InterestPage() {
       if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
       if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
       if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+      if (fromDateFilter) q = q.gte("due_date", fromDateFilter);
+      if (toDateFilter) q = q.lte("due_date", toDateFilter);
       if (classFilter !== "all") {
         if (classFilter === "PROMOTER") {
           q = q.or("payee_segment.eq.PROMOTER,instrument_ref.ilike.%PROMOT%");
@@ -288,9 +301,19 @@ function InterestPage() {
       }
 
       if (debouncedSearch) {
-        q = q.or(
-          `instrument_ref.ilike.%${debouncedSearch}%,payment_reference.ilike.%${debouncedSearch}%,fiscal_year.ilike.%${debouncedSearch}%`
-        );
+        const clean = debouncedSearch.trim();
+        const { data: matchedClients } = await (supabase as any)
+          .from("clients")
+          .select("id")
+          .or(`full_name.ilike.%${clean}%,boid.ilike.%${clean}%,pan_or_citizenship.ilike.%${clean}%,bank_account_no.ilike.%${clean}%`)
+          .limit(80);
+
+        const clientIds = (matchedClients || []).map((c: any) => c.id);
+        if (clientIds.length > 0) {
+          q = q.or(`client_id.in.(${clientIds.join(",")}),instrument_ref.ilike.%${clean}%,payment_reference.ilike.%${clean}%,fiscal_year.ilike.%${clean}%`);
+        } else {
+          q = q.or(`instrument_ref.ilike.%${clean}%,payment_reference.ilike.%${clean}%,fiscal_year.ilike.%${clean}%`);
+        }
       }
 
       const { data, count, error } = await q;
@@ -310,15 +333,35 @@ function InterestPage() {
     return fetchAllRows<Payable>((from, to) => {
       let q = (supabase as any)
         .from("interest_payables")
-        .select("*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no), company:companies(id, company_code, company_name)")
+        .select("*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no, holder_type, payee_classification), company:companies(id, company_code, company_name)")
         .order("due_date", { ascending: false, nullsFirst: false })
         .range(from, to);
       if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
       if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
       if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+      if (fromDateFilter) q = q.gte("due_date", fromDateFilter);
+      if (toDateFilter) q = q.lte("due_date", toDateFilter);
+      if (classFilter !== "all") {
+        if (classFilter === "PROMOTER") {
+          q = q.or("payee_segment.eq.PROMOTER,instrument_ref.ilike.%PROMOT%");
+        } else if (classFilter === "LOCAL") {
+          q = q.or("payee_segment.eq.LOCAL,instrument_ref.ilike.%LOCAL%");
+        } else if (classFilter === "TAX_EXEMPT") {
+          q = q.or("payee_classification.eq.TAX_EXEMPT,instrument_ref.ilike.%MUTUAL%,instrument_ref.ilike.%EXEMPT%");
+        } else if (classFilter === "INSTITUTION") {
+          q = q.or("payee_classification.eq.COMPANY_INSTITUTION,instrument_ref.ilike.%INSTITUT%,instrument_ref.ilike.%COMPANY%");
+        } else if (classFilter === "PUBLIC") {
+          q = q.or("payee_classification.eq.NATURAL_PERSON,payee_classification.eq.PUBLIC_LEGAL_PERSON,instrument_ref.ilike.%PUBLIC%");
+        }
+      }
+      if (debouncedSearch) {
+        q = q.or(
+          `instrument_ref.ilike.%${debouncedSearch}%,payment_reference.ilike.%${debouncedSearch}%,fiscal_year.ilike.%${debouncedSearch}%`
+        );
+      }
       return q;
     });
-  }, [statusFilter, companyFilter, fyFilter]);
+  }, [statusFilter, companyFilter, fyFilter, classFilter, fromDateFilter, toDateFilter, debouncedSearch]);
 
   const [summaryReportOpen, setSummaryReportOpen] = useState(true);
   const [summaryCouponRate, setSummaryCouponRate] = useState<string>("");
@@ -498,10 +541,16 @@ function InterestPage() {
           client_code: cl?.client_code ?? "",
           client_name: cl?.full_name ?? "",
           boid: cl?.boid ?? "",
+          holder_type: cl?.holder_type ?? "",
+          classification: p.payee_classification || cl?.payee_classification || "",
+          pan_or_citizenship: cl?.pan_or_citizenship ?? "",
+          bank_name: cl?.bank_name ?? "",
+          bank_account_no: cl?.bank_account_no ?? "",
           instrument_ref: p.instrument_ref,
           gross_interest: p.gross_interest,
           tax_amount: p.tax_amount,
           net_payable: p.net_payable,
+          tds_rate: p.tds_rate ? (Number(p.tds_rate) * 100).toFixed(0) + "%" : "",
           due_date: p.due_date,
           payment_status: p.payment_status,
           payment_date: p.payment_date,
@@ -748,6 +797,30 @@ function InterestPage() {
           </CardHeader>
           <CardContent className="pt-4 grid gap-4 lg:grid-cols-2">
             <div className="grid gap-4 sm:grid-cols-3 bg-card p-4 rounded-lg border shadow-sm">
+              <div className="sm:col-span-3 flex flex-wrap items-center gap-1.5 pb-2 border-b">
+                <span className="text-xs font-semibold text-muted-foreground mr-1">Period Presets:</span>
+                {(["3M", "6M", "9M", "12M"] as PeriodPreset[]).map((p) => {
+                  const days = STANDARD_PERIODS[p].days;
+                  return (
+                    <Button
+                      key={p}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs px-2.5 bg-background"
+                      onClick={() => {
+                        const end = new Date();
+                        const start = new Date();
+                        start.setDate(end.getDate() - days);
+                        setCalcFromDate(start.toISOString().slice(0, 10));
+                        setCalcToDate(end.toISOString().slice(0, 10));
+                      }}
+                    >
+                      {STANDARD_PERIODS[p].label}
+                    </Button>
+                  );
+                })}
+              </div>
               <div className="space-y-1.5">
                 <Label>Debenture Kitta</Label>
                 <Input type="number" value={calcKitta} onChange={e => setCalcKitta(e.target.value)} />
@@ -770,7 +843,7 @@ function InterestPage() {
               </div>
               <div className="space-y-1.5">
                 <Label>Calculated Days</Label>
-                <Input readOnly value={calcDays || ''} placeholder="0" className="bg-muted" />
+                <Input readOnly value={calcDays || ''} placeholder="0" className="bg-muted font-mono" />
               </div>
               <div className="space-y-1.5">
                 <Label>TDS Category</Label>
@@ -876,16 +949,39 @@ function InterestPage() {
                 ))}
               </SelectContent>
             </Select>
+
+            {/* Period Quick Presets */}
+            <div className="flex items-center gap-1 bg-background border rounded px-1.5 py-0.5 h-8">
+              <span className="text-[11px] text-muted-foreground whitespace-nowrap mr-0.5">Period:</span>
+              {(["3M", "6M", "9M", "12M"] as PeriodPreset[]).map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => {
+                    setPeriodPreset(p);
+                    setSummaryDays(String(STANDARD_PERIODS[p].days));
+                  }}
+                  className={`text-[11px] font-medium px-1.5 py-0.5 rounded transition-colors ${
+                    summaryDays === String(STANDARD_PERIODS[p].days) || (p === "12M" && (!summaryDays || summaryDays === "365"))
+                      ? "bg-primary text-primary-foreground font-semibold"
+                      : "text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+
             <div className="flex items-center gap-1 bg-background border rounded px-2 py-0.5 h-8">
               <span className="text-[11px] text-muted-foreground whitespace-nowrap">Coupon %:</span>
               <input
                 type="number"
                 step="0.01"
-                placeholder={String(debentureSummaryReport?.couponRate || 7)}
+                placeholder={String(debentureSummaryReport?.couponRate || 8.5)}
                 value={summaryCouponRate}
                 onChange={(e) => setSummaryCouponRate(e.target.value)}
                 className="w-12 text-xs font-mono bg-transparent outline-none text-right font-medium text-foreground"
-                title="Annual Coupon Rate % (e.g. 7)"
+                title="Annual Coupon Rate % (e.g. 8.5)"
               />
             </div>
             <div className="flex items-center gap-1 bg-background border rounded px-2 py-0.5 h-8">
@@ -906,9 +1002,12 @@ function InterestPage() {
                 type="number"
                 placeholder="365"
                 value={summaryDays}
-                onChange={(e) => setSummaryDays(e.target.value)}
+                onChange={(e) => {
+                  setSummaryDays(e.target.value);
+                  setPeriodPreset("CUSTOM");
+                }}
                 className="w-12 text-xs font-mono bg-transparent outline-none text-right font-medium text-foreground"
-                title="Coupon Period Days (e.g. 74, 182, 365)"
+                title="Coupon Period Days (e.g. 91, 183, 274, 365)"
               />
             </div>
             <Button
@@ -1029,10 +1128,10 @@ function InterestPage() {
 
       <Card>
         <CardContent className="p-4">
-          <div className="mb-4 flex flex-wrap gap-2">
-            <Input placeholder="Search company, client, BOID, bank, ref…" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} className="max-w-sm" />
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <Input placeholder="Search shareholder name, BOID, PAN, account, ref…" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} className="max-w-xs h-9 text-xs" />
             <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1); }}>
-              <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-36 h-9 text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All statuses</SelectItem>
                 <SelectItem value="Pending">Pending</SelectItem>
@@ -1041,7 +1140,7 @@ function InterestPage() {
               </SelectContent>
             </Select>
             <Select value={classFilter} onValueChange={(v) => { setClassFilter(v); setPage(1); }}>
-              <SelectTrigger className="w-48"><SelectValue placeholder="All Classes" /></SelectTrigger>
+              <SelectTrigger className="w-44 h-9 text-xs"><SelectValue placeholder="All Classes" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Classes / Categories</SelectItem>
                 <SelectItem value="PUBLIC">Public (Natural Person)</SelectItem>
@@ -1052,7 +1151,7 @@ function InterestPage() {
               </SelectContent>
             </Select>
             <Select value={companyFilter} onValueChange={(v) => { setCompanyFilter(v); setPage(1); }}>
-              <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-52 h-9 text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All companies</SelectItem>
                 {companies.map((c) => (
@@ -1061,7 +1160,7 @@ function InterestPage() {
               </SelectContent>
             </Select>
             <Select value={fyFilter} onValueChange={(v) => { setFyFilter(v); setPage(1); }}>
-              <SelectTrigger className="w-40"><SelectValue placeholder="All Fiscal Years" /></SelectTrigger>
+              <SelectTrigger className="w-36 h-9 text-xs"><SelectValue placeholder="All FY" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Fiscal Years</SelectItem>
                 {fiscalYears.map((fy) => (
@@ -1069,6 +1168,33 @@ function InterestPage() {
                 ))}
               </SelectContent>
             </Select>
+
+            {/* Date Range Search */}
+            <div className="flex items-center gap-1 bg-background border rounded px-2 h-9 text-xs">
+              <span className="text-[11px] text-muted-foreground">From:</span>
+              <input
+                type="date"
+                value={fromDateFilter}
+                onChange={(e) => { setFromDateFilter(e.target.value); setPage(1); }}
+                className="bg-transparent text-xs outline-none"
+              />
+              <span className="text-[11px] text-muted-foreground ml-1">To:</span>
+              <input
+                type="date"
+                value={toDateFilter}
+                onChange={(e) => { setToDateFilter(e.target.value); setPage(1); }}
+                className="bg-transparent text-xs outline-none"
+              />
+              {(fromDateFilter || toDateFilter) && (
+                <button
+                  type="button"
+                  onClick={() => { setFromDateFilter(""); setToDateFilter(""); setPage(1); }}
+                  className="ml-1 text-[11px] text-destructive hover:underline font-medium"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="rounded-md border bg-card">
@@ -1107,9 +1233,17 @@ function InterestPage() {
                       <TableCell className="text-right font-medium">{fmt(p.net_payable)}</TableCell>
                       <TableCell>{p.due_date ?? "—"}</TableCell>
                       <TableCell>
-                        <Badge variant={p.payment_status === "Paid" ? "default" : p.payment_status === "Partial" ? "secondary" : "outline"}>
+                        <Badge variant={p.payment_status === "Paid" ? "default" : p.payment_status === "Partial" ? "secondary" : (p as any).remarks?.includes("Rejected") ? "destructive" : "outline"}>
                           {p.payment_status}
                         </Badge>
+                        {(p as any).remarks && (
+                          <span
+                            className={`block text-[10px] max-w-[160px] truncate mt-0.5 ${(p as any).remarks.includes("Rejected") ? "text-destructive font-medium" : "text-muted-foreground"}`}
+                            title={(p as any).remarks}
+                          >
+                            {(p as any).remarks}
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell className="text-xs">{p.fiscal_year ?? "—"}</TableCell>
                       <TableCell className="text-right">
@@ -1121,9 +1255,11 @@ function InterestPage() {
                               </Button>
                             )}
                             <Button size="icon" variant="ghost" onClick={() => startEdit(p)} className="hover:bg-blue-50"><Pencil className="h-4 w-4" /></Button>
-                            <Button size="icon" variant="ghost" onClick={() => { if (confirm("Delete this payable?")) del.mutate(p.id); }} className="hover:bg-red-50">
-                              <Trash2 className="h-4 w-4 text-destructive" />
-                            </Button>
+                            {canDelete && (
+                              <Button size="icon" variant="ghost" onClick={() => { if (confirm("Delete this payable?")) del.mutate(p.id); }} className="hover:bg-red-50" title="Delete Payable (Admin Only)">
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            )}
                           </div>
                         )}
                       </TableCell>

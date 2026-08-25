@@ -62,9 +62,11 @@ import {
   Percent,
   CheckCircle2,
   Loader2,
+  FileText,
 } from "lucide-react";
 import { toast } from "sonner";
 import { exportToExcel, importFromExcel } from "@/lib/xlsx-utils";
+import { ShareholderStatementDialog } from "@/components/shareholder-statement-dialog";
 
 export const Route = createFileRoute("/_authenticated/clients")({
   component: ClientsPage,
@@ -217,8 +219,7 @@ function ClientsPage() {
 
   const [search, setSearch] = useState("");
   const [companyFilter, setCompanyFilter] = useState("all");
-  const [holderFilter, setHolderFilter] = useState("all");
-  const [classFilter, setClassFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [verFilter, setVerFilter] = useState("all");
   const [page, setPage] = useState(1);
@@ -228,6 +229,7 @@ function ClientsPage() {
   const [editing, setEditing] = useState<Client | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [deleteTarget, setDeleteTarget] = useState<Client | null>(null);
+  const [selectedStatementBoid, setSelectedStatementBoid] = useState<string | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const debouncedSearch = useDebounce(search, 400);
@@ -246,49 +248,98 @@ function ClientsPage() {
   });
 
   const { data: stats = { total: 0, verified: 0, pending: 0, natural: 0, institutions: 0 } } = useQuery({
-    queryKey: ["clients-stats"],
+    queryKey: ["clients-stats", companyFilter],
     queryFn: async () => {
+      if (companyFilter === "all") {
+        const [totalRes, verifiedRes, pendingRes, naturalRes, instRes] = await Promise.all([
+          (supabase as any).from("clients").select("id", { count: "exact", head: true }),
+          (supabase as any).from("clients").select("id", { count: "exact", head: true }).eq("verification_status", "Verified"),
+          (supabase as any).from("clients").select("id", { count: "exact", head: true }).eq("verification_status", "Pending"),
+          (supabase as any).from("clients").select("id", { count: "exact", head: true }).eq("payee_classification", "NATURAL_PERSON"),
+          (supabase as any).from("clients").select("id", { count: "exact", head: true }).in("payee_classification", ["COMPANY_INSTITUTION", "PUBLIC_LEGAL_PERSON"]),
+        ]);
+
+        return {
+          total: totalRes.count || 0,
+          verified: verifiedRes.count || 0,
+          pending: pendingRes.count || 0,
+          natural: naturalRes.count || 0,
+          institutions: instRes.count || 0,
+        };
+      }
+
+      // Company selected: Query via get_clients_paginated with p_limit = 1
       const [totalRes, verifiedRes, pendingRes, naturalRes, instRes] = await Promise.all([
-        (supabase as any).from("clients").select("id", { count: "exact", head: true }),
-        (supabase as any).from("clients").select("id", { count: "exact", head: true }).eq("verification_status", "Verified"),
-        (supabase as any).from("clients").select("id", { count: "exact", head: true }).eq("verification_status", "Pending"),
-        (supabase as any).from("clients").select("id", { count: "exact", head: true }).eq("payee_classification", "NATURAL_PERSON"),
-        (supabase as any).from("clients").select("id", { count: "exact", head: true }).in("payee_classification", ["COMPANY_INSTITUTION", "PUBLIC_LEGAL_PERSON"]),
+        (supabase as any).rpc("get_clients_paginated", { p_company_id: companyFilter, p_limit: 1, p_offset: 0 }),
+        (supabase as any).rpc("get_clients_paginated", { p_company_id: companyFilter, p_verification: "Verified", p_limit: 1, p_offset: 0 }),
+        (supabase as any).rpc("get_clients_paginated", { p_company_id: companyFilter, p_verification: "Pending", p_limit: 1, p_offset: 0 }),
+        (supabase as any).rpc("get_clients_paginated", { p_company_id: companyFilter, p_classification: "NATURAL_PERSON", p_limit: 1, p_offset: 0 }),
+        (supabase as any).rpc("get_clients_paginated", { p_company_id: companyFilter, p_classification: "COMPANY_INSTITUTION", p_limit: 1, p_offset: 0 }),
       ]);
+
       return {
-        total: totalRes.count || 0,
-        verified: verifiedRes.count || 0,
-        pending: pendingRes.count || 0,
-        natural: naturalRes.count || 0,
-        institutions: instRes.count || 0,
+        total: totalRes.data && totalRes.data.length > 0 ? Number(totalRes.data[0].total_count) : 0,
+        verified: verifiedRes.data && verifiedRes.data.length > 0 ? Number(verifiedRes.data[0].total_count) : 0,
+        pending: pendingRes.data && pendingRes.data.length > 0 ? Number(pendingRes.data[0].total_count) : 0,
+        natural: naturalRes.data && naturalRes.data.length > 0 ? Number(naturalRes.data[0].total_count) : 0,
+        institutions: instRes.data && instRes.data.length > 0 ? Number(instRes.data[0].total_count) : 0,
       };
     },
   });
 
   const { data: pageData = { rows: [], count: 0 }, isLoading } = useQuery({
-    queryKey: ["clients", page, pageSize, debouncedSearch, companyFilter, holderFilter, classFilter, statusFilter, verFilter],
+    queryKey: ["clients", page, pageSize, debouncedSearch, companyFilter, categoryFilter, statusFilter, verFilter],
     queryFn: async () => {
-      let query = (supabase as any)
-        .from("clients")
-        .select("*, company:companies(company_name, company_code)", { count: "exact" })
-        .order("created_at", { ascending: false })
-        .range((page - 1) * pageSize, page * pageSize - 1);
+      let effectiveHolderType = "all";
+      let effectiveClassification = "all";
 
-      if (companyFilter !== "all") query = query.eq("company_id", companyFilter);
-      if (holderFilter !== "all") query = query.eq("holder_type", holderFilter as any);
-      if (classFilter !== "all") query = query.eq("payee_classification", classFilter as any);
-      if (statusFilter !== "all") query = query.eq("status", statusFilter as any);
-      if (verFilter !== "all") query = query.eq("verification_status", verFilter as any);
-
-      if (debouncedSearch) {
-        query = query.or(
-          `full_name.ilike.%${debouncedSearch}%,client_code.ilike.%${debouncedSearch}%,boid.ilike.%${debouncedSearch}%,pan_or_citizenship.ilike.%${debouncedSearch}%,phone.ilike.%${debouncedSearch}%,bank_account_no.ilike.%${debouncedSearch}%`
-        );
+      if (categoryFilter === "NATURAL_PERSON") {
+        effectiveClassification = "NATURAL_PERSON";
+      } else if (categoryFilter === "NATURAL_PERSON_PROMOTER") {
+        effectiveHolderType = "Natural Person - Promoter";
+      } else if (categoryFilter === "COMPANY_INSTITUTION") {
+        effectiveClassification = "COMPANY_INSTITUTION";
+      } else if (categoryFilter === "TAX_EXEMPT") {
+        effectiveClassification = "TAX_EXEMPT";
+      } else if (categoryFilter === "FOREIGN") {
+        effectiveHolderType = "Foreign";
       }
 
-      const { data, count, error } = await query;
-      if (error) throw error;
-      return { rows: data as unknown as Client[], count: count || 0 };
+      const { data, error } = await (supabase as any).rpc("get_clients_paginated", {
+        p_company_id: companyFilter === "all" ? null : companyFilter,
+        p_holder_type: effectiveHolderType,
+        p_classification: effectiveClassification,
+        p_status: statusFilter,
+        p_verification: verFilter,
+        p_search: debouncedSearch || "",
+        p_limit: pageSize,
+        p_offset: (page - 1) * pageSize,
+      });
+
+      if (error) {
+        let query = (supabase as any)
+          .from("clients")
+          .select("*, company:companies(company_name, company_code)", { count: "exact" })
+          .order("created_at", { ascending: false })
+          .range((page - 1) * pageSize, page * pageSize - 1);
+
+        if (companyFilter !== "all") query = query.eq("company_id", companyFilter);
+        if (effectiveHolderType !== "all") query = query.eq("holder_type", effectiveHolderType as any);
+        if (effectiveClassification !== "all") query = query.eq("payee_classification", effectiveClassification as any);
+        if (statusFilter !== "all") query = query.eq("status", statusFilter as any);
+        if (verFilter !== "all") query = query.eq("verification_status", verFilter as any);
+
+        const res = await query;
+        return { rows: (res.data || []) as unknown as Client[], count: res.count || 0 };
+      }
+
+      const rows = (data || []).map((r: any) => ({
+        ...r,
+        company: r.company_name ? { company_name: r.company_name, company_code: r.company_code } : null,
+      }));
+      const count = data && data.length > 0 ? Number(data[0].total_count) : 0;
+
+      return { rows: rows as unknown as Client[], count };
     },
     placeholderData: keepPreviousData,
   });
@@ -419,32 +470,55 @@ function ClientsPage() {
 
   const handleExport = async () => {
     try {
-      const batchSize = 1000;
+      const batchSize = 2000;
       let allData: Record<string, unknown>[] = [];
-      const numBatches = Math.ceil(pageData.count / batchSize);
+      const totalRows = pageData.count;
+      const numBatches = Math.max(1, Math.ceil(totalRows / batchSize));
+
+      let effectiveHolderType = "all";
+      let effectiveClassification = "all";
+
+      if (categoryFilter === "NATURAL_PERSON") {
+        effectiveClassification = "NATURAL_PERSON";
+      } else if (categoryFilter === "NATURAL_PERSON_PROMOTER") {
+        effectiveHolderType = "Natural Person - Promoter";
+      } else if (categoryFilter === "COMPANY_INSTITUTION") {
+        effectiveClassification = "COMPANY_INSTITUTION";
+      } else if (categoryFilter === "TAX_EXEMPT") {
+        effectiveClassification = "TAX_EXEMPT";
+      } else if (categoryFilter === "FOREIGN") {
+        effectiveHolderType = "Foreign";
+      }
 
       for (let i = 0; i < numBatches; i++) {
-        let query = (supabase as any)
-          .from("clients")
-          .select("*, company:companies(company_name, company_code)")
-          .order("created_at", { ascending: false })
-          .range(i * batchSize, (i + 1) * batchSize - 1);
+        const { data, error } = await (supabase as any).rpc("get_clients_paginated", {
+          p_company_id: companyFilter === "all" ? null : companyFilter,
+          p_holder_type: effectiveHolderType,
+          p_classification: effectiveClassification,
+          p_status: statusFilter,
+          p_verification: verFilter,
+          p_search: debouncedSearch || "",
+          p_limit: batchSize,
+          p_offset: i * batchSize,
+        });
 
-        if (companyFilter !== "all") query = query.eq("company_id", companyFilter);
-        if (holderFilter !== "all") query = query.eq("holder_type", holderFilter as any);
-        if (classFilter !== "all") query = query.eq("payee_classification", classFilter as any);
-        if (statusFilter !== "all") query = query.eq("status", statusFilter as any);
-        if (verFilter !== "all") query = query.eq("verification_status", verFilter as any);
+        if (error) {
+          let query = (supabase as any)
+            .from("clients")
+            .select("*, company:companies(company_name, company_code)")
+            .order("created_at", { ascending: false })
+            .range(i * batchSize, (i + 1) * batchSize - 1);
 
-        if (debouncedSearch) {
-          query = query.or(
-            `full_name.ilike.%${debouncedSearch}%,client_code.ilike.%${debouncedSearch}%,boid.ilike.%${debouncedSearch}%,pan_or_citizenship.ilike.%${debouncedSearch}%,phone.ilike.%${debouncedSearch}%,bank_account_no.ilike.%${debouncedSearch}%`
-          );
+          if (companyFilter !== "all") query = query.eq("company_id", companyFilter);
+          if (effectiveHolderType !== "all") query = query.eq("holder_type", effectiveHolderType as any);
+          if (effectiveClassification !== "all") query = query.eq("payee_classification", effectiveClassification as any);
+          if (statusFilter !== "all") query = query.eq("status", statusFilter as any);
+          if (verFilter !== "all") query = query.eq("verification_status", verFilter as any);
+          const fallback = await query;
+          if (fallback.data) allData = allData.concat(fallback.data);
+        } else if (data) {
+          allData = allData.concat(data);
         }
-
-        const { data, error } = await query;
-        if (error) throw error;
-        if (data) allData = allData.concat(data as unknown as Record<string, unknown>[]);
       }
 
       if (allData.length === 0) return toast.error("No data to export");
@@ -621,33 +695,17 @@ function ClientsPage() {
               </SelectContent>
             </Select>
 
-            <Select value={classFilter} onValueChange={(v) => { setClassFilter(v); setPage(1); }}>
-              <SelectTrigger className="w-44 h-9">
-                <SelectValue placeholder="Classification" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Classes</SelectItem>
-                <SelectItem value="NATURAL_PERSON">Natural Person (Public)</SelectItem>
-                <SelectItem value="COMPANY_INSTITUTION">Legal Person (Institution)</SelectItem>
-                <SelectItem value="TAX_EXEMPT">Tax Exempted (Mutual Fund)</SelectItem>
-              </SelectContent>
-            </Select>
-
-            <Select value={holderFilter} onValueChange={(v) => { setHolderFilter(v); setPage(1); }}>
-              <SelectTrigger className="w-36 h-9">
+            <Select value={categoryFilter} onValueChange={(v) => { setCategoryFilter(v); setPage(1); }}>
+              <SelectTrigger className="w-48 h-9">
                 <SelectValue placeholder="Holder Type" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Holder Types</SelectItem>
-                <SelectItem value="Natural Person - Public">Natural Person - Public</SelectItem>
-                <SelectItem value="Natural Person - Promoter">Natural Person - Promoter</SelectItem>
-                <SelectItem value="Legal Person">Legal Person / Company</SelectItem>
-                <SelectItem value="Mutual Fund">Mutual Fund</SelectItem>
-                <SelectItem value="Foreign">Foreign</SelectItem>
-                <SelectItem value="Tax Exempt">Tax Exempt</SelectItem>
-                <SelectItem value="Public">Public</SelectItem>
-                <SelectItem value="Promoter">Promoter</SelectItem>
-                <SelectItem value="Institution">Institution</SelectItem>
+                <SelectItem value="NATURAL_PERSON">Natural Person - Public</SelectItem>
+                <SelectItem value="NATURAL_PERSON_PROMOTER">Natural Person - Promoter</SelectItem>
+                <SelectItem value="COMPANY_INSTITUTION">Legal Person / Institution</SelectItem>
+                <SelectItem value="TAX_EXEMPT">Mutual Fund / Tax Exempt</SelectItem>
+                <SelectItem value="FOREIGN">Foreign</SelectItem>
               </SelectContent>
             </Select>
 
@@ -720,7 +778,23 @@ function ClientsPage() {
                       <div className="font-medium text-sm text-foreground">{c.full_name}</div>
                       {c.father_name && <div className="text-[11px] text-muted-foreground">s/o {c.father_name}</div>}
                     </TableCell>
-                    <TableCell className="font-mono text-xs">{c.boid ?? "—"}</TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {c.boid ? (
+                        <button
+                          type="button"
+                          className="font-semibold text-primary hover:underline cursor-pointer"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedStatementBoid(c.boid);
+                          }}
+                          title="Click to view full distribution & payment statement"
+                        >
+                          {c.boid}
+                        </button>
+                      ) : (
+                        "—"
+                      )}
+                    </TableCell>
                     <TableCell>{classificationBadge(c.payee_classification)}</TableCell>
                     <TableCell>{holderBadge(c.holder_type)}</TableCell>
                     <TableCell>
@@ -739,21 +813,32 @@ function ClientsPage() {
                         <Button
                           size="icon"
                           variant="ghost"
+                          className="h-7 w-7 text-primary hover:bg-primary/10 cursor-pointer"
+                          onClick={() => setSelectedStatementBoid(c.boid || c.id)}
+                          title="View All-Time Distribution & Payment Statement"
+                        >
+                          <FileText className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
                           className="h-7 w-7 hover:bg-muted"
                           onClick={() => openEdit(c)}
                           title="Edit Shareholder"
                         >
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-7 w-7 text-destructive hover:bg-destructive/10"
-                          onClick={() => setDeleteTarget(c)}
-                          title="Delete Shareholder"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
+                        {isAdmin && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-destructive hover:bg-destructive/10"
+                            onClick={() => setDeleteTarget(c)}
+                            title="Delete Shareholder (Admin Only)"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -1073,6 +1158,15 @@ function ClientsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Shareholder Multi-Year Statement Dialog */}
+      <ShareholderStatementDialog
+        boid={selectedStatementBoid}
+        open={!!selectedStatementBoid}
+        onOpenChange={(open) => {
+          if (!open) setSelectedStatementBoid(null);
+        }}
+      />
     </div>
   );
 }
