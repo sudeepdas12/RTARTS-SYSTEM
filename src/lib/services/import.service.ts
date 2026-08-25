@@ -586,6 +586,22 @@ function extractRowField(row: any, keys: string[]): string {
         "NAGARIKTA",
       ]);
 
+      const rowKitta = Number(
+        row.shares_held ||
+          row.kitta ||
+          row.KITTA ||
+          row["TOTA KITTA"] ||
+          row.alloted_quantity ||
+          row.ALLOTED_QUANTITY ||
+          row["UNITS HELD"] ||
+          row["UNIT HELD"] ||
+          row["UNITS"] ||
+          row["NO OF UNITS"] ||
+          row["DEBENTURE UNITS"] ||
+          row["FACE VALUE UNITS"] ||
+          0,
+      );
+
       const cachedClientId = sharedContext?.clientIdCache?.get(boid);
       if (cachedClientId) {
         resolvedClientIds.set(boid, cachedClientId);
@@ -595,15 +611,17 @@ function extractRowField(row: any, keys: string[]): string {
         sharedContext?.clientInfoCache?.set(boid, clientMeta);
         resolvedClientIds.set(boid, clientMeta.id);
 
-        // If existing client lacks NID, PAN, or Citizenship and this sheet provides it, queue update
+        // If existing client lacks NID, PAN, Citizenship or has new Kitta, queue update
         const needsNidUpdate = nidNumber && !clientMeta.nid_number;
         const needsPanUpdate = panNo && !clientMeta.pan_no;
         const needsCtzUpdate = citizenshipNo && !clientMeta.citizenship_no;
+        const needsKittaUpdate = rowKitta > 0;
 
-        if (needsNidUpdate || needsPanUpdate || needsCtzUpdate) {
+        if (needsNidUpdate || needsPanUpdate || needsCtzUpdate || needsKittaUpdate) {
           newClientRecords.push({
             id: clientMeta.id,
             boid: boid,
+            kitta: rowKitta > 0 ? rowKitta : undefined,
             nid_number: nidNumber || clientMeta.nid_number || null,
             pan_no: panNo || clientMeta.pan_no || null,
             citizenship_no: citizenshipNo || clientMeta.citizenship_no || null,
@@ -873,6 +891,7 @@ function extractRowField(row: any, keys: string[]): string {
         newClientRecords.push({
           id: tempId,
           boid,
+          kitta: rowKitta || 0,
           company_id: companyId,
           full_name: fullName,
           client_code: buildClientCode(row, boid),
@@ -1234,6 +1253,8 @@ function extractRowField(row: any, keys: string[]): string {
           upload_id: uploadId,
           company_id: companyId,
           client_id: clientId,
+          shares_held: sharesHeld || null,
+          kitta: sharesHeld || null,
           gross_interest: totals.grossAmount,
           tax_amount: totals.taxAmount,
           net_payable: totals.netPayable,

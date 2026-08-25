@@ -18,13 +18,14 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Pencil, Plus, Trash2, Download, Upload, CheckCircle2, Calculator, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FileSpreadsheet, FileText, BarChart3 } from "lucide-react";
+import { Pencil, Plus, Trash2, Download, Upload, CheckCircle2, Calculator, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FileSpreadsheet, FileText, BarChart3, Search, Users, Coins, Receipt, Wallet, Building2, Filter, X } from "lucide-react";
 import { toast } from "sonner";
 import { SettingsService } from "@/lib/services/settings.service";
 import { exportToExcel, importFromExcel } from "@/lib/xlsx-utils";
 import { InterestCalculator, type InterestResult } from "@/lib/interest-calculator";
 import { DebentureSummaryReportService } from "@/lib/services/debenture-summary-report.service";
 import { STANDARD_PERIODS, type PeriodPreset, calculateDaysBetween } from "@/lib/services/period-calculator";
+import { ShareholderStatementDialog } from "@/components/shareholder-statement-dialog";
 
 export const Route = createFileRoute("/_authenticated/interest")({
   component: InterestPage,
@@ -37,6 +38,8 @@ interface Payable {
   company_id: string | null;
   client_id: string | null;
   instrument_ref: string | null;
+  shares_held?: number | null;
+  kitta?: number | null;
   gross_interest: number | null;
   tax_amount: number | null;
   net_payable: number | null;
@@ -49,7 +52,7 @@ interface Payable {
   payee_classification?: string | null;
   upload_id?: string | null;
   created_at: string;
-  client?: { id: string; client_code: string; full_name: string; boid: string | null; holder_type?: string | null; payee_classification?: string | null; father_name: string | null; grandfather_name: string | null; pan_no?: string | null; citizenship_no?: string | null; pan_or_citizenship: string | null; nid_number?: string | null; address: string | null; district: string | null; phone: string | null; bank_name: string | null; bank_account_no: string | null } | null;
+  client?: { id: string; client_code: string; full_name: string; boid: string | null; kitta?: number | null; holder_type?: string | null; payee_classification?: string | null; father_name: string | null; grandfather_name: string | null; pan_no?: string | null; citizenship_no?: string | null; pan_or_citizenship: string | null; nid_number?: string | null; address: string | null; district: string | null; phone: string | null; bank_name: string | null; bank_account_no: string | null } | null;
   company?: { id: string; company_code: string; company_name: string } | null;
 }
 
@@ -71,6 +74,7 @@ const emptyForm = {
   client_bank_name: "",
   client_bank_account_no: "",
   // Payable fields
+  kitta: "",
   instrument_ref: "",
   gross_interest: "",
   tax_amount: "",
@@ -95,6 +99,7 @@ function InterestPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [open, setOpen] = useState(false);
+  const [selectedStatementBoid, setSelectedStatementBoid] = useState<string | null>(null);
   const [payOpen, setPayOpen] = useState<Payable | null>(null);
   const [payRef, setPayRef] = useState("");
   const [payDate, setPayDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -204,7 +209,7 @@ function InterestPage() {
   // Date range filters
   const [fromDateFilter, setFromDateFilter] = useState<string>("");
   const [toDateFilter, setToDateFilter] = useState<string>("");
-  const [periodPreset, setPeriodPreset] = useState<PeriodPreset>("12M");
+  const [periodPreset, setPeriodPreset] = useState<PeriodPreset | "ALL">("ALL");
 
   // Debounced search — wait 400ms before firing server query
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -403,6 +408,7 @@ function InterestPage() {
 
   const upsert = useMutation({
     mutationFn: async () => {
+      const kittaVal = form.kitta ? Number(form.kitta) : null;
       const gross = form.gross_interest ? Number(form.gross_interest) : null;
       const tax = form.tax_amount ? Number(form.tax_amount) : null;
       const net = form.net_payable ? Number(form.net_payable) : (gross != null && tax != null ? gross - tax : (gross ?? null));
@@ -410,6 +416,8 @@ function InterestPage() {
         company_id: form.company_id || null,
         client_id: form.client_id || null,
         instrument_ref: form.instrument_ref || null,
+        shares_held: kittaVal,
+        kitta: kittaVal,
         gross_interest: gross,
         tax_amount: tax,
         net_payable: net,
@@ -427,6 +435,7 @@ function InterestPage() {
         if (form.client_full_name !== undefined) clientPayload.full_name = form.client_full_name || null;
         if (form.client_father_name !== undefined) clientPayload.father_name = form.client_father_name || null;
         if (form.client_grandfather_name !== undefined) clientPayload.grandfather_name = form.client_grandfather_name || null;
+        if (form.kitta !== undefined && kittaVal != null) clientPayload.kitta = kittaVal;
         if (form.client_pan !== undefined) {
           clientPayload.pan_no = form.client_pan || null;
         }
@@ -470,6 +479,8 @@ function InterestPage() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["interest_payables"] });
+      qc.invalidateQueries({ queryKey: ["interest_payables_totals"] });
+      qc.invalidateQueries({ queryKey: ["interest_summary_rows"] });
       qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
       toast.success("Payable deleted");
     },
@@ -494,8 +505,8 @@ function InterestPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const startNew = () => { setEditing(null); setForm({ ...emptyForm, fiscal_year: activeFyData || "" }); setOpen(true); };
-  const startEdit = (p: Payable) => {
+  const startNew = () => { setEditing(null); setForm(emptyForm); setOpen(true); };
+  const openEdit = (p: Payable) => {
     setEditing(p);
     const cl = p.client ?? null;
     setForm({
@@ -516,6 +527,7 @@ function InterestPage() {
       client_bank_name: cl?.bank_name ?? "",
       client_bank_account_no: cl?.bank_account_no ?? "",
       // Payable fields
+      kitta: p.kitta != null ? String(p.kitta) : (p.shares_held != null ? String(p.shares_held) : (cl?.kitta != null ? String(cl.kitta) : "")),
       instrument_ref: p.instrument_ref ?? "",
       gross_interest: p.gross_interest?.toString() ?? "",
       tax_amount: p.tax_amount?.toString() ?? "",
@@ -541,6 +553,7 @@ function InterestPage() {
           client_code: cl?.client_code ?? "",
           client_name: cl?.full_name ?? "",
           boid: cl?.boid ?? "",
+          holding_kitta: p.kitta || p.shares_held || cl?.kitta || 0,
           holder_type: cl?.holder_type ?? "",
           classification: p.payee_classification || cl?.payee_classification || "",
           pan_or_citizenship: cl?.pan_or_citizenship ?? "",
@@ -716,10 +729,31 @@ function InterestPage() {
                           <SelectTrigger><SelectValue placeholder="Select client" /></SelectTrigger>
                           <SelectContent>
                             {clients.map((c) => (
-                              <SelectItem key={c.id} value={c.id}>{c.client_code} — {c.full_name}</SelectItem>
+                              <SelectItem key={c.id} value={c.id}>{c.full_name} {c.boid ? `(${c.boid})` : ""}</SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Holding (Kitta / Units)</Label>
+                        <Input
+                          type="number"
+                          placeholder="e.g. 50"
+                          value={form.kitta}
+                          onChange={(e) => {
+                            const k = e.target.value;
+                            const comp = companies.find(c => c.id === form.company_id);
+                            const rate = comp ? (Number(comp.company_name?.match(/(\d+(?:\.\d+)?)\s*%/)?.[1]) || 8.5) : 8.5;
+                            const kNum = Number(k) || 0;
+                            const calculatedGross = kNum > 0 ? (kNum * 1000 * (rate / 100) * (183 / 365)) : null;
+                            setForm(f => ({
+                              ...f,
+                              kitta: k,
+                              gross_interest: calculatedGross ? calculatedGross.toFixed(2) : f.gross_interest,
+                            }));
+                          }}
+                          className="font-mono"
+                        />
                       </div>
                       <div className="space-y-1.5">
                         <Label>Instrument Ref</Label>
@@ -916,10 +950,57 @@ function InterestPage() {
       )}
 
       <div className="mb-4 grid gap-3 grid-cols-2 md:grid-cols-4">
-        <Card><CardContent className="p-4"><div className="text-xs text-muted-foreground">Total Records</div><div className="text-xl font-semibold">{(totals.count ?? 0).toLocaleString()}</div><div className="text-[11px] text-muted-foreground mt-0.5">{totals.paidCount ?? 0} Paid · {totals.pendingCount ?? 0} Pending</div></CardContent></Card>
-        <Card><CardContent className="p-4"><div className="text-xs text-muted-foreground">Gross Interest</div><div className="text-xl font-semibold">NPR {fmt(totals.gross)}</div></CardContent></Card>
-        <Card><CardContent className="p-4"><div className="text-xs text-muted-foreground">TDS Tax</div><div className="text-xl font-semibold text-destructive">NPR {fmt(totals.tax)}</div></CardContent></Card>
-        <Card><CardContent className="p-4"><div className="text-xs text-muted-foreground">Net Interest Payable</div><div className="text-xl font-semibold text-emerald-600">NPR {fmt(totals.net)}</div></CardContent></Card>
+        <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div>
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Debenture Records</div>
+              <div className="text-xl font-bold font-mono tracking-tight mt-1">{(totals.count ?? 0).toLocaleString()}</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5"><span className="text-emerald-600 font-medium">{totals.paidCount ?? 0} Paid</span> · {totals.pendingCount ?? 0} Pending</div>
+            </div>
+            <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary shrink-0">
+              <Users className="h-5 w-5" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div>
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Gross Interest</div>
+              <div className="text-xl font-bold font-mono tracking-tight mt-1">NPR {fmt(totals.gross)}</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">Pre-tax interest pool</div>
+            </div>
+            <div className="h-10 w-10 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-600 shrink-0">
+              <Coins className="h-5 w-5" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div>
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">TDS Tax Withheld</div>
+              <div className="text-xl font-bold font-mono tracking-tight mt-1 text-rose-600 dark:text-rose-400">NPR {fmt(totals.tax)}</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">6% / 15% TDS rate</div>
+            </div>
+            <div className="h-10 w-10 rounded-full bg-rose-500/10 flex items-center justify-center text-rose-600 shrink-0">
+              <Receipt className="h-5 w-5" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div>
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Net Interest Payable</div>
+              <div className="text-xl font-bold font-mono tracking-tight mt-1 text-emerald-600 dark:text-emerald-400">NPR {fmt(totals.net)}</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">{totals.pendingCount ?? 0} Pending transfer</div>
+            </div>
+            <div className="h-10 w-10 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-600 shrink-0">
+              <Wallet className="h-5 w-5" />
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* ─── Debenture Interest Distribution Summary Card (Pumori / CDS Format) ─── */}
@@ -950,103 +1031,106 @@ function InterestPage() {
               </SelectContent>
             </Select>
 
+            <Select value={fyFilter} onValueChange={(v) => { setFyFilter(v); setPage(1); }}>
+              <SelectTrigger className="h-8 w-28 text-xs bg-background">
+                <SelectValue placeholder="All FY" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All FY</SelectItem>
+                {fiscalYears.map((fy) => (
+                  <SelectItem key={fy} value={fy}>{fy}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
             {/* Period Quick Presets */}
             <div className="flex items-center gap-1 bg-background border rounded px-1.5 py-0.5 h-8">
               <span className="text-[11px] text-muted-foreground whitespace-nowrap mr-0.5">Period:</span>
-              {(["3M", "6M", "9M", "12M"] as PeriodPreset[]).map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => {
-                    setPeriodPreset(p);
-                    setSummaryDays(String(STANDARD_PERIODS[p].days));
-                  }}
-                  className={`text-[11px] font-medium px-1.5 py-0.5 rounded transition-colors ${
-                    summaryDays === String(STANDARD_PERIODS[p].days) || (p === "12M" && (!summaryDays || summaryDays === "365"))
-                      ? "bg-primary text-primary-foreground font-semibold"
-                      : "text-muted-foreground hover:bg-muted"
-                  }`}
-                >
-                  {p}
-                </button>
-              ))}
+              {(["3M", "6M", "9M", "12M"] as PeriodPreset[]).map((p) => {
+                const days = STANDARD_PERIODS[p].days;
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => {
+                      setPeriodPreset(p);
+                      const end = new Date();
+                      const start = new Date();
+                      start.setDate(end.getDate() - days);
+                      setFromDateFilter(start.toISOString().slice(0, 10));
+                      setToDateFilter(end.toISOString().slice(0, 10));
+                      setPage(1);
+                    }}
+                    className={`text-[11px] font-medium px-1.5 py-0.5 rounded transition-colors ${
+                      periodPreset === p
+                        ? "bg-primary text-primary-foreground font-semibold"
+                        : "text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {p}
+                  </button>
+                );
+              })}
             </div>
 
-            <div className="flex items-center gap-1 bg-background border rounded px-2 py-0.5 h-8">
-              <span className="text-[11px] text-muted-foreground whitespace-nowrap">Coupon %:</span>
+            {/* Date Range Search */}
+            <div className="flex items-center gap-1 bg-background border rounded px-2 py-0.5 h-8 text-xs">
+              <span className="text-[11px] text-muted-foreground">From:</span>
               <input
-                type="number"
-                step="0.01"
-                placeholder={String(debentureSummaryReport?.couponRate || 8.5)}
-                value={summaryCouponRate}
-                onChange={(e) => setSummaryCouponRate(e.target.value)}
-                className="w-12 text-xs font-mono bg-transparent outline-none text-right font-medium text-foreground"
-                title="Annual Coupon Rate % (e.g. 8.5)"
-              />
-            </div>
-            <div className="flex items-center gap-1 bg-background border rounded px-2 py-0.5 h-8">
-              <span className="text-[11px] text-muted-foreground whitespace-nowrap">Face Value:</span>
-              <input
-                type="number"
-                step="100"
-                placeholder="1000"
-                value={summaryFaceValue}
-                onChange={(e) => setSummaryFaceValue(e.target.value)}
-                className="w-14 text-xs font-mono bg-transparent outline-none text-right font-medium text-foreground"
-                title="Debenture Face Value (Rs. 1000)"
-              />
-            </div>
-            <div className="flex items-center gap-1 bg-background border rounded px-2 py-0.5 h-8">
-              <span className="text-[11px] text-muted-foreground whitespace-nowrap">Days:</span>
-              <input
-                type="number"
-                placeholder="365"
-                value={summaryDays}
+                type="date"
+                value={fromDateFilter}
                 onChange={(e) => {
-                  setSummaryDays(e.target.value);
+                  setFromDateFilter(e.target.value);
                   setPeriodPreset("CUSTOM");
+                  setPage(1);
                 }}
-                className="w-12 text-xs font-mono bg-transparent outline-none text-right font-medium text-foreground"
-                title="Coupon Period Days (e.g. 91, 183, 274, 365)"
+                className="bg-transparent text-xs outline-none"
               />
+              <span className="text-[11px] text-muted-foreground ml-1">To:</span>
+              <input
+                type="date"
+                value={toDateFilter}
+                onChange={(e) => {
+                  setToDateFilter(e.target.value);
+                  setPeriodPreset("CUSTOM");
+                  setPage(1);
+                }}
+                className="bg-transparent text-xs outline-none"
+              />
+              {(fromDateFilter || toDateFilter) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFromDateFilter("");
+                    setToDateFilter("");
+                    setPeriodPreset("ALL");
+                    setPage(1);
+                  }}
+                  className="ml-1 text-[11px] text-destructive hover:underline font-medium"
+                >
+                  Clear
+                </button>
+              )}
             </div>
+
             <Button
               variant="outline"
               size="sm"
               className="h-8 text-xs"
-              onClick={() => loadSummary()}
-              disabled={summaryLoading}
+              onClick={() => setSummaryReportOpen((v) => !v)}
             >
-              {summaryLoading ? "Loading…" : debentureSummaryReport ? "Refresh" : "Load Summary"}
+              {summaryReportOpen ? <ChevronUp className="h-3.5 w-3.5 mr-1" /> : <ChevronDown className="h-3.5 w-3.5 mr-1" />}
+              {summaryReportOpen ? "Hide Breakdown" : "View Breakdown"}
             </Button>
             <Button
               variant="outline"
               size="sm"
               className="h-8 text-xs"
               onClick={() => debentureSummaryReport && DebentureSummaryReportService.exportToExcel(debentureSummaryReport)}
-              disabled={!debentureSummaryReport?.rows.length}
+              disabled={debentureSummaryReport.rows.length === 0}
             >
-              <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
-              Export Excel
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() => debentureSummaryReport && DebentureSummaryReportService.exportToPdf(debentureSummaryReport)}
-              disabled={!debentureSummaryReport?.rows.length}
-            >
-              <FileText className="mr-1.5 h-3.5 w-3.5 text-rose-600" />
-              Export PDF
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setSummaryReportOpen((v) => !v)}
-              title={summaryReportOpen ? "Collapse Summary" : "Expand Summary"}
-            >
-              {summaryReportOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              <FileSpreadsheet className="h-3.5 w-3.5 mr-1 text-emerald-600" />
+              Summary Excel
             </Button>
           </div>
         </CardHeader>
@@ -1126,74 +1210,113 @@ function InterestPage() {
         )}
       </Card>
 
-      <Card>
+      <Card className="border-border/60 shadow-sm">
         <CardContent className="p-4">
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            <Input placeholder="Search shareholder name, BOID, PAN, account, ref…" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} className="max-w-xs h-9 text-xs" />
-            <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1); }}>
-              <SelectTrigger className="w-36 h-9 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All statuses</SelectItem>
-                <SelectItem value="Pending">Pending</SelectItem>
-                <SelectItem value="Partial">Partial</SelectItem>
-                <SelectItem value="Paid">Paid</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={classFilter} onValueChange={(v) => { setClassFilter(v); setPage(1); }}>
-              <SelectTrigger className="w-44 h-9 text-xs"><SelectValue placeholder="All Classes" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Classes / Categories</SelectItem>
-                <SelectItem value="PUBLIC">Public (Natural Person)</SelectItem>
-                <SelectItem value="INSTITUTION">Institution (Legal Person)</SelectItem>
-                <SelectItem value="TAX_EXEMPT">Tax Exempted (Mutual Fund)</SelectItem>
-                <SelectItem value="PROMOTER">Promoter</SelectItem>
-                <SelectItem value="LOCAL">Local</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={companyFilter} onValueChange={(v) => { setCompanyFilter(v); setPage(1); }}>
-              <SelectTrigger className="w-52 h-9 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All companies</SelectItem>
-                {companies.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>{c.company_code} — {c.company_name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={fyFilter} onValueChange={(v) => { setFyFilter(v); setPage(1); }}>
-              <SelectTrigger className="w-36 h-9 text-xs"><SelectValue placeholder="All FY" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Fiscal Years</SelectItem>
-                {fiscalYears.map((fy) => (
-                  <SelectItem key={fy} value={fy}>{fy}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="mb-4 flex flex-col gap-3">
+            <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-5">
+              <div className="relative">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search shareholder, BOID, account, ref…"
+                  value={search}
+                  onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                  className="pl-9 h-9 text-xs bg-background"
+                />
+              </div>
 
-            {/* Date Range Search */}
-            <div className="flex items-center gap-1 bg-background border rounded px-2 h-9 text-xs">
-              <span className="text-[11px] text-muted-foreground">From:</span>
-              <input
-                type="date"
-                value={fromDateFilter}
-                onChange={(e) => { setFromDateFilter(e.target.value); setPage(1); }}
-                className="bg-transparent text-xs outline-none"
-              />
-              <span className="text-[11px] text-muted-foreground ml-1">To:</span>
-              <input
-                type="date"
-                value={toDateFilter}
-                onChange={(e) => { setToDateFilter(e.target.value); setPage(1); }}
-                className="bg-transparent text-xs outline-none"
-              />
-              {(fromDateFilter || toDateFilter) && (
-                <button
-                  type="button"
-                  onClick={() => { setFromDateFilter(""); setToDateFilter(""); setPage(1); }}
-                  className="ml-1 text-[11px] text-destructive hover:underline font-medium"
-                >
-                  Clear
-                </button>
-              )}
+              <Select value={companyFilter} onValueChange={(v) => { setCompanyFilter(v); setPage(1); }}>
+                <SelectTrigger className="h-9 text-xs bg-background">
+                  <SelectValue placeholder="All Debentures" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Debentures</SelectItem>
+                  {companies.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.company_code} — {c.company_name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select value={classFilter} onValueChange={(v) => { setClassFilter(v); setPage(1); }}>
+                <SelectTrigger className="h-9 text-xs bg-background">
+                  <SelectValue placeholder="All Classes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Classes / Categories</SelectItem>
+                  <SelectItem value="PUBLIC">Public (Natural Person)</SelectItem>
+                  <SelectItem value="INSTITUTION">Institution (Legal Person)</SelectItem>
+                  <SelectItem value="TAX_EXEMPT">Tax Exempted (Mutual Fund)</SelectItem>
+                  <SelectItem value="PROMOTER">Promoter</SelectItem>
+                  <SelectItem value="LOCAL">Local</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1); }}>
+                <SelectTrigger className="h-9 text-xs bg-background">
+                  <SelectValue placeholder="All statuses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All statuses</SelectItem>
+                  <SelectItem value="Pending">Pending</SelectItem>
+                  <SelectItem value="Partial">Partial</SelectItem>
+                  <SelectItem value="Paid">Paid</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Select value={fyFilter} onValueChange={(v) => { setFyFilter(v); setPage(1); }}>
+                <SelectTrigger className="h-9 text-xs bg-background">
+                  <SelectValue placeholder="All Fiscal Years" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Fiscal Years</SelectItem>
+                  {fiscalYears.map((fy) => (
+                    <SelectItem key={fy} value={fy}>{fy}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-border/40">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1.5 bg-muted/40 border rounded-md px-2.5 h-8 text-xs">
+                  <span className="text-[11px] text-muted-foreground font-medium">From:</span>
+                  <input
+                    type="date"
+                    value={fromDateFilter}
+                    onChange={(e) => { setFromDateFilter(e.target.value); setPage(1); }}
+                    className="bg-transparent text-xs outline-none"
+                  />
+                  <span className="text-[11px] text-muted-foreground font-medium ml-1">To:</span>
+                  <input
+                    type="date"
+                    value={toDateFilter}
+                    onChange={(e) => { setToDateFilter(e.target.value); setPage(1); }}
+                    className="bg-transparent text-xs outline-none"
+                  />
+                </div>
+
+                {(search || statusFilter !== "all" || companyFilter !== "all" || fyFilter !== "all" || classFilter !== "all" || fromDateFilter || toDateFilter) && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setSearch("");
+                      setStatusFilter("all");
+                      setCompanyFilter("all");
+                      setFyFilter("all");
+                      setClassFilter("all");
+                      setFromDateFilter("");
+                      setToDateFilter("");
+                      setPage(1);
+                    }}
+                    className="h-8 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3.5 w-3.5 mr-1" /> Reset Filters
+                  </Button>
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Showing <span className="font-semibold text-foreground">{pageItems.length}</span> of <span className="font-semibold text-foreground">{pageResult.count.toLocaleString()}</span> payables
+              </div>
             </div>
           </div>
 
@@ -1204,10 +1327,12 @@ function InterestPage() {
                   <TableHead className="font-semibold">Company</TableHead>
                   <TableHead className="font-semibold">Client</TableHead>
                   <TableHead className="font-semibold">BOID</TableHead>
+                  <TableHead className="text-right font-semibold">Holding (Kitta)</TableHead>
                   <TableHead className="font-semibold">Instrument</TableHead>
                   <TableHead className="text-right font-semibold">Gross</TableHead>
                   <TableHead className="text-right font-semibold">Tax</TableHead>
                   <TableHead className="text-right font-semibold">Net</TableHead>
+                  <TableHead className="font-semibold">Bank Details</TableHead>
                   <TableHead className="font-semibold">Due</TableHead>
                   <TableHead className="font-semibold">Status</TableHead>
                   <TableHead className="font-semibold">FY</TableHead>
@@ -1216,22 +1341,47 @@ function InterestPage() {
               </TableHeader>
               <TableBody>
                 {isLoading ? (
-                  <TableRow><TableCell colSpan={11} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={13} className="py-12 text-center text-muted-foreground">Loading…</TableCell></TableRow>
                 ) : pageItems.length === 0 ? (
-                  <TableRow><TableCell colSpan={11} className="py-12 text-center text-muted-foreground">No payables.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={13} className="py-12 text-center text-muted-foreground">No payables.</TableCell></TableRow>
                 ) : pageItems.map((p) => {
                   const c = p.company ?? null;
                   const cl = p.client ?? null;
                   return (
                     <TableRow key={p.id} className="hover:bg-muted/30 transition-colors">
                       <TableCell>{c ? <span><span className="font-mono text-xs text-muted-foreground">{c.company_code}</span> {c.company_name}</span> : "—"}</TableCell>
-                      <TableCell>{cl ? <span><span className="font-mono text-xs text-muted-foreground">{cl.client_code}</span> {cl.full_name}</span> : "—"}</TableCell>
-                      <TableCell className="font-mono text-xs">{cl?.boid ?? "—"}</TableCell>
+                      <TableCell>
+                        <div className="font-medium text-xs text-foreground">{cl?.full_name ?? "—"}</div>
+                        {cl?.father_name && <div className="text-[10px] text-muted-foreground">s/o {cl.father_name}</div>}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {cl?.boid ? (
+                          <button
+                            type="button"
+                            className="font-semibold text-primary hover:underline cursor-pointer"
+                            onClick={() => setSelectedStatementBoid(cl.boid)}
+                            title="Click to view full statement"
+                          >
+                            {cl.boid}
+                          </button>
+                        ) : (
+                          "—"
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right font-mono font-semibold text-primary">
+                        {p.kitta || p.shares_held || cl?.kitta ? (p.kitta || p.shares_held || cl?.kitta)?.toLocaleString() : "—"}
+                      </TableCell>
                       <TableCell className="text-xs">{p.instrument_ref ?? "—"}</TableCell>
-                      <TableCell className="text-right">{fmt(p.gross_interest)}</TableCell>
-                      <TableCell className="text-right">{fmt(p.tax_amount)}</TableCell>
-                      <TableCell className="text-right font-medium">{fmt(p.net_payable)}</TableCell>
-                      <TableCell>{p.due_date ?? "—"}</TableCell>
+                      <TableCell className="text-right font-mono">{fmt(p.gross_interest)}</TableCell>
+                      <TableCell className="text-right font-mono text-amber-600">{fmt(p.tax_amount)}</TableCell>
+                      <TableCell className="text-right font-mono font-bold text-foreground">{fmt(p.net_payable)}</TableCell>
+                      <TableCell>
+                        <div className="text-[11px] font-medium max-w-[140px] truncate">{(p as any).bank_name || cl?.bank_name || "—"}</div>
+                        {((p as any).bank_account_no || cl?.bank_account_no) && (
+                          <div className="font-mono text-[10px] text-muted-foreground">{(p as any).bank_account_no || cl?.bank_account_no}</div>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-xs">{p.due_date ?? "—"}</TableCell>
                       <TableCell>
                         <Badge variant={p.payment_status === "Paid" ? "default" : p.payment_status === "Partial" ? "secondary" : (p as any).remarks?.includes("Rejected") ? "destructive" : "outline"}>
                           {p.payment_status}
@@ -1245,7 +1395,7 @@ function InterestPage() {
                           </span>
                         )}
                       </TableCell>
-                      <TableCell className="text-xs">{p.fiscal_year ?? "—"}</TableCell>
+                      <TableCell className="text-xs font-mono">{p.fiscal_year ?? "—"}</TableCell>
                       <TableCell className="text-right">
                         {canWrite && (
                           <div className="flex justify-end gap-1">
@@ -1254,7 +1404,7 @@ function InterestPage() {
                                 <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                               </Button>
                             )}
-                            <Button size="icon" variant="ghost" onClick={() => startEdit(p)} className="hover:bg-blue-50"><Pencil className="h-4 w-4" /></Button>
+                            <Button size="icon" variant="ghost" onClick={() => openEdit(p)} className="hover:bg-blue-50"><Pencil className="h-4 w-4" /></Button>
                             {canDelete && (
                               <Button size="icon" variant="ghost" onClick={() => { if (confirm("Delete this payable?")) del.mutate(p.id); }} className="hover:bg-red-50" title="Delete Payable (Admin Only)">
                                 <Trash2 className="h-4 w-4 text-destructive" />
@@ -1324,6 +1474,14 @@ function InterestPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ShareholderStatementDialog
+        boid={selectedStatementBoid}
+        open={Boolean(selectedStatementBoid)}
+        onOpenChange={(openState) => {
+          if (!openState) setSelectedStatementBoid(null);
+        }}
+      />
     </div>
   );
 }

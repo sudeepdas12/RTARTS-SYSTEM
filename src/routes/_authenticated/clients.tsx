@@ -90,6 +90,7 @@ interface Client {
   gender: string | null;
   occupation: string | null;
   boid: string | null;
+  kitta?: number | null;
   holder_type: Holder | null;
   payee_classification: PayeeClassification | null;
   pan_no: string | null;
@@ -124,6 +125,7 @@ const emptyForm = {
   gender: "",
   occupation: "",
   boid: "",
+  kitta: "",
   holder_type: "Natural Person - Public" as Holder,
   payee_classification: "NATURAL_PERSON" as PayeeClassification,
   pan_no: "",
@@ -366,6 +368,7 @@ function ClientsPage() {
       gender: c.gender ?? "",
       occupation: c.occupation ?? "",
       boid: c.boid ?? "",
+      kitta: c.kitta != null ? String(c.kitta) : "",
       holder_type: (c.holder_type ?? "Natural Person - Public") as Holder,
       payee_classification: (c.payee_classification ?? "NATURAL_PERSON") as PayeeClassification,
       pan_no: c.pan_no ?? (c.pan_or_citizenship && c.pan_or_citizenship.length === 9 ? c.pan_or_citizenship : ""),
@@ -395,6 +398,7 @@ function ClientsPage() {
     mutationFn: async () => {
       const panNo = form.pan_no.trim() || null;
       const citizenshipNo = form.citizenship_no.trim() || null;
+      const kittaVal = form.kitta !== "" ? Number(form.kitta) : 0;
       const payload = {
         client_code: form.client_code.trim(),
         client_id: form.client_id.trim() || null,
@@ -406,6 +410,7 @@ function ClientsPage() {
         gender: form.gender.trim() || null,
         occupation: form.occupation.trim() || null,
         boid: form.boid.trim() || null,
+        kitta: kittaVal,
         holder_type: form.holder_type,
         payee_classification: form.payee_classification,
         pan_no: panNo,
@@ -528,6 +533,7 @@ function ClientsPage() {
           client_code: d.client_code,
           full_name: d.full_name,
           boid: d.boid,
+          holding_kitta: d.kitta || 0,
           company: d.company?.company_name || "",
           holder_type: d.holder_type,
           classification: d.payee_classification,
@@ -733,9 +739,9 @@ function ClientsPage() {
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/40 hover:bg-muted/40">
-                <TableHead className="font-semibold text-xs">Code</TableHead>
                 <TableHead className="font-semibold text-xs">Shareholder Name</TableHead>
                 <TableHead className="font-semibold text-xs">BOID</TableHead>
+                <TableHead className="text-right font-semibold text-xs">Holding (Kitta)</TableHead>
                 <TableHead className="font-semibold text-xs">Tax Class</TableHead>
                 <TableHead className="font-semibold text-xs">Holder Type</TableHead>
                 <TableHead className="font-semibold text-xs">Company</TableHead>
@@ -771,9 +777,6 @@ function ClientsPage() {
                     className={`cursor-pointer transition-colors hover:bg-muted/50 ${idx % 2 === 0 ? "" : "bg-muted/20"}`}
                     onClick={() => openEdit(c)}
                   >
-                    <TableCell className="font-mono text-xs text-muted-foreground font-semibold">
-                      {c.client_code}
-                    </TableCell>
                     <TableCell>
                       <div className="font-medium text-sm text-foreground">{c.full_name}</div>
                       {c.father_name && <div className="text-[11px] text-muted-foreground">s/o {c.father_name}</div>}
@@ -794,6 +797,9 @@ function ClientsPage() {
                       ) : (
                         "—"
                       )}
+                    </TableCell>
+                    <TableCell className="text-right font-mono font-semibold text-primary">
+                      {c.kitta ? Number(c.kitta).toLocaleString() : "—"}
                     </TableCell>
                     <TableCell>{classificationBadge(c.payee_classification)}</TableCell>
                     <TableCell>{holderBadge(c.holder_type)}</TableCell>
@@ -993,8 +999,18 @@ function ClientsPage() {
             </div>
 
             {/* Classification */}
-            <SectionLabel icon={Percent}>Tax Classification & Category</SectionLabel>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <SectionLabel icon={Percent}>Tax Classification & Holding Units</SectionLabel>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-1.5">
+                <Label>Holding (Kitta / Shares / Units)</Label>
+                <Input
+                  type="number"
+                  value={form.kitta}
+                  onChange={(e) => setF("kitta", e.target.value)}
+                  placeholder="e.g. 500"
+                  className="font-mono"
+                />
+              </div>
               <div className="space-y-1.5">
                 <Label>Tax Classification (TDS Rate)</Label>
                 <Select value={form.payee_classification} onValueChange={(v) => setF("payee_classification", v)}>

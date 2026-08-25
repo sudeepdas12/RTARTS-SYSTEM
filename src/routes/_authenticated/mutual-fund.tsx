@@ -32,11 +32,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Pencil, Plus, Trash2, Download, Upload, CheckCircle2, Calculator, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FileSpreadsheet, FileText, BarChart3 } from "lucide-react";
+import { Pencil, Plus, Trash2, Download, Upload, CheckCircle2, Calculator, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FileSpreadsheet, FileText, BarChart3, Search, Users, Coins, Receipt, Wallet, Building2, Filter, X } from "lucide-react";
 import { toast } from "sonner";
 import { exportToExcel, importFromExcel } from "@/lib/xlsx-utils";
 import { SummaryReportService } from "@/lib/services/summary-report.service";
 import { STANDARD_PERIODS, type PeriodPreset } from "@/lib/services/period-calculator";
+import { ShareholderStatementDialog } from "@/components/shareholder-statement-dialog";
 import {
   getTaxRateFromRules,
   investorCategoryToClassification,
@@ -54,6 +55,7 @@ interface Payable {
   company_id: string | null;
   client_id: string | null;
   shares_held: number | null;
+  kitta?: number | null;
   dividend_rate: number | null;
   dividend_type: string | null;
   gross_dividend: number | null;
@@ -78,6 +80,9 @@ interface Payable {
     client_code: string;
     full_name: string;
     boid: string | null;
+    kitta?: number | null;
+    holder_type?: string | null;
+    payee_classification?: string | null;
     father_name: string | null;
     grandfather_name: string | null;
     pan_no?: string | null;
@@ -147,6 +152,7 @@ function MutualFundPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [open, setOpen] = useState(false);
+  const [selectedStatementBoid, setSelectedStatementBoid] = useState<string | null>(null);
   const [payOpen, setPayOpen] = useState<Payable | null>(null);
   const [payRef, setPayRef] = useState("");
   const [payDate, setPayDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -832,7 +838,7 @@ function MutualFundPage() {
                           <SelectContent>
                             {clients.map((c) => (
                               <SelectItem key={c.id} value={c.id}>
-                                {c.client_code} — {c.full_name}
+                                {c.full_name} {c.boid ? `(${c.boid})` : ""}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -1008,29 +1014,55 @@ function MutualFundPage() {
       )}
 
       <div className="mb-4 grid gap-3 grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-xs text-muted-foreground">Total Units Held</div>
-            <div className="text-xl font-semibold">{(totals.units ?? 0).toLocaleString()}</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">{(totals.count ?? 0).toLocaleString()} records ({totals.paidCount ?? 0} Paid)</div>
+        <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div>
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Units Held</div>
+              <div className="text-xl font-bold font-mono tracking-tight mt-1">{(totals.units ?? 0).toLocaleString()}</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">{(totals.count ?? 0).toLocaleString()} records · <span className="text-emerald-600 font-medium">{totals.paidCount ?? 0} Paid</span></div>
+            </div>
+            <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary shrink-0">
+              <Users className="h-5 w-5" />
+            </div>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-xs text-muted-foreground">Gross Distribution</div>
-            <div className="text-xl font-semibold">NPR {fmt(totals.gross)}</div>
+
+        <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div>
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Gross Distribution</div>
+              <div className="text-xl font-bold font-mono tracking-tight mt-1">NPR {fmt(totals.gross)}</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">Pre-tax gross pool</div>
+            </div>
+            <div className="h-10 w-10 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-600 shrink-0">
+              <Coins className="h-5 w-5" />
+            </div>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-xs text-muted-foreground">TDS Tax</div>
-            <div className="text-xl font-semibold text-destructive">NPR {fmt(totals.tax)}</div>
+
+        <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div>
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">TDS Tax Withheld</div>
+              <div className="text-xl font-bold font-mono tracking-tight mt-1 text-rose-600 dark:text-rose-400">NPR {fmt(totals.tax)}</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">Auto-calculated TDS</div>
+            </div>
+            <div className="h-10 w-10 rounded-full bg-rose-500/10 flex items-center justify-center text-rose-600 shrink-0">
+              <Receipt className="h-5 w-5" />
+            </div>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-xs text-muted-foreground">Net Distribution Payable</div>
-            <div className="text-xl font-semibold text-emerald-600">NPR {fmt(totals.net)}</div>
+
+        <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div>
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Net Payable</div>
+              <div className="text-xl font-bold font-mono tracking-tight mt-1 text-emerald-600 dark:text-emerald-400">NPR {fmt(totals.net)}</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">{totals.pendingCount ?? 0} Pending transfer</div>
+            </div>
+            <div className="h-10 w-10 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-600 shrink-0">
+              <Wallet className="h-5 w-5" />
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -1225,24 +1257,36 @@ function MutualFundPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardContent>
+      <Card className="border-border/60 shadow-sm">
+        <CardContent className="p-4">
           <div className="mb-4 flex flex-col gap-3">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-              <Input placeholder="Search company, client, reference..." value={search} onChange={(e) => setSearch(e.target.value)} />
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger>
-                  <SelectValue />
+            <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-5">
+              <div className="relative">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search scheme, client, BOID, bank…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="pl-9 h-9 text-xs bg-background"
+                />
+              </div>
+
+              <Select value={companyFilter} onValueChange={setCompanyFilter}>
+                <SelectTrigger className="h-9 text-xs bg-background">
+                  <SelectValue placeholder="All schemes" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All statuses</SelectItem>
-                  <SelectItem value="Pending">Pending</SelectItem>
-                  <SelectItem value="Partial">Partial</SelectItem>
-                  <SelectItem value="Paid">Paid</SelectItem>
+                  <SelectItem value="all">All Schemes / Funds</SelectItem>
+                  {companies.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.company_code} — {c.company_name}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
+
               <Select value={classFilter} onValueChange={setClassFilter}>
-                <SelectTrigger>
+                <SelectTrigger className="h-9 text-xs bg-background">
                   <SelectValue placeholder="All Classes" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1254,22 +1298,22 @@ function MutualFundPage() {
                   <SelectItem value="LOCAL">Local</SelectItem>
                 </SelectContent>
               </Select>
-              <Select value={companyFilter} onValueChange={setCompanyFilter}>
-                <SelectTrigger>
-                  <SelectValue />
+
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="h-9 text-xs bg-background">
+                  <SelectValue placeholder="All statuses" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All companies</SelectItem>
-                  {companies.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.company_code}
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="all">All statuses</SelectItem>
+                  <SelectItem value="Pending">Pending</SelectItem>
+                  <SelectItem value="Partial">Partial</SelectItem>
+                  <SelectItem value="Paid">Paid</SelectItem>
                 </SelectContent>
               </Select>
+
               <Select value={fyFilter} onValueChange={setFyFilter}>
-                <SelectTrigger>
-                  <SelectValue />
+                <SelectTrigger className="h-9 text-xs bg-background">
+                  <SelectValue placeholder="All fiscal years" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All fiscal years</SelectItem>
@@ -1281,19 +1325,66 @@ function MutualFundPage() {
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Date Filters & Quick Reset */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-border/40">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1.5 bg-muted/40 border rounded-md px-2.5 h-8 text-xs">
+                  <span className="text-[11px] text-muted-foreground font-medium">From:</span>
+                  <input
+                    type="date"
+                    value={fromDateFilter}
+                    onChange={(e) => { setFromDateFilter(e.target.value); setPage(1); }}
+                    className="bg-transparent text-xs outline-none"
+                  />
+                  <span className="text-[11px] text-muted-foreground font-medium ml-1">To:</span>
+                  <input
+                    type="date"
+                    value={toDateFilter}
+                    onChange={(e) => { setToDateFilter(e.target.value); setPage(1); }}
+                    className="bg-transparent text-xs outline-none"
+                  />
+                </div>
+                {(fromDateFilter || toDateFilter || search || statusFilter !== "all" || companyFilter !== "all" || fyFilter !== "all" || classFilter !== "all") && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setSearch("");
+                      setStatusFilter("all");
+                      setCompanyFilter("all");
+                      setFyFilter("all");
+                      setClassFilter("all");
+                      setFromDateFilter("");
+                      setToDateFilter("");
+                      setPage(1);
+                    }}
+                    className="h-8 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3.5 w-3.5 mr-1" /> Reset Filters
+                  </Button>
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Showing <span className="font-semibold text-foreground">{pageItems.length}</span> of <span className="font-semibold text-foreground">{pageResult.count.toLocaleString()}</span> payables
+              </div>
+            </div>
           </div>
 
           <div className="rounded-md border bg-card">
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/50 hover:bg-muted/50">
-                  <TableHead className="font-semibold">Company</TableHead>
+                  <TableHead className="font-semibold">Company / Scheme</TableHead>
                   <TableHead className="font-semibold">Client</TableHead>
+                  <TableHead className="font-semibold">BOID</TableHead>
+                  <TableHead className="text-right font-semibold">Holding (Units / Kitta)</TableHead>
+                  <TableHead className="text-right font-semibold">Rate %</TableHead>
                   <TableHead className="text-right font-semibold">Gross</TableHead>
                   <TableHead className="text-right font-semibold">Tax</TableHead>
                   <TableHead className="text-right font-semibold">Net</TableHead>
+                  <TableHead className="font-semibold">Bank Details</TableHead>
                   <TableHead className="font-semibold">Status</TableHead>
-                  <TableHead className="font-semibold">Payment</TableHead>
                   <TableHead className="font-semibold">Fiscal Year</TableHead>
                   <TableHead className="text-right font-semibold">Actions</TableHead>
                 </TableRow>
@@ -1301,33 +1392,66 @@ function MutualFundPage() {
               <TableBody>
                 {pageItems.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="py-12 text-center text-muted-foreground">
+                    <TableCell colSpan={12} className="py-12 text-center text-muted-foreground">
                       No mutual fund payables.
                     </TableCell>
                   </TableRow>
                 ) : (
                   pageItems.map((payable) => (
                     <TableRow key={payable.id} className="hover:bg-muted/30 transition-colors">
-                      <TableCell>{payable.company?.company_code ?? "—"}</TableCell>
-                      <TableCell>{payable.client?.full_name ?? "—"}</TableCell>
-                      <TableCell className="text-right">{fmt(payable.gross_dividend)}</TableCell>
-                      <TableCell className="text-right">{fmt(payable.tax_amount)}</TableCell>
-                      <TableCell className="text-right font-medium">{fmt(payable.net_payable)}</TableCell>
+                      <TableCell>
+                        <span className="font-mono text-xs font-semibold text-muted-foreground mr-1">{payable.company?.company_code ?? "—"}</span>
+                        <span className="text-xs">{payable.company?.company_name}</span>
+                      </TableCell>
+                      <TableCell>
+                        <div className="font-medium text-xs text-foreground">{payable.client?.full_name ?? "—"}</div>
+                        {payable.client?.father_name && <div className="text-[10px] text-muted-foreground">s/o {payable.client.father_name}</div>}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {payable.client?.boid ? (
+                          <button
+                            type="button"
+                            className="font-semibold text-primary hover:underline cursor-pointer"
+                            onClick={() => setSelectedStatementBoid(payable.client!.boid)}
+                            title="Click to view full statement"
+                          >
+                            {payable.client.boid}
+                          </button>
+                        ) : (
+                          "—"
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right font-mono font-semibold text-primary">
+                        {payable.shares_held || payable.after_bonus_kitta || payable.client?.kitta
+                          ? (payable.shares_held || payable.after_bonus_kitta || payable.client?.kitta)?.toLocaleString()
+                          : "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs">
+                        {payable.dividend_rate ? `${payable.dividend_rate}%` : "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">{fmt(payable.gross_dividend)}</TableCell>
+                      <TableCell className="text-right font-mono text-amber-600">{fmt(payable.tax_amount)}</TableCell>
+                      <TableCell className="text-right font-mono font-bold text-foreground">{fmt(payable.net_payable)}</TableCell>
+                      <TableCell>
+                        <div className="text-[11px] font-medium max-w-[140px] truncate">{payable.bank_name || payable.client?.bank_name || "—"}</div>
+                        {(payable.bank_account_no || payable.client?.bank_account_no) && (
+                          <div className="font-mono text-[10px] text-muted-foreground">{payable.bank_account_no || payable.client?.bank_account_no}</div>
+                        )}
+                      </TableCell>
                       <TableCell>
                         <Badge variant={payable.payment_status === "Paid" ? "default" : payable.payment_status === "Partial" ? "secondary" : (payable as any).remarks?.includes("Rejected") ? "destructive" : "outline"}>
                           {payable.payment_status}
                         </Badge>
                         {(payable as any).remarks && (
                           <span
-                            className={`block text-[10px] max-w-[160px] truncate mt-0.5 ${(payable as any).remarks.includes("Rejected") ? "text-destructive font-medium" : "text-muted-foreground"}`}
+                            className={`block text-[10px] max-w-[140px] truncate mt-0.5 ${(payable as any).remarks.includes("Rejected") ? "text-destructive font-medium" : "text-muted-foreground"}`}
                             title={(payable as any).remarks}
                           >
                             {(payable as any).remarks}
                           </span>
                         )}
                       </TableCell>
-                      <TableCell>{payable.payment_date ?? "—"}</TableCell>
-                      <TableCell>{payable.fiscal_year ?? "—"}</TableCell>
+                      <TableCell className="text-xs font-mono">{payable.fiscal_year ?? "—"}</TableCell>
                       <TableCell className="text-right">
                         {canWrite && (
                           <div className="flex justify-end gap-1">
@@ -1414,6 +1538,14 @@ function MutualFundPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ShareholderStatementDialog
+        boid={selectedStatementBoid}
+        open={Boolean(selectedStatementBoid)}
+        onOpenChange={(openState) => {
+          if (!openState) setSelectedStatementBoid(null);
+        }}
+      />
     </div>
   );
 }

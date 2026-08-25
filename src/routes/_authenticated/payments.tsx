@@ -21,7 +21,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ShareholderStatementDialog } from '@/components/shareholder-statement-dialog';
-import { Download, Plus, CheckCircle2, XCircle, FileSpreadsheet, Trash2, Eye, X, Loader2, Send, Search, User, CreditCard, Layers, FileText } from 'lucide-react';
+import { Download, Plus, CheckCircle2, XCircle, FileSpreadsheet, Trash2, Eye, X, Loader2, Send, Search, User, CreditCard, Layers, FileText, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ApprovalBar } from '@/components/workflow/approval-bar';
@@ -485,6 +485,38 @@ function PaymentsRoute() {
   const totalBatchAmount = filteredBatches.reduce((sum: number, p: any) => sum + (p.total_amount || 0), 0);
   const totalBatchCount = filteredBatches.length;
 
+  // Pagination for Batches Table
+  const [batchesPage, setBatchesPage] = useState<number>(1);
+  const [batchesPageSize, setBatchesPageSize] = useState<number>(10);
+  const batchesTotalPages = Math.max(1, Math.ceil(totalBatchCount / batchesPageSize));
+  const safeBatchesPage = Math.min(batchesPage, batchesTotalPages);
+  const paginatedBatches = useMemo(() => {
+    const start = (safeBatchesPage - 1) * batchesPageSize;
+    return filteredBatches.slice(start, start + batchesPageSize);
+  }, [filteredBatches, safeBatchesPage, batchesPageSize]);
+
+  // Pagination for Individual Shareholder Payments Table
+  const [shareholderPage, setShareholderPage] = useState<number>(1);
+  const [shareholderPageSize, setShareholderPageSize] = useState<number>(15);
+  const totalShareholders = filteredIndividualPayments.length;
+  const shareholderTotalPages = Math.max(1, Math.ceil(totalShareholders / shareholderPageSize));
+  const safeShareholderPage = Math.min(shareholderPage, shareholderTotalPages);
+  const paginatedShareholders = useMemo(() => {
+    const start = (safeShareholderPage - 1) * shareholderPageSize;
+    return filteredIndividualPayments.slice(start, start + shareholderPageSize);
+  }, [filteredIndividualPayments, safeShareholderPage, shareholderPageSize]);
+
+  // Pagination for Active Batch Line Items in Modal
+  const [lineItemsPage, setLineItemsPage] = useState<number>(1);
+  const [lineItemsPageSize, setLineItemsPageSize] = useState<number>(10);
+  const totalLineItems = lineItems?.length || 0;
+  const lineItemsTotalPages = Math.max(1, Math.ceil(totalLineItems / lineItemsPageSize));
+  const safeLineItemsPage = Math.min(lineItemsPage, lineItemsTotalPages);
+  const paginatedLineItems = useMemo(() => {
+    const start = (safeLineItemsPage - 1) * lineItemsPageSize;
+    return (lineItems || []).slice(start, start + lineItemsPageSize);
+  }, [lineItems, safeLineItemsPage, lineItemsPageSize]);
+
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex items-start justify-between flex-wrap gap-3">
@@ -820,9 +852,9 @@ function PaymentsRoute() {
               <TableBody>
                 {isLoading ? (
                   <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">Loading...</TableCell></TableRow>
-                ) : filteredBatches.length === 0 ? (
+                ) : paginatedBatches.length === 0 ? (
                   <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No payment batches match the selected filters.</TableCell></TableRow>
-                ) : filteredBatches.map((batch: any) => (
+                ) : paginatedBatches.map((batch: any) => (
                   <TableRow key={batch.id} className={activeBatchId === batch.id ? 'bg-muted/30' : ''}>
                     <TableCell className="font-medium">
                       <div>
@@ -948,6 +980,40 @@ function PaymentsRoute() {
                 ))}
               </TableBody>
             </Table>
+            {totalBatchCount > 0 && (
+              <div className="flex flex-wrap items-center justify-between border-t px-4 py-3 gap-2 bg-muted/20">
+                <div className="text-xs text-muted-foreground">
+                  Showing {(safeBatchesPage - 1) * batchesPageSize + 1} to {Math.min(safeBatchesPage * batchesPageSize, totalBatchCount)} of {totalBatchCount} batches
+                </div>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={batchesPageSize}
+                    onChange={(e) => { setBatchesPageSize(Number(e.target.value)); setBatchesPage(1); }}
+                    className="h-8 rounded border bg-background px-2 text-xs"
+                  >
+                    <option value="10">10 / page</option>
+                    <option value="25">25 / page</option>
+                    <option value="50">50 / page</option>
+                    <option value="100">100 / page</option>
+                  </select>
+                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setBatchesPage(1)} disabled={safeBatchesPage === 1}>
+                    <ChevronsLeft className="h-4 w-4" />
+                  </Button>
+                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setBatchesPage(p => Math.max(1, p - 1))} disabled={safeBatchesPage === 1}>
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <span className="text-xs text-muted-foreground px-1.5 font-medium">
+                    {safeBatchesPage} / {batchesTotalPages}
+                  </span>
+                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setBatchesPage(p => Math.min(batchesTotalPages, p + 1))} disabled={safeBatchesPage === batchesTotalPages}>
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setBatchesPage(batchesTotalPages)} disabled={safeBatchesPage === batchesTotalPages}>
+                    <ChevronsRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </TabsContent>
 
@@ -1009,10 +1075,10 @@ function PaymentsRoute() {
               <TableBody>
                 {isIndividualLoading ? (
                   <TableRow><TableCell colSpan={10} className="text-center py-8 text-muted-foreground">Loading individual payments...</TableCell></TableRow>
-                ) : filteredIndividualPayments.length === 0 ? (
+                ) : paginatedShareholders.length === 0 ? (
                   <TableRow><TableCell colSpan={10} className="text-center py-8 text-muted-foreground">No shareholder transactions found matching your search.</TableCell></TableRow>
                 ) : (
-                  filteredIndividualPayments.map((p: any) => (
+                  paginatedShareholders.map((p: any) => (
                     <TableRow key={p.id} className="hover:bg-muted/30 text-xs">
                       <TableCell className="font-mono font-semibold text-primary">
                         <button
@@ -1068,6 +1134,40 @@ function PaymentsRoute() {
                 )}
               </TableBody>
             </Table>
+            {totalShareholders > 0 && (
+              <div className="flex flex-wrap items-center justify-between border-t px-4 py-3 gap-2 bg-muted/20">
+                <div className="text-xs text-muted-foreground">
+                  Showing {(safeShareholderPage - 1) * shareholderPageSize + 1} to {Math.min(safeShareholderPage * shareholderPageSize, totalShareholders)} of {totalShareholders} transactions
+                </div>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={shareholderPageSize}
+                    onChange={(e) => { setShareholderPageSize(Number(e.target.value)); setShareholderPage(1); }}
+                    className="h-8 rounded border bg-background px-2 text-xs"
+                  >
+                    <option value="15">15 / page</option>
+                    <option value="25">25 / page</option>
+                    <option value="50">50 / page</option>
+                    <option value="100">100 / page</option>
+                  </select>
+                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShareholderPage(1)} disabled={safeShareholderPage === 1}>
+                    <ChevronsLeft className="h-4 w-4" />
+                  </Button>
+                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShareholderPage(p => Math.max(1, p - 1))} disabled={safeShareholderPage === 1}>
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <span className="text-xs text-muted-foreground px-1.5 font-medium">
+                    {safeShareholderPage} / {shareholderTotalPages}
+                  </span>
+                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShareholderPage(p => Math.min(shareholderTotalPages, p + 1))} disabled={safeShareholderPage === shareholderTotalPages}>
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShareholderPage(shareholderTotalPages)} disabled={safeShareholderPage === shareholderTotalPages}>
+                    <ChevronsRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </TabsContent>
       </Tabs>
@@ -1283,8 +1383,8 @@ function PaymentsRoute() {
                   <TableBody>
                     {lineItemsLoading ? (
                       <TableRow><TableCell colSpan={6} className="text-center py-4 text-muted-foreground">Loading...</TableCell></TableRow>
-                    ) : lineItems && lineItems.length > 0 ? (
-                      lineItems.map((item: PaymentLineItem) => (
+                    ) : paginatedLineItems && paginatedLineItems.length > 0 ? (
+                      paginatedLineItems.map((item: PaymentLineItem) => (
                         <TableRow key={item.id}>
                           <TableCell>
                             <div>
@@ -1324,6 +1424,39 @@ function PaymentsRoute() {
                     )}
                   </TableBody>
                 </Table>
+                {totalLineItems > 0 && (
+                  <div className="flex flex-wrap items-center justify-between border-t px-4 py-2.5 gap-2 bg-muted/20">
+                    <div className="text-xs text-muted-foreground">
+                      Showing {(safeLineItemsPage - 1) * lineItemsPageSize + 1} to {Math.min(safeLineItemsPage * lineItemsPageSize, totalLineItems)} of {totalLineItems} payables in batch
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={lineItemsPageSize}
+                        onChange={(e) => { setLineItemsPageSize(Number(e.target.value)); setLineItemsPage(1); }}
+                        className="h-7 rounded border bg-background px-2 text-xs"
+                      >
+                        <option value="10">10 / page</option>
+                        <option value="25">25 / page</option>
+                        <option value="50">50 / page</option>
+                      </select>
+                      <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setLineItemsPage(1)} disabled={safeLineItemsPage === 1}>
+                        <ChevronsLeft className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setLineItemsPage(p => Math.max(1, p - 1))} disabled={safeLineItemsPage === 1}>
+                        <ChevronLeft className="h-3.5 w-3.5" />
+                      </Button>
+                      <span className="text-xs text-muted-foreground px-1 font-medium">
+                        {safeLineItemsPage} / {lineItemsTotalPages}
+                      </span>
+                      <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setLineItemsPage(p => Math.min(lineItemsTotalPages, p + 1))} disabled={safeLineItemsPage === lineItemsTotalPages}>
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setLineItemsPage(lineItemsTotalPages)} disabled={safeLineItemsPage === lineItemsTotalPages}>
+                        <ChevronsRight className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
