@@ -1,9 +1,9 @@
-﻿---
-name: Bug Report
-about: Report a bug or calculation error in the system
-title: [BUG]: 
+---
+name: Bug report
+about: Create a report to help us improve
+title: ''
 labels: bug
-assignees: "
+assignees: ''
 ---
 
 ### Bug Description

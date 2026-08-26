@@ -1,4 +1,4 @@
-﻿# Security Policy
+# Security Policy
 
 ## Supported Versions
 
@@ -34,6 +34,6 @@ Please report all security vulnerabilities privately:
 
 ### Security Architecture
 
-- **Maker-Checker Segregation**: Critical workflow actions (pprove, process, complete, eject, eturn) enforce role segregation between makers and reviewers.
+- **Maker-Checker Segregation**: Critical workflow actions (`approve`, `process`, `complete`, `reject`, `return`) enforce role segregation between makers and reviewers.
 - **Fail-Closed RBAC**: Authorization checks fail closed if user identity is missing or unverified.
 - **Database Row Level Security (RLS)**: Client PII, BOIDs, bank accounts, and payment histories are strictly protected at the database tier.

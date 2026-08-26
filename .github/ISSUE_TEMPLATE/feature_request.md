@@ -1,9 +1,9 @@
-﻿---
-name: Feature Request
-about: Suggest an idea or new feature for RTARTS System
-title: [FEATURE]: 
+---
+name: Feature request
+about: Suggest an idea for this project
+title: ''
 labels: enhancement
-assignees: 
+assignees: ''
 ---
 
 ### Feature Summary
