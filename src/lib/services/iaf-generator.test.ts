@@ -138,4 +138,37 @@ describe('IafGeneratorService — CDSC Allotment Engine', () => {
       expect(summary.categoryBreakdown['PUBLIC'].count).toBe(1);
     });
   });
+
+  describe('IPF Corporate Action Format (9896.011.ipf Spec)', () => {
+    it('creates exact 58-character IPF Control Record', () => {
+      const header = IafGeneratorService.formatIpfHeader(2, 4590, 0, 0);
+      expect(header.length).toBe(58);
+      expect(header).toBe('0000000002000000004590.000000000000000.000000000000000.000');
+    });
+
+    it('creates exact 274-character IPF Detail Record', () => {
+      const line = IafGeneratorService.formatIpfDetailLine({
+        boid: '1301480000009177',
+        rtaRefNo: 'R-100% FY-080/81',
+        debitIsin: 'NPE254A00000',
+        debitCurrentQty: 0,
+        debitFrozenQty: 0,
+        debitLockInQty: 0,
+        debitLockCode: '00',
+        debitLockReason: '',
+        debitLockExpiry: '00000000',
+        debitCrDb: 'C',
+        creditIsin: 'NPE254A00000',
+        creditCurrentQty: 590,
+        creditFrozenQty: 0,
+        creditLockInQty: 0,
+        creditLockCode: '00',
+        creditLockReason: '',
+        creditLockExpiry: '00000000',
+        creditCrDb: 'C',
+      });
+      expect(line.length).toBe(274);
+      expect(line).toBe('1301480000009177R-100% FY-080/81NPE254A00000000000000000.000000000000000.000000000000000.00000                                                  00000000CNPE254A00000000000000590.000000000000000.000000000000000.00000                                                  00000000C');
+    });
+  });
 });

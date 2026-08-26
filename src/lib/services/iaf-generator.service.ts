@@ -233,6 +233,53 @@ export function formatIafDetailLine(record: IafRecord, defaultRtaRef = ''): stri
   return `${boid}${currentQty}${lockInQty}${lockCode}${reason}${expiry}${rtaRef}`;
 }
 
+/**
+ * Generate Corporate Action Allotment Control Record (IPF Header Line — Exactly 58 Characters)
+ * Format: TotalRecords(10) + TotalDebit/CreditQty(16.3) + TotalFrozenQty(16.3) + TotalLockInQty(16.3)
+ */
+export function formatIpfHeader(
+  totalRecords: number,
+  totalQty: number,
+  totalFrozenQty = 0,
+  totalLockQty = 0
+): string {
+  const recStr = String(Math.max(0, totalRecords)).padStart(10, '0');
+  const qtyStr = formatIafQuantity(totalQty);
+  const frozStr = formatIafQuantity(totalFrozenQty);
+  const lockStr = formatIafQuantity(totalLockQty);
+  return `${recStr}${qtyStr}${frozStr}${lockStr}`;
+}
+
+/**
+ * Generate Corporate Action Allotment Detail Record (IPF Line 2..N — Exactly 274 Characters)
+ */
+export function formatIpfDetailLine(record: IpfRecord): string {
+  const boid = String(record.boid || '').trim().replace(/[^0-9A-Za-z]/g, '').padStart(16, '0').slice(0, 16);
+  const rtaRef = String(record.rtaRefNo || '').trim().slice(0, 16).padEnd(16, ' ');
+
+  // Debit fields
+  const debitIsin = String(record.debitIsin || '').trim().padEnd(12, ' ').slice(0, 12);
+  const debitCurr = formatIafQuantity(record.debitCurrentQty);
+  const debitFroz = formatIafQuantity(record.debitFrozenQty);
+  const debitLock = formatIafQuantity(record.debitLockInQty);
+  const debitCode = String(record.debitLockCode || '00').padStart(2, '0').slice(0, 2);
+  const debitReason = (record.debitLockReason || '').padEnd(50, ' ').slice(0, 50);
+  const debitExpiry = normalizeDateToDDMMYYYY(record.debitLockExpiry || '00000000').padEnd(8, '0').slice(0, 8);
+  const debitCrDb = (record.debitCrDb || 'C').slice(0, 1).toUpperCase();
+
+  // Credit fields
+  const creditIsin = String(record.creditIsin || '').trim().padEnd(12, ' ').slice(0, 12);
+  const creditCurr = formatIafQuantity(record.creditCurrentQty);
+  const creditFroz = formatIafQuantity(record.creditFrozenQty);
+  const creditLock = formatIafQuantity(record.creditLockInQty);
+  const creditCode = String(record.creditLockCode || '00').padStart(2, '0').slice(0, 2);
+  const creditReason = (record.creditLockReason || '').padEnd(50, ' ').slice(0, 50);
+  const creditExpiry = normalizeDateToDDMMYYYY(record.creditLockExpiry || '00000000').padEnd(8, '0').slice(0, 8);
+  const creditCrDb = (record.creditCrDb || 'C').slice(0, 1).toUpperCase();
+
+  return `${boid}${rtaRef}${debitIsin}${debitCurr}${debitFroz}${debitLock}${debitCode}${debitReason}${debitExpiry}${debitCrDb}${creditIsin}${creditCurr}${creditFroz}${creditLock}${creditCode}${creditReason}${creditExpiry}${creditCrDb}`;
+}
+
 // ──────────────────────────────────────────────
 // Service Implementation
 // ──────────────────────────────────────────────
@@ -241,6 +288,8 @@ export const IafGeneratorService = {
   formatIafHeader,
   formatIafDetailLine,
   formatIafQuantity,
+  formatIpfHeader,
+  formatIpfDetailLine,
   normalizeDateToDDMMYYYY,
 
   /**
