@@ -154,9 +154,9 @@ export function mfSummaryType(row: any): string {
   return determinePayeeCategory(row);
 }
 
-function determinePayeeCategory(row: SummarySourceRow): 'PUBLIC' | 'PROMOTER' | 'LOCAL AFFECTED' | 'EMPLOYEE / STAFF' | 'INSTITUTION' | 'MUTUAL FUND (TAX EXEMPT)' | 'OTHERS' {
+function determinePayeeCategory(row: SummarySourceRow): 'PUBLIC' | 'INSTITUTION' | 'MUTUAL FUND' | 'PROMOTER' | 'LOCAL' | 'EMPLOYEE' | 'OTHERS' {
   const explicitClass = row.payee_classification || row.client?.payee_classification;
-  if (explicitClass === 'TAX_EXEMPT') return 'MUTUAL FUND (TAX EXEMPT)';
+  if (explicitClass === 'TAX_EXEMPT') return 'MUTUAL FUND';
   if (explicitClass === 'COMPANY_INSTITUTION') return 'INSTITUTION';
 
   const lot = String((row as any).lot_name || '').toUpperCase();
@@ -164,8 +164,8 @@ function determinePayeeCategory(row: SummarySourceRow): 'PUBLIC' | 'PROMOTER' | 
   const segment = String(row.payee_segment || '').toUpperCase();
 
   if (lot.includes('PROMOTER') || lot.includes('PROMOT') || holder.includes('PROMOT') || segment === 'PROMOTER') return 'PROMOTER';
-  if (lot.includes('LOCAL') || lot.includes('UNVERIFIED') || holder.includes('LOCAL') || segment === 'LOCAL') return 'LOCAL AFFECTED';
-  if (lot.includes('STAFF') || lot.includes('EMPLOYEE') || holder.includes('EMPLOYEE') || holder.includes('STAFF') || segment === 'EMPLOYEE') return 'EMPLOYEE / STAFF';
+  if (lot.includes('LOCAL') || lot.includes('UNVERIFIED') || holder.includes('LOCAL') || segment === 'LOCAL') return 'LOCAL';
+  if (lot.includes('STAFF') || lot.includes('EMPLOYEE') || holder.includes('EMPLOYEE') || holder.includes('STAFF') || segment === 'EMPLOYEE') return 'EMPLOYEE';
 
   const result = smartClassify({
     full_name: row.client?.full_name,
@@ -176,11 +176,11 @@ function determinePayeeCategory(row: SummarySourceRow): 'PUBLIC' | 'PROMOTER' | 
     payee_classification: explicitClass,
   });
 
-  if (result.payee_classification === 'TAX_EXEMPT' || result.payee_category === 'MUTUAL_FUND' || result.payee_category === 'TAX_EXEMPT') return 'MUTUAL FUND (TAX EXEMPT)';
+  if (result.payee_classification === 'TAX_EXEMPT' || result.payee_category === 'MUTUAL_FUND' || result.payee_category === 'TAX_EXEMPT') return 'MUTUAL FUND';
   if (result.payee_classification === 'COMPANY_INSTITUTION' || result.payee_category === 'INSTITUTION') return 'INSTITUTION';
   if (result.payee_category === 'PROMOTER') return 'PROMOTER';
-  if (result.payee_category === 'LOCAL') return 'LOCAL AFFECTED';
-  if (result.payee_category === 'EMPLOYEE') return 'EMPLOYEE / STAFF';
+  if (result.payee_category === 'LOCAL') return 'LOCAL';
+  if (result.payee_category === 'EMPLOYEE') return 'EMPLOYEE';
   if (result.payee_classification === 'NATURAL_PERSON' || result.payee_category === 'PUBLIC') return 'PUBLIC';
   return 'OTHERS';
 }
@@ -312,7 +312,7 @@ export const SummaryReportService = {
       map.set(type, entry);
     }
 
-    const order = ['PUBLIC', 'PROMOTER', 'LOCAL AFFECTED', 'EMPLOYEE / STAFF', 'INSTITUTION', 'MUTUAL FUND (TAX EXEMPT)'];
+    const order = ['PUBLIC', 'INSTITUTION', 'MUTUAL FUND', 'PROMOTER', 'LOCAL', 'EMPLOYEE'];
     const sorted = Array.from(map.values()).sort((a, b) => {
       const ai = order.indexOf(a.type);
       const bi = order.indexOf(b.type);

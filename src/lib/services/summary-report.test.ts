@@ -16,7 +16,7 @@ describe('mfSummaryType', () => {
   it('classifies a tax-exempt payee regardless of shareholder segment', () => {
     expect(
       mfSummaryType({ payee_classification: 'TAX_EXEMPT', payee_segment: 'PUBLIC' }),
-    ).toBe('MUTUAL FUND (TAX EXEMPT)');
+    ).toBe('MUTUAL FUND');
   });
 
   it('classifies natural-person holders by segment', () => {
@@ -28,13 +28,13 @@ describe('mfSummaryType', () => {
     ).toBe('PROMOTER');
     expect(
       mfSummaryType({ payee_classification: 'NATURAL_PERSON', payee_segment: 'LOCAL' }),
-    ).toBe('LOCAL AFFECTED');
+    ).toBe('LOCAL');
     expect(
       mfSummaryType({ payee_classification: 'PUBLIC_LEGAL_PERSON', payee_segment: 'LOCAL' }),
-    ).toBe('LOCAL AFFECTED');
+    ).toBe('LOCAL');
     expect(
       mfSummaryType({ payee_classification: 'NATURAL_PERSON', payee_segment: 'EMPLOYEE' }),
-    ).toBe('EMPLOYEE / STAFF');
+    ).toBe('EMPLOYEE');
   });
 
   it('falls back to OTHERS for unclassified payees', () => {

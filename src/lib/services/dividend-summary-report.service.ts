@@ -43,7 +43,7 @@ export interface AgmDividendSummaryReport {
   };
 }
 
-export type AgmParticular = 'PROMOTER' | 'PUBLIC' | 'LOCAL AFFECTED' | 'EMPLOYEE / STAFF' | 'INSTITUTION' | 'MUTUAL FUND (TAX EXEMPT)';
+export type AgmParticular = 'PUBLIC' | 'INSTITUTION' | 'MUTUAL FUND' | 'PROMOTER' | 'LOCAL' | 'EMPLOYEE';
 
 export function determineParticular(p: any): string {
   return determineAgmCategory(p);
@@ -56,8 +56,8 @@ export function determineAgmCategory(p: any): AgmParticular {
   const segment = String(p.payee_segment || p.client?.payee_segment || '').toUpperCase();
 
   if (lot.includes('PROMOTER') || lot.includes('PROMOT') || holder.includes('PROMOT') || segment === 'PROMOTER') return 'PROMOTER';
-  if (lot.includes('LOCAL') || lot.includes('UNVERIFIED') || holder.includes('LOCAL') || segment === 'LOCAL') return 'LOCAL AFFECTED';
-  if (lot.includes('STAFF') || lot.includes('EMPLOYEE') || holder.includes('EMPLOYEE') || holder.includes('STAFF') || segment === 'EMPLOYEE') return 'EMPLOYEE / STAFF';
+  if (lot.includes('LOCAL') || lot.includes('UNVERIFIED') || holder.includes('LOCAL') || segment === 'LOCAL') return 'LOCAL';
+  if (lot.includes('STAFF') || lot.includes('EMPLOYEE') || holder.includes('EMPLOYEE') || holder.includes('STAFF') || segment === 'EMPLOYEE') return 'EMPLOYEE';
 
   const result = smartClassify({
     full_name: p.client?.full_name || p.full_name,
@@ -69,11 +69,11 @@ export function determineAgmCategory(p: any): AgmParticular {
     lot_name: p.lot_name,
   });
 
-  if (result.payee_category === 'PROMOTER') return 'PROMOTER';
-  if (result.payee_category === 'LOCAL') return 'LOCAL AFFECTED';
-  if (result.payee_category === 'EMPLOYEE') return 'EMPLOYEE / STAFF';
-  if (result.payee_classification === 'TAX_EXEMPT' || result.payee_category === 'MUTUAL_FUND' || result.payee_category === 'TAX_EXEMPT') return 'MUTUAL FUND (TAX EXEMPT)';
+  if (result.payee_classification === 'TAX_EXEMPT' || result.payee_category === 'MUTUAL_FUND' || result.payee_category === 'TAX_EXEMPT') return 'MUTUAL FUND';
   if (result.payee_classification === 'COMPANY_INSTITUTION' || result.payee_category === 'INSTITUTION') return 'INSTITUTION';
+  if (result.payee_category === 'PROMOTER') return 'PROMOTER';
+  if (result.payee_category === 'LOCAL') return 'LOCAL';
+  if (result.payee_category === 'EMPLOYEE') return 'EMPLOYEE';
   return 'PUBLIC';
 }
 
@@ -136,7 +136,7 @@ export const AgmDividendSummaryReportService = {
     }
 
     // Group records by Particular
-    const groupOrder: AgmParticular[] = ['PROMOTER', 'PUBLIC', 'LOCAL AFFECTED', 'EMPLOYEE / STAFF', 'INSTITUTION', 'MUTUAL FUND (TAX EXEMPT)'];
+    const groupOrder: AgmParticular[] = ['PUBLIC', 'INSTITUTION', 'MUTUAL FUND', 'PROMOTER', 'LOCAL', 'EMPLOYEE'];
     const groups = new Map<
       string,
       {
@@ -184,11 +184,11 @@ export const AgmDividendSummaryReportService = {
         gross = shares * detectedDividendRate;
       }
       let divTax = Number(p.tax_amount || 0);
-      if (divTax === 0 && gross > 0 && particular !== 'MUTUAL FUND (TAX EXEMPT)' && particular !== 'TAX EXEMPTED') {
+      if (divTax === 0 && gross > 0 && particular !== 'MUTUAL FUND' && particular !== 'TAX EXEMPTED') {
         divTax = Math.round(gross * 0.05 * 100) / 100;
       }
       let bonusTax = Number(p.bonus_tax || 0);
-      if (bonusTax === 0 && actualB > 0 && particular !== 'MUTUAL FUND (TAX EXEMPT)' && particular !== 'TAX EXEMPTED') {
+      if (bonusTax === 0 && actualB > 0 && particular !== 'MUTUAL FUND' && particular !== 'TAX EXEMPTED') {
         bonusTax = Math.round(actualB * 100 * 0.05 * 100) / 100;
       }
       let net = Number(p.net_payable || (gross - divTax));

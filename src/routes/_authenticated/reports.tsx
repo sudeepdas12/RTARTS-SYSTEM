@@ -352,7 +352,7 @@ function ReportsRoute() {
                   <thead>
                     <tr className="bg-muted/80 text-foreground font-semibold border-b border-border divide-x divide-border">
                       <th className="py-2 px-3 text-center w-10 uppercase text-[11px]">S.N.</th>
-                      <th className="py-2 px-3 uppercase text-[11px]">PARTICULAR</th>
+                      <th className="py-2 px-3 uppercase text-[11px]">CATEGORY</th>
                       <th className="py-2 px-3 text-right uppercase text-[11px]">SHAREHOLDERS</th>
                       <th className="py-2 px-3 text-right uppercase text-[11px]">KITTA</th>
                       <th className="py-2 px-3 text-right uppercase text-[11px]">{agmSummary.detectedBonusRate ? `BONUS ${agmSummary.detectedBonusRate}%` : "BONUS"}</th>
@@ -515,7 +515,7 @@ function ReportsRoute() {
                   <thead>
                     <tr className="bg-muted/80 text-foreground font-semibold border-b border-border divide-x divide-border">
                       <th className="py-2 px-3 text-center w-10 uppercase text-[11px]">S.N.</th>
-                      <th className="py-2 px-3 uppercase text-[11px]">TYPE</th>
+                      <th className="py-2 px-3 uppercase text-[11px]">CATEGORY</th>
                       <th className="py-2 px-3 text-right uppercase text-[11px]">UNITHOLDERS</th>
                       <th className="py-2 px-3 text-right uppercase text-[11px]">UNITS / KITTA</th>
                       <th className="py-2 px-3 text-right uppercase text-[11px]">GROSS DIVIDEND</th>
@@ -579,7 +579,7 @@ function ReportsRoute() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>S.N.</TableHead>
-                      <TableHead>Category / Particular</TableHead>
+                      <TableHead>Category</TableHead>
                       <TableHead className="text-right">Shareholders</TableHead>
                       <TableHead className="text-right">Kitta</TableHead>
                       <TableHead className="text-right">Bonus Issued</TableHead>
@@ -625,7 +625,7 @@ function ReportsRoute() {
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
                   <CardTitle>Debenture Interest Distribution Summary</CardTitle>
-                  <CardDescription>Pumori banking & CDS format for Public, Institution, and Tax Exempted debentures.</CardDescription>
+                  <CardDescription>Pumori banking & CDS format for Public, Institution, and Mutual Fund debentures.</CardDescription>
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={() => DebentureSummaryReportService.exportToExcel(debentureSummary)}>
@@ -640,7 +640,7 @@ function ReportsRoute() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Holder Category</TableHead>
+                      <TableHead>Category</TableHead>
                       <TableHead className="text-right">Kitta</TableHead>
                       <TableHead className="text-right">Principal Amount</TableHead>
                       <TableHead className="text-right">Annual Interest</TableHead>
@@ -711,7 +711,7 @@ function ReportsRoute() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>S.N.</TableHead>
-                      <TableHead>Type</TableHead>
+                      <TableHead>Category</TableHead>
                       <TableHead className="text-right">Unitholders</TableHead>
                       <TableHead className="text-right">Units / Kitta</TableHead>
                       <TableHead className="text-right">Gross Dividend</TableHead>

@@ -1270,7 +1270,7 @@ function DividendPage() {
               <thead>
                 <tr className="bg-muted/80 text-foreground font-semibold border-b border-border divide-x divide-border">
                   <th className="py-2.5 px-3 text-center w-12 uppercase text-[11px]">S.N.</th>
-                  <th className="py-2.5 px-3 uppercase text-[11px]">PARTICULAR</th>
+                  <th className="py-2.5 px-3 uppercase text-[11px]">CATEGORY</th>
                   <th className="py-2.5 px-3 text-right uppercase text-[11px]">NO. OF SHAREHOLDER</th>
                   <th className="py-2.5 px-3 text-right uppercase text-[11px]">KITTA</th>
                   <th className="py-2.5 px-3 text-right uppercase text-[11px]">
