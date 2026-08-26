@@ -313,7 +313,10 @@ export const SummaryReportService = {
     }
 
     const order = ['PUBLIC', 'INSTITUTION', 'MUTUAL FUND', 'PROMOTER', 'LOCAL', 'EMPLOYEE'];
-    const sorted = Array.from(map.values()).sort((a, b) => {
+    const filtered = Array.from(map.values()).filter(
+      (item) => item.transaction_count > 0 || item.kitta > 0 || item.gross > 0,
+    );
+    const sorted = filtered.sort((a, b) => {
       const ai = order.indexOf(a.type);
       const bi = order.indexOf(b.type);
       return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi) || a.type.localeCompare(b.type);

@@ -253,6 +253,9 @@ export const AgmDividendSummaryReportService = {
     for (const key of sortedKeys) {
       const g = groups.get(key)!;
       const shCount = g.shareholders.size;
+      if (shCount === 0 && g.kitta === 0 && g.grossDividend === 0) {
+        continue;
+      }
       const comp = grandKitta > 0 ? (g.kitta / grandKitta) * 100 : 0;
 
       rows.push({

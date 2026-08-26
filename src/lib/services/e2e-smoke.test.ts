@@ -154,12 +154,12 @@ describe('End-to-End System Smoke Test', () => {
       expect(pubRow?.grossInterest).toBe(87500);
       expect(pubRow?.taxAmount).toBe(5250);
 
-      const instRow = report.rows.find(r => r.category === 'PRIVATE');
+      const instRow = report.rows.find(r => r.category === 'INSTITUTION');
       expect(instRow?.taxRatePercent).toBe(15);
       expect(instRow?.grossInterest).toBe(437500);
       expect(instRow?.taxAmount).toBe(65625);
 
-      const exemptRow = report.rows.find(r => r.category === 'MUTUAL_FUND');
+      const exemptRow = report.rows.find(r => r.category === 'MUTUAL FUND');
       expect(exemptRow?.taxRatePercent).toBe(0);
       expect(exemptRow?.grossInterest).toBe(175000);
       expect(exemptRow?.taxAmount).toBe(0);
@@ -172,35 +172,35 @@ describe('End-to-End System Smoke Test', () => {
 
   describe('5. Heuristic Detection of Shareholder Categories', () => {
     it('detects corporate legal persons by name keywords', () => {
-      expect(determineDebentureCategory({ client: { full_name: 'SHIVAM CEMENTS LIMITED' } })).toBe('PRIVATE');
-      expect(determineDebentureCategory({ client: { full_name: 'SURYA JYOTI LIFE INSURANCE CO. LTD.' } })).toBe('PRIVATE');
-      expect(determineDebentureCategory({ client: { full_name: 'KUMARI BANK LIMITED' } })).toBe('PRIVATE');
+      expect(determineDebentureCategory({ client: { full_name: 'SHIVAM CEMENTS LIMITED' } })).toBe('INSTITUTION');
+      expect(determineDebentureCategory({ client: { full_name: 'SURYA JYOTI LIFE INSURANCE CO. LTD.' } })).toBe('INSTITUTION');
+      expect(determineDebentureCategory({ client: { full_name: 'KUMARI BANK LIMITED' } })).toBe('INSTITUTION');
     });
 
     it('detects mutual funds and tax-exempt funds by name keywords', () => {
       // Direct user mention: RBB Focus 40
-      expect(determineDebentureCategory({ client: { full_name: 'RBB FOCUS 40' } })).toBe('MUTUAL_FUND');
+      expect(determineDebentureCategory({ client: { full_name: 'RBB FOCUS 40' } })).toBe('MUTUAL FUND');
       expect(detectPayeeCategory({ full_name: 'RBB Focus 40' })).toBe('MUTUAL_FUND');
       
       // All other unique SEBON mutual funds
-      expect(determineDebentureCategory({ client: { full_name: 'RBB MUTUAL FUND 1' } })).toBe('MUTUAL_FUND');
-      expect(determineDebentureCategory({ client: { full_name: 'NIC ASIA SELECT 30' } })).toBe('MUTUAL_FUND');
-      expect(determineDebentureCategory({ client: { full_name: 'CITIZENS SUPER 30 MUTUAL FUND' } })).toBe('MUTUAL_FUND');
-      expect(determineDebentureCategory({ client: { full_name: 'NIBL SAMRIDDHI FUND 2' } })).toBe('MUTUAL_FUND');
-      expect(determineDebentureCategory({ client: { full_name: 'GLOBAL IME SAMUNNAT SCHEME 1' } })).toBe('MUTUAL_FUND');
-      expect(determineDebentureCategory({ client: { full_name: 'NIBL PRAGATI FUND' } })).toBe('MUTUAL_FUND');
-      expect(determineDebentureCategory({ client: { full_name: 'KUMARI DHANABRIDDHI YOJANA' } })).toBe('MUTUAL_FUND');
-      expect(determineDebentureCategory({ client: { full_name: 'SUNRISE BLUECHIP FUND' } })).toBe('MUTUAL_FUND');
-      expect(determineDebentureCategory({ client: { full_name: 'NABIL FLEXI CAP FUND' } })).toBe('MUTUAL_FUND');
-      expect(determineDebentureCategory({ client: { full_name: 'SANIMA LARGE CAP FUND' } })).toBe('MUTUAL_FUND');
-      expect(determineDebentureCategory({ client: { full_name: 'SIDDHARTHA SYSTEMATIC INVESTMENT SCHEME' } })).toBe('MUTUAL_FUND');
+      expect(determineDebentureCategory({ client: { full_name: 'RBB MUTUAL FUND 1' } })).toBe('MUTUAL FUND');
+      expect(determineDebentureCategory({ client: { full_name: 'NIC ASIA SELECT 30' } })).toBe('MUTUAL FUND');
+      expect(determineDebentureCategory({ client: { full_name: 'CITIZENS SUPER 30 MUTUAL FUND' } })).toBe('MUTUAL FUND');
+      expect(determineDebentureCategory({ client: { full_name: 'NIBL SAMRIDDHI FUND 2' } })).toBe('MUTUAL FUND');
+      expect(determineDebentureCategory({ client: { full_name: 'GLOBAL IME SAMUNNAT SCHEME 1' } })).toBe('MUTUAL FUND');
+      expect(determineDebentureCategory({ client: { full_name: 'NIBL PRAGATI FUND' } })).toBe('MUTUAL FUND');
+      expect(determineDebentureCategory({ client: { full_name: 'KUMARI DHANABRIDDHI YOJANA' } })).toBe('MUTUAL FUND');
+      expect(determineDebentureCategory({ client: { full_name: 'SUNRISE BLUECHIP FUND' } })).toBe('MUTUAL FUND');
+      expect(determineDebentureCategory({ client: { full_name: 'NABIL FLEXI CAP FUND' } })).toBe('MUTUAL FUND');
+      expect(determineDebentureCategory({ client: { full_name: 'SANIMA LARGE CAP FUND' } })).toBe('MUTUAL FUND');
+      expect(determineDebentureCategory({ client: { full_name: 'SIDDHARTHA SYSTEMATIC INVESTMENT SCHEME' } })).toBe('MUTUAL FUND');
       
       // Statutory Tax-Exempt / Retirement Funds
-      expect(determineDebentureCategory({ client: { full_name: 'CITIZEN INVESTMENT TRUST' } })).toBe('MUTUAL_FUND');
-      expect(determineDebentureCategory({ client: { full_name: 'EMPLOYEES PROVIDENT FUND' } })).toBe('MUTUAL_FUND');
-      expect(determineDebentureCategory({ client: { full_name: 'NAGARIK LAGANI KOSH' } })).toBe('MUTUAL_FUND');
-      expect(determineDebentureCategory({ client: { full_name: 'SOCIAL SECURITY FUND' } })).toBe('MUTUAL_FUND');
-      expect(determineDebentureCategory({ client: { full_name: 'NEPAL BANK KARMACHARI AWAKASH KOSH BYAWASTHAPAN TRUST' } })).toBe('MUTUAL_FUND');
+      expect(determineDebentureCategory({ client: { full_name: 'CITIZEN INVESTMENT TRUST' } })).toBe('MUTUAL FUND');
+      expect(determineDebentureCategory({ client: { full_name: 'EMPLOYEES PROVIDENT FUND' } })).toBe('MUTUAL FUND');
+      expect(determineDebentureCategory({ client: { full_name: 'NAGARIK LAGANI KOSH' } })).toBe('MUTUAL FUND');
+      expect(determineDebentureCategory({ client: { full_name: 'SOCIAL SECURITY FUND' } })).toBe('MUTUAL FUND');
+      expect(determineDebentureCategory({ client: { full_name: 'NEPAL BANK KARMACHARI AWAKASH KOSH BYAWASTHAPAN TRUST' } })).toBe('MUTUAL FUND');
     });
 
     it('detects natural persons as default public and avoids false positives on names containing kosh', () => {
@@ -228,13 +228,13 @@ describe('End-to-End System Smoke Test', () => {
     });
 
     it('classifies private limited companies with fund/kosh in name as INSTITUTION', () => {
-      expect(determineDebentureCategory({ client: { full_name: 'KHIMADEVI LAGANI KOSH PVT.LTD' } })).toBe('PRIVATE');
+      expect(determineDebentureCategory({ client: { full_name: 'KHIMADEVI LAGANI KOSH PVT.LTD' } })).toBe('INSTITUTION');
       expect(detectPayeeCategory({ full_name: 'KHIMADEVI LAGANI KOSH PVT.LTD' })).toBe('INSTITUTION');
 
-      expect(determineDebentureCategory({ client: { full_name: 'KOSH BYAWASTHAPAN COMPANY' } })).toBe('PRIVATE');
+      expect(determineDebentureCategory({ client: { full_name: 'KOSH BYAWASTHAPAN COMPANY' } })).toBe('INSTITUTION');
       expect(detectPayeeCategory({ full_name: 'KOSH BYAWASTHAPAN COMPANY' })).toBe('INSTITUTION');
 
-      expect(determineDebentureCategory({ client: { full_name: 'SHUBHA LAGANI PVT. LTD.' } })).toBe('PRIVATE');
+      expect(determineDebentureCategory({ client: { full_name: 'SHUBHA LAGANI PVT. LTD.' } })).toBe('INSTITUTION');
       expect(detectPayeeCategory({ full_name: 'SHUBHA LAGANI PVT. LTD.' })).toBe('INSTITUTION');
     });
   });

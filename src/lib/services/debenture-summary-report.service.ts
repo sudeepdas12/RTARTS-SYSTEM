@@ -38,10 +38,20 @@ export interface DebentureSummaryReport {
   };
 }
 
-export function determineDebentureCategory(p: any): 'PUBLIC' | 'PRIVATE' | 'MUTUAL_FUND' {
+export type DebentureParticular = 'PUBLIC' | 'INSTITUTION' | 'MUTUAL FUND' | 'PROMOTER' | 'LOCAL' | 'EMPLOYEE';
+
+export function determineDebentureCategory(p: any): DebentureParticular {
+  const lot = String(p.lot_name || '').trim().toUpperCase();
+  const holder = String(p.client?.holder_type || p.holder_type || '').toUpperCase();
+  const segment = String(p.payee_segment || p.client?.payee_segment || '').toUpperCase();
+
+  if (lot.includes('PROMOTER') || lot.includes('PROMOT') || holder.includes('PROMOT') || segment === 'PROMOTER') return 'PROMOTER';
+  if (lot.includes('LOCAL') || lot.includes('UNVERIFIED') || holder.includes('LOCAL') || segment === 'LOCAL') return 'LOCAL';
+  if (lot.includes('STAFF') || lot.includes('EMPLOYEE') || holder.includes('EMPLOYEE') || holder.includes('STAFF') || segment === 'EMPLOYEE') return 'EMPLOYEE';
+
   const explicitClass = p.payee_classification || p.client?.payee_classification;
-  if (explicitClass === 'TAX_EXEMPT') return 'MUTUAL_FUND';
-  if (explicitClass === 'COMPANY_INSTITUTION') return 'PRIVATE';
+  if (explicitClass === 'TAX_EXEMPT') return 'MUTUAL FUND';
+  if (explicitClass === 'COMPANY_INSTITUTION') return 'INSTITUTION';
   if (explicitClass === 'NATURAL_PERSON' || explicitClass === 'PUBLIC_LEGAL_PERSON') return 'PUBLIC';
 
   const result = smartClassify({
@@ -54,8 +64,11 @@ export function determineDebentureCategory(p: any): 'PUBLIC' | 'PRIVATE' | 'MUTU
     lot_name: p.lot_name,
   });
 
-  if (result.payee_classification === 'TAX_EXEMPT') return 'MUTUAL_FUND';
-  if (result.payee_classification === 'COMPANY_INSTITUTION') return 'PRIVATE';
+  if (result.payee_classification === 'TAX_EXEMPT' || result.payee_category === 'MUTUAL_FUND') return 'MUTUAL FUND';
+  if (result.payee_classification === 'COMPANY_INSTITUTION' || result.payee_category === 'INSTITUTION') return 'INSTITUTION';
+  if (result.payee_category === 'PROMOTER') return 'PROMOTER';
+  if (result.payee_category === 'LOCAL') return 'LOCAL';
+  if (result.payee_category === 'EMPLOYEE') return 'EMPLOYEE';
   return 'PUBLIC';
 }
 
@@ -123,8 +136,21 @@ export const DebentureSummaryReportService = {
       }
     }
 
-    const groups: Record<
-      'PUBLIC' | 'PRIVATE' | 'MUTUAL_FUND',
+    const categoryConfigs: Array<{
+      key: DebentureParticular;
+      label: string;
+      taxRatePercent: number;
+    }> = [
+      { key: 'PUBLIC', label: 'PUBLIC', taxRatePercent: 6 },
+      { key: 'INSTITUTION', label: 'INSTITUTION', taxRatePercent: 15 },
+      { key: 'MUTUAL FUND', label: 'MUTUAL FUND', taxRatePercent: 0 },
+      { key: 'PROMOTER', label: 'PROMOTER', taxRatePercent: 6 },
+      { key: 'LOCAL', label: 'LOCAL', taxRatePercent: 6 },
+      { key: 'EMPLOYEE', label: 'EMPLOYEE', taxRatePercent: 6 },
+    ];
+
+    const groups = new Map<
+      DebentureParticular,
       {
         kitta: number;
         principal: number;
@@ -134,11 +160,19 @@ export const DebentureSummaryReportService = {
         net: number;
         unitholders: Set<string>;
       }
-    > = {
-      PUBLIC: { kitta: 0, principal: 0, annualInterest: 0, gross: 0, tax: 0, net: 0, unitholders: new Set() },
-      PRIVATE: { kitta: 0, principal: 0, annualInterest: 0, gross: 0, tax: 0, net: 0, unitholders: new Set() },
-      MUTUAL_FUND: { kitta: 0, principal: 0, annualInterest: 0, gross: 0, tax: 0, net: 0, unitholders: new Set() },
-    };
+    >();
+
+    for (const cfg of categoryConfigs) {
+      groups.set(cfg.key, {
+        kitta: 0,
+        principal: 0,
+        annualInterest: 0,
+        gross: 0,
+        tax: 0,
+        net: 0,
+        unitholders: new Set(),
+      });
+    }
 
     let grandKitta = 0;
 
@@ -163,34 +197,25 @@ export const DebentureSummaryReportService = {
       if (gross === 0 && kitta > 0) {
         gross = annualInt;
       }
-      if (tax === 0 && gross > 0 && cat !== 'MUTUAL_FUND') {
-        const ratePct = cat === 'PUBLIC' ? 0.06 : 0.15;
+      if (tax === 0 && gross > 0 && cat !== 'MUTUAL FUND') {
+        const ratePct = cat === 'INSTITUTION' ? 0.15 : 0.06;
         tax = Math.round(gross * ratePct * 100) / 100;
       }
       if (net === 0 && gross > 0) {
         net = Math.round((gross - tax) * 100) / 100;
       }
 
-      groups[cat].kitta += kitta;
-      groups[cat].principal += principal;
-      groups[cat].annualInterest += annualInt;
-      groups[cat].gross += gross;
-      groups[cat].tax += tax;
-      groups[cat].net += net;
-      groups[cat].unitholders.add(clientId);
+      const g = groups.get(cat)!;
+      g.kitta += kitta;
+      g.principal += principal;
+      g.annualInterest += annualInt;
+      g.gross += gross;
+      g.tax += tax;
+      g.net += net;
+      g.unitholders.add(clientId);
 
       grandKitta += kitta;
     }
-
-    const categoryConfigs: Array<{
-      key: 'PUBLIC' | 'PRIVATE' | 'MUTUAL_FUND';
-      label: string;
-      taxRatePercent: number;
-    }> = [
-      { key: 'PUBLIC', label: 'PUBLIC', taxRatePercent: 6 },
-      { key: 'PRIVATE', label: 'INSTITUTION', taxRatePercent: 15 },
-      { key: 'MUTUAL_FUND', label: 'MUTUAL FUND', taxRatePercent: 0 },
-    ];
 
     const rows: DebentureSummaryRow[] = [];
     const total = {
@@ -206,7 +231,12 @@ export const DebentureSummaryReportService = {
     };
 
     for (const cfg of categoryConfigs) {
-      const g = groups[cfg.key];
+      const g = groups.get(cfg.key)!;
+      // If no unitholders, kitta, or interest exists for this category, omit it from the summary
+      if (g.unitholders.size === 0 && g.kitta === 0 && g.gross === 0) {
+        continue;
+      }
+
       const principal = g.principal;
       const annualInt = g.annualInterest;
       const intPerDay = Math.round((annualInt / 365) * 100) / 100;
@@ -218,7 +248,7 @@ export const DebentureSummaryReportService = {
 
       rows.push({
         name: cfg.label,
-        category: cfg.key,
+        category: cfg.key as any,
         kitta: g.kitta,
         principalAmount: principal,
         annualInterest: annualInt,
