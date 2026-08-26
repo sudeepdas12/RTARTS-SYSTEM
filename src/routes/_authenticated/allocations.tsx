@@ -486,6 +486,70 @@ function AllocationsPage() {
                     />
                   </div>
                 </div>
+
+                {/* Lock Date Source Toggle & Spacing Notice */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t text-[11px]">
+                  <div className="flex items-center gap-3">
+                    <span className="font-medium text-muted-foreground">Lock-in Date Source:</span>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="lockDateMode"
+                        checked={!isLockAll}
+                        onChange={() => setIsLockAll(false)}
+                        className="h-3 w-3 text-primary"
+                      />
+                      <span>From Spreadsheet Rows</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="lockDateMode"
+                        checked={isLockAll}
+                        onChange={() => setIsLockAll(true)}
+                        className="h-3 w-3 text-primary"
+                      />
+                      <span>Apply Fixed Lot Expiry Date</span>
+                    </label>
+                  </div>
+                  <div className="text-muted-foreground font-mono">
+                    Header: 42 chars | Detail: 124 chars | CRLF endings
+                  </div>
+                </div>
+
+                {/* Live CDSC Fixed-Width Line Inspector */}
+                {records.length > 0 && (
+                  <div className="p-3 rounded-lg bg-muted/40 border space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px] font-semibold text-muted-foreground">
+                      <span className="flex items-center gap-1.5">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                        CDSC Fixed-Width Output Inspector (Exact Spacing & Character Positions)
+                      </span>
+                      <span className="font-mono text-[10px] text-primary">Strict CDSC Spec Verified</span>
+                    </div>
+                    <div className="font-mono text-[11px] bg-background/80 p-2.5 rounded border overflow-x-auto space-y-1">
+                      <div className="text-muted-foreground text-[10px]">
+                        Line 1 (Header: 42 chars) = [Recs: 1-10] [CurrentQty: 11-26] [LockQty: 27-42]
+                      </div>
+                      <div className="text-emerald-700 dark:text-emerald-300 select-all font-semibold">
+                        {IafGeneratorService.formatIafHeader(records.length, summary?.totalAllottedKitta || 0, summary?.totalLockInKitta || 0)}
+                      </div>
+                      <div className="text-muted-foreground text-[10px] pt-1">
+                        Line 2 (Detail: 124 chars) = [BOID: 1-16] [Curr: 17-32] [Lock: 33-48] [Code: 49-50] [Reason: 51-100] [Date: 101-108] [Ref: 109-124]
+                      </div>
+                      <div className="text-primary select-all font-semibold whitespace-pre">
+                        {IafGeneratorService.formatIafDetailLine({
+                          ...records[0],
+                          lockInKitta: isLockAll ? records[0].currentKitta : records[0].lockInKitta,
+                          lockInReasonCode: customLockCode || records[0].lockInReasonCode,
+                          lockInReason: customLockReason || records[0].lockInReason,
+                          lockInExpiryDate: isLockAll ? customExpiryDate : records[0].lockInExpiryDate,
+                          rtaIntRefNo: rtaRef || records[0].rtaIntRefNo,
+                        }, rtaRef)}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>

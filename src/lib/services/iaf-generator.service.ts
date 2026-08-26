@@ -128,9 +128,33 @@ export function normalizeDateToDDMMYYYY(dateInput?: string | Date | number | nul
   if (!dateInput) return '00000000';
 
   if (typeof dateInput === 'string') {
-    const clean = dateInput.replace(/[^0-9]/g, '');
+    const raw = dateInput.trim();
+    if (!raw || raw === '00000000' || raw === '0') return '00000000';
+
+    // Handle delimited strings: DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, YYYY-MM-DD, YYYY/MM/DD
+    const delimMatch = raw.match(/^(\d{1,4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,4})$/);
+    if (delimMatch) {
+      const p1 = delimMatch[1];
+      const p2 = delimMatch[2];
+      const p3 = delimMatch[3];
+      if (p1.length === 4) {
+        // YYYY-MM-DD
+        const yyyy = p1;
+        const mm = p2.padStart(2, '0');
+        const dd = p3.padStart(2, '0');
+        return `${dd}${mm}${yyyy}`;
+      } else {
+        // DD/MM/YYYY
+        const dd = p1.padStart(2, '0');
+        const mm = p2.padStart(2, '0');
+        const yyyy = p3.length === 2 ? `20${p3}` : p3.padStart(4, '20');
+        return `${dd}${mm}${yyyy}`;
+      }
+    }
+
+    const clean = raw.replace(/[^0-9]/g, '');
     if (clean.length === 8) {
-      // If ends with 4-digit year 19XX or 20XX (e.g. 19042029), it is already DDMMYYYY
+      // If ends with 4-digit year 19XX or 20XX (e.g. 19042029 or 20112026), it is already DDMMYYYY
       const endYear = clean.slice(4, 8);
       if (endYear.startsWith('20') || endYear.startsWith('19')) {
         return clean;
@@ -188,19 +212,21 @@ export function formatIafHeader(totalRecords: number, totalCurrentQty: number, t
  * - RTA INT REF NO: Char(16) - space padded
  */
 export function formatIafDetailLine(record: IafRecord, defaultRtaRef = ''): string {
-  const boid = String(record.boid || '').trim().padStart(16, '0').slice(0, 16);
+  const boid = String(record.boid || '').trim().replace(/[^0-9A-Za-z]/g, '').padStart(16, '0').slice(0, 16);
   const currentQty = formatIafQuantity(record.currentKitta);
   const lockInQty = formatIafQuantity(record.lockInKitta);
   
-  let lockCode = String(record.lockInReasonCode || '00').padStart(2, '0').slice(0, 2);
-  if (record.lockInKitta <= 0) {
-    lockCode = '00';
+  let lockCode = '00';
+  let reason = ''.padEnd(50, ' ');
+  let expiry = '00000000';
+
+  if (record.lockInKitta > 0) {
+    lockCode = String(record.lockInReasonCode || '09').padStart(2, '0').slice(0, 2);
+    const rawReason = record.lockInReason || 'Local Affected';
+    reason = rawReason.padEnd(50, ' ').slice(0, 50);
+    expiry = normalizeDateToDDMMYYYY(record.lockInExpiryDate || '00000000').padEnd(8, '0').slice(0, 8);
   }
 
-  const rawReason = record.lockInKitta > 0 ? (record.lockInReason || 'Local Affected') : '';
-  const reason = rawReason.padEnd(50, ' ').slice(0, 50);
-
-  const expiry = record.lockInKitta > 0 ? (record.lockInExpiryDate || '00000000').padEnd(8, '0').slice(0, 8) : '00000000';
   const rtaRef = (record.rtaIntRefNo || defaultRtaRef || '').padEnd(16, ' ').slice(0, 16);
 
   return `${boid}${currentQty}${lockInQty}${lockCode}${reason}${expiry}${rtaRef}`;
