@@ -6,7 +6,7 @@ export interface InterestCalculationParams {
   toDate?: Date;
   daysCount?: number;           // explicit day count
   taxRate?: number;             // e.g. 0.06 for 6% TDS
-  taxCategory?: 'PUBLIC' | 'PRIVATE' | 'MUTUAL_FUND' | 'INSTITUTION' | 'TAX_EXEMPTED' | 'PROMOTER' | 'CUSTOM';
+  taxCategory?: 'PUBLIC' | 'PRIVATE' | 'MUTUAL_FUND' | 'INSTITUTION' | 'TAX_EXEMPTED' | 'PROMOTER' | 'LOCAL' | 'EMPLOYEE' | 'CUSTOM';
 }
 
 export interface InterestResult {
@@ -54,8 +54,14 @@ export const InterestCalculator = {
       tdsRate = 0.0; // Tax Exempted / Mutual Fund
     } else if (params.taxCategory === 'INSTITUTION') {
       tdsRate = 0.15; // Legal Person / Company
-    } else if (params.taxCategory === 'PUBLIC' || params.taxCategory === 'PRIVATE' || params.taxCategory === 'PROMOTER') {
-      tdsRate = 0.06; // Natural Person
+    } else if (
+      params.taxCategory === 'PUBLIC' ||
+      params.taxCategory === 'PRIVATE' ||
+      params.taxCategory === 'PROMOTER' ||
+      params.taxCategory === 'LOCAL' ||
+      params.taxCategory === 'EMPLOYEE'
+    ) {
+      tdsRate = 0.06; // Natural Person (6% on debenture coupon)
     } else if (params.taxCategory === 'CUSTOM' && params.taxRate !== undefined) {
       tdsRate = params.taxRate;
     }

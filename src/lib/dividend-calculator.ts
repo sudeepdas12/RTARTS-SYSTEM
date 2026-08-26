@@ -4,7 +4,7 @@ export interface DividendCalculationParams {
   cashDividendRate?: number; // e.g. 5.631 for Rs 5.631 per share OR 10 for 10%
   cashRateIsPerShare?: boolean; // true if Rs 5.631 per share, false if percentage of face value
   bonusRatio?: number;       // e.g. 0.07 for 7% bonus
-  taxCategory?: 'PUBLIC' | 'INSTITUTION' | 'TAX_EXEMPTED' | 'PROMOTER' | 'CUSTOM';
+  taxCategory?: 'PUBLIC' | 'INSTITUTION' | 'TAX_EXEMPTED' | 'MUTUAL_FUND' | 'PROMOTER' | 'LOCAL' | 'EMPLOYEE' | 'CUSTOM';
   customTaxRate?: number;    // e.g. 0.15 for 15%
   faceValue?: number;        // Default 100
 }
@@ -28,10 +28,12 @@ export const DividendCalculator = {
     const sharesHeld = Math.max(0, params.sharesHeld || 0);
     
     // Determine TDS Rate by Category
-    let appliedTdsRate = 0.05; // Default 5% for Natural Person (Public) and Legal Person (Institution)
-    if (params.taxCategory === 'TAX_EXEMPTED') appliedTdsRate = 0.0; // 0% for Mutual Fund (Tax Exempted)
-    else if (params.taxCategory === 'PROMOTER') appliedTdsRate = 0.05; // Explicitly 5% for Promoter dividend
-    else if (params.taxCategory === 'CUSTOM' && params.customTaxRate !== undefined) appliedTdsRate = Math.max(0, params.customTaxRate);
+    let appliedTdsRate = 0.05; // Default 5% for Public, Institution, Promoter, Local, Employee
+    if (params.taxCategory === 'TAX_EXEMPTED' || params.taxCategory === 'MUTUAL_FUND') {
+      appliedTdsRate = 0.0; // 0% for Mutual Fund (Tax Exempted)
+    } else if (params.taxCategory === 'CUSTOM' && params.customTaxRate !== undefined) {
+      appliedTdsRate = Math.max(0, params.customTaxRate);
+    }
 
     // 1. Bonus / Right Share Calculations
     let exactBonusShares = 0;

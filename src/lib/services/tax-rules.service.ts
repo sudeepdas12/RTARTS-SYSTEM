@@ -109,6 +109,7 @@ export function investorCategoryToClassification(
     case "FOREIGN":
       return "COMPANY_INSTITUTION";
     case "MUTUAL_FUND":
+    case "MUTUAL FUND":
     case "TAX_EXEMPT":
     case "TAX_EXEMPTED":
       return "TAX_EXEMPT";
@@ -117,7 +118,13 @@ export function investorCategoryToClassification(
       return "PUBLIC_LEGAL_PERSON";
     case "PROMOTER":
     case "LOCAL":
+    case "EMPLOYEE":
+    case "STAFF":
     case "NATURAL_PERSON":
+    case "NATURAL PERSON - PUBLIC":
+    case "NATURAL PERSON - LOCAL":
+    case "NATURAL PERSON - EMPLOYEE":
+    case "NATURAL PERSON - PROMOTER":
       return "NATURAL_PERSON";
     default:
       return null;
