@@ -25,18 +25,9 @@ export const Route = createFileRoute("/_authenticated/analytics")({
   component: AnalyticsPage,
 });
 
+import { formatCurrencyNPR as fmt, formatCount as fmtCount } from "@/lib/currency";
+
 const PAGE_SIZE = 20;
-
-const fmt = (n: number | null | undefined) =>
-  n == null
-    ? "—"
-    : Number(n).toLocaleString("en-US", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      });
-
-const fmtCount = (n: number | null | undefined) =>
-  n == null || n === 0 ? "—" : Number(n).toLocaleString();
 
 function StatCard({
   title,
@@ -77,6 +68,7 @@ function AnalyticsPage() {
 
   const { data: companies = [] } = useQuery({
     queryKey: ["companies-lookup"],
+    staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("companies")
@@ -89,11 +81,14 @@ function AnalyticsPage() {
 
   const { data: fiscalYears = [] } = useQuery({
     queryKey: ["distinct-fiscal-years"],
+    staleTime: 5 * 60 * 1000,
     queryFn: () => DataManagementService.getDistinctFiscalYears(),
   });
 
   const { data: summary = [], isLoading: summaryLoading, refetch: refetchSummary } = useQuery({
     queryKey: ["company-fiscal-summary", selectedFy],
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
     queryFn: () =>
       DataManagementService.getCompanyFiscalSummary(
         selectedFy !== "all" ? selectedFy : undefined

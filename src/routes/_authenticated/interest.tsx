@@ -425,10 +425,17 @@ function InterestPage() {
 
   const upsert = useMutation({
     mutationFn: async () => {
+      if (!canWrite) throw new Error("Unauthorized: You do not have permission to modify records.");
       const kittaVal = form.kitta ? Number(form.kitta) : null;
       const gross = form.gross_interest ? Number(form.gross_interest) : null;
       const tax = form.tax_amount ? Number(form.tax_amount) : null;
-      const net = form.net_payable ? Number(form.net_payable) : (gross != null && tax != null ? gross - tax : (gross ?? null));
+      const net = form.net_payable ? Number(form.net_payable) : (gross != null && tax != null ? Math.max(0, gross - tax) : (gross ?? null));
+
+      if (kittaVal != null && kittaVal < 0) throw new Error("Kitta cannot be negative.");
+      if (gross != null && gross < 0) throw new Error("Gross interest cannot be negative.");
+      if (tax != null && tax < 0) throw new Error("Tax amount cannot be negative.");
+      if (net != null && net < 0) throw new Error("Net payable cannot be negative.");
+
       const payload = {
         company_id: form.company_id || null,
         client_id: form.client_id || null,
@@ -444,6 +451,14 @@ function InterestPage() {
         payment_reference: form.payment_reference || null,
         fiscal_year: form.fiscal_year || null,
       };
+
+      if (editing) {
+        const { error } = await supabase.from("interest_payables").update(payload as never).eq("id", editing.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from("interest_payables").insert(payload as never);
+        if (error) throw error;
+      }
 
       // If editing, also update the client record with editable client details
       if (editing && editing.client_id) {
@@ -469,14 +484,6 @@ function InterestPage() {
         const { error: clientErr } = await supabase.from("clients").update(clientPayload as never).eq("id", editing.client_id);
         if (clientErr) throw clientErr;
       }
-
-      if (editing) {
-        const { error } = await supabase.from("interest_payables").update(payload as never).eq("id", editing.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from("interest_payables").insert(payload as never);
-        if (error) throw error;
-      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["interest_payables"] });
@@ -491,6 +498,7 @@ function InterestPage() {
 
   const del = useMutation({
     mutationFn: async (id: string) => {
+      if (!canDelete) throw new Error("Unauthorized: You do not have permission to delete records.");
       const { error } = await supabase.from("interest_payables").delete().eq("id", id);
       if (error) throw error;
     },
@@ -506,6 +514,7 @@ function InterestPage() {
 
   const markPaid = useMutation({
     mutationFn: async () => {
+      if (!canWrite) throw new Error("Unauthorized: You do not have permission to update payment status.");
       if (!payOpen) return;
       const { error } = await supabase
         .from("interest_payables")

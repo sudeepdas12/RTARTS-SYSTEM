@@ -75,24 +75,26 @@ export const DividendCalculator = {
     
     // Cash Dividend Tax: Gross Cash Dividend * TDS Rate
     const cashTaxAmount = grossCashDividend * appliedTdsRate;
+
+    // Round individual financial components to paisa (2 decimal places) before calculating totals and net
+    const rGross = Math.round(grossCashDividend * 100) / 100;
+    const rCashTax = Math.round(cashTaxAmount * 100) / 100;
+    const rBonusTax = Math.round(bonusTaxAmount * 100) / 100;
+    const rTotalTax = Math.round((rCashTax + rBonusTax) * 100) / 100;
     
-    const totalTaxAmount = bonusTaxAmount + cashTaxAmount;
-    
-    // Net Cash Payable: Cash dividend minus the tax on the cash dividend
-    // The bonus tax should be deducted from the net cash payable if it's a combined dividend where the cash component covers the bonus tax.
-    // If it's a bonus-only dividend, the cash dividend is 0, so deducting totalTaxAmount from 0 would yield negative (floor to 0).
-    const netCashPayable = Math.max(0, grossCashDividend - cashTaxAmount - bonusTaxAmount);
+    // Net Cash Payable: Cash dividend minus total tax on cash and bonus
+    const netCashPayable = Math.max(0, Math.round((rGross - rTotalTax) * 100) / 100);
 
     return {
       exactBonusShares: Math.round(exactBonusShares * 10000) / 10000,
       issuedBonusShares,
       fractionBonusShares: Math.round(fractionBonusShares * 10000) / 10000,
       afterBonusKitta: Math.round(afterBonusKitta * 10000) / 10000,
-      grossCashDividend: Math.round(grossCashDividend * 100) / 100,
-      bonusTaxAmount: Math.round(bonusTaxAmount * 100) / 100,
-      cashTaxAmount: Math.round(cashTaxAmount * 100) / 100,
-      totalTaxAmount: Math.round(totalTaxAmount * 100) / 100,
-      netCashPayable: Math.round(netCashPayable * 100) / 100,
+      grossCashDividend: rGross,
+      bonusTaxAmount: rBonusTax,
+      cashTaxAmount: rCashTax,
+      totalTaxAmount: rTotalTax,
+      netCashPayable,
       appliedTdsRate
     };
   }

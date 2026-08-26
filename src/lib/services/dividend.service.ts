@@ -25,7 +25,7 @@ export const DividendService = {
     const payload = {
       company_id: payable.company_id!,
       client_id: payable.client_id!,
-      amount: Number(payable.gross_dividend ?? 0) - Number(payable.tax_amount ?? 0),
+      amount: Math.max(0, Math.round((Number(payable.gross_dividend ?? 0) - Number(payable.tax_amount ?? 0)) * 100) / 100),
       fiscal_year: payable.fiscal_year ?? '',
       payment_reference: payable.payment_reference ?? null,
       payment_date: payable.payment_date ?? new Date().toISOString().slice(0, 10),

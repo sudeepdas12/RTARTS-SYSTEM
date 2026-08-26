@@ -429,12 +429,20 @@ function DividendPage() {
 
   const upsert = useMutation({
     mutationFn: async () => {
+      if (!canWrite) throw new Error("Unauthorized: You do not have permission to modify records.");
       const shares = form.shares_held ? Number(form.shares_held) : null;
       const rate = form.dividend_rate ? Number(form.dividend_rate) : null;
       const gross = form.gross_dividend ? Number(form.gross_dividend) : (shares != null && rate != null ? shares * rate : null);
       const tax = form.tax_amount ? Number(form.tax_amount) : null;
       const bonusTax = form.bonus_tax ? Number(form.bonus_tax) : 0;
       const net = form.net_payable ? Number(form.net_payable) : (gross != null && tax != null ? Math.max(0, gross - tax - bonusTax) : (gross ?? null));
+
+      if (shares != null && shares < 0) throw new Error("Shares held cannot be negative.");
+      if (gross != null && gross < 0) throw new Error("Gross dividend cannot be negative.");
+      if (tax != null && tax < 0) throw new Error("Tax amount cannot be negative.");
+      if (bonusTax < 0) throw new Error("Bonus tax cannot be negative.");
+      if (net != null && net < 0) throw new Error("Net payable cannot be negative.");
+
       const payload = {
         company_id: form.company_id || null,
         client_id: form.client_id || null,
@@ -455,6 +463,14 @@ function DividendPage() {
         bonus_tax: form.bonus_tax ? Number(form.bonus_tax) : null,
         lot_name: form.lot_name || null,
       };
+
+      if (editing) {
+        const { error } = await supabase.from("dividend_payables").update(payload as never).eq("id", editing.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from("dividend_payables").insert(payload as never);
+        if (error) throw error;
+      }
 
       // If editing, also update the client record with editable client details
       if (editing && editing.client_id) {
@@ -479,14 +495,6 @@ function DividendPage() {
         const { error: clientErr } = await supabase.from("clients").update(clientPayload as never).eq("id", editing.client_id);
         if (clientErr) throw clientErr;
       }
-
-      if (editing) {
-        const { error } = await supabase.from("dividend_payables").update(payload as never).eq("id", editing.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from("dividend_payables").insert(payload as never);
-        if (error) throw error;
-      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["dividend_payables"] });
@@ -500,6 +508,7 @@ function DividendPage() {
 
   const del = useMutation({
     mutationFn: async (id: string) => {
+      if (!canDelete) throw new Error("Unauthorized: You do not have permission to delete records.");
       const { error } = await supabase.from("dividend_payables").delete().eq("id", id);
       if (error) throw error;
     },
@@ -513,6 +522,7 @@ function DividendPage() {
 
   const markPaid = useMutation({
     mutationFn: async () => {
+      if (!canWrite) throw new Error("Unauthorized: You do not have permission to update payment status.");
       if (!payOpen) return;
       const { error } = await supabase
         .from("dividend_payables")

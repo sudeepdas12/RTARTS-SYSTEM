@@ -78,6 +78,8 @@ function ReportsRoute() {
 
   const { data: companies = [] } = useQuery({
     queryKey: ["report-companies"],
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
     queryFn: async () => {
       const { data, error } = await supabase.from("companies").select("id, company_name, company_code").order("company_name");
       if (error) throw error;
@@ -91,6 +93,8 @@ function ReportsRoute() {
   // 1. Consolidated Summary
   const summary = useQuery({
     queryKey: ["live-payable-summary", companyId],
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
     queryFn: () => SummaryReportService.getCompanySummary(filters),
   });
   const rows = summary.data || [];
@@ -112,6 +116,8 @@ function ReportsRoute() {
   // 2. AGM Dividend Summary
   const agmSummaryQuery = useQuery({
     queryKey: ["agm-dividend-summary-report", companyId],
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
     queryFn: () => AgmDividendSummaryReportService.getCompanySummary(companyId === "all" ? undefined : companyId),
   });
   const agmSummary = agmSummaryQuery.data;
@@ -119,6 +125,8 @@ function ReportsRoute() {
   // 3. Debenture Summary
   const debentureSummaryQuery = useQuery({
     queryKey: ["debenture-interest-summary-report", companyId],
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
     queryFn: async () => {
       const data = await fetchAllRows<any>((from, to) => {
         let q = (supabase as any)
@@ -142,6 +150,8 @@ function ReportsRoute() {
   // 4. Mutual Fund Summary
   const mfSummaryQuery = useQuery({
     queryKey: ["mutual-fund-summary-report", companyId],
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
     queryFn: () => SummaryReportService.getMutualFundSummary({ companyId }),
   });
   const mfSummary = mfSummaryQuery.data || [];
@@ -201,12 +211,19 @@ function ReportsRoute() {
     }
   };
 
-  const handleRefreshAll = () => {
-    summary.refetch();
-    agmSummaryQuery.refetch();
-    debentureSummaryQuery.refetch();
-    mfSummaryQuery.refetch();
-    toast.success("All summaries refreshed with latest data.");
+  const handleRefreshAll = async () => {
+    const results = await Promise.allSettled([
+      summary.refetch(),
+      agmSummaryQuery.refetch(),
+      debentureSummaryQuery.refetch(),
+      mfSummaryQuery.refetch(),
+    ]);
+    const failed = results.filter((r) => r.status === "rejected");
+    if (failed.length > 0) {
+      toast.error(`${failed.length} report(s) could not be refreshed.`);
+    } else {
+      toast.success("All summaries refreshed with latest data.");
+    }
   };
 
   return (

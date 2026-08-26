@@ -66,18 +66,20 @@ export const InterestCalculator = {
       tdsRate = params.taxRate;
     }
 
-    const taxAmount = grossPeriodInterest * tdsRate;
-    const netInterestPayable = grossPeriodInterest - taxAmount;
+    const rawTaxAmount = grossPeriodInterest * tdsRate;
+    const rGross = Math.round(grossPeriodInterest * 100) / 100;
+    const rTax = Math.round(rawTaxAmount * 100) / 100;
+    const netInterestPayable = Math.max(0, Math.round((rGross - rTax) * 100) / 100);
 
     return {
       totalPrincipal,
       annualInterestAmount: Math.round(annualInterestAmount * 100) / 100,
       dailyInterestRate: Math.round(dailyInterestRate * 1000000) / 1000000,
       daysCount: days,
-      grossPeriodInterest: Math.round(grossPeriodInterest * 100) / 100,
+      grossPeriodInterest: rGross,
       tdsRate,
-      taxAmount: Math.round(taxAmount * 100) / 100,
-      netInterestPayable: Math.round(netInterestPayable * 100) / 100
+      taxAmount: rTax,
+      netInterestPayable
     };
   }
 };

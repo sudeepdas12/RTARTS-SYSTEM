@@ -1,5 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
-import { bulkUpdateByIds } from '../bulk-ops';
+import { bulkUpdateByIds, chunkArray } from '../bulk-ops';
+import { BULK_CHUNK_SIZE } from '../constants';
 import { getPayeeTaxRate } from './payable-summary';
 
 export interface PaymentBatch {
@@ -195,13 +196,16 @@ export const PaymentService = {
         batch_id: batchId,
       }));
       
-      const { error } = await (supabase as any)
-        .from('payments')
-        .insert(items);
-      
-      if (error) {
-        console.warn('Failed to add line items:', error.message);
-        return false;
+      const chunks = chunkArray(items, BULK_CHUNK_SIZE);
+      for (const chunk of chunks) {
+        const { error } = await (supabase as any)
+          .from('payments')
+          .insert(chunk);
+        
+        if (error) {
+          console.warn('Failed to add line items chunk:', error.message);
+          throw new Error(`Failed to insert payment line items: ${error.message}`);
+        }
       }
       
       // Update batch totals

@@ -65,7 +65,7 @@ export function determineDebentureCategory(p: any): DebentureParticular {
   });
 
   if (result.payee_classification === 'TAX_EXEMPT' || result.payee_category === 'MUTUAL_FUND') return 'MUTUAL FUND';
-  if (result.payee_classification === 'COMPANY_INSTITUTION' || result.payee_category === 'INSTITUTION') return 'INSTITUTION';
+  if (result.payee_classification === 'COMPANY_INSTITUTION' || result.payee_category === 'INSTITUTION' || result.payee_category === 'FOREIGN') return 'INSTITUTION';
   if (result.payee_category === 'PROMOTER') return 'PROMOTER';
   if (result.payee_category === 'LOCAL') return 'LOCAL';
   if (result.payee_category === 'EMPLOYEE') return 'EMPLOYEE';

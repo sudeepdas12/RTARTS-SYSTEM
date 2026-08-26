@@ -577,8 +577,9 @@ export const ReconciliationService = {
             const expectedAmount = Number(result.expected_amount ?? 0);
             const paidAmount = actualAmount || expectedAmount;
             const netAmount = paidAmount;
-            const grossAmount = payableGross || netAmount;
-            const taxAmount = payableTax;
+            const varianceRatio = expectedAmount > 0 ? (paidAmount / expectedAmount) : 1;
+            const grossAmount = Math.round(((payableGross || netAmount) * varianceRatio) * 100) / 100;
+            const taxAmount = Math.round((payableTax * varianceRatio) * 100) / 100;
 
             batchTotalGross += grossAmount;
             batchTotalTax += taxAmount;
