@@ -18,18 +18,43 @@ function applyDateFilter(query: any, field: string, startDate?: string, endDate?
   return query;
 }
 
-function applyClassificationFilter(query: any, classification?: string) {
+function applyClassificationFilter(query: any, classification?: string, tableName?: string) {
   if (!classification || classification === 'all') return query;
+  const isInterest = tableName === 'interest_payables';
+  const isDividend = tableName === 'dividend_payables';
+  const hasLot = isDividend;
+  const hasInstrument = isInterest;
+
   if (classification === 'PROMOTER') {
-    return query.or('payee_segment.eq.PROMOTER,lot_name.ilike.%PROMOT%');
+    const parts = ['payee_segment.eq.PROMOTER'];
+    if (hasLot) parts.push('lot_name.ilike.%PROMOT%');
+    if (hasInstrument) parts.push('instrument_ref.ilike.%PROMOT%');
+    return query.or(parts.join(','));
   } else if (classification === 'LOCAL') {
-    return query.or('payee_segment.eq.LOCAL,lot_name.ilike.%LOCAL%');
+    const parts = ['payee_segment.eq.LOCAL'];
+    if (hasLot) parts.push('lot_name.ilike.%LOCAL%');
+    if (hasInstrument) parts.push('instrument_ref.ilike.%LOCAL%');
+    return query.or(parts.join(','));
+  } else if (classification === 'EMPLOYEE') {
+    const parts = ['payee_segment.eq.EMPLOYEE'];
+    if (hasLot) parts.push('lot_name.ilike.%STAFF%', 'lot_name.ilike.%EMPLOYEE%');
+    if (hasInstrument) parts.push('instrument_ref.ilike.%STAFF%', 'instrument_ref.ilike.%EMPLOYEE%');
+    return query.or(parts.join(','));
   } else if (classification === 'TAX_EXEMPT') {
-    return query.or('payee_classification.eq.TAX_EXEMPT,lot_name.ilike.%MUTUAL%,lot_name.ilike.%EXEMPT%,instrument_ref.ilike.%MUTUAL%,instrument_ref.ilike.%EXEMPT%');
+    const parts = ['payee_classification.eq.TAX_EXEMPT'];
+    if (hasLot) parts.push('lot_name.ilike.%MUTUAL%', 'lot_name.ilike.%EXEMPT%');
+    if (hasInstrument) parts.push('instrument_ref.ilike.%MUTUAL%', 'instrument_ref.ilike.%EXEMPT%');
+    return query.or(parts.join(','));
   } else if (classification === 'INSTITUTION') {
-    return query.or('payee_classification.eq.COMPANY_INSTITUTION,lot_name.ilike.%INSTITUT%,lot_name.ilike.%COMPANY%,instrument_ref.ilike.%INSTITUT%,instrument_ref.ilike.%COMPANY%');
+    const parts = ['payee_classification.eq.COMPANY_INSTITUTION'];
+    if (hasLot) parts.push('lot_name.ilike.%INSTITUT%', 'lot_name.ilike.%COMPANY%');
+    if (hasInstrument) parts.push('instrument_ref.ilike.%INSTITUT%', 'instrument_ref.ilike.%COMPANY%');
+    return query.or(parts.join(','));
   } else if (classification === 'PUBLIC') {
-    return query.or('payee_classification.eq.NATURAL_PERSON,payee_classification.eq.PUBLIC_LEGAL_PERSON,lot_name.ilike.%PUBLIC%,instrument_ref.ilike.%PUBLIC%');
+    const parts = ['payee_classification.eq.NATURAL_PERSON', 'payee_classification.eq.PUBLIC_LEGAL_PERSON'];
+    if (hasLot) parts.push('lot_name.ilike.%PUBLIC%');
+    if (hasInstrument) parts.push('instrument_ref.ilike.%PUBLIC%');
+    return query.or(parts.join(','));
   }
   return query.eq('payee_classification', classification);
 }
@@ -611,7 +636,7 @@ export const ReportService = {
         id: row.id,
         boid: row.client?.boid ?? null,
         shareholder_name: row.client?.full_name ?? row.notes?.split('/')[0]?.replace('Category:', '').trim() ?? 'Shareholder',
-        category: row.notes?.split('/')[0]?.replace('Category:', '').trim() ?? 'General',
+        category: (row.notes && row.notes.includes('/') ? row.notes.split('/')[1] : row.notes)?.replace('Category:', '').trim() || 'General',
         excel_amount: nr(row.actual_amount),
         system_amount: nr(row.expected_amount),
         difference: nr(row.difference),

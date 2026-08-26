@@ -1,5 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import { ParsedExcelData } from './excel-parser';
+import { RECONCILIATION_TOLERANCE_NPR } from './constants';
 
 export interface CategorySummary {
   categoryName: string;
@@ -284,18 +285,25 @@ export const ReconciliationEngine = {
 
         // SOURCE 1: Match against Payables
         if (clientId) {
-          const candidatePayables = payablesByClientId.get(clientId) || [];
-          bestPayable = candidatePayables.reduce<PayableRow | null>((best, current) => {
-            if (!best) return current;
-            const currentDiff = Math.abs(current.net_payable - excelAmount);
-            const bestDiff = Math.abs(best.net_payable - excelAmount);
-            return currentDiff < bestDiff ? current : best;
-          }, null);
+          const candidatePayables = (payablesByClientId.get(clientId) || []).filter(p => !usedPayableIds.has(p.id));
+          if (candidatePayables.length > 0) {
+            // Prioritize exact or within-tolerance amount matches
+            const exactMatches = candidatePayables.filter(p => Math.abs(p.net_payable - excelAmount) <= RECONCILIATION_TOLERANCE_NPR);
+            if (exactMatches.length > 0) {
+              bestPayable = exactMatches[0];
+            } else {
+              bestPayable = candidatePayables.reduce<PayableRow | null>((best, current) => {
+                if (!best) return current;
+                const currentDiff = Math.abs(current.net_payable - excelAmount);
+                const bestDiff = Math.abs(best.net_payable - excelAmount);
+                return currentDiff < bestDiff ? current : best;
+              }, null);
+            }
+          }
           
-          if (bestPayable && !usedPayableIds.has(bestPayable.id)) {
+          if (bestPayable) {
             matchSources.push('payable');
-          } else if (bestPayable) {
-            bestPayable = null; // Already used
+            usedPayableIds.add(bestPayable.id);
           }
         }
 
@@ -329,7 +337,7 @@ export const ReconciliationEngine = {
         // Calculate amounts and differences
         const systemAmount = bestPayable?.net_payable ?? bestPayment?.net_amount ?? 0;
         const difference = Number((systemAmount - excelAmount).toFixed(2));
-        const TOLERANCE = 1; // NPR tolerance for matching
+        const TOLERANCE = RECONCILIATION_TOLERANCE_NPR;
 
         // Determine status
         let status: ReconciliationMatch['status'] = 'Missing';
@@ -547,11 +555,11 @@ export const ReconciliationEngine = {
       // 1. Match against Payments
       if (txnAcct) {
         const acctPayments = paymentsByAcct.get(txnAcct) || [];
-        bestPayment = acctPayments.find(p => !usedPaymentIds.has(p.id) && Math.abs(Number(p.net_amount) - amount) < 0.05) || null;
+        bestPayment = acctPayments.find(p => !usedPaymentIds.has(p.id) && Math.abs(Number(p.net_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR) || null;
       }
       if (!bestPayment && txnName) {
         const namePayments = paymentsByName.get(txnName) || [];
-        bestPayment = namePayments.find(p => !usedPaymentIds.has(p.id) && Math.abs(Number(p.net_amount) - amount) < 0.05) || null;
+        bestPayment = namePayments.find(p => !usedPaymentIds.has(p.id) && Math.abs(Number(p.net_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR) || null;
       }
       if (!bestPayment && txnAcct) {
         const acctPayments = paymentsByAcct.get(txnAcct) || [];

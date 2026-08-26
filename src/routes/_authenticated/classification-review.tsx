@@ -136,6 +136,17 @@ function ReviewRow({
   );
   const [segment, setSegment] = useState(client.payee_segment ?? "");
 
+  useEffect(() => {
+    setClassification(
+      (["NATURAL_PERSON", "PUBLIC_LEGAL_PERSON", "COMPANY_INSTITUTION", "TAX_EXEMPT"].includes(
+        client.payee_classification,
+      )
+        ? client.payee_classification
+        : "NATURAL_PERSON") as PayeeClassification,
+    );
+    setSegment(client.payee_segment ?? "");
+  }, [client.id, client.payee_classification, client.payee_segment]);
+
   return (
     <TableRow key={client.id} className="hover:bg-muted/30">
       <TableCell className="font-medium text-sm">

@@ -148,16 +148,16 @@ export function ReconciliationRoute() {
       ['BOID', 'Shareholder Name', 'Company', 'Payable Type', 'Status', 'Expected Amount', 'Actual Amount', 'Difference', 'Bank Name', 'Account No', 'Notes'].join(','),
       ...lot.records.map(r => [
         r.client?.boid || '',
-        `"${r.client?.full_name || ''}"`,
-        `"${r.company?.company_name || lot.companyName}"`,
+        `"${(r.client?.full_name || '').replace(/"/g, '""')}"`,
+        `"${(r.company?.company_name || lot.companyName || '').replace(/"/g, '""')}"`,
         r.payable_type || lot.payableType,
         r.result,
         (r.expected_amount || 0).toFixed(2),
         (r.actual_amount || 0).toFixed(2),
         (r.difference || 0).toFixed(2),
-        `"${r.client?.bank_name || ''}"`,
-        `"${r.client?.bank_account_no || ''}"`,
-        `"${r.notes || ''}"`
+        `"${(r.client?.bank_name || '').replace(/"/g, '""')}"`,
+        `"${(r.client?.bank_account_no || '').replace(/"/g, '""')}"`,
+        `"${(r.notes || '').replace(/"/g, '""')}"`
       ].join(','))
     ].join('\n');
 

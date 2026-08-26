@@ -72,8 +72,8 @@ function ApprovalsPage() {
     queryKey: ["pending_approvals_all"],
     queryFn: async () => {
       const [pendingApprovalsRes, paymentBatchesRes] = await Promise.all([
-        supabase.from("pending_approvals").select("*").order("created_at", { ascending: false }),
-        (supabase as any).from("payment_batches").select("id, batch_name, total_amount, total_payments, status, created_at, created_by, payment_method").order("created_at", { ascending: false }),
+        supabase.from("pending_approvals").select("*").order("created_at", { ascending: false }).limit(200),
+        (supabase as any).from("payment_batches").select("id, batch_name, total_amount, total_payments, status, created_at, created_by, payment_method").order("created_at", { ascending: false }).limit(200),
       ]);
 
       const rows: Row[] = [...((pendingApprovalsRes.data ?? []) as Row[])];

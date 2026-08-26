@@ -122,6 +122,7 @@ function AllocationsPage() {
       const { data } = await supabase.from("companies").select("id, company_name, company_code").order("company_name");
       return (data ?? []) as { id: string; company_name: string; company_code: string }[];
     },
+    staleTime: 5 * 60 * 1000,
   });
 
   const { data: fys = [] } = useQuery({
@@ -130,6 +131,7 @@ function AllocationsPage() {
       const { data } = await supabase.from("fiscal_years").select("fiscal_year").order("fiscal_year", { ascending: false });
       return (data ?? []) as { fiscal_year: string }[];
     },
+    staleTime: 5 * 60 * 1000,
   });
 
   const companyMap = useMemo(() => Object.fromEntries(companies.map((c) => [c.id, c.company_name])), [companies]);
@@ -332,11 +334,19 @@ function AllocationsPage() {
   // ── Fund Allocations Mutations ──
   const saveFund = useMutation({
     mutationFn: async () => {
+      if (!canWrite) throw new Error("You do not have permission to modify fund allocations.");
+      if (!fundForm.fiscal_year) throw new Error("Fiscal year is required.");
+      const allocated = Number(fundForm.allocated_amount || 0);
+      const utilized = Number(fundForm.utilized_amount || 0);
+      if (allocated < 0) throw new Error("Allocated amount cannot be negative.");
+      if (utilized < 0) throw new Error("Utilized amount cannot be negative.");
+      if (utilized > allocated) throw new Error("Utilized amount cannot exceed allocated budget.");
+
       const payload = {
         company_id: fundForm.company_id || null,
         fiscal_year: fundForm.fiscal_year,
-        allocated_amount: Number(fundForm.allocated_amount || 0),
-        utilized_amount: Number(fundForm.utilized_amount || 0),
+        allocated_amount: allocated,
+        utilized_amount: utilized,
         notes: fundForm.notes || null,
       };
       if (editingFund) {
@@ -357,6 +367,7 @@ function AllocationsPage() {
 
   const delFund = useMutation({
     mutationFn: async (id: string) => {
+      if (!canWrite) throw new Error("You do not have permission to delete fund allocations.");
       const { error } = await supabase.from("iaf_allocations").delete().eq("id", id);
       if (error) throw error;
     },

@@ -36,6 +36,7 @@ type PaymentMethod = 'NEFT' | 'RTGS' | 'ConnectIPS' | 'Cheque' | 'Cash';
 function PaymentsRoute() {
   const qc = useQueryClient();
   const { user, roles, isAdmin } = useAuth();
+  const canWrite = isAdmin || (roles || []).some((r: string) => ['admin', 'finance_operator', 'maker', 'operator'].includes(r));
   const currentUser: UserContext | null = user ? { id: user.id, roles: (roles as any) || ['read_only'] } : null;
   const [createOpen, setCreateOpen] = useState(false);
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
@@ -163,9 +164,10 @@ function PaymentsRoute() {
 
   const { mutate: createBatch, isPending } = useMutation({
     mutationFn: async () => {
-      const generatedName = batchName.trim() || `${selectedCompany !== 'all' ? (companies.find(c => c.id === selectedCompany)?.company_code || '') : 'ALL'} ${selectedPayableType !== 'all' ? selectedPayableType.toUpperCase() : 'PAYMENT'} ${periodPreset !== '12M' ? periodPreset : ''} ${fiscalYear || new Date().toISOString().slice(0, 10)}`.trim();
+      if (!canWrite) throw new Error("You do not have permission to create payment batches.");
+      if (!batchName.trim()) throw new Error('Batch name is required');
       const batch = await PaymentService.createBatch({
-        batch_name: generatedName,
+        batch_name: batchName.trim(),
         company_id: selectedCompany !== 'all' ? selectedCompany : undefined,
         fiscal_year: fiscalYear || undefined,
         payable_type: selectedPayableType !== 'all' ? selectedPayableType : undefined,
@@ -176,34 +178,40 @@ function PaymentsRoute() {
 
       // Auto-populate all matching payables into the created batch
       if (availablePayables.length > 0) {
-        const items = availablePayables.map(payable => {
-          const grossAmount = Number(payable.gross_dividend ?? payable.gross_interest ?? 0);
-          const netAmount = Number(payable.net_payable ?? 0);
-          const taxAmount = Number(payable.tax_amount ?? (grossAmount - netAmount));
-          return {
-            company_id: payable.company_id,
-            client_id: payable.client_id,
-            payable_type: payable.payable_type || (selectedPayableType !== 'all' ? selectedPayableType : 'dividend'),
-            payable_id: payable.id,
-            gross_amount: grossAmount,
-            tax_amount: taxAmount,
-            net_amount: netAmount,
-            paid_amount: netAmount,
-            payment_method: paymentMethod,
-            payment_date: null,
-            payment_reference: null,
-            bank_name: payable.clients?.bank_name || payable.bank_name || null,
-            bank_account_no: payable.clients?.bank_account_no || payable.bank_account_no || null,
-            neft_ref: null,
-            connectips_ref: null,
-            rtgs_ref: null,
-            cheque_no: null,
-            status: 'Pending',
-            remarks: null,
-          };
-        });
+        try {
+          const items = availablePayables.map(payable => {
+            const grossAmount = Number(payable.gross_dividend ?? payable.gross_interest ?? 0);
+            const netAmount = Number(payable.net_payable ?? 0);
+            const taxAmount = Number(payable.tax_amount ?? (grossAmount - netAmount));
+            return {
+              company_id: payable.company_id,
+              client_id: payable.client_id,
+              payable_type: payable.payable_type || (selectedPayableType !== 'all' ? selectedPayableType : 'dividend'),
+              payable_id: payable.id,
+              gross_amount: grossAmount,
+              tax_amount: taxAmount,
+              net_amount: netAmount,
+              paid_amount: netAmount,
+              payment_method: paymentMethod,
+              payment_date: null,
+              payment_reference: null,
+              bank_name: payable.clients?.bank_name || payable.bank_name || null,
+              bank_account_no: payable.clients?.bank_account_no || payable.bank_account_no || null,
+              neft_ref: null,
+              connectips_ref: null,
+              rtgs_ref: null,
+              cheque_no: null,
+              status: 'Pending',
+              remarks: null,
+            };
+          });
 
-        await PaymentService.addLineItems(batch.id, items);
+          await PaymentService.addLineItems(batch.id, items);
+        } catch (addErr) {
+          // Clean up created batch to avoid zombie records
+          await (supabase as any).from('payment_batches').delete().eq('id', batch.id);
+          throw addErr;
+        }
       }
 
       // Update cds_batch_ref and registrar if provided

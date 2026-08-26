@@ -1195,7 +1195,9 @@ function extractRowField(row: any, keys: string[]): string {
             isDebenture: false,
             isMutualFund: targetTable === 'mutual_fund_payables',
             customTaxRate: options?.tdsRate,
-          });
+        if (totals.grossAmount <= 0 && totals.netPayable <= 0 && (!sharesHeld || sharesHeld <= 0)) {
+          continue;
+        }
 
         payablesToInsert.push({
           upload_id: uploadId,
@@ -1246,7 +1248,9 @@ function extractRowField(row: any, keys: string[]): string {
             category: investorCategory,
             isDebenture: true,
             customTaxRate: options?.tdsRate,
-          });
+        if (totals.grossAmount <= 0 && totals.netPayable <= 0 && (!sharesHeld || sharesHeld <= 0)) {
+          continue;
+        }
 
         payablesToInsert.push({
           upload_id: uploadId,

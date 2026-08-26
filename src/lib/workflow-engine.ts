@@ -37,8 +37,11 @@ const WORKFLOW_CONFIGS: Record<string, WorkflowConfig> = {
     table: 'upload_history',
     statusField: 'status',
     transitions: [
-      { from: 'Processing', to: 'Completed', action: 'complete', requiredRole: ['operator', 'supervisor', 'admin'] },
-      { from: 'Processing', to: 'Failed', action: 'reject', requiredRole: ['operator', 'supervisor', 'admin'] },
+      { from: 'Pending', to: 'Processing', action: 'process', requiredRole: ['operator', 'supervisor', 'admin', 'finance_operator'] },
+      { from: 'Pending', to: 'Completed', action: 'complete', requiredRole: ['operator', 'supervisor', 'admin', 'finance_operator'] },
+      { from: 'Pending', to: 'Failed', action: 'reject', requiredRole: ['operator', 'supervisor', 'admin', 'finance_operator'] },
+      { from: 'Processing', to: 'Completed', action: 'complete', requiredRole: ['operator', 'supervisor', 'admin', 'finance_operator'] },
+      { from: 'Processing', to: 'Failed', action: 'reject', requiredRole: ['operator', 'supervisor', 'admin', 'finance_operator'] },
     ],
   },
   reconciliation_results: {

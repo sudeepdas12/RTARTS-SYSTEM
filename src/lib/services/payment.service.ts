@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { bulkUpdateByIds } from '../bulk-ops';
 import { getPayeeTaxRate } from './payable-summary';
 
 export interface PaymentBatch {
@@ -281,22 +282,23 @@ export const PaymentService = {
             .eq('batch_id', batchId)
             .eq('status', 'Pending');
 
-          // Update underlying payables to Paid
+          // Update underlying payables to Paid in bulk chunks
+          const payablesByTable: Record<string, string[]> = {
+            dividend_payables: [],
+            interest_payables: [],
+            mutual_fund_payables: [],
+          };
+
           for (const item of lineItems || []) {
             if (!item.payable_id) continue;
-            const tableName = item.payable_type === 'dividend'
-              ? 'dividend_payables'
-              : item.payable_type === 'interest'
-                ? 'interest_payables'
-                : item.payable_type === 'mutual_fund'
-                  ? 'mutual_fund_payables'
-                  : null;
+            if (item.payable_type === 'dividend') payablesByTable.dividend_payables.push(item.payable_id);
+            else if (item.payable_type === 'interest') payablesByTable.interest_payables.push(item.payable_id);
+            else if (item.payable_type === 'mutual_fund') payablesByTable.mutual_fund_payables.push(item.payable_id);
+          }
 
-            if (tableName) {
-              await (supabase as any)
-                .from(tableName)
-                .update({ payment_status: 'Paid', payment_date: today })
-                .eq('id', item.payable_id);
+          for (const [table, ids] of Object.entries(payablesByTable)) {
+            if (ids.length > 0) {
+              await bulkUpdateByIds(table, ids, { payment_status: 'Paid', payment_date: today });
             }
           }
         } catch (syncErr) {
@@ -553,8 +555,8 @@ export const PaymentService = {
               };
             });
 
-            const totalNetPaisa = Math.round(interestItems.reduce((s: number, r: any) => s + r._rawNet, 0) * 100);
-            const totalTaxPaisa = Math.round(interestItems.reduce((s: number, r: any) => s + r._rawTax, 0) * 100);
+            const totalNetPaisa = interestItems.reduce((s: number, r: any) => s + Math.round(r._rawNet * 100), 0);
+            const totalTaxPaisa = interestItems.reduce((s: number, r: any) => s + Math.round(r._rawTax * 100), 0);
 
             // Distribute net paisa with largest remainder method
             let currentNetFloor = 0;

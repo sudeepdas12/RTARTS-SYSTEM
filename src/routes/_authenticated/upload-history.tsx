@@ -58,6 +58,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/lib/auth-context";
 
 export const Route = createFileRoute("/_authenticated/upload-history")({
   component: UploadHistoryRoute,
@@ -129,6 +130,7 @@ function StatusBadge({ status }: { status: string }) {
 
 function UploadHistoryRoute() {
   const qc = useQueryClient();
+  const { isAdmin } = useAuth();
 
   // ── State ────────────────────────────────────────────────────────────────
   const [search, setSearch] = useState("");
@@ -226,6 +228,7 @@ function UploadHistoryRoute() {
 
   const rollbackMutation = useMutation({
     mutationFn: async (record: any) => {
+      if (!isAdmin) throw new Error("Only administrators are authorized to roll back uploads.");
       // Determine target table — fall back to all payable tables if null
       const table = record.target_table;
       if (table) {
@@ -266,6 +269,7 @@ function UploadHistoryRoute() {
 
   const markFailedMutation = useMutation({
     mutationFn: async (id: string) => {
+      if (!isAdmin) throw new Error("Only administrators are authorized to mark uploads as failed.");
       const { error } = await (supabase as any)
         .from("upload_history")
         .update({

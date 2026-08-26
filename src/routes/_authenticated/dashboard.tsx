@@ -31,6 +31,7 @@ import {
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, PieChart, Pie, Cell, AreaChart, Area } from "recharts";
 import { Link } from "@tanstack/react-router";
 import { format } from "date-fns";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   component: Dashboard,
@@ -590,7 +591,13 @@ function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {(data?.recentPayments ?? []).length === 0 ? (
+              {isLoading ? (
+                <div className="space-y-2 py-2">
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-full" />
+                </div>
+              ) : (data?.recentPayments ?? []).length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-4">No recent payments</p>
               ) : (
                 (data?.recentPayments ?? []).map((p: any) => (
@@ -601,7 +608,7 @@ function Dashboard() {
                       </div>
                       <div className="min-w-0">
                         <p className="text-sm font-medium truncate">{p.id.slice(0, 8)}…</p>
-                        <p className="text-xs text-muted-foreground">{format(new Date(p.created_at), "dd MMM yyyy")}</p>
+                        <p className="text-xs text-muted-foreground">{p.created_at ? format(new Date(p.created_at), "dd MMM yyyy") : "—"}</p>
                       </div>
                     </div>
                     <div className="text-right">
@@ -625,7 +632,13 @@ function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {(data?.recentUploads ?? []).length === 0 && (data?.recentBatches ?? []).length === 0 ? (
+              {isLoading ? (
+                <div className="space-y-2 py-2">
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-full" />
+                </div>
+              ) : (data?.recentUploads ?? []).length === 0 && (data?.recentBatches ?? []).length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-4">No recent activity</p>
               ) : (
                 <>
