@@ -169,9 +169,9 @@ export const DebentureSummaryReportService = {
       label: string;
       taxRatePercent: number;
     }> = [
-      { key: 'PUBLIC', label: 'PUBLIC TOTAL', taxRatePercent: 6 },
-      { key: 'PRIVATE', label: 'PRIVATE TOTAL', taxRatePercent: 15 },
-      { key: 'MUTUAL_FUND', label: 'MUTUAL FUND TOTAL', taxRatePercent: 0 },
+      { key: 'PUBLIC', label: 'PUBLIC (NATURAL PERSON)', taxRatePercent: 6 },
+      { key: 'PRIVATE', label: 'INSTITUTION (LEGAL PERSON)', taxRatePercent: 15 },
+      { key: 'MUTUAL_FUND', label: 'MUTUAL FUND (TAX EXEMPT)', taxRatePercent: 0 },
     ];
 
     const rows: DebentureSummaryRow[] = [];
