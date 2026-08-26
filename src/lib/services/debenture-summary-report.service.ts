@@ -99,14 +99,16 @@ export const DebentureSummaryReportService = {
 
     // Detect coupon rate if not overridden
     let detectedCouponRate = overrideCouponRate || 0;
-    if (!detectedCouponRate) {
+    const isAll = !companyCode || companyCode === 'All' || (companyName || '').toLowerCase().includes('all');
+
+    if (!detectedCouponRate && !isAll) {
       // 1. Try to extract coupon rate from company name (e.g. "8.5% RBB", "8 5%", "8.75% PRIME", "10% DEBENTURE")
       const nameMatch = (companyName || '').match(/(\d+(?:[.\s]\d+)?)\s*%/);
       if (nameMatch) {
         detectedCouponRate = parseFloat(nameMatch[1].replace(/\s+/, '.'));
       }
     }
-    if (!detectedCouponRate) {
+    if (!detectedCouponRate && !isAll) {
       for (const p of payables) {
         const refMatch = (p.instrument_ref || '').match(/(\d+(?:[.\s]\d+)?)\s*%/);
         if (refMatch) {
@@ -120,21 +122,22 @@ export const DebentureSummaryReportService = {
         }
       }
     }
-    if (!detectedCouponRate) detectedCouponRate = 8.5; // Standard default
 
     const groups: Record<
       'PUBLIC' | 'PRIVATE' | 'MUTUAL_FUND',
       {
         kitta: number;
+        principal: number;
+        annualInterest: number;
         gross: number;
         tax: number;
         net: number;
         unitholders: Set<string>;
       }
     > = {
-      PUBLIC: { kitta: 0, gross: 0, tax: 0, net: 0, unitholders: new Set() },
-      PRIVATE: { kitta: 0, gross: 0, tax: 0, net: 0, unitholders: new Set() },
-      MUTUAL_FUND: { kitta: 0, gross: 0, tax: 0, net: 0, unitholders: new Set() },
+      PUBLIC: { kitta: 0, principal: 0, annualInterest: 0, gross: 0, tax: 0, net: 0, unitholders: new Set() },
+      PRIVATE: { kitta: 0, principal: 0, annualInterest: 0, gross: 0, tax: 0, net: 0, unitholders: new Set() },
+      MUTUAL_FUND: { kitta: 0, principal: 0, annualInterest: 0, gross: 0, tax: 0, net: 0, unitholders: new Set() },
     };
 
     let grandKitta = 0;
@@ -143,22 +146,37 @@ export const DebentureSummaryReportService = {
       const cat = determineDebentureCategory(p);
       const clientId = p.client_id || p.id || crypto.randomUUID();
       
-      // Units held / kitta
       let kitta = Number(p.shares_held || p.kitta || 0);
       let gross = Number(p.gross_interest || 0);
+      let tax = Number(p.tax_amount || 0);
+      let net = Number(p.net_payable || 0);
+      let rowRate = Number(p.interest_rate_value || p.interest_rate || detectedCouponRate || 0);
 
-      // If kitta is 0 but gross exists, derive exact kitta from annual coupon
-      if (kitta === 0 && gross > 0 && detectedCouponRate > 0) {
-        kitta = Math.round(gross / (fv * (detectedCouponRate / 100)));
+      // If kitta is 0 but gross exists, derive exact kitta from coupon if rate exists
+      if (kitta === 0 && gross > 0 && rowRate > 0) {
+        kitta = Math.round(gross / (fv * (rowRate / 100)));
       }
 
-      // If gross is 0 but kitta exists, calculate annual gross
+      const principal = kitta * fv;
+      let annualInt = rowRate > 0 ? principal * (rowRate / 100) : gross;
+
       if (gross === 0 && kitta > 0) {
-        gross = kitta * fv * (detectedCouponRate / 100);
+        gross = annualInt;
+      }
+      if (tax === 0 && gross > 0 && cat !== 'MUTUAL_FUND') {
+        const ratePct = cat === 'PUBLIC' ? 0.06 : 0.15;
+        tax = Math.round(gross * ratePct * 100) / 100;
+      }
+      if (net === 0 && gross > 0) {
+        net = Math.round((gross - tax) * 100) / 100;
       }
 
       groups[cat].kitta += kitta;
+      groups[cat].principal += principal;
+      groups[cat].annualInterest += annualInt;
       groups[cat].gross += gross;
+      groups[cat].tax += tax;
+      groups[cat].net += net;
       groups[cat].unitholders.add(clientId);
 
       grandKitta += kitta;
@@ -189,14 +207,14 @@ export const DebentureSummaryReportService = {
 
     for (const cfg of categoryConfigs) {
       const g = groups[cfg.key];
-      const principal = g.kitta * fv;
-      const annualInt = principal * (detectedCouponRate / 100);
-      const intPerDay = annualInt / 365;
+      const principal = g.principal;
+      const annualInt = g.annualInterest;
+      const intPerDay = Math.round((annualInt / 365) * 100) / 100;
       const comp = grandKitta > 0 ? Math.round((g.kitta / grandKitta) * 10000) / 100 : 0;
 
-      const periodGross = overrideDays && overrideDays > 0 ? Math.round(intPerDay * overrideDays * 100) / 100 : annualInt;
-      const periodTax = Math.round(periodGross * (cfg.taxRatePercent / 100) * 100) / 100;
-      const periodNet = Math.round((periodGross - periodTax) * 100) / 100;
+      const periodGross = overrideDays && overrideDays > 0 ? Math.round(intPerDay * overrideDays * 100) / 100 : g.gross;
+      const periodTax = g.tax > 0 ? g.tax : Math.round(periodGross * (cfg.taxRatePercent / 100) * 100) / 100;
+      const periodNet = g.net > 0 ? g.net : Math.round((periodGross - periodTax) * 100) / 100;
 
       rows.push({
         name: cfg.label,
@@ -204,7 +222,7 @@ export const DebentureSummaryReportService = {
         kitta: g.kitta,
         principalAmount: principal,
         annualInterest: annualInt,
-        interestPerDay: Math.round(intPerDay * 100) / 100,
+        interestPerDay: intPerDay,
         grossInterest: periodGross,
         taxAmount: periodTax,
         netInterestPayable: periodNet,
@@ -216,12 +234,17 @@ export const DebentureSummaryReportService = {
       total.kitta += g.kitta;
       total.principalAmount += principal;
       total.annualInterest += annualInt;
-      total.interestPerDay += Math.round(intPerDay * 100) / 100;
+      total.interestPerDay += intPerDay;
       total.grossInterest += periodGross;
       total.taxAmount += periodTax;
       total.netInterestPayable += periodNet;
       total.unitholderCount += g.unitholders.size;
     }
+
+    total.interestPerDay = Math.round(total.interestPerDay * 100) / 100;
+    total.grossInterest = Math.round(total.grossInterest * 100) / 100;
+    total.taxAmount = Math.round(total.taxAmount * 100) / 100;
+    total.netInterestPayable = Math.round(total.netInterestPayable * 100) / 100;
 
     return {
       companyName,

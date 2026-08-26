@@ -6,22 +6,22 @@ import { determineDebentureCategory, DebentureSummaryReportService } from '@/lib
 describe('End-to-End System Smoke Test', () => {
   describe('1. Shareholder Category & Uniform Labels', () => {
     it('correctly maps and labels Natural Person (Public)', () => {
-      expect(getPayeeCategoryLabel('NATURAL_PERSON')).toBe('Natural Person (Public)');
-      expect(getPayeeCategoryLabel('PUBLIC')).toBe('Public (Natural Person)');
+      expect(getPayeeCategoryLabel('NATURAL_PERSON')).toBe('Public');
+      expect(getPayeeCategoryLabel('PUBLIC')).toBe('Public');
       expect(mapToHolderType('PUBLIC')).toBe('Natural Person - Public');
       expect(getInvestorDemographicGroup('Natural Person - Public')).toBe('Natural Person');
     });
 
     it('correctly maps and labels Legal Person (Institution / Company)', () => {
-      expect(getPayeeCategoryLabel('COMPANY_INSTITUTION')).toBe('Legal Person (Institution / Company)');
-      expect(getPayeeCategoryLabel('INSTITUTION')).toBe('Legal Person (Institution / Company)');
+      expect(getPayeeCategoryLabel('COMPANY_INSTITUTION')).toBe('Institution');
+      expect(getPayeeCategoryLabel('INSTITUTION')).toBe('Institution');
       expect(mapToHolderType('INSTITUTION')).toBe('Legal Person');
       expect(getInvestorDemographicGroup('Legal Person')).toBe('Legal Person');
     });
 
     it('correctly maps and labels Tax Exempted (Mutual Fund / Retirement)', () => {
-      expect(getPayeeCategoryLabel('TAX_EXEMPT')).toBe('Tax Exempted (Mutual Fund / Retirement Fund)');
-      expect(getPayeeCategoryLabel('MUTUAL_FUND')).toBe('Mutual Fund (Tax Exempt)');
+      expect(getPayeeCategoryLabel('TAX_EXEMPT')).toBe('Tax Exempt');
+      expect(getPayeeCategoryLabel('MUTUAL_FUND')).toBe('Mutual Fund');
       expect(mapToHolderType('MUTUAL_FUND')).toBe('Mutual Fund');
       expect(mapToHolderType('TAX_EXEMPT')).toBe('Tax Exempt');
       expect(getInvestorDemographicGroup('Mutual Fund')).toBe('Mutual Fund');

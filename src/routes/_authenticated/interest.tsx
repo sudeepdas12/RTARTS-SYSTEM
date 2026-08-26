@@ -1146,10 +1146,14 @@ function InterestPage() {
             <table className="w-full text-xs text-left border-collapse">
               <thead>
                 <tr className="bg-muted/80 text-foreground font-semibold border-b border-border divide-x border-border">
-                  <th className="py-2.5 px-3 uppercase text-[11px]">NAME</th>
+                  <th className="py-2.5 px-3 uppercase text-[11px]">CATEGORY</th>
                   <th className="py-2.5 px-3 text-right uppercase text-[11px]">KITTA</th>
                   <th className="py-2.5 px-3 text-right uppercase text-[11px]">AMOUNT</th>
-                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">INT. @ {debentureSummaryReport.couponRate}%</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">
+                    {debentureSummaryReport.couponRate > 0
+                      ? `INT. @ ${debentureSummaryReport.couponRate}%`
+                      : "ANNUAL INT."}
+                  </th>
                   <th className="py-2.5 px-3 text-right uppercase text-[11px]">INT. PER DAY</th>
                   <th className="py-2.5 px-3 text-right uppercase text-[11px]">INTEREST PUMORI</th>
                   <th className="py-2.5 px-3 text-right uppercase text-[11px]">TAX</th>

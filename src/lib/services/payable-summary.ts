@@ -34,29 +34,44 @@ export function normalizePayeeCategory(value?: string | null): PayeeCategory {
 
 export function getPayeeCategoryLabel(category?: string | null): string {
   switch (String(category ?? '').toUpperCase()) {
-    case 'NATURAL_PERSON': return 'Natural Person (Public)';
-    case 'PUBLIC_LEGAL_PERSON': return 'Natural Person (Public)';
-    case 'INSTITUTION': return 'Legal Person (Institution / Company)';
-    case 'COMPANY_INSTITUTION': return 'Legal Person (Institution / Company)';
-    case 'LEGAL_PERSON': return 'Legal Person (Institution / Company)';
-    case 'TAX_EXEMPT': return 'Tax Exempted (Mutual Fund / Retirement Fund)';
-    case 'MUTUAL_FUND': return 'Mutual Fund (Tax Exempt)';
-    case 'FOREIGN': return 'Foreign';
-    case 'UNCLASSIFIED': return 'Review Required';
-    case 'PROMOTER': return 'Promoter';
-    case 'LOCAL': return 'Local';
-    case 'PUBLIC': return 'Public (Natural Person)';
+    case 'NATURAL_PERSON':
+    case 'PUBLIC_LEGAL_PERSON':
+    case 'PUBLIC':
+      return 'Public';
+    case 'INSTITUTION':
+    case 'COMPANY_INSTITUTION':
+    case 'LEGAL_PERSON':
+      return 'Institution';
+    case 'MUTUAL_FUND':
+      return 'Mutual Fund';
+    case 'TAX_EXEMPT':
+      return 'Tax Exempt';
+    case 'FOREIGN':
+      return 'Foreign';
+    case 'PROMOTER':
+      return 'Promoter';
+    case 'LOCAL':
+      return 'Local';
+    case 'EMPLOYEE':
+    case 'STAFF':
+      return 'Employee';
+    case 'UNCLASSIFIED':
+      return 'Review Required';
   }
   switch (normalizePayeeCategory(category)) {
     case 'PUBLIC':
+      return 'Public';
     case 'PROMOTER':
+      return 'Promoter';
     case 'LOCAL':
-      return 'Natural Person (Public)';
+      return 'Local';
+    case 'EMPLOYEE':
+      return 'Employee';
     case 'INSTITUTION':
     case 'FOREIGN':
-      return 'Legal Person (Institution / Company)';
+      return 'Institution';
     case 'MUTUAL_FUND':
-      return 'Mutual Fund (Tax Exempt)';
+      return 'Mutual Fund';
     case 'TAX_EXEMPT':
       return 'Tax Exempt';
     default:

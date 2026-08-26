@@ -411,7 +411,7 @@ function ReportsRoute() {
                     </Badge>
                   </CardTitle>
                   <p className="text-xs text-muted-foreground">
-                    Public (6% TDS), Institution (15% TDS), and Tax Exempted (0% TDS) debenture coupon calculation.
+                    Public (6% TDS), Institution (15% TDS), and Mutual Fund (0% TDS) debenture coupon calculation.
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -428,11 +428,13 @@ function ReportsRoute() {
               <CardContent className="p-0 overflow-x-auto">
                 <table className="w-full text-xs text-left border-collapse">
                   <thead>
-                    <tr className="bg-muted/80 text-foreground font-semibold border-b border-border divide-x divide-border">
+                    <tr className="bg-muted/80 text-foreground font-semibold border-b border-border divide-x border-border">
                       <th className="py-2 px-3 uppercase text-[11px]">CATEGORY</th>
                       <th className="py-2 px-3 text-right uppercase text-[11px]">KITTA</th>
                       <th className="py-2 px-3 text-right uppercase text-[11px]">PRINCIPAL</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px]">INT. @ {debentureSummary.couponRate}%</th>
+                      <th className="py-2 px-3 text-right uppercase text-[11px]">
+                        {debentureSummary.couponRate > 0 ? `INT. @ ${debentureSummary.couponRate}%` : "ANNUAL INT."}
+                      </th>
                       <th className="py-2 px-3 text-right uppercase text-[11px]">INT. PER DAY</th>
                       <th className="py-2 px-3 text-right uppercase text-[11px]">GROSS INTEREST</th>
                       <th className="py-2 px-3 text-right uppercase text-[11px]">TAX</th>
