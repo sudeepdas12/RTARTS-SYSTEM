@@ -227,7 +227,8 @@ export function formatIafDetailLine(record: IafRecord, defaultRtaRef = ''): stri
     expiry = normalizeDateToDDMMYYYY(record.lockInExpiryDate || '00000000').padEnd(8, '0').slice(0, 8);
   }
 
-  const rtaRef = (record.rtaIntRefNo || defaultRtaRef || '').padEnd(16, ' ').slice(0, 16);
+  const rawRef = (record.rtaIntRefNo || defaultRtaRef || '').trim();
+  const rtaRef = rawRef.slice(0, 16).padStart(16, ' ');
 
   return `${boid}${currentQty}${lockInQty}${lockCode}${reason}${expiry}${rtaRef}`;
 }

@@ -78,7 +78,7 @@ describe('IafGeneratorService — CDSC Allotment Engine', () => {
       expect(line.slice(48, 50)).toBe('09');
       expect(line.slice(50, 100)).toBe('Local Affected                                    ');
       expect(line.slice(100, 108)).toBe('19042029');
-      expect(line.slice(108, 124)).toBe('KHPL IPO 2082   ');
+      expect(line.slice(108, 124)).toBe('   KHPL IPO 2082');
     });
 
     it('creates exact 124-character CDSC Detail Record for Free Public Shares', () => {
@@ -94,13 +94,14 @@ describe('IafGeneratorService — CDSC Allotment Engine', () => {
 
       const line = formatIafDetailLine(rec);
       expect(line.length).toBe(124);
+      expect(line).toBe('1301150000048068000000000100.000000000000000.00000                                                  00000000     RBBF4008283');
       expect(line.slice(0, 16)).toBe('1301150000048068');
       expect(line.slice(16, 32)).toBe('000000000100.000');
       expect(line.slice(32, 48)).toBe('000000000000.000');
       expect(line.slice(48, 50)).toBe('00');
       expect(line.slice(50, 100)).toBe('                                                  ');
       expect(line.slice(100, 108)).toBe('00000000');
-      expect(line.slice(108, 124)).toBe('RBBF4008283     ');
+      expect(line.slice(108, 124)).toBe('     RBBF4008283');
     });
   });
 
