@@ -450,13 +450,7 @@ function ReportsRoute() {
                         <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(row.annualInterest)}</td>
                         <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(row.interestPerDay)}</td>
                         <td className="py-2 px-3 text-right font-medium whitespace-nowrap">{fmtNr(row.grossInterest)}</td>
-                        <td className="py-2 px-3 text-right whitespace-nowrap">
-                          {row.taxAmount > 0 ? (
-                            <span>{fmtNr(row.taxAmount)} <span className="text-[10px] text-muted-foreground font-sans">({row.taxRatePercent}%)</span></span>
-                          ) : (
-                            <span className="text-muted-foreground font-sans">—</span>
-                          )}
-                        </td>
+                        <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(row.taxAmount)}</td>
                         <td className="py-2 px-3 text-right font-bold bg-emerald-50/70 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-200 whitespace-nowrap">{fmtNr(row.netInterestPayable)}</td>
                       </tr>
                     ))}
@@ -661,11 +655,7 @@ function ReportsRoute() {
                         <TableCell className="text-right">{format(row.annualInterest)}</TableCell>
                         <TableCell className="text-right">{format(row.interestPerDay)}</TableCell>
                         <TableCell className="text-right">{format(row.grossInterest)}</TableCell>
-                        <TableCell className="text-right text-amber-600">
-                          {row.taxAmount > 0
-                            ? `${format(row.taxAmount)} (${row.grossInterest > 0 ? (Math.round((row.taxAmount / row.grossInterest) * 100 * 10) / 10).toFixed(1).replace(/\.0$/, '') : row.taxRatePercent}%)`
-                            : "—"}
-                        </TableCell>
+                        <TableCell className="text-right text-amber-600">{format(row.taxAmount)}</TableCell>
                         <TableCell className="text-right font-bold text-emerald-600">{format(row.netInterestPayable)}</TableCell>
                       </TableRow>
                     ))}

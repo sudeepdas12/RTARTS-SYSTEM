@@ -1178,13 +1178,7 @@ function InterestPage() {
                       <td className="py-2 px-3 text-right whitespace-nowrap">{fmt(row.annualInterest)}</td>
                       <td className="py-2 px-3 text-right whitespace-nowrap">{fmt(row.interestPerDay)}</td>
                       <td className="py-2 px-3 text-right font-medium whitespace-nowrap">{fmt(row.grossInterest)}</td>
-                      <td className="py-2 px-3 text-right whitespace-nowrap">
-                        {row.taxAmount > 0 ? (
-                          <span>{fmt(row.taxAmount)} <span className="text-[10px] text-muted-foreground font-sans">({row.taxRatePercent}%)</span></span>
-                        ) : (
-                          <span className="text-muted-foreground font-sans">—</span>
-                        )}
-                      </td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmt(row.taxAmount)}</td>
                       <td className="py-2 px-3 text-right font-bold bg-emerald-50/70 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-200 whitespace-nowrap">
                         {fmt(row.netInterestPayable)}
                       </td>
