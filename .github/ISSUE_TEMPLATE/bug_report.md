@@ -1,38 +1,32 @@
 ﻿---
-name: Bug report
-about: Create a report to help us improve RTARTS System
-title: '[BUG]: '
-labels: 'bug'
-assignees: ''
-
+name: Bug Report
+about: Report a bug or calculation error in the system
+title: [BUG]: 
+labels: bug
+assignees: "
 ---
 
-**Describe the bug**
+### Bug Description
 A clear and concise description of what the bug is.
 
-**Affected Area**
-- [ ] Classification & Categorization
+### Affected Area
+- [ ] Classification & Demographics
 - [ ] Dividend / Interest Calculation
 - [ ] Tax (TDS) Rules
-- [ ] Payment Batches & Disbursement
+- [ ] Payment Batches & ConnectIPS
 - [ ] Bank Reconciliation
 - [ ] Excel / Demat Import
 - [ ] Reports & Registers
 - [ ] Workflow & Approvals
 
-**To Reproduce**
-Steps to reproduce the behavior:
+### Steps to Reproduce
 1. Go to '...'
-2. Click on '....'
-3. Input '....'
+2. Click on '...'
+3. Upload/Select '...'
 4. See error
 
-**Expected behavior**
+### Expected Behavior
 A clear and concise description of what you expected to happen.
 
-**Screenshots / Data Samples**
-If applicable, add screenshots or sample anonymized rows to help explain the problem.
-
-**Environment (please complete the following information):**
-- OS: [e.g. Windows / macOS]
-- Browser: [e.g. Chrome, Firefox, Edge]
+### Screenshots or Data Context
+If applicable, add screenshots or sample data to help explain your problem.
