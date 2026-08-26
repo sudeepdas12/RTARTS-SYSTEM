@@ -15,8 +15,8 @@
  */
 
 export type PayeeClassification = 'NATURAL_PERSON' | 'PUBLIC_LEGAL_PERSON' | 'COMPANY_INSTITUTION' | 'TAX_EXEMPT' | 'UNCLASSIFIED';
-export type PayeeCategory = 'PUBLIC' | 'PROMOTER' | 'INSTITUTION' | 'MUTUAL_FUND' | 'TAX_EXEMPT' | 'LOCAL' | 'FOREIGN' | 'UNKNOWN';
-export type PayeeSegment = 'PROMOTER' | 'LOCAL' | 'PUBLIC' | null;
+export type PayeeCategory = 'PUBLIC' | 'PROMOTER' | 'INSTITUTION' | 'MUTUAL_FUND' | 'TAX_EXEMPT' | 'LOCAL' | 'EMPLOYEE' | 'FOREIGN' | 'UNKNOWN';
+export type PayeeSegment = 'PROMOTER' | 'LOCAL' | 'EMPLOYEE' | 'PUBLIC' | null;
 
 export interface ClassificationInput {
   full_name?: string | null;
@@ -171,6 +171,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
 
   const isPromoterSegment = explicitType.includes('PROMOT') || lotName.includes('PROMOT') || dbSegment === 'PROMOTER';
   const isLocalSegment = explicitType.includes('LOCAL') || lotName.includes('LOCAL') || dbSegment === 'LOCAL';
+  const isEmployeeSegment = explicitType.includes('STAFF') || explicitType.includes('EMPLOYEE') || lotName.includes('STAFF') || lotName.includes('EMPLOYEE') || dbSegment === 'EMPLOYEE';
 
   // =========================================================================
   // TIER 0: Direct Payee Classification Argument (When passed explicitly)
@@ -199,8 +200,8 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
       };
     }
     if (dbClassification === 'NATURAL_PERSON' || dbClassification === 'PUBLIC_LEGAL_PERSON') {
-      const segment: PayeeSegment = isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : 'PUBLIC';
-      const category: PayeeCategory = isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : 'PUBLIC';
+      const segment: PayeeSegment = isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : isEmployeeSegment ? 'EMPLOYEE' : 'PUBLIC';
+      const category: PayeeCategory = isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : isEmployeeSegment ? 'EMPLOYEE' : 'PUBLIC';
       return {
         payee_classification: dbClassification === 'PUBLIC_LEGAL_PERSON' ? 'PUBLIC_LEGAL_PERSON' : 'NATURAL_PERSON',
         payee_category: category,
@@ -209,6 +210,8 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
           ? 'Natural Person - Promoter'
           : isLocalSegment
           ? 'Natural Person - Local'
+          : isEmployeeSegment
+          ? 'Natural Person - Employee'
           : 'Natural Person - Public',
         tds_rate_dividend: 0.05,
         tds_rate_debenture: 0.06,
@@ -247,12 +250,14 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
   const hasGuardian = Boolean(guardian);
 
   if (hasFamilyLineage || hasGuardian) {
-    const segment: PayeeSegment = isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : 'PUBLIC';
-    const category: PayeeCategory = isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : 'PUBLIC';
+    const segment: PayeeSegment = isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : isEmployeeSegment ? 'EMPLOYEE' : 'PUBLIC';
+    const category: PayeeCategory = isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : isEmployeeSegment ? 'EMPLOYEE' : 'PUBLIC';
     const holderType = isPromoterSegment
       ? 'Natural Person - Promoter'
       : isLocalSegment
       ? 'Natural Person - Local'
+      : isEmployeeSegment
+      ? 'Natural Person - Employee'
       : hasGuardian || nameUpper.includes('MINOR')
       ? 'Natural Person - Minor'
       : 'Natural Person - Public';
@@ -331,12 +336,14 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
     hasHumanTitle ||
     hasHumanRelationship
   ) {
-    const segment: PayeeSegment = isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : 'PUBLIC';
-    const category: PayeeCategory = isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : 'PUBLIC';
+    const segment: PayeeSegment = isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : isEmployeeSegment ? 'EMPLOYEE' : 'PUBLIC';
+    const category: PayeeCategory = isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : isEmployeeSegment ? 'EMPLOYEE' : 'PUBLIC';
     const holderType = isPromoterSegment
       ? 'Natural Person - Promoter'
       : isLocalSegment
       ? 'Natural Person - Local'
+      : isEmployeeSegment
+      ? 'Natural Person - Employee'
       : nameUpper.includes('MINOR')
       ? 'Natural Person - Minor'
       : 'Natural Person - Public';
@@ -417,6 +424,17 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
         rule_matched: 'Explicit Metadata (Local)',
       };
     }
+    if (/STAFF|EMPLOYEE/i.test(explicitType)) {
+      return {
+        payee_classification: 'NATURAL_PERSON',
+        payee_category: 'EMPLOYEE',
+        payee_segment: 'EMPLOYEE',
+        holder_type: 'Natural Person - Employee',
+        tds_rate_dividend: 0.05,
+        tds_rate_debenture: 0.06,
+        rule_matched: 'Explicit Metadata (Employee Quota)',
+      };
+    }
     if (/LEGAL|INSTIT|COMPANY|CORPORAT|PRIVATE/i.test(explicitType)) {
       return {
         payee_classification: 'COMPANY_INSTITUTION',
@@ -447,8 +465,8 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
   const isJointHumanHolder = /\s+(\/|&|\+)\s+/.test(nameUpper);
 
   if (isJointHumanHolder || NEPALI_SURNAMES_REGEX.test(nameUpper)) {
-    const segment: PayeeSegment = isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : 'PUBLIC';
-    const category: PayeeCategory = isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : 'PUBLIC';
+    const segment: PayeeSegment = isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : isEmployeeSegment ? 'EMPLOYEE' : 'PUBLIC';
+    const category: PayeeCategory = isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : isEmployeeSegment ? 'EMPLOYEE' : 'PUBLIC';
     return {
       payee_classification: 'NATURAL_PERSON',
       payee_category: category,
@@ -459,6 +477,8 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
         ? 'Natural Person - Promoter'
         : isLocalSegment
         ? 'Natural Person - Local'
+        : isEmployeeSegment
+        ? 'Natural Person - Employee'
         : 'Natural Person - Public',
       tds_rate_dividend: 0.05,
       tds_rate_debenture: 0.06,
@@ -483,12 +503,14 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
 
   return {
     payee_classification: 'NATURAL_PERSON',
-    payee_category: isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : 'PUBLIC',
-    payee_segment: isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : 'PUBLIC',
+    payee_category: isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : isEmployeeSegment ? 'EMPLOYEE' : 'PUBLIC',
+    payee_segment: isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : isEmployeeSegment ? 'EMPLOYEE' : 'PUBLIC',
     holder_type: isPromoterSegment
       ? 'Natural Person - Promoter'
       : isLocalSegment
       ? 'Natural Person - Local'
+      : isEmployeeSegment
+      ? 'Natural Person - Employee'
       : 'Natural Person - Public',
     tds_rate_dividend: 0.05,
     tds_rate_debenture: 0.06,

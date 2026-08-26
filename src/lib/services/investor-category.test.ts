@@ -8,7 +8,9 @@ import {
 describe('mapToHolderType (raw detected category -> granular DB value)', () => {
   it('maps natural person categories to granular natural-person values', () => {
     expect(mapToHolderType('PUBLIC')).toBe('Natural Person - Public');
-    expect(mapToHolderType('LOCAL')).toBe('Natural Person - Public');
+    expect(mapToHolderType('LOCAL')).toBe('Natural Person - Local');
+    expect(mapToHolderType('EMPLOYEE')).toBe('Natural Person - Employee');
+    expect(mapToHolderType('STAFF')).toBe('Natural Person - Employee');
     expect(mapToHolderType('PROMOTER')).toBe('Natural Person - Promoter');
   });
 
@@ -39,6 +41,7 @@ describe('getInvestorDemographicGroup (stored holder_type -> report bucket)', ()
     expect(getInvestorDemographicGroup('Natural Person - Public')).toBe('Natural Person');
     expect(getInvestorDemographicGroup('Natural Person - Promoter')).toBe('Natural Person');
     expect(getInvestorDemographicGroup('Natural Person - Local')).toBe('Natural Person');
+    expect(getInvestorDemographicGroup('Natural Person - Employee')).toBe('Natural Person');
     expect(getInvestorDemographicGroup('Natural Person - Minor')).toBe('Natural Person');
     expect(getInvestorDemographicGroup('Natural Person - Joint Holder')).toBe('Natural Person');
     expect(getInvestorDemographicGroup('Legal Person - Promoter')).toBe('Legal Person');
@@ -47,6 +50,8 @@ describe('getInvestorDemographicGroup (stored holder_type -> report bucket)', ()
   it('maps legacy values to their best bucket', () => {
     expect(getInvestorDemographicGroup('Public')).toBe('Natural Person');
     expect(getInvestorDemographicGroup('Promoter')).toBe('Natural Person');
+    expect(getInvestorDemographicGroup('Local')).toBe('Natural Person');
+    expect(getInvestorDemographicGroup('Employee')).toBe('Natural Person');
     expect(getInvestorDemographicGroup('Institution')).toBe('Legal Person');
   });
 

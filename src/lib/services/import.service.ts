@@ -164,7 +164,7 @@ function payableClassification(category: string): string {
   if (upper === 'INSTITUTION' || upper === 'FOREIGN' || upper === 'COMPANY_INSTITUTION') return 'COMPANY_INSTITUTION';
   if (upper === 'MUTUAL_FUND' || upper === 'TAX_EXEMPT' || upper === 'TAX_EXEMPTED') return 'TAX_EXEMPT';
   if (upper === 'PUBLIC' || upper === 'NATURAL_PERSON' || upper === 'PUBLIC_LEGAL_PERSON') return 'NATURAL_PERSON';
-  if (upper === 'PROMOTER' || upper === 'LOCAL') return 'NATURAL_PERSON';
+  if (upper === 'PROMOTER' || upper === 'LOCAL' || upper === 'EMPLOYEE' || upper === 'STAFF') return 'NATURAL_PERSON';
   return 'UNCLASSIFIED';
 }
 
@@ -172,6 +172,7 @@ function payableSegment(category: string): string | null {
   const upper = String(category || '').trim().toUpperCase();
   if (upper === 'PROMOTER') return 'PROMOTER';
   if (upper === 'LOCAL') return 'LOCAL';
+  if (upper === 'EMPLOYEE' || upper === 'STAFF') return 'EMPLOYEE';
   if (upper === 'PUBLIC') return 'PUBLIC';
   return null;
 }

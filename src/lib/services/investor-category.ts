@@ -25,6 +25,7 @@ export type HolderTypeValue =
   | 'Natural Person - Public'
   | 'Natural Person - Promoter'
   | 'Natural Person - Local'
+  | 'Natural Person - Employee'
   | 'Natural Person - Minor'
   | 'Natural Person - Joint Holder'
   | 'Legal Person'
@@ -34,6 +35,8 @@ export type HolderTypeValue =
   | 'Tax Exempt'
   | 'Public'
   | 'Promoter'
+  | 'Local'
+  | 'Employee'
   | 'Institution';
 
 /** Coarse demographic bucket shown to the user in the report. */
@@ -43,14 +46,6 @@ export type DemographicGroup = 'Natural Person' | 'Legal Person' | 'Mutual Fund'
  * Map the raw detected investor category (the UPPER-CASE string returned by
  * `detectInvestorCategory`) to the granular `holder_type` value that is
  * persisted in the database.
- *
- * - Natural persons keep their Public / Promoter sub-flavour.
- * - Legal Persons (companies) get 'Legal Person' (NOT 'Institution').
- * - Mutual Funds, Tax Exempt and Foreign investors each get their own value
- *   instead of being squashed into 'Institution'.
- *
- * A `default` of 'Natural Person - Public' mirrors the previous behaviour
- * where an unrecognised/empty type fell back to a natural person.
  */
 export function mapToHolderType(category: string): HolderTypeValue | null {
   switch (category) {
@@ -59,7 +54,10 @@ export function mapToHolderType(category: string): HolderTypeValue | null {
     case 'PUBLIC':
       return 'Natural Person - Public';
     case 'LOCAL':
-      return 'Natural Person - Public';
+      return 'Natural Person - Local';
+    case 'EMPLOYEE':
+    case 'STAFF':
+      return 'Natural Person - Employee';
     case 'INSTITUTION':
       return 'Legal Person';
     case 'MUTUAL_FUND':
@@ -76,12 +74,6 @@ export function mapToHolderType(category: string): HolderTypeValue | null {
 /**
  * Map any stored `holder_type` value (granular OR legacy) to a coarse
  * demographic group for reporting.
- *
- * Legacy 'Institution' previously lumped Legal Persons, Mutual Funds and
- * Foreign investors together; since that distinction was lost at import time we
- * map it to 'Legal Person' as the best single estimate. New imports store the
- * granular value, so the report is precise for all data imported after this
- * change.
  */
 export function getInvestorDemographicGroup(holderType: HolderTypeValue | string | null | undefined): DemographicGroup {
   if (!holderType) return 'Unknown';
@@ -91,10 +83,13 @@ export function getInvestorDemographicGroup(holderType: HolderTypeValue | string
     case 'Natural Person - Public':
     case 'Natural Person - Promoter':
     case 'Natural Person - Local':
+    case 'Natural Person - Employee':
     case 'Natural Person - Minor':
     case 'Natural Person - Joint Holder':
     case 'Public':
     case 'Promoter':
+    case 'Local':
+    case 'Employee':
       return 'Natural Person';
     case 'Legal Person':
     case 'Legal Person - Promoter':

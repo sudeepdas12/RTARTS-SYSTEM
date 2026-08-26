@@ -72,11 +72,61 @@ export const Route = createFileRoute("/_authenticated/clients")({
   component: ClientsPage,
 });
 
-type Holder = "Natural Person - Public" | "Natural Person - Promoter" | "Legal Person" | "Mutual Fund" | "Foreign" | "Tax Exempt" | "Public" | "Promoter" | "Institution";
+type Holder =
+  | "Natural Person - Public"
+  | "Natural Person - Promoter"
+  | "Natural Person - Local"
+  | "Natural Person - Employee"
+  | "Natural Person - Minor"
+  | "Natural Person - Joint Holder"
+  | "Legal Person"
+  | "Legal Person - Promoter"
+  | "Mutual Fund"
+  | "Foreign"
+  | "Tax Exempt"
+  | "Public"
+  | "Promoter"
+  | "Local"
+  | "Employee"
+  | "Institution";
 type Status = "Active" | "Inactive";
 type Residency = "Resident" | "Non-Resident";
 type Verification = "Pending" | "Verified" | "Rejected";
 type PayeeClassification = "NATURAL_PERSON" | "PUBLIC_LEGAL_PERSON" | "COMPANY_INSTITUTION" | "TAX_EXEMPT" | "UNCLASSIFIED";
+
+function classificationBadge(c: PayeeClassification | null) {
+  switch (c) {
+    case "NATURAL_PERSON":
+      return <Badge variant="secondary" className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border-0 text-[10px]">Natural Person (5% Div / 6% Deb)</Badge>;
+    case "PUBLIC_LEGAL_PERSON":
+      return <Badge variant="secondary" className="bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300 border-0 text-[10px]">Public Legal Person (Statutory)</Badge>;
+    case "COMPANY_INSTITUTION":
+      return <Badge variant="secondary" className="bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300 border-0 text-[10px]">Legal Person (5% Div / 15% Deb)</Badge>;
+    case "TAX_EXEMPT":
+      return <Badge variant="secondary" className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-0 text-[10px]">Tax Exempted (0% TDS)</Badge>;
+    case "UNCLASSIFIED":
+      return <Badge variant="outline" className="text-red-600 border-red-300 bg-red-50 dark:bg-red-950/30 text-[10px]">Review Required</Badge>;
+    default:
+      return <Badge variant="outline" className="text-muted-foreground border-muted text-[10px]">Unclassified</Badge>;
+  }
+}
+
+function holderBadge(h: Holder | null) {
+  const type = String(h || "Public").trim();
+  if (/Local/i.test(type))
+    return <Badge variant="secondary" className="bg-cyan-100 text-cyan-800 dark:bg-cyan-900/40 dark:text-cyan-300 border-0 gap-1 text-[11px]"><MapPin className="h-3 w-3" />Local Affected</Badge>;
+  if (/Employee|Staff/i.test(type))
+    return <Badge variant="secondary" className="bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 border-0 gap-1 text-[11px]"><User className="h-3 w-3" />Employee Quota</Badge>;
+  if (/Promoter/i.test(type))
+    return <Badge variant="secondary" className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-0 gap-1 text-[11px]"><ShieldCheck className="h-3 w-3" />Promoter</Badge>;
+  if (/Mutual Fund/i.test(type))
+    return <Badge variant="secondary" className="bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300 border-0 gap-1 text-[11px]"><Landmark className="h-3 w-3" />Mutual Fund</Badge>;
+  if (/Foreign/i.test(type))
+    return <Badge variant="outline" className="text-purple-700 border-purple-300 gap-1 text-[11px]"><User className="h-3 w-3" />Foreign</Badge>;
+  if (/Legal Person|Institution/i.test(type))
+    return <Badge variant="outline" className="text-indigo-700 border-indigo-300 gap-1 text-[11px]"><Building2 className="h-3 w-3" />Institution</Badge>;
+  return <Badge variant="outline" className="text-emerald-700 border-emerald-300 gap-1 text-[11px]"><User className="h-3 w-3" />Public</Badge>;
+}
 
 interface Client {
   id: string;
@@ -167,31 +217,6 @@ function verificationBadge(v: Verification) {
       <Clock className="h-3 w-3" /> Pending
     </Badge>
   );
-}
-
-function classificationBadge(c: PayeeClassification | null | undefined) {
-  switch (c) {
-    case "NATURAL_PERSON":
-    case "PUBLIC_LEGAL_PERSON":
-      return <Badge variant="secondary" className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border-0 text-[10px]">Natural Person (Public)</Badge>;
-    case "COMPANY_INSTITUTION":
-      return <Badge variant="secondary" className="bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300 border-0 text-[10px]">Legal Person (Institution)</Badge>;
-    case "TAX_EXEMPT":
-      return <Badge variant="secondary" className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-0 text-[10px]">Tax Exempted (Mutual Fund)</Badge>;
-    case "UNCLASSIFIED":
-      return <Badge variant="outline" className="text-red-600 border-red-300 bg-red-50 dark:bg-red-950/30 text-[10px]">Review Required</Badge>;
-    default:
-      return <Badge variant="outline" className="text-muted-foreground border-muted text-[10px]">Unclassified</Badge>;
-  }
-}
-
-function holderBadge(h: Holder | null) {
-  const type = h || "Public";
-  if (type.includes("Promoter"))
-    return <Badge variant="secondary" className="gap-1 text-[11px]"><Building2 className="h-3 w-3" />{type}</Badge>;
-  if (type === "Institution" || type === "Legal Person" || type === "Mutual Fund")
-    return <Badge variant="outline" className="gap-1 text-[11px]"><Building2 className="h-3 w-3" />{type}</Badge>;
-  return <Badge variant="outline" className="gap-1 text-[11px]"><User className="h-3 w-3" />{type}</Badge>;
 }
 
 function SectionLabel({ icon: Icon, children }: { icon?: React.ElementType; children: React.ReactNode }) {
@@ -295,12 +320,18 @@ function ClientsPage() {
       let effectiveHolderType = "all";
       let effectiveClassification = "all";
 
-      if (categoryFilter === "NATURAL_PERSON") {
-        effectiveClassification = "NATURAL_PERSON";
-      } else if (categoryFilter === "NATURAL_PERSON_PROMOTER") {
+      if (categoryFilter === "PUBLIC") {
+        effectiveHolderType = "Natural Person - Public";
+      } else if (categoryFilter === "PROMOTER") {
         effectiveHolderType = "Natural Person - Promoter";
-      } else if (categoryFilter === "COMPANY_INSTITUTION") {
+      } else if (categoryFilter === "LOCAL") {
+        effectiveHolderType = "Natural Person - Local";
+      } else if (categoryFilter === "EMPLOYEE") {
+        effectiveHolderType = "Natural Person - Employee";
+      } else if (categoryFilter === "INSTITUTION") {
         effectiveClassification = "COMPANY_INSTITUTION";
+      } else if (categoryFilter === "MUTUAL_FUND") {
+        effectiveHolderType = "Mutual Fund";
       } else if (categoryFilter === "TAX_EXEMPT") {
         effectiveClassification = "TAX_EXEMPT";
       } else if (categoryFilter === "FOREIGN") {
@@ -483,12 +514,18 @@ function ClientsPage() {
       let effectiveHolderType = "all";
       let effectiveClassification = "all";
 
-      if (categoryFilter === "NATURAL_PERSON") {
-        effectiveClassification = "NATURAL_PERSON";
-      } else if (categoryFilter === "NATURAL_PERSON_PROMOTER") {
+      if (categoryFilter === "PUBLIC") {
+        effectiveHolderType = "Natural Person - Public";
+      } else if (categoryFilter === "PROMOTER") {
         effectiveHolderType = "Natural Person - Promoter";
-      } else if (categoryFilter === "COMPANY_INSTITUTION") {
+      } else if (categoryFilter === "LOCAL") {
+        effectiveHolderType = "Natural Person - Local";
+      } else if (categoryFilter === "EMPLOYEE") {
+        effectiveHolderType = "Natural Person - Employee";
+      } else if (categoryFilter === "INSTITUTION") {
         effectiveClassification = "COMPANY_INSTITUTION";
+      } else if (categoryFilter === "MUTUAL_FUND") {
+        effectiveHolderType = "Mutual Fund";
       } else if (categoryFilter === "TAX_EXEMPT") {
         effectiveClassification = "TAX_EXEMPT";
       } else if (categoryFilter === "FOREIGN") {
@@ -702,16 +739,19 @@ function ClientsPage() {
             </Select>
 
             <Select value={categoryFilter} onValueChange={(v) => { setCategoryFilter(v); setPage(1); }}>
-              <SelectTrigger className="w-48 h-9">
-                <SelectValue placeholder="Holder Type" />
+              <SelectTrigger className="w-52 h-9">
+                <SelectValue placeholder="Category" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Holder Types</SelectItem>
-                <SelectItem value="NATURAL_PERSON">Natural Person - Public</SelectItem>
-                <SelectItem value="NATURAL_PERSON_PROMOTER">Natural Person - Promoter</SelectItem>
-                <SelectItem value="COMPANY_INSTITUTION">Legal Person / Institution</SelectItem>
-                <SelectItem value="TAX_EXEMPT">Mutual Fund / Tax Exempt</SelectItem>
+                <SelectItem value="all">All Shareholder Categories</SelectItem>
+                <SelectItem value="PUBLIC">Public</SelectItem>
+                <SelectItem value="INSTITUTION">Institution (Legal Person)</SelectItem>
+                <SelectItem value="MUTUAL_FUND">Mutual Fund (Tax Exempt)</SelectItem>
+                <SelectItem value="PROMOTER">Promoter</SelectItem>
+                <SelectItem value="LOCAL">Local Affected</SelectItem>
+                <SelectItem value="EMPLOYEE">Employee / Staff Quota</SelectItem>
                 <SelectItem value="FOREIGN">Foreign</SelectItem>
+                <SelectItem value="TAX_EXEMPT">Tax Exempt (Statutory)</SelectItem>
               </SelectContent>
             </Select>
 
@@ -1027,12 +1067,15 @@ function ClientsPage() {
                 <Select value={form.holder_type} onValueChange={(v) => setF("holder_type", v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Natural Person - Public">Natural Person - Public</SelectItem>
-                    <SelectItem value="Natural Person - Promoter">Natural Person - Promoter</SelectItem>
-                    <SelectItem value="Legal Person">Legal Person / Company</SelectItem>
-                    <SelectItem value="Mutual Fund">Mutual Fund</SelectItem>
-                    <SelectItem value="Foreign">Foreign</SelectItem>
-                    <SelectItem value="Tax Exempt">Tax Exempt</SelectItem>
+                    <SelectItem value="Natural Person - Public">Public (Natural Person)</SelectItem>
+                    <SelectItem value="Natural Person - Local">Local Affected</SelectItem>
+                    <SelectItem value="Natural Person - Employee">Employee / Staff Quota</SelectItem>
+                    <SelectItem value="Natural Person - Promoter">Promoter (Natural Person)</SelectItem>
+                    <SelectItem value="Legal Person">Institution (Legal Person / Corporate)</SelectItem>
+                    <SelectItem value="Legal Person - Promoter">Promoter (Legal Person / Corporate)</SelectItem>
+                    <SelectItem value="Mutual Fund">Mutual Fund (Tax Exempt)</SelectItem>
+                    <SelectItem value="Foreign">Foreign / Non-Resident</SelectItem>
+                    <SelectItem value="Tax Exempt">Tax Exempt (Statutory / Pension)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

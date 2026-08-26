@@ -64,7 +64,8 @@ const SEGMENT_OPTIONS = [
   { value: "", label: "— Segment: None —" },
   { value: "PUBLIC", label: "Public" },
   { value: "PROMOTER", label: "Promoter" },
-  { value: "LOCAL", label: "Local" },
+  { value: "LOCAL", label: "Local Affected" },
+  { value: "EMPLOYEE", label: "Employee / Staff" },
 ];
 
 const PAGE_SIZE = 25;
