@@ -147,7 +147,7 @@ export const ChunkProcessor = {
           // why. Without this, the upload history reports errors but upload_errors
           // stays empty -> "No error records found for this upload."
           const chunkErrorRows = chunk.map((row, idx) => ({
-            row_number: idx + 1,
+            row_number: i * effectiveChunkSize + idx + 1,
             field_name: 'chunk',
             error_type: 'chunk_error',
             error_message: `Chunk failed: ${err?.message ?? String(err)}`,
@@ -166,7 +166,7 @@ export const ChunkProcessor = {
           processedRows: processed,
           successRows: success,
           errorRows: errors,
-          status: processed === rows.length ? 'Completed' : 'Processing'
+          status: processed === rows.length ? (success === 0 && errors > 0 ? 'Failed' : 'Completed') : 'Processing'
         });
       }
     }
@@ -191,7 +191,7 @@ export const ChunkProcessor = {
       processedRows: processed,
       successRows: success,
       errorRows: errors,
-      status: 'Completed',
+      status: success === 0 && errors > 0 ? 'Failed' : 'Completed',
     };
   }
 };

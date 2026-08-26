@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { getPayeeTaxRate } from './payable-summary';
 
 export interface PaymentBatch {
   id: string;
@@ -165,6 +166,7 @@ export const PaymentService = {
 
       if (lineItemsError) {
         console.warn('Failed to delete payment line items:', lineItemsError.message);
+        return false;
       }
 
       // 2. Delete the batch header
@@ -348,6 +350,11 @@ export const PaymentService = {
         return false;
       }
 
+      if (payment.status === 'Reversed') {
+        console.warn('Payment is already reversed:', paymentId);
+        return false;
+      }
+
       // Update payment status to Reversed
       const { error: updateError } = await (supabase as any)
         .from('payments')
@@ -410,6 +417,14 @@ export const PaymentService = {
    */
   async retryPayment(paymentId: string, userId?: string): Promise<boolean> {
     try {
+      const { data: currentPayment } = await (supabase as any)
+        .from('payments')
+        .select('status')
+        .eq('id', paymentId)
+        .single();
+
+      const prevStatus = currentPayment?.status || 'Failed';
+
       const { error } = await (supabase as any)
         .from('payments')
         .update({
@@ -427,7 +442,7 @@ export const PaymentService = {
         await (supabase as any).from('payment_logs').insert({
           payment_id: paymentId,
           action: 'retried',
-          previous_status: 'Failed',
+          previous_status: prevStatus,
           new_status: 'Pending',
           performed_by: userId || null,
         });
@@ -460,7 +475,7 @@ export const PaymentService = {
         const { data: existingPayments } = await (supabase as any)
           .from('payments')
           .select('payable_id')
-          .not('status', 'in', '("Reversed","Failed")');
+          .not('status', 'in', ['Reversed', 'Failed']);
 
         if (existingPayments && Array.isArray(existingPayments)) {
           batchedPayableIds = new Set(existingPayments.map((p: any) => p.payable_id).filter(Boolean));
@@ -525,7 +540,7 @@ export const PaymentService = {
             const interestItems = interestData.map((p: any) => {
               const annualGross = Number(p.gross_interest ?? 0);
               const gross = (annualGross / 365) * days;
-              const rate = p.payee_classification === 'COMPANY_INSTITUTION' ? 0.15 : (p.payee_classification === 'TAX_EXEMPT' ? 0 : 0.06);
+              const rate = getPayeeTaxRate(p.payee_classification, true, null, false);
               const tax = gross * rate;
               const net = gross - tax;
               return {

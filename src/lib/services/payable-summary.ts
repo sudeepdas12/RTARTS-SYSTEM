@@ -36,7 +36,9 @@ export function getPayeeCategoryLabel(category?: string | null): string {
   switch (String(category ?? '').toUpperCase()) {
     case 'NATURAL_PERSON': return 'Natural Person (Public)';
     case 'PUBLIC_LEGAL_PERSON': return 'Natural Person (Public)';
+    case 'INSTITUTION': return 'Legal Person (Institution / Company)';
     case 'COMPANY_INSTITUTION': return 'Legal Person (Institution / Company)';
+    case 'LEGAL_PERSON': return 'Legal Person (Institution / Company)';
     case 'TAX_EXEMPT': return 'Tax Exempted (Mutual Fund / Retirement Fund)';
     case 'MUTUAL_FUND': return 'Mutual Fund (Tax Exempt)';
     case 'FOREIGN': return 'Foreign';

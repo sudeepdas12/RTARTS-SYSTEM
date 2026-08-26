@@ -312,7 +312,7 @@ export const ReconciliationService = {
       for (const table of payableTables) {
         let q = (supabase as any).from(table).select('id, payment_reference');
         if (batchIdOrDate) {
-          q = q.or(`payment_reference.ilike.%${batchIdOrDate}%,payment_reference.ilike.RECON-%`);
+          q = q.ilike('payment_reference', `%${batchIdOrDate}%`);
         } else {
           q = q.ilike('payment_reference', 'RECON-%');
         }
@@ -575,10 +575,10 @@ export const ReconciliationService = {
           } else {
             const actualAmount = Number(result.actual_amount ?? 0);
             const expectedAmount = Number(result.expected_amount ?? 0);
-            const netAmount = expectedAmount;
+            const paidAmount = actualAmount || expectedAmount;
+            const netAmount = paidAmount;
             const grossAmount = payableGross || netAmount;
             const taxAmount = payableTax;
-            const paidAmount = actualAmount || expectedAmount;
 
             batchTotalGross += grossAmount;
             batchTotalTax += taxAmount;

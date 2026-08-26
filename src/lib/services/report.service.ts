@@ -311,6 +311,7 @@ export const ReportService = {
           let q = supabase
             .from('dividend_payables')
             .select('id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)')
+            .neq('payment_status', 'Reversed')
             .order('created_at', { ascending: false })
             .range(from, to);
           if (filters.companyId && filters.companyId !== 'all') q = q.eq('company_id', filters.companyId);
@@ -322,6 +323,7 @@ export const ReportService = {
           let q = supabase
             .from('interest_payables')
             .select('id, gross_interest, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)')
+            .neq('payment_status', 'Reversed')
             .order('created_at', { ascending: false })
             .range(from, to);
           if (filters.companyId && filters.companyId !== 'all') q = q.eq('company_id', filters.companyId);
@@ -333,6 +335,7 @@ export const ReportService = {
           let q = (supabase as any)
             .from('mutual_fund_payables')
             .select('id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)')
+            .neq('payment_status', 'Reversed')
             .order('created_at', { ascending: false })
             .range(from, to);
           if (filters.companyId && filters.companyId !== 'all') q = q.eq('company_id', filters.companyId);
@@ -750,7 +753,7 @@ export const ReportService = {
         .order('full_name', { ascending: true });
 
       if (filters.companyId && filters.companyId !== 'all') {
-        (query as any).eq('company_id', filters.companyId);
+        query = query.eq('company_id', filters.companyId);
       }
 
       const { data, error } = await query;

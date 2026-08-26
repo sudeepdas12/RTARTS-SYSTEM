@@ -38,6 +38,10 @@ describe('getInvestorDemographicGroup (stored holder_type -> report bucket)', ()
   it('groups granular natural-person values', () => {
     expect(getInvestorDemographicGroup('Natural Person - Public')).toBe('Natural Person');
     expect(getInvestorDemographicGroup('Natural Person - Promoter')).toBe('Natural Person');
+    expect(getInvestorDemographicGroup('Natural Person - Local')).toBe('Natural Person');
+    expect(getInvestorDemographicGroup('Natural Person - Minor')).toBe('Natural Person');
+    expect(getInvestorDemographicGroup('Natural Person - Joint Holder')).toBe('Natural Person');
+    expect(getInvestorDemographicGroup('Legal Person - Promoter')).toBe('Legal Person');
   });
 
   it('maps legacy values to their best bucket', () => {

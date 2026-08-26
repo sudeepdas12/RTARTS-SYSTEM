@@ -341,7 +341,7 @@ export const BankParser = {
                 date: indices.date >= 0 ? String(row[indices.date] || '').trim() : '',
                 description,
                 debit: withdrawVal,
-                credit: depositVal || (withdrawVal > 0 ? withdrawVal : 0),
+                credit: depositVal,
                 balance: balanceVal,
                 bankName: indices.bankName >= 0 ? String(row[indices.bankName] || '').trim() : undefined,
                 accountNo: extractedAccountNo || undefined,

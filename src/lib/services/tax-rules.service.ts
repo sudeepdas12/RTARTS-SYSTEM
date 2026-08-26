@@ -41,7 +41,7 @@ export const TAX_CATEGORY_LABEL: Record<TaxPayableCategory, string> = {
 
 export const TAX_CLASSIFICATION_LABEL: Record<TaxClassification, string> = {
   NATURAL_PERSON: "Natural Person (Public / Individual)",
-  PUBLIC_LEGAL_PERSON: "Natural Person (Public)",
+  PUBLIC_LEGAL_PERSON: "Public Legal Person (Semi-Govt / Statutory)",
   COMPANY_INSTITUTION: "Legal Person (Company / Institution)",
   TAX_EXEMPT: "Tax Exempt (Mutual Fund / Retirement Fund)",
 };
@@ -55,6 +55,7 @@ export async function loadTaxRules(force = false): Promise<TaxRule[]> {
   const { data, error } = await (supabase as any)
     .from("payable_tax_rules")
     .select("id, payable_category, payee_classification, tax_rate, is_active")
+    .eq("is_active", true)
     .order("payable_category")
     .order("payee_classification");
   throwIfError(error, "Failed to load tax rules");

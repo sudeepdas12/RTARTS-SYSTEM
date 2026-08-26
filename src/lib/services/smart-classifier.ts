@@ -145,10 +145,9 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
   const mother = String(input.mother_name || '').trim();
   const spouse = String(input.spouse_name || '').trim();
 
-  // Guardian Details (Minors)
+  // Guardian Details (Minors - only person names indicate guardian presence)
   const guardian = String(
-    input.guardian_name || input.guardianName || input.GUARDIAN_NAME || input.GUARDIAN ||
-    input.guardian_relation || input.guardianRelation || input.guardian_citizenship || input.guardian_father_name || ''
+    input.guardian_name || input.guardianName || input.GUARDIAN_NAME || input.GUARDIAN || ''
   ).trim();
 
   // Personal Credentials & Demographics
@@ -176,7 +175,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
   // =========================================================================
   // TIER 0: Direct Payee Classification Argument (When passed explicitly)
   // =========================================================================
-  if (dbClassification && !rawName) {
+  if (dbClassification && dbClassification !== 'UNCLASSIFIED' && !input.lot_name) {
     if (dbClassification === 'COMPANY_INSTITUTION') {
       return {
         payee_classification: 'COMPANY_INSTITUTION',
@@ -203,7 +202,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
       const segment: PayeeSegment = isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : 'PUBLIC';
       const category: PayeeCategory = isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : 'PUBLIC';
       return {
-        payee_classification: 'NATURAL_PERSON',
+        payee_classification: dbClassification === 'PUBLIC_LEGAL_PERSON' ? 'PUBLIC_LEGAL_PERSON' : 'NATURAL_PERSON',
         payee_category: category,
         payee_segment: segment,
         holder_type: isPromoterSegment
@@ -213,18 +212,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
           : 'Natural Person - Public',
         tds_rate_dividend: 0.05,
         tds_rate_debenture: 0.06,
-        rule_matched: 'Explicit Payee Classification (Natural Person)',
-      };
-    }
-    if (dbClassification === 'UNCLASSIFIED') {
-      return {
-        payee_classification: 'UNCLASSIFIED',
-        payee_category: 'UNKNOWN',
-        payee_segment: isPromoterSegment ? 'PROMOTER' : isLocalSegment ? 'LOCAL' : null,
-        holder_type: 'Public',
-        tds_rate_dividend: 0.05,
-        tds_rate_debenture: 0.06,
-        rule_matched: 'Unclassified Payee',
+        rule_matched: `Explicit Payee Classification (${dbClassification})`,
       };
     }
   }
@@ -396,15 +384,15 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
         rule_matched: 'Explicit Metadata (Tax Exempt)',
       };
     }
-    if (/LEGAL|INSTIT|COMPANY|CORPORAT|PRIVATE/i.test(explicitType)) {
+    if (/FOREIGN|NRN/i.test(explicitType)) {
       return {
         payee_classification: 'COMPANY_INSTITUTION',
-        payee_category: isPromoterSegment ? 'PROMOTER' : 'INSTITUTION',
-        payee_segment: isPromoterSegment ? 'PROMOTER' : null,
-        holder_type: isPromoterSegment ? 'Legal Person - Promoter' : 'Legal Person',
+        payee_category: 'FOREIGN',
+        payee_segment: null,
+        holder_type: 'Foreign',
         tds_rate_dividend: 0.05,
         tds_rate_debenture: 0.15,
-        rule_matched: 'Explicit Metadata (Institution / Corporate)',
+        rule_matched: 'Explicit Metadata (Foreign / NRN)',
       };
     }
     if (/PROMOT/i.test(explicitType)) {
@@ -427,6 +415,17 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
         tds_rate_dividend: 0.05,
         tds_rate_debenture: 0.06,
         rule_matched: 'Explicit Metadata (Local)',
+      };
+    }
+    if (/LEGAL|INSTIT|COMPANY|CORPORAT|PRIVATE/i.test(explicitType)) {
+      return {
+        payee_classification: 'COMPANY_INSTITUTION',
+        payee_category: isPromoterSegment ? 'PROMOTER' : 'INSTITUTION',
+        payee_segment: isPromoterSegment ? 'PROMOTER' : null,
+        holder_type: isPromoterSegment ? 'Legal Person - Promoter' : 'Legal Person',
+        tds_rate_dividend: 0.05,
+        tds_rate_debenture: 0.15,
+        rule_matched: 'Explicit Metadata (Institution / Corporate)',
       };
     }
     if (/PUBLIC|INDIVIDUAL|GENERAL/i.test(explicitType)) {
@@ -468,7 +467,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
   }
 
   // =========================================================================
-  // TIER 8: Fallback -> Natural Person (Public) or Unclassified if empty
+  // TIER 8: Fallback -> Natural Person (Public) or Unclassified if empty / ambiguous
   // =========================================================================
   if (!rawName || rawName === 'Ram Shyam') {
     return {

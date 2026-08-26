@@ -24,40 +24,43 @@ export interface DividendResult {
 
 export const DividendCalculator = {
   calculate(params: DividendCalculationParams): DividendResult {
-    const faceValue = params.faceValue || 100;
+    const faceValue = Math.max(0, params.faceValue || 100);
+    const sharesHeld = Math.max(0, params.sharesHeld || 0);
     
     // Determine TDS Rate by Category
     let appliedTdsRate = 0.05; // Default 5% for Natural Person (Public) and Legal Person (Institution)
     if (params.taxCategory === 'TAX_EXEMPTED') appliedTdsRate = 0.0; // 0% for Mutual Fund (Tax Exempted)
     else if (params.taxCategory === 'PROMOTER') appliedTdsRate = 0.05; // Explicitly 5% for Promoter dividend
-    else if (params.taxCategory === 'CUSTOM' && params.customTaxRate !== undefined) appliedTdsRate = params.customTaxRate;
+    else if (params.taxCategory === 'CUSTOM' && params.customTaxRate !== undefined) appliedTdsRate = Math.max(0, params.customTaxRate);
 
     // 1. Bonus / Right Share Calculations
     let exactBonusShares = 0;
     let issuedBonusShares = 0;
     let fractionBonusShares = 0;
-    let afterBonusKitta = params.sharesHeld;
+    let afterBonusKitta = sharesHeld;
 
-    if ((params.dividendType === 'Bonus' || params.dividendType === 'Stock' || params.dividendType === 'Combined' || params.dividendType === 'Right') && params.bonusRatio) {
-      exactBonusShares = params.sharesHeld * params.bonusRatio;
+    const bonusRatio = Math.max(0, params.bonusRatio || 0);
+    if ((params.dividendType === 'Bonus' || params.dividendType === 'Stock' || params.dividendType === 'Combined' || params.dividendType === 'Right') && bonusRatio > 0) {
+      exactBonusShares = sharesHeld * bonusRatio;
       issuedBonusShares = Math.floor(exactBonusShares);
       fractionBonusShares = exactBonusShares - issuedBonusShares;
       // Only whole shares are issued
-      afterBonusKitta = params.sharesHeld + issuedBonusShares;
+      afterBonusKitta = sharesHeld + issuedBonusShares;
     }
 
     // 2. Gross Cash Dividend Calculation
     let grossCashDividend = 0;
-    if (params.cashDividendRate) {
+    const cashDividendRate = Math.max(0, params.cashDividendRate || 0);
+    if (cashDividendRate > 0) {
       // For combined/bonus, cash dividend is often paid on the post-bonus capital, but in some markets it's paid on pre-bonus. 
       // Typically if they provide a rate per share or percentage, it applies to the pre-bonus capital for Cash, and post-bonus for Combined.
-      const kittaForCash = (params.dividendType === 'Combined') ? afterBonusKitta : params.sharesHeld;
+      const kittaForCash = (params.dividendType === 'Combined') ? afterBonusKitta : sharesHeld;
       
       if (params.cashRateIsPerShare) {
-        grossCashDividend = kittaForCash * params.cashDividendRate;
+        grossCashDividend = kittaForCash * cashDividendRate;
       } else {
         // Percentage of face value (e.g. 10% of Rs 100 face value)
-        grossCashDividend = (kittaForCash * faceValue * params.cashDividendRate) / 100;
+        grossCashDividend = (kittaForCash * faceValue * cashDividendRate) / 100;
       }
     }
 

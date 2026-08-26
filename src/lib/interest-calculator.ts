@@ -22,20 +22,26 @@ export interface InterestResult {
 
 export const InterestCalculator = {
   calculate(params: InterestCalculationParams): InterestResult {
-    const faceValue = params.unitFaceValue || 1000;
-    const totalPrincipal = params.debentureKitta * faceValue;
+    const faceValue = Math.max(0, params.unitFaceValue || 1000);
+    const debentureKitta = Math.max(0, params.debentureKitta || 0);
+    const totalPrincipal = debentureKitta * faceValue;
 
     // Annual Interest (e.g. 7% of total principal)
-    const annualInterestAmount = (totalPrincipal * params.annualInterestRate) / 100;
+    const annualInterestRate = Math.max(0, params.annualInterestRate || 0);
+    const annualInterestAmount = (totalPrincipal * annualInterestRate) / 100;
 
     // Daily Interest (365-day convention)
     const dailyInterestRate = annualInterestAmount / 365;
 
     // Compute days from dates if not explicitly provided
-    let days = params.daysCount ?? 0;
+    let days = Math.max(0, params.daysCount ?? 0);
     if (!days && params.fromDate && params.toDate) {
-      const timeDiff = params.toDate.getTime() - params.fromDate.getTime();
-      days = Math.max(0, Math.ceil(timeDiff / (1000 * 3600 * 24)));
+      const fromTime = params.fromDate.getTime();
+      const toTime = params.toDate.getTime();
+      if (!isNaN(fromTime) && !isNaN(toTime) && toTime > fromTime) {
+        const timeDiff = toTime - fromTime;
+        days = Math.max(0, Math.ceil(timeDiff / (1000 * 3600 * 24)));
+      }
     }
 
     // Gross Period Interest

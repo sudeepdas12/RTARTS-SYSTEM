@@ -25,6 +25,7 @@ const WORKFLOW_CONFIGS: Record<string, WorkflowConfig> = {
     statusField: 'status',
     transitions: [
       { from: 'Draft', to: 'Pending', action: 'submit', requiredRole: ['maker', 'operator', 'supervisor', 'admin'] },
+      { from: 'Returned', to: 'Pending', action: 'submit', requiredRole: ['maker', 'operator', 'supervisor', 'admin'] },
       { from: 'Pending', to: 'Approved', action: 'approve', requiredRole: ['checker', 'approver', 'supervisor', 'admin'] },
       { from: 'Pending', to: 'Rejected', action: 'reject', requiredRole: ['checker', 'approver', 'supervisor', 'admin'] },
       { from: 'Pending', to: 'Returned', action: 'return', requiredRole: ['checker', 'approver', 'supervisor', 'admin'] },
@@ -95,15 +96,15 @@ export const WorkflowEngine = {
       return { success: false, error: `Invalid transition: ${currentStatus} → ${action}` };
     }
 
-    // Check role permission
-    if (user && !RBACService.hasRole(user, transition.requiredRole as any)) {
+    // Check role permission (Fail-closed: user must exist and have the required role)
+    if (!user || !RBACService.hasRole(user, transition.requiredRole as any)) {
       return { success: false, error: 'Insufficient permissions for this action' };
     }
 
     // ─── MAKER-CHECKER SEGREGATION ─────────────────────────────────────────────
-    // If require_maker_checker is enabled globally, block approve/process/complete
-    // actions when the acting user is the same as the record's creator.
-    if (action === 'approve' || action === 'process' || action === 'complete') {
+    // If require_maker_checker is enabled globally, block checker actions
+    // (approve, process, complete, reject, return) when acting user is creator.
+    if (action === 'approve' || action === 'process' || action === 'complete' || action === 'reject' || action === 'return') {
       try {
         const settings = await SettingsService.getSettings();
         if (settings.require_maker_checker && user) {
@@ -118,7 +119,7 @@ export const WorkflowEngine = {
           if (createdBy && createdBy === user.id) {
             return {
               success: false,
-              error: 'Maker and Checker cannot be the same user. This batch was created by you and must be approved by a different user.'
+              error: 'Maker and Checker cannot be the same user. This batch was created by you and must be reviewed by a different user.'
             };
           }
         }
@@ -134,8 +135,11 @@ export const WorkflowEngine = {
     if (action === 'approve') {
       updateData.approved_by = user?.id || null;
       updateData.approved_at = new Date().toISOString();
-    } else if (action === 'process' || action === 'complete') {
+    } else if (action === 'process') {
       updateData.processed_at = new Date().toISOString();
+    } else if (action === 'complete') {
+      updateData.completed_at = new Date().toISOString();
+      updateData.processed_at = updateData.processed_at || new Date().toISOString();
     }
 
     const { error: updateError } = await (supabase as any)
@@ -156,6 +160,7 @@ export const WorkflowEngine = {
         new_status: newStatus,
         remarks: remarks || null,
         performed_by: user?.id || null,
+        performed_at: new Date().toISOString(),
       });
     } catch (logErr) {
       console.warn('Failed to write approval log:', logErr);
@@ -173,9 +178,10 @@ export const WorkflowEngine = {
           requested_by: user?.id || null,
         });
       } else if (action === 'approve' || action === 'reject' || action === 'return') {
+        const mappedPendingStatus = action === 'approve' ? 'Approved' : action === 'return' ? 'Returned' : 'Rejected';
         await (supabase as any).from('pending_approvals')
           .update({
-            status: action === 'approve' ? 'Approved' : 'Rejected',
+            status: mappedPendingStatus,
             review_notes: remarks || null,
             reviewed_by: user?.id || null,
             reviewed_at: new Date().toISOString(),
@@ -189,10 +195,18 @@ export const WorkflowEngine = {
 
     // Send notification
     try {
+      const actionPast = action === 'submit' ? 'submitted'
+        : action === 'approve' ? 'approved'
+        : action === 'reject' ? 'rejected'
+        : action === 'return' ? 'returned'
+        : action === 'process' ? 'processed'
+        : action === 'complete' ? 'completed'
+        : `${action}ed`;
+
       await NotificationService.sendNotification({
         user_id: user?.id || null,
         title: `${table.replace('_', ' ')} ${action}`,
-        message: `Record ${recordId.slice(0, 8)} was ${action}d. Status: ${currentStatus} → ${newStatus}`,
+        message: `Record ${recordId.slice(0, 8)} was ${actionPast}. Status: ${currentStatus} → ${newStatus}`,
         channel: 'System',
         category: 'approval_pending',
         reference_type: table,

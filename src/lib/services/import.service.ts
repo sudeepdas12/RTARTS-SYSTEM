@@ -33,7 +33,8 @@ const CLIENT_LOOKUP_BATCH = 300;
 
 export interface ClientRecordMeta {
   id: string;
-  boid: string;
+  boid?: string | null;
+  client_code?: string | null;
   holder_type?: string | null;
   payee_classification?: string | null;
   payee_segment?: string | null;
@@ -48,7 +49,7 @@ async function fetchClientInfoByBoids(boids: string[]): Promise<Map<string, Clie
     const part = boids.slice(i, i + CLIENT_LOOKUP_BATCH);
     const { data } = await (supabase as any)
       .from("clients")
-      .select("id, boid, holder_type, payee_classification, payee_segment, nid_number, pan_no, citizenship_no")
+      .select("id, boid, client_code, holder_type, payee_classification, payee_segment, nid_number, pan_no, citizenship_no")
       .in("boid", part);
     for (const c of data || []) {
       if (c?.boid) map.set(String(c.boid), c);
@@ -437,12 +438,9 @@ export const ImportService = {
         }
       }
 
-      // 4. Fallback if insert failed
+      // 4. Fallback warning if resolution/creation was unsuccessful
       if (!companyId) {
-        const { data: companies } = await supabase.from("companies").select("id").limit(1);
-        if (companies && companies.length > 0) {
-          companyId = companies[0].id;
-        }
+        console.warn("Could not determine or create company for import:", companyName);
       }
 
       if (sharedContext) {
@@ -626,7 +624,7 @@ function extractRowField(row: any, keys: string[]): string {
             pan_no: panNo || clientMeta.pan_no || null,
             citizenship_no: citizenshipNo || clientMeta.citizenship_no || null,
             pan_or_citizenship: panNo || citizenshipNo || null,
-            client_code: buildClientCode(row, boid),
+            client_code: clientMeta.client_code || buildClientCode(row, boid),
             full_name: extractRowField(row, ["full_name", "name", "NAME", "SHAREHOLDER NAME"]) || "Existing Investor",
           });
           if (needsNidUpdate) clientMeta.nid_number = nidNumber;

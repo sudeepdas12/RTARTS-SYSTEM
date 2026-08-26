@@ -208,4 +208,50 @@ describe('Smart Shareholder Classification Engine (Ultra-Smart & Multi-Tier)', (
       expect(local.tds_rate_dividend).toBe(0.05);
     });
   });
+
+  describe('5. Database Classification Precedence (Tier 0)', () => {
+    it('respects explicit database classification even when full name is present', () => {
+      const dbCompany = smartClassify({
+        full_name: 'Ram Bahadur Shrestha',
+        payee_classification: 'COMPANY_INSTITUTION',
+      });
+      expect(dbCompany.payee_classification).toBe('COMPANY_INSTITUTION');
+      expect(dbCompany.payee_category).toBe('INSTITUTION');
+      expect(dbCompany.tds_rate_debenture).toBe(0.15);
+
+      const dbTaxExempt = smartClassify({
+        full_name: 'Shrestha Enterprises',
+        payee_classification: 'TAX_EXEMPT',
+      });
+      expect(dbTaxExempt.payee_classification).toBe('TAX_EXEMPT');
+      expect(dbTaxExempt.tds_rate_dividend).toBe(0.0);
+
+      const dbPublicLegal = smartClassify({
+        full_name: 'Government Entity',
+        payee_classification: 'PUBLIC_LEGAL_PERSON',
+      });
+      expect(dbPublicLegal.payee_classification).toBe('PUBLIC_LEGAL_PERSON');
+    });
+  });
+
+  describe('6. Edge Cases & Metadata Precedence', () => {
+    it('handles PRIVATE PROMOTER without erroneously categorizing as institution', () => {
+      const privatePromoter = smartClassify({
+        full_name: 'Bishnu Prasad',
+        holder_type: 'PRIVATE PROMOTER',
+      });
+      expect(privatePromoter.payee_classification).toBe('NATURAL_PERSON');
+      expect(privatePromoter.payee_category).toBe('PROMOTER');
+    });
+
+    it('correctly classifies FOREIGN metadata', () => {
+      const foreign = smartClassify({
+        full_name: 'John Doe',
+        holder_type: 'FOREIGN INVESTOR',
+      });
+      expect(foreign.payee_classification).toBe('COMPANY_INSTITUTION');
+      expect(foreign.payee_category).toBe('FOREIGN');
+    });
+  });
 });
+

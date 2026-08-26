@@ -490,41 +490,56 @@ export const ValidationEngine = {
       }
 
       // RULE 10: Numeric field validations (Soft notice)
-      if (gross !== null && isNaN(gross)) {
+      if (gross !== null && (isNaN(gross) || gross < 0)) {
         errors.push({
           row: rowNum,
           field: "gross_amount",
           type: "invalid_gross",
-          message: "Gross amount must be numeric.",
+          message: "Gross amount must be a valid non-negative number.",
           rawData,
         });
       }
-      if (tax !== null && isNaN(tax)) {
+      if (tax !== null && (isNaN(tax) || tax < 0)) {
         errors.push({
           row: rowNum,
           field: "tax_amount",
           type: "invalid_tax",
-          message: "Tax amount must be numeric.",
+          message: "Tax amount must be a valid non-negative number.",
           rawData,
         });
       }
-      if (net !== null && isNaN(net)) {
+      if (net !== null && (isNaN(net) || net < 0)) {
         errors.push({
           row: rowNum,
           field: "net_payable",
           type: "invalid_net",
-          message: "Net payable must be numeric.",
+          message: "Net payable must be a valid non-negative number.",
           rawData,
         });
       }
-      if (sharesHeld !== null && isNaN(sharesHeld)) {
+      if (sharesHeld !== null && (isNaN(sharesHeld) || sharesHeld < 0)) {
         errors.push({
           row: rowNum,
           field: "shares_held",
           type: "invalid_shares",
-          message: "Shares / Units held must be numeric.",
+          message: "Shares / Units held must be a valid non-negative number.",
           rawData,
         });
+      }
+
+      // RULE 10B: Payee classification enum validation
+      const rawClassification = get("payee_classification");
+      if (rawClassification) {
+        const validClassifications = new Set(['NATURAL_PERSON', 'PUBLIC_LEGAL_PERSON', 'COMPANY_INSTITUTION', 'TAX_EXEMPT', 'UNCLASSIFIED']);
+        if (!validClassifications.has(rawClassification.toUpperCase())) {
+          errors.push({
+            row: rowNum,
+            field: "payee_classification",
+            type: "invalid_payee_classification",
+            message: `Payee classification "${rawClassification}" is not a recognized classification. Expected one of NATURAL_PERSON, PUBLIC_LEGAL_PERSON, COMPANY_INSTITUTION, TAX_EXEMPT, UNCLASSIFIED.`,
+            rawData,
+          });
+        }
       }
 
       // RULE 11: Net = Gross - Tax calculation check (Soft notice)

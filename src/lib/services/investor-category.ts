@@ -24,7 +24,11 @@
 export type HolderTypeValue =
   | 'Natural Person - Public'
   | 'Natural Person - Promoter'
+  | 'Natural Person - Local'
+  | 'Natural Person - Minor'
+  | 'Natural Person - Joint Holder'
   | 'Legal Person'
+  | 'Legal Person - Promoter'
   | 'Mutual Fund'
   | 'Foreign'
   | 'Tax Exempt'
@@ -80,13 +84,20 @@ export function mapToHolderType(category: string): HolderTypeValue | null {
  * change.
  */
 export function getInvestorDemographicGroup(holderType: HolderTypeValue | string | null | undefined): DemographicGroup {
-  switch (holderType) {
+  if (!holderType) return 'Unknown';
+  const val = String(holderType).trim();
+
+  switch (val) {
     case 'Natural Person - Public':
     case 'Natural Person - Promoter':
+    case 'Natural Person - Local':
+    case 'Natural Person - Minor':
+    case 'Natural Person - Joint Holder':
     case 'Public':
     case 'Promoter':
       return 'Natural Person';
     case 'Legal Person':
+    case 'Legal Person - Promoter':
     case 'Institution':
       return 'Legal Person';
     case 'Mutual Fund':
@@ -96,6 +107,8 @@ export function getInvestorDemographicGroup(holderType: HolderTypeValue | string
     case 'Foreign':
       return 'Foreign';
     default:
+      if (val.startsWith('Natural Person')) return 'Natural Person';
+      if (val.startsWith('Legal Person')) return 'Legal Person';
       return 'Unknown';
   }
 }

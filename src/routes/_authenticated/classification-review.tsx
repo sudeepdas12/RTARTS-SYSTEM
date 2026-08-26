@@ -55,6 +55,7 @@ export const Route = createFileRoute("/_authenticated/classification-review")({
 
 const CLASSIFICATION_OPTIONS: { value: PayeeClassification; label: string }[] = [
   { value: "NATURAL_PERSON", label: "Natural Person (Public / Individual)" },
+  { value: "PUBLIC_LEGAL_PERSON", label: "Public Legal Person (Semi-Govt / Statutory)" },
   { value: "COMPANY_INSTITUTION", label: "Legal Person (Institution / Company)" },
   { value: "TAX_EXEMPT", label: "Tax Exempted (Mutual Fund / Retirement Fund)" },
 ];
@@ -71,10 +72,15 @@ const PAGE_SIZE = 25;
 const classBadge = (c: string | null | undefined) => {
   switch (c) {
     case "NATURAL_PERSON":
-    case "PUBLIC_LEGAL_PERSON":
       return (
         <Badge variant="secondary" className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border-0">
           Natural Person (Public)
+        </Badge>
+      );
+    case "PUBLIC_LEGAL_PERSON":
+      return (
+        <Badge variant="secondary" className="bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300 border-0">
+          Public Legal Person (Statutory)
         </Badge>
       );
     case "COMPANY_INSTITUTION":

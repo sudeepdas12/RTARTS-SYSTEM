@@ -34,11 +34,12 @@ export const DividendService = {
     try {
       await RtsService.submitDividend(payload);
       // 4. On success, mark as submitted and clear error
+      const currentAttempts = Number((payable as any).rts_attempts || 0);
       const { error: updateError } = await supabase
         .from('dividend_payables')
         .update({
           rts_submitted: true,
-          rts_attempts: (payable as any).rts_attempts ?? 0 + 1,
+          rts_attempts: currentAttempts + 1,
           rts_error: null,
         } as any)
         .eq('id', payableId);
@@ -47,11 +48,12 @@ export const DividendService = {
       }
     } catch (err: any) {
       // 5. On failure, increment attempts and store error message
+      const currentAttempts = Number((payable as any).rts_attempts || 0);
       const { error: updateError } = await supabase
         .from('dividend_payables')
         .update({
           rts_submitted: false,
-          rts_attempts: (payable as any).rts_attempts ?? 0 + 1,
+          rts_attempts: currentAttempts + 1,
           rts_error: err?.message ?? String(err),
         } as any)
         .eq('id', payableId);
