@@ -382,7 +382,7 @@ function InterestPage() {
       return fetchAllRows<Payable>((from, to) => {
         let q = (supabase as any)
           .from("interest_payables")
-          .select("id, client_id, company_id, instrument_ref, gross_interest, tax_amount, net_payable, due_date, payment_status, fiscal_year, payee_classification, payee_segment, client:clients(id, full_name, holder_type, payee_classification, payee_segment)")
+          .select("*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no, holder_type, payee_classification, payee_segment, kitta), company:companies(id, company_code, company_name)")
           .range(from, to);
         if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
         if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);

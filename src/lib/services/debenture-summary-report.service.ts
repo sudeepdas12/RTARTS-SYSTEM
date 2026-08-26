@@ -180,18 +180,33 @@ export const DebentureSummaryReportService = {
       const cat = determineDebentureCategory(p);
       const clientId = p.client_id || p.id || crypto.randomUUID();
       
-      let kitta = Number(p.shares_held || p.kitta || 0);
+      let kitta = Number(p.shares_held || p.kitta || p.client?.kitta || 0);
       let gross = Number(p.gross_interest || 0);
       let tax = Number(p.tax_amount || 0);
       let net = Number(p.net_payable || 0);
       let rowRate = Number(p.interest_rate_value || p.interest_rate || detectedCouponRate || 0);
 
-      // If kitta is 0 but gross exists, derive exact kitta from coupon if rate exists
-      if (kitta === 0 && gross > 0 && rowRate > 0) {
-        kitta = Math.round(gross / (fv * (rowRate / 100)));
+      // If rowRate is 0, attempt to parse percentage from instrument_ref or company name
+      if (!rowRate) {
+        const refMatch = String(p.instrument_ref || p.company?.company_name || '').match(/(\d+(?:[.\s]\d+)?)\s*%/);
+        if (refMatch) {
+          rowRate = parseFloat(refMatch[1].replace(/\s+/, '.'));
+        }
       }
 
-      const principal = kitta * fv;
+      // If kitta is 0 but gross exists, derive exact kitta from coupon rate
+      if (kitta === 0 && gross > 0 && rowRate > 0) {
+        kitta = Math.round(gross / (fv * (rowRate / 100)));
+      } else if (kitta === 0 && gross > 0 && detectedCouponRate > 0) {
+        kitta = Math.round(gross / (fv * (detectedCouponRate / 100)));
+      }
+
+      let principal = kitta * fv;
+      if (principal === 0 && gross > 0 && rowRate > 0) {
+        principal = Math.round((gross / (rowRate / 100)) * 100) / 100;
+        if (kitta === 0) kitta = Math.round(principal / fv);
+      }
+
       let annualInt = rowRate > 0 ? principal * (rowRate / 100) : gross;
 
       if (gross === 0 && kitta > 0) {
