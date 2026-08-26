@@ -320,7 +320,9 @@ function DividendPage() {
           q = q.or("payee_segment.eq.PROMOTER,lot_name.ilike.%PROMOT%");
         } else if (classFilter === "LOCAL") {
           q = q.or("payee_segment.eq.LOCAL,lot_name.ilike.%LOCAL%");
-        } else if (classFilter === "TAX_EXEMPT") {
+        } else if (classFilter === "EMPLOYEE") {
+          q = q.or("payee_segment.eq.EMPLOYEE,lot_name.ilike.%STAFF%,lot_name.ilike.%EMPLOYEE%");
+        } else if (classFilter === "TAX_EXEMPT" || classFilter === "MUTUAL_FUND") {
           q = q.or("payee_classification.eq.TAX_EXEMPT,lot_name.ilike.%MUTUAL%,lot_name.ilike.%EXEMPT%");
         } else if (classFilter === "INSTITUTION") {
           q = q.or("payee_classification.eq.COMPANY_INSTITUTION,lot_name.ilike.%INSTITUT%,lot_name.ilike.%COMPANY%");
@@ -366,7 +368,9 @@ function DividendPage() {
           q = q.or("payee_segment.eq.PROMOTER,lot_name.ilike.%PROMOT%");
         } else if (classFilter === "LOCAL") {
           q = q.or("payee_segment.eq.LOCAL,lot_name.ilike.%LOCAL%");
-        } else if (classFilter === "TAX_EXEMPT") {
+        } else if (classFilter === "EMPLOYEE") {
+          q = q.or("payee_segment.eq.EMPLOYEE,lot_name.ilike.%STAFF%,lot_name.ilike.%EMPLOYEE%");
+        } else if (classFilter === "TAX_EXEMPT" || classFilter === "MUTUAL_FUND") {
           q = q.or("payee_classification.eq.TAX_EXEMPT,lot_name.ilike.%MUTUAL%,lot_name.ilike.%EXEMPT%");
         } else if (classFilter === "INSTITUTION") {
           q = q.or("payee_classification.eq.COMPANY_INSTITUTION,lot_name.ilike.%INSTITUT%,lot_name.ilike.%COMPANY%");
@@ -1398,12 +1402,13 @@ function DividendPage() {
                   <SelectValue placeholder="All Classes" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Classes / Categories</SelectItem>
-                  <SelectItem value="PUBLIC">Public (Natural Person)</SelectItem>
+                  <SelectItem value="all">All Categories</SelectItem>
+                  <SelectItem value="PUBLIC">Public</SelectItem>
                   <SelectItem value="INSTITUTION">Institution (Legal Person)</SelectItem>
-                  <SelectItem value="TAX_EXEMPT">Tax Exempted (Mutual Fund)</SelectItem>
+                  <SelectItem value="MUTUAL_FUND">Mutual Fund (Tax Exempt)</SelectItem>
                   <SelectItem value="PROMOTER">Promoter</SelectItem>
-                  <SelectItem value="LOCAL">Local</SelectItem>
+                  <SelectItem value="LOCAL">Local Affected</SelectItem>
+                  <SelectItem value="EMPLOYEE">Employee / Staff Quota</SelectItem>
                 </SelectContent>
               </Select>
 
