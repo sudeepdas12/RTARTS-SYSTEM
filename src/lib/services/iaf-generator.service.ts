@@ -315,68 +315,115 @@ export const IafGeneratorService = {
     const records: IafRecord[] = [];
     let detectedRtaRef = options?.defaultRtaRef || '';
 
+    // Helper to normalize keys (e.g. "BO ACCT NO " -> "boacctno")
+    const norm = (str: string) => String(str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
     for (const sheetName of workbook.SheetNames) {
-      if (/SUMMARY|TOTAL/i.test(sheetName)) continue;
+      if (/SUMMARY|TOTAL|REPORT/i.test(sheetName)) continue;
       const ws = workbook.Sheets[sheetName];
-      const rawRows: any[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      const rawMatrix: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 
-      for (const row of rawRows) {
-        // Find BOID from aliases
-        const rawBoid = String(
-          row['boid'] ??
-          row['BOID'] ??
-          row['bo acct no '] ??
-          row['bo acct no'] ??
-          row['BO ACCT NO'] ??
-          row['BENEFICIARY ID'] ??
-          row['CLIENT ID'] ??
-          row['CLIENT_ID'] ??
-          row['BENEFICIARY_ID'] ??
-          row['Demat Account'] ??
-          row['Demat'] ??
-          row['DEMAT'] ??
-          ''
-        ).trim().replace(/[^0-9A-Za-z]/g, '');
+      if (rawMatrix.length === 0) continue;
 
-        if (!rawBoid) continue;
+      // Find header row (search first 10 rows for boid/demat/kitta/account keyword or 16-digit data)
+      let headerRowIdx = 0;
+      for (let r = 0; r < Math.min(rawMatrix.length, 10); r++) {
+        const rowStrings = rawMatrix[r].map((c) => String(c).trim());
+        const hasBoidHeader = rowStrings.some((s) => /boid|demat|beneficiary|client.*id|bo.*acct|account|shareholder/i.test(s));
+        const has16DigitBoid = rowStrings.some((s) => /^\d{16}$/.test(s.replace(/[^0-9]/g, '')));
+        if (hasBoidHeader) {
+          headerRowIdx = r;
+          break;
+        }
+        if (has16DigitBoid) {
+          // Data starts right away without explicit header
+          headerRowIdx = -1;
+          break;
+        }
+      }
 
-        // Find Current / Allotted Kitta
-        const rawCurrentKitta = Number(
-          row['curr_kitta'] ??
-          row['AllotedKitta'] ??
-          row['alloted_kitta'] ??
-          row['ALLOTED_KITTA'] ??
-          row['ALLOTTED_KITTA'] ??
-          row['Allotted Kitta'] ??
-          row['Alloted Kitta'] ??
-          row['current quan'] ??
-          row['CURRENT_QTY'] ??
-          row['kitta'] ??
-          row['KITTA'] ??
-          row['shares'] ??
-          row['SHARES'] ??
-          row['Total Shares'] ??
-          0
-        );
+      let parsedRows: Record<string, any>[] = [];
+      if (headerRowIdx >= 0) {
+        parsedRows = XLSX.utils.sheet_to_json(ws, { range: headerRowIdx, defval: '' });
+      } else {
+        // Headerless rows: map col 0 -> boid, col 1 -> kitta
+        parsedRows = rawMatrix.map((cols) => ({
+          boid: cols[0],
+          curr_kitta: cols[1],
+          lock_kitta: cols[2],
+          lock_code: cols[3],
+          lock_reason: cols[4],
+          lock_date: cols[5],
+          rta_reg: cols[6],
+        }));
+      }
 
-        if (isNaN(rawCurrentKitta) || rawCurrentKitta <= 0) continue;
+      for (const row of parsedRows) {
+        // Create normalized map for case-insensitive and punctuation-free lookup
+        const nMap: Record<string, any> = {};
+        for (const [k, v] of Object.entries(row)) {
+          nMap[norm(k)] = v;
+        }
 
-        // Find Lock-in Kitta
-        let rawLockKitta = row['lock_kitta'] ?? row['lock in quan'] ?? row['LOCK_IN_KITTA'] ?? row['Locked Kitta'];
-        let lockInKitta = rawLockKitta !== undefined && rawLockKitta !== '' ? Number(rawLockKitta) : 0;
+        const getVal = (aliases: string[]): any => {
+          for (const a of aliases) {
+            if (row[a] !== undefined && row[a] !== '') return row[a];
+            const nk = norm(a);
+            if (nMap[nk] !== undefined && nMap[nk] !== '') return nMap[nk];
+          }
+          return undefined;
+        };
 
-        // Lock code
-        let lockCode = String(row['lock_code'] ?? row['lock code'] ?? row['LOCK_CODE'] ?? '').trim();
-        // Lock reason
-        let lockReason = String(row['lock_reason'] ?? row['lock in reason'] ?? row['LOCK_REASON'] ?? '').trim();
-        // Lock date
-        let rawLockDate = row['lock_date'] ?? row['lock in expiry'] ?? row['expiry'] ?? row['LOCK_EXPIRY'];
+        // 1. BOID lookup
+        const rawBoidVal = getVal([
+          'boid', 'bo_id', 'bo id', 'boid no', 'boid number',
+          'bo acct no', 'bo acct no ', 'bo_acct_no', 'bo account no',
+          'demat', 'demat no', 'demat account', 'demat_account',
+          'beneficiary id', 'beneficiary_id', 'beneficiary owner id',
+          'client id', 'client_id', 'client code', 'account no', 'acct no',
+          'sh no', 'shareholder no', 'applicant no', 'dp id'
+        ]);
 
-        // RTA Ref
-        const rtaRef = String(row['rta_reg'] ?? row['rtarefno'] ?? row['RTA_REF'] ?? row['RTA_REF_NO'] ?? options?.defaultRtaRef ?? '').trim();
+        const rawBoid = String(rawBoidVal ?? '').trim().replace(/[^0-9A-Za-z]/g, '');
+        if (!rawBoid || rawBoid.length < 8) continue;
+
+        // 2. Allotted Kitta lookup
+        const rawKittaVal = getVal([
+          'curr_kitta', 'currkitta', 'current kitta', 'current_kitta',
+          'allotedkitta', 'alloted_kitta', 'alloted kitta',
+          'allottedkitta', 'allotted_kitta', 'allotted kitta',
+          'current quan', 'current_quan', 'current qty', 'current_qty',
+          'kitta', 'shares', 'total shares', 'total kitta',
+          'allotment', 'allotted', 'alloted', 'units', 'qty', 'quantity', 'balance'
+        ]);
+
+        let rawCurrentKitta = Number(rawKittaVal ?? 10);
+        if (isNaN(rawCurrentKitta) || rawCurrentKitta <= 0) {
+          rawCurrentKitta = 10; // default to 10 shares if column missing but BOID exists
+        }
+
+        // 3. Lock-in Kitta lookup
+        const rawLockVal = getVal([
+          'lock_kitta', 'lockkitta', 'locked kitta', 'locked_kitta',
+          'lock in quan', 'lock_in_quan', 'lock in qty', 'lock_in_qty',
+          'locked shares', 'lock in', 'lockin', 'lock_in_kitta'
+        ]);
+        let lockInKitta = rawLockVal !== undefined && rawLockVal !== '' ? Number(rawLockVal) : 0;
+
+        // 4. Lock Code lookup
+        let lockCode = String(getVal(['lock_code', 'lock code', 'lockcode', 'code']) ?? '').trim();
+
+        // 5. Lock Reason lookup
+        let lockReason = String(getVal(['lock_reason', 'lock in reason', 'lockreason', 'reason', 'remarks']) ?? '').trim();
+
+        // 6. Lock Date lookup
+        let rawLockDate = getVal(['lock_date', 'lock in expiry', 'lock_expiry', 'expiry date', 'expiry', 'lock date']);
+
+        // 7. RTA Reference lookup
+        const rtaRef = String(getVal(['rta_reg', 'rtarefno', 'rta_ref', 'rta_ref_no', 'rta ref', 'reference', 'ref']) ?? options?.defaultRtaRef ?? '').trim();
         if (rtaRef && !detectedRtaRef) detectedRtaRef = rtaRef;
 
-        // Apply preset if lock columns not specified in sheet
+        // Apply preset defaults if lock settings not in spreadsheet
         if (options?.defaultLockPreset) {
           if (options.defaultLockPreset.isLocked) {
             if (lockInKitta <= 0) lockInKitta = rawCurrentKitta;
@@ -391,9 +438,10 @@ export const IafGeneratorService = {
           }
         }
 
-        const name = String(row['name'] ?? row['NAME'] ?? row['shareholder_name'] ?? row['APPLICANT NAME'] ?? '').trim();
-        const applicantNo = String(row['applicant_no'] ?? row['APPLICANT_NO'] ?? row['APP_NO'] ?? '').trim();
-        const category = String(row['category'] ?? row['CATEGORY'] ?? sheetName).trim();
+        // 8. Name and category
+        const name = String(getVal(['name', 'shareholder name', 'shareholder_name', 'applicant name', 'applicant_name', 'investor name', 'full name', 'client name']) ?? '').trim();
+        const applicantNo = String(getVal(['applicant_no', 'app_no', 'app no', 'form no', 'application no']) ?? '').trim();
+        const category = String(getVal(['category', 'quota', 'group', 'type']) ?? sheetName).trim();
 
         // Validation errors
         const errors: string[] = [];

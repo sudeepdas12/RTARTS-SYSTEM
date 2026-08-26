@@ -419,12 +419,12 @@ function AllocationsPage() {
                     {fileName ? fileName : "Click to select Excel / CSV file"}
                   </p>
                   <p className="text-[11px] text-muted-foreground">
-                    Supports .xlsx, .xls, .csv (e.g. 410.005 iaf.xlsx, weballoteelist.csv)
+                    Supports .xlsx, .xls, .csv, .tsv, .txt (e.g. 410.005 iaf.xlsx, weballoteelist.csv)
                   </p>
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".xlsx,.xls,.csv"
+                    accept=".xlsx,.xls,.csv,.tsv,.txt"
                     onChange={handleFileUpload}
                     className="hidden"
                   />
