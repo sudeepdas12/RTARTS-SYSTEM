@@ -86,11 +86,11 @@ function AllocationsPage() {
   const [issueSeqNo, setIssueSeqNo] = useState<string>("504");
   const [lotNo, setLotNo] = useState<string>("001");
   const [rtaRef, setRtaRef] = useState<string>("");
-  const [selectedPresetKey, setSelectedPresetKey] = useState<string>("LOCAL");
-  const [customLockCode, setCustomLockCode] = useState<string>("09");
-  const [customLockReason, setCustomLockReason] = useState<string>("Local Affected");
-  const [customExpiryDate, setCustomExpiryDate] = useState<string>("2029-04-19");
-  const [isLockAll, setIsLockAll] = useState<boolean>(true);
+  const [selectedPresetKey, setSelectedPresetKey] = useState<string>("PUBLIC");
+  const [customLockCode, setCustomLockCode] = useState<string>("00");
+  const [customLockReason, setCustomLockReason] = useState<string>("");
+  const [customExpiryDate, setCustomExpiryDate] = useState<string>("");
+  const [isLockAll, setIsLockAll] = useState<boolean>(false);
 
   // ── Calculator State ──
   const [calcTotalKitta, setCalcTotalKitta] = useState<number>(1000000);
@@ -147,7 +147,7 @@ function AllocationsPage() {
     setFileName(file.name);
 
     try {
-      const preset = LOCK_IN_PRESETS[selectedPresetKey] || LOCK_IN_PRESETS.LOCAL;
+      const preset = LOCK_IN_PRESETS[selectedPresetKey] || LOCK_IN_PRESETS.PUBLIC;
       const { records: parsedRecords, summary: parsedSummary, detectedRtaRef } = await IafGeneratorService.parseAllotmentExcel(file, {
         defaultLockPreset: preset,
         defaultRtaRef: rtaRef || undefined,
@@ -200,9 +200,50 @@ function AllocationsPage() {
     }
   };
 
+  // ── Fully Reactive Effective Records ──
+  const effectiveRecords = useMemo(() => {
+    if (records.length === 0) return [];
+    return records.map((r) => {
+      let lockQty = r.lockInKitta;
+      let code = r.lockInReasonCode;
+      let reason = r.lockInReason;
+      let expiry = r.lockInExpiryDate;
+
+      if (selectedPresetKey === "PUBLIC" || customLockCode === "00") {
+        lockQty = 0;
+        code = "00";
+        reason = "";
+        expiry = "00000000";
+      } else if (isLockAll) {
+        lockQty = r.currentKitta;
+        code = customLockCode || "09";
+        reason = customLockReason || "Local Affected";
+        expiry = customExpiryDate ? normalizeDateToDDMMYYYY(customExpiryDate) : "00000000";
+      } else if (customLockCode) {
+        code = customLockCode;
+        reason = customLockReason;
+        if (customExpiryDate) expiry = normalizeDateToDDMMYYYY(customExpiryDate);
+      }
+
+      return {
+        ...r,
+        lockInKitta: lockQty,
+        lockInReasonCode: code,
+        lockInReason: reason,
+        lockInExpiryDate: expiry,
+        rtaIntRefNo: rtaRef || r.rtaIntRefNo,
+      };
+    });
+  }, [records, selectedPresetKey, isLockAll, customLockCode, customLockReason, customExpiryDate, rtaRef]);
+
+  const effectiveSummary = useMemo(() => {
+    if (effectiveRecords.length === 0) return null;
+    return IafGeneratorService.generateAllotmentSummary(effectiveRecords);
+  }, [effectiveRecords]);
+
   // ── Filtered Records for Table ──
   const filteredRecords = useMemo(() => {
-    let list = records;
+    let list = effectiveRecords;
     if (categoryFilter !== "all") {
       list = list.filter((r) => (r.category || r.lotName) === categoryFilter);
     }
@@ -217,16 +258,16 @@ function AllocationsPage() {
       );
     }
     return list;
-  }, [records, categoryFilter, searchTerm]);
+  }, [effectiveRecords, categoryFilter, searchTerm]);
 
   // ── Download Actions ──
   const handleDownloadIaf = () => {
-    if (records.length === 0) {
+    if (effectiveRecords.length === 0) {
       toast.error("Please upload an allotment file first.");
       return;
     }
 
-    const content = IafGeneratorService.generateIafContent(records, {
+    const content = IafGeneratorService.generateIafContent(effectiveRecords, {
       rtaRef: rtaRef || "RTA REF",
       lockCode: customLockCode,
       lockReason: customLockReason,
@@ -240,36 +281,36 @@ function AllocationsPage() {
   };
 
   const handleDownloadIvf = () => {
-    if (records.length === 0) {
+    if (effectiveRecords.length === 0) {
       toast.error("Please upload an allotment file first.");
       return;
     }
 
-    const content = IafGeneratorService.generateIvfContent(records);
+    const content = IafGeneratorService.generateIvfContent(effectiveRecords);
     const outputName = `${issueSeqNo.trim() || "504"}.${lotNo.trim() || "0001"}.ivf`;
     IafGeneratorService.downloadFile(content, outputName);
     toast.success(`Generated and downloaded ${outputName} (BO Verification File)`);
   };
 
   const handleDownloadWebCsv = () => {
-    if (records.length === 0) {
+    if (effectiveRecords.length === 0) {
       toast.error("Please upload an allotment file first.");
       return;
     }
 
-    const content = IafGeneratorService.generateWebAlloteeCsv(records);
+    const content = IafGeneratorService.generateWebAlloteeCsv(effectiveRecords);
     const outputName = `weballoteelist_${issueSeqNo || "allotment"}.csv`;
     IafGeneratorService.downloadFile(content, outputName, "text/csv;charset=utf-8");
     toast.success(`Generated and downloaded ${outputName} (Web Search Result CSV)`);
   };
 
   const handleDownloadExcelExport = () => {
-    if (records.length === 0) {
+    if (effectiveRecords.length === 0) {
       toast.error("Please upload an allotment file first.");
       return;
     }
 
-    const exportRows = records.map((r, idx) => ({
+    const exportRows = effectiveRecords.map((r, idx) => ({
       "S.N": idx + 1,
       BOID: r.boid,
       "Shareholder Name": r.name || "Shareholder",
@@ -520,7 +561,7 @@ function AllocationsPage() {
                 </div>
 
                 {/* Live CDSC Fixed-Width Line Inspector */}
-                {records.length > 0 && (
+                {effectiveRecords.length > 0 && (
                   <div className="p-3 rounded-lg bg-muted/40 border space-y-1.5">
                     <div className="flex items-center justify-between text-[11px] font-semibold text-muted-foreground">
                       <span className="flex items-center gap-1.5">
@@ -534,20 +575,13 @@ function AllocationsPage() {
                         Line 1 (Header: 42 chars) = [Recs: 1-10] [CurrentQty: 11-26] [LockQty: 27-42]
                       </div>
                       <div className="text-emerald-700 dark:text-emerald-300 select-all font-semibold">
-                        {formatIafHeader(records.length, summary?.totalAllottedKitta || 0, summary?.totalLockInKitta || 0)}
+                        {formatIafHeader(effectiveRecords.length, effectiveSummary?.totalAllottedKitta || 0, effectiveSummary?.totalLockInKitta || 0)}
                       </div>
                       <div className="text-muted-foreground text-[10px] pt-1">
                         Line 2 (Detail: 124 chars) = [BOID: 1-16] [Curr: 17-32] [Lock: 33-48] [Code: 49-50] [Reason: 51-100] [Date: 101-108] [Ref: 109-124]
                       </div>
                       <div className="text-primary select-all font-semibold whitespace-pre">
-                        {formatIafDetailLine({
-                          ...records[0],
-                          lockInKitta: isLockAll ? records[0].currentKitta : records[0].lockInKitta,
-                          lockInReasonCode: customLockCode || records[0].lockInReasonCode,
-                          lockInReason: customLockReason || records[0].lockInReason,
-                          lockInExpiryDate: isLockAll ? customExpiryDate : records[0].lockInExpiryDate,
-                          rtaIntRefNo: rtaRef || records[0].rtaIntRefNo,
-                        }, rtaRef)}
+                        {formatIafDetailLine(effectiveRecords[0], rtaRef)}
                       </div>
                     </div>
                   </div>
@@ -557,17 +591,17 @@ function AllocationsPage() {
           </div>
 
           {/* KPI Summary Cards */}
-          {summary && (
+          {effectiveSummary && (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Card className="glass-card hover-lift border border-border/80">
                 <CardContent className="p-4 flex items-center justify-between">
                   <div>
                     <p className="text-xs font-medium uppercase text-muted-foreground">Total Beneficiaries</p>
                     <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
-                      {summary.totalRecords.toLocaleString()}
+                      {effectiveSummary.totalRecords.toLocaleString()}
                     </p>
                     <p className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5">
-                      {summary.validRecords.toLocaleString()} valid BOIDs
+                      {effectiveSummary.validRecords.toLocaleString()} valid BOIDs
                     </p>
                   </div>
                   <div className="p-2.5 rounded-lg bg-primary/10 text-primary">
@@ -581,7 +615,7 @@ function AllocationsPage() {
                   <div>
                     <p className="text-xs font-medium uppercase text-muted-foreground">Total Allotted Kitta</p>
                     <p className="text-2xl font-bold text-primary mt-1 tabular-nums">
-                      {summary.totalAllottedKitta.toLocaleString()}
+                      {effectiveSummary.totalAllottedKitta.toLocaleString()}
                     </p>
                     <p className="text-[11px] text-muted-foreground mt-0.5">Total shares declared</p>
                   </div>
@@ -596,10 +630,10 @@ function AllocationsPage() {
                   <div>
                     <p className="text-xs font-medium uppercase text-muted-foreground">Locked-in Quantity</p>
                     <p className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1 tabular-nums">
-                      {summary.totalLockInKitta.toLocaleString()}
+                      {effectiveSummary.totalLockInKitta.toLocaleString()}
                     </p>
                     <p className="text-[11px] text-muted-foreground mt-0.5">
-                      Code {customLockCode || "09"} ({customLockReason || "Locked"})
+                      Code {customLockCode || "00"} ({customLockReason || "Free/No Lock"})
                     </p>
                   </div>
                   <div className="p-2.5 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
@@ -613,7 +647,7 @@ function AllocationsPage() {
                   <div>
                     <p className="text-xs font-medium uppercase text-muted-foreground">Free Floating Kitta</p>
                     <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1 tabular-nums">
-                      {summary.totalFreeKitta.toLocaleString()}
+                      {effectiveSummary.totalFreeKitta.toLocaleString()}
                     </p>
                     <p className="text-[11px] text-muted-foreground mt-0.5">Immediately tradable</p>
                   </div>
@@ -626,13 +660,13 @@ function AllocationsPage() {
           )}
 
           {/* Action Button Bar */}
-          {records.length > 0 && (
+          {effectiveRecords.length > 0 && (
             <Card className="glass-card border border-primary/30 bg-primary/5">
               <CardContent className="p-4 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-xs font-medium text-foreground">
                   <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                   <span>
-                    Ready to generate files for <strong>{records.length.toLocaleString()}</strong> investors ({summary?.totalAllottedKitta.toLocaleString()} kitta)
+                    Ready to generate files for <strong>{effectiveRecords.length.toLocaleString()}</strong> investors ({effectiveSummary?.totalAllottedKitta.toLocaleString()} kitta)
                   </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -661,13 +695,13 @@ function AllocationsPage() {
           )}
 
           {/* Data Table */}
-          {records.length > 0 && (
+          {effectiveRecords.length > 0 && (
             <Card className="glass-card border border-border/80">
               <CardHeader className="pb-3 flex flex-row items-center justify-between">
                 <div>
                   <CardTitle className="text-sm font-semibold">Shareholder Allotment Preview</CardTitle>
                   <CardDescription className="text-xs">
-                    Showing {filteredRecords.length.toLocaleString()} of {records.length.toLocaleString()} records
+                    Showing {filteredRecords.length.toLocaleString()} of {effectiveRecords.length.toLocaleString()} records
                   </CardDescription>
                 </div>
                 <div className="flex items-center gap-2">

@@ -328,11 +328,17 @@ export const IafGeneratorService = {
 
         // Apply preset if lock columns not specified in sheet
         if (options?.defaultLockPreset) {
-          if (options.defaultLockPreset.isLocked && lockInKitta <= 0) {
-            lockInKitta = rawCurrentKitta;
+          if (options.defaultLockPreset.isLocked) {
+            if (lockInKitta <= 0) lockInKitta = rawCurrentKitta;
+            if (!lockCode) lockCode = options.defaultLockPreset.code;
+            if (!lockReason) lockReason = options.defaultLockPreset.reason;
+          } else {
+            // Free Public / No lock-in
+            lockInKitta = 0;
+            lockCode = '00';
+            lockReason = '';
+            rawLockDate = '00000000';
           }
-          if (!lockCode) lockCode = options.defaultLockPreset.code;
-          if (!lockReason) lockReason = options.defaultLockPreset.reason;
         }
 
         const name = String(row['name'] ?? row['NAME'] ?? row['shareholder_name'] ?? row['APPLICANT NAME'] ?? '').trim();
@@ -432,7 +438,14 @@ export const IafGeneratorService = {
 
     for (const rec of validRecords) {
       const currentKitta = rec.currentKitta;
-      let lockKitta = options?.lockAll ? currentKitta : rec.lockInKitta;
+      let lockKitta = rec.lockInKitta;
+
+      if (options?.lockCode === '00') {
+        lockKitta = 0;
+      } else if (options?.lockAll === true) {
+        lockKitta = currentKitta;
+      }
+
       if (lockKitta > currentKitta) lockKitta = currentKitta;
 
       totalCurrent += currentKitta;
@@ -441,9 +454,9 @@ export const IafGeneratorService = {
       const recordToFormat: IafRecord = {
         ...rec,
         lockInKitta: lockKitta,
-        lockInReasonCode: options?.lockCode || rec.lockInReasonCode,
-        lockInReason: options?.lockReason !== undefined ? options.lockReason : rec.lockInReason,
-        lockInExpiryDate: options?.lockExpiryDate ? normalizeDateToDDMMYYYY(options.lockExpiryDate) : rec.lockInExpiryDate,
+        lockInReasonCode: lockKitta > 0 ? (options?.lockCode || rec.lockInReasonCode || '09') : '00',
+        lockInReason: lockKitta > 0 ? (options?.lockReason !== undefined ? options.lockReason : rec.lockInReason) : '',
+        lockInExpiryDate: lockKitta > 0 ? (options?.lockExpiryDate ? normalizeDateToDDMMYYYY(options.lockExpiryDate) : rec.lockInExpiryDate) : '00000000',
         rtaIntRefNo: options?.rtaRef || rec.rtaIntRefNo,
       };
 
