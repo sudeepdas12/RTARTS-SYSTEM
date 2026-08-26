@@ -1266,63 +1266,63 @@ function DividendPage() {
                 <p className="text-xs text-muted-foreground">Aggregating promoter, public, and local shareholding data</p>
               </div>
             ) : (
-            <table className="w-full text-xs text-left border-collapse">
+            <table className="w-full text-xs text-left border-collapse whitespace-nowrap">
               <thead>
                 <tr className="bg-muted/80 text-foreground font-semibold border-b border-border divide-x divide-border">
-                  <th className="py-2.5 px-3 text-center w-12 uppercase text-[11px]">S.N.</th>
-                  <th className="py-2.5 px-3 uppercase text-[11px]">CATEGORY</th>
-                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">NO. OF SHAREHOLDER</th>
-                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">KITTA</th>
-                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">
+                  <th className="py-2.5 px-3 text-center w-12 uppercase text-[11px] whitespace-nowrap">S.N.</th>
+                  <th className="py-2.5 px-3 uppercase text-[11px] whitespace-nowrap min-w-[140px]">CATEGORY</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">NO. OF SHAREHOLDER</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">KITTA</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
                     {agmSummaryReport.detectedBonusRate
                       ? `ACTUAL_BONUS ${agmSummaryReport.detectedBonusRate}%`
                       : "ACTUAL_BONUS"}
                   </th>
-                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">ISSUED BONUS</th>
-                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">REM FRACTION</th>
-                  <th className="py-2.5 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200">
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">ISSUED BONUS</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">REM FRACTION</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200 whitespace-nowrap">
                     AFTER BONUS KITTA
                   </th>
-                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
                     {agmSummaryReport.detectedDividendRate
                       ? `DIVIDEND ${agmSummaryReport.detectedDividendRate}`
                       : "DIVIDEND"}
                   </th>
-                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">BON_TAX</th>
-                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">DIV_TAX</th>
-                  <th className="py-2.5 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200">
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">BON_TAX</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">DIV_TAX</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200 whitespace-nowrap">
                     NET_DIV.
                   </th>
-                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">COMPOSITION</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">COMPOSITION</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border font-mono">
                 {agmSummaryReport.rows.length === 0 ? (
                   <tr>
-                    <td colSpan={13} className="py-8 text-center text-muted-foreground font-sans text-xs">
+                    <td colSpan={13} className="py-8 text-center text-muted-foreground font-sans text-xs whitespace-nowrap">
                       No payable records match the selected company / fiscal year filter.
                     </td>
                   </tr>
                 ) : (
                   agmSummaryReport.rows.map((row) => (
                     <tr key={row.particular} className="hover:bg-muted/30 transition-colors divide-x divide-border">
-                      <td className="py-2 px-3 text-center text-muted-foreground">{row.sn}</td>
-                      <td className="py-2 px-3 font-semibold font-sans">{row.particular}</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(row.shareholderCount)}</td>
-                      <td className="py-2 px-3 text-right font-medium">{fmtNr(row.kitta)}</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(row.actualBonus)}</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(row.issuedBonus)}</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(row.remFraction)}</td>
-                      <td className="py-2 px-3 text-right font-semibold bg-emerald-50/70 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-200">
+                      <td className="py-2 px-3 text-center text-muted-foreground whitespace-nowrap">{row.sn}</td>
+                      <td className="py-2 px-3 font-semibold font-sans whitespace-nowrap text-foreground">{row.particular}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(row.shareholderCount)}</td>
+                      <td className="py-2 px-3 text-right font-medium whitespace-nowrap">{fmtNr(row.kitta)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(row.actualBonus)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(row.issuedBonus)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(row.remFraction)}</td>
+                      <td className="py-2 px-3 text-right font-semibold bg-emerald-50/70 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-200 whitespace-nowrap">
                         {fmtNr(row.afterBonusKitta)}
                       </td>
-                      <td className="py-2 px-3 text-right font-medium">{fmtNr(row.grossDividend)}</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(row.bonTax)}</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(row.divTax)}</td>
-                      <td className="py-2 px-3 text-right font-bold bg-emerald-50/70 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-200">
+                      <td className="py-2 px-3 text-right font-medium whitespace-nowrap">{fmtNr(row.grossDividend)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(row.bonTax)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(row.divTax)}</td>
+                      <td className="py-2 px-3 text-right font-bold bg-emerald-50/70 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-200 whitespace-nowrap">
                         {fmtNr(row.netDividend)}
                       </td>
-                      <td className="py-2 px-3 text-right font-sans font-medium">{row.composition.toFixed(2)}%</td>
+                      <td className="py-2 px-3 text-right font-sans font-medium whitespace-nowrap">{row.composition.toFixed(2)}%</td>
                     </tr>
                   ))
                 )}
@@ -1330,23 +1330,23 @@ function DividendPage() {
               {agmSummaryReport.rows.length > 0 && (
                 <tfoot>
                   <tr className="bg-muted/90 font-bold border-t-2 border-b-2 border-foreground/30 divide-x divide-border font-mono">
-                    <td className="py-2.5 px-3 text-center"></td>
-                    <td className="py-2.5 px-3 font-sans uppercase">TOTAL</td>
-                    <td className="py-2.5 px-3 text-right">{fmtNr(agmSummaryReport.total.shareholderCount)}</td>
-                    <td className="py-2.5 px-3 text-right">{fmtNr(agmSummaryReport.total.kitta)}</td>
-                    <td className="py-2.5 px-3 text-right">{fmtNr(agmSummaryReport.total.actualBonus)}</td>
-                    <td className="py-2.5 px-3 text-right">{fmtNr(agmSummaryReport.total.issuedBonus)}</td>
-                    <td className="py-2.5 px-3 text-right">{fmtNr(agmSummaryReport.total.remFraction)}</td>
-                    <td className="py-2.5 px-3 text-right bg-emerald-100 text-emerald-950 dark:bg-emerald-900/60 dark:text-emerald-200">
+                    <td className="py-2.5 px-3 text-center whitespace-nowrap"></td>
+                    <td className="py-2.5 px-3 font-sans uppercase whitespace-nowrap">TOTAL</td>
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap">{fmtNr(agmSummaryReport.total.shareholderCount)}</td>
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap">{fmtNr(agmSummaryReport.total.kitta)}</td>
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap">{fmtNr(agmSummaryReport.total.actualBonus)}</td>
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap">{fmtNr(agmSummaryReport.total.issuedBonus)}</td>
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap">{fmtNr(agmSummaryReport.total.remFraction)}</td>
+                    <td className="py-2.5 px-3 text-right bg-emerald-100 text-emerald-950 dark:bg-emerald-900/60 dark:text-emerald-200 whitespace-nowrap">
                       {fmtNr(agmSummaryReport.total.afterBonusKitta)}
                     </td>
-                    <td className="py-2.5 px-3 text-right">{fmtNr(agmSummaryReport.total.grossDividend)}</td>
-                    <td className="py-2.5 px-3 text-right">{fmtNr(agmSummaryReport.total.bonTax)}</td>
-                    <td className="py-2.5 px-3 text-right">{fmtNr(agmSummaryReport.total.divTax)}</td>
-                    <td className="py-2.5 px-3 text-right bg-emerald-100 text-emerald-950 dark:bg-emerald-900/60 dark:text-emerald-200">
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap">{fmtNr(agmSummaryReport.total.grossDividend)}</td>
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap">{fmtNr(agmSummaryReport.total.bonTax)}</td>
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap">{fmtNr(agmSummaryReport.total.divTax)}</td>
+                    <td className="py-2.5 px-3 text-right bg-emerald-100 text-emerald-950 dark:bg-emerald-900/60 dark:text-emerald-200 whitespace-nowrap">
                       {fmtNr(agmSummaryReport.total.netDividend)}
                     </td>
-                    <td className="py-2.5 px-3 text-right font-sans">{agmSummaryReport.total.composition.toFixed(2)}%</td>
+                    <td className="py-2.5 px-3 text-right font-sans whitespace-nowrap">{agmSummaryReport.total.composition.toFixed(2)}%</td>
                   </tr>
                 </tfoot>
               )}

@@ -348,49 +348,49 @@ function ReportsRoute() {
                 </div>
               </CardHeader>
               <CardContent className="p-0 overflow-x-auto">
-                <table className="w-full text-xs text-left border-collapse">
+                <table className="w-full text-xs text-left border-collapse whitespace-nowrap">
                   <thead>
                     <tr className="bg-muted/80 text-foreground font-semibold border-b border-border divide-x divide-border">
-                      <th className="py-2 px-3 text-center w-10 uppercase text-[11px]">S.N.</th>
-                      <th className="py-2 px-3 uppercase text-[11px]">CATEGORY</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px]">SHAREHOLDERS</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px]">KITTA</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px]">{agmSummary.detectedBonusRate ? `BONUS ${agmSummary.detectedBonusRate}%` : "BONUS"}</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200">AFTER BONUS KITTA</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px]">GROSS DIVIDEND</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px]">DIV_TAX</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200">NET DIVIDEND</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px]">COMPOSITION</th>
+                      <th className="py-2.5 px-3 text-center w-10 uppercase text-[11px] whitespace-nowrap">S.N.</th>
+                      <th className="py-2.5 px-3 uppercase text-[11px] whitespace-nowrap min-w-[140px]">CATEGORY</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">SHAREHOLDERS</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">KITTA</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">{agmSummary.detectedBonusRate ? `BONUS ${agmSummary.detectedBonusRate}%` : "BONUS"}</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200 whitespace-nowrap">AFTER BONUS KITTA</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">GROSS DIVIDEND</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">DIV_TAX</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200 whitespace-nowrap">NET DIVIDEND</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">COMPOSITION</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border font-mono">
                     {agmSummary.rows.map((row) => (
                       <tr key={row.particular} className="hover:bg-muted/30 transition-colors divide-x divide-border">
-                        <td className="py-2 px-3 text-center text-muted-foreground">{row.sn}</td>
-                        <td className="py-2 px-3 font-semibold font-sans">{row.particular}</td>
-                        <td className="py-2 px-3 text-right">{fmtNr(row.shareholderCount)}</td>
-                        <td className="py-2 px-3 text-right font-medium">{fmtNr(row.kitta)}</td>
-                        <td className="py-2 px-3 text-right">{fmtNr(row.issuedBonus)}</td>
-                        <td className="py-2 px-3 text-right font-semibold bg-emerald-50/70 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-200">{fmtNr(row.afterBonusKitta)}</td>
-                        <td className="py-2 px-3 text-right font-medium">{fmtNr(row.grossDividend)}</td>
-                        <td className="py-2 px-3 text-right">{fmtNr(row.divTax)}</td>
-                        <td className="py-2 px-3 text-right font-bold bg-emerald-50/70 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-200">{fmtNr(row.netDividend)}</td>
-                        <td className="py-2 px-3 text-right font-sans font-medium">{row.composition.toFixed(2)}%</td>
+                        <td className="py-2 px-3 text-center text-muted-foreground whitespace-nowrap">{row.sn}</td>
+                        <td className="py-2 px-3 font-semibold font-sans whitespace-nowrap text-foreground">{row.particular}</td>
+                        <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(row.shareholderCount)}</td>
+                        <td className="py-2 px-3 text-right font-medium whitespace-nowrap">{fmtNr(row.kitta)}</td>
+                        <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(row.issuedBonus)}</td>
+                        <td className="py-2 px-3 text-right font-semibold bg-emerald-50/70 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-200 whitespace-nowrap">{fmtNr(row.afterBonusKitta)}</td>
+                        <td className="py-2 px-3 text-right font-medium whitespace-nowrap">{fmtNr(row.grossDividend)}</td>
+                        <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(row.divTax)}</td>
+                        <td className="py-2 px-3 text-right font-bold bg-emerald-50/70 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-200 whitespace-nowrap">{fmtNr(row.netDividend)}</td>
+                        <td className="py-2 px-3 text-right font-sans font-medium whitespace-nowrap">{row.composition.toFixed(2)}%</td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr className="bg-muted/90 font-bold border-t-2 border-b-2 border-foreground/30 divide-x divide-border font-mono">
-                      <td className="py-2 px-3 text-center"></td>
-                      <td className="py-2 px-3 font-sans uppercase">TOTAL</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(agmSummary.total.shareholderCount)}</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(agmSummary.total.kitta)}</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(agmSummary.total.issuedBonus)}</td>
-                      <td className="py-2 px-3 text-right bg-emerald-100 text-emerald-950 dark:bg-emerald-900/60 dark:text-emerald-200">{fmtNr(agmSummary.total.afterBonusKitta)}</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(agmSummary.total.grossDividend)}</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(agmSummary.total.divTax)}</td>
-                      <td className="py-2 px-3 text-right bg-emerald-100 text-emerald-950 dark:bg-emerald-900/60 dark:text-emerald-200">{fmtNr(agmSummary.total.netDividend)}</td>
-                      <td className="py-2 px-3 text-right font-sans">{agmSummary.total.composition.toFixed(2)}%</td>
+                      <td className="py-2 px-3 text-center whitespace-nowrap"></td>
+                      <td className="py-2 px-3 font-sans uppercase whitespace-nowrap">TOTAL</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(agmSummary.total.shareholderCount)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(agmSummary.total.kitta)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(agmSummary.total.issuedBonus)}</td>
+                      <td className="py-2 px-3 text-right bg-emerald-100 text-emerald-950 dark:bg-emerald-900/60 dark:text-emerald-200 whitespace-nowrap">{fmtNr(agmSummary.total.afterBonusKitta)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(agmSummary.total.grossDividend)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(agmSummary.total.divTax)}</td>
+                      <td className="py-2 px-3 text-right bg-emerald-100 text-emerald-950 dark:bg-emerald-900/60 dark:text-emerald-200 whitespace-nowrap">{fmtNr(agmSummary.total.netDividend)}</td>
+                      <td className="py-2 px-3 text-right font-sans whitespace-nowrap">{agmSummary.total.composition.toFixed(2)}%</td>
                     </tr>
                   </tfoot>
                 </table>
@@ -426,51 +426,51 @@ function ReportsRoute() {
                 </div>
               </CardHeader>
               <CardContent className="p-0 overflow-x-auto">
-                <table className="w-full text-xs text-left border-collapse">
+                <table className="w-full text-xs text-left border-collapse whitespace-nowrap">
                   <thead>
                     <tr className="bg-muted/80 text-foreground font-semibold border-b border-border divide-x border-border">
-                      <th className="py-2 px-3 uppercase text-[11px]">CATEGORY</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px]">KITTA</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px]">PRINCIPAL</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px]">
+                      <th className="py-2.5 px-3 uppercase text-[11px] whitespace-nowrap min-w-[140px]">CATEGORY</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">KITTA</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">PRINCIPAL</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
                         {debentureSummary.couponRate > 0 ? `INT. @ ${debentureSummary.couponRate}%` : "ANNUAL INT."}
                       </th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px]">INT. PER DAY</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px]">GROSS INTEREST</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px]">TAX</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200">NET PAYABLE</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">INT. PER DAY</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">GROSS INTEREST</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">TAX</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200 whitespace-nowrap">NET PAYABLE</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border font-mono">
                     {debentureSummary.rows.map((row) => (
                       <tr key={row.name} className="hover:bg-muted/30 transition-colors divide-x divide-border">
-                        <td className="py-2 px-3 font-semibold font-sans">{row.name}</td>
-                        <td className="py-2 px-3 text-right">{fmtNr(row.kitta)}</td>
-                        <td className="py-2 px-3 text-right">{fmtNr(row.principalAmount)}</td>
-                        <td className="py-2 px-3 text-right">{fmtNr(row.annualInterest)}</td>
-                        <td className="py-2 px-3 text-right">{fmtNr(row.interestPerDay)}</td>
-                        <td className="py-2 px-3 text-right font-medium">{fmtNr(row.grossInterest)}</td>
-                        <td className="py-2 px-3 text-right">
+                        <td className="py-2 px-3 font-semibold font-sans whitespace-nowrap text-foreground">{row.name}</td>
+                        <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(row.kitta)}</td>
+                        <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(row.principalAmount)}</td>
+                        <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(row.annualInterest)}</td>
+                        <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(row.interestPerDay)}</td>
+                        <td className="py-2 px-3 text-right font-medium whitespace-nowrap">{fmtNr(row.grossInterest)}</td>
+                        <td className="py-2 px-3 text-right whitespace-nowrap">
                           {row.taxAmount > 0 ? (
                             <span>{fmtNr(row.taxAmount)} <span className="text-[10px] text-muted-foreground font-sans">({row.taxRatePercent}%)</span></span>
                           ) : (
                             <span className="text-muted-foreground font-sans">—</span>
                           )}
                         </td>
-                        <td className="py-2 px-3 text-right font-bold bg-emerald-50/70 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-200">{fmtNr(row.netInterestPayable)}</td>
+                        <td className="py-2 px-3 text-right font-bold bg-emerald-50/70 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-200 whitespace-nowrap">{fmtNr(row.netInterestPayable)}</td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr className="bg-muted/90 font-bold border-t-2 border-b-2 border-foreground/30 divide-x divide-border font-mono">
-                      <td className="py-2 px-3 font-sans uppercase">TOTAL</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(debentureSummary.total.kitta)}</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(debentureSummary.total.principalAmount)}</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(debentureSummary.total.annualInterest)}</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(debentureSummary.total.interestPerDay)}</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(debentureSummary.total.grossInterest)}</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(debentureSummary.total.taxAmount)}</td>
-                      <td className="py-2 px-3 text-right bg-emerald-100 text-emerald-950 dark:bg-emerald-900/60 dark:text-emerald-200">{fmtNr(debentureSummary.total.netInterestPayable)}</td>
+                      <td className="py-2 px-3 font-sans uppercase whitespace-nowrap">TOTAL</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(debentureSummary.total.kitta)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(debentureSummary.total.principalAmount)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(debentureSummary.total.annualInterest)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(debentureSummary.total.interestPerDay)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(debentureSummary.total.grossInterest)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(debentureSummary.total.taxAmount)}</td>
+                      <td className="py-2 px-3 text-right bg-emerald-100 text-emerald-950 dark:bg-emerald-900/60 dark:text-emerald-200 whitespace-nowrap">{fmtNr(debentureSummary.total.netInterestPayable)}</td>
                     </tr>
                   </tfoot>
                 </table>
@@ -513,43 +513,43 @@ function ReportsRoute() {
                 </div>
               </CardHeader>
               <CardContent className="p-0 overflow-x-auto">
-                <table className="w-full text-xs text-left border-collapse">
+                <table className="w-full text-xs text-left border-collapse whitespace-nowrap">
                   <thead>
                     <tr className="bg-muted/80 text-foreground font-semibold border-b border-border divide-x divide-border">
-                      <th className="py-2 px-3 text-center w-10 uppercase text-[11px]">S.N.</th>
-                      <th className="py-2 px-3 uppercase text-[11px]">CATEGORY</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px]">UNITHOLDERS</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px]">UNITS / KITTA</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px]">GROSS DIVIDEND</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px]">TAX</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200">NET DIVIDEND</th>
-                      <th className="py-2 px-3 text-right uppercase text-[11px]">COMPOSITION</th>
+                      <th className="py-2.5 px-3 text-center w-10 uppercase text-[11px] whitespace-nowrap">S.N.</th>
+                      <th className="py-2.5 px-3 uppercase text-[11px] whitespace-nowrap min-w-[140px]">CATEGORY</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">UNITHOLDERS</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">UNITS / KITTA</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">GROSS DIVIDEND</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">TAX</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200 whitespace-nowrap">NET DIVIDEND</th>
+                      <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">COMPOSITION</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border font-mono">
                     {mfSummary.map((row) => (
                       <tr key={row.type} className="hover:bg-muted/30 transition-colors divide-x divide-border">
-                        <td className="py-2 px-3 text-center text-muted-foreground">{row.sn}</td>
-                        <td className="py-2 px-3 font-semibold font-sans">{row.type}</td>
-                        <td className="py-2 px-3 text-right">{fmtNr(row.transaction_count)}</td>
-                        <td className="py-2 px-3 text-right font-medium">{fmtNr(row.kitta)}</td>
-                        <td className="py-2 px-3 text-right">{fmtNr(row.gross)}</td>
-                        <td className="py-2 px-3 text-right">{fmtNr(row.tax)}</td>
-                        <td className="py-2 px-3 text-right font-bold bg-emerald-50/70 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-200">{fmtNr(row.net)}</td>
-                        <td className="py-2 px-3 text-right font-sans font-medium">{(row.composition ?? 0).toFixed(2)}%</td>
+                        <td className="py-2 px-3 text-center text-muted-foreground whitespace-nowrap">{row.sn}</td>
+                        <td className="py-2 px-3 font-semibold font-sans whitespace-nowrap text-foreground">{row.type}</td>
+                        <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(row.transaction_count)}</td>
+                        <td className="py-2 px-3 text-right font-medium whitespace-nowrap">{fmtNr(row.kitta)}</td>
+                        <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(row.gross)}</td>
+                        <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(row.tax)}</td>
+                        <td className="py-2 px-3 text-right font-bold bg-emerald-50/70 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-200 whitespace-nowrap">{fmtNr(row.net)}</td>
+                        <td className="py-2 px-3 text-right font-sans font-medium whitespace-nowrap">{(row.composition ?? 0).toFixed(2)}%</td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr className="bg-muted/90 font-bold border-t-2 border-b-2 border-foreground/30 divide-x divide-border font-mono">
-                      <td className="py-2 px-3 text-center"></td>
-                      <td className="py-2 px-3 font-sans uppercase">TOTAL</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(mfTotal.transaction_count)}</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(mfTotal.kitta)}</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(mfTotal.gross)}</td>
-                      <td className="py-2 px-3 text-right">{fmtNr(mfTotal.tax)}</td>
-                      <td className="py-2 px-3 text-right bg-emerald-100 text-emerald-950 dark:bg-emerald-900/60 dark:text-emerald-200">{fmtNr(mfTotal.net)}</td>
-                      <td className="py-2 px-3 text-right font-sans">100.00%</td>
+                      <td className="py-2 px-3 text-center whitespace-nowrap"></td>
+                      <td className="py-2 px-3 font-sans uppercase whitespace-nowrap">TOTAL</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(mfTotal.transaction_count)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(mfTotal.kitta)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(mfTotal.gross)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmtNr(mfTotal.tax)}</td>
+                      <td className="py-2 px-3 text-right bg-emerald-100 text-emerald-950 dark:bg-emerald-900/60 dark:text-emerald-200 whitespace-nowrap">{fmtNr(mfTotal.net)}</td>
+                      <td className="py-2 px-3 text-right font-sans whitespace-nowrap">100.00%</td>
                     </tr>
                   </tfoot>
                 </table>

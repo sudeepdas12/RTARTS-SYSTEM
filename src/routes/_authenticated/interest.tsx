@@ -1143,21 +1143,21 @@ function InterestPage() {
                 <p className="text-xs text-muted-foreground">Aggregating coupon rates, days, and tax categories</p>
               </div>
             ) : (
-            <table className="w-full text-xs text-left border-collapse">
+            <table className="w-full text-xs text-left border-collapse whitespace-nowrap">
               <thead>
                 <tr className="bg-muted/80 text-foreground font-semibold border-b border-border divide-x border-border">
-                  <th className="py-2.5 px-3 uppercase text-[11px]">CATEGORY</th>
-                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">KITTA</th>
-                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">AMOUNT</th>
-                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">
+                  <th className="py-2.5 px-3 uppercase text-[11px] whitespace-nowrap min-w-[140px]">CATEGORY</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">KITTA</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">AMOUNT</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
                     {debentureSummaryReport.couponRate > 0
                       ? `INT. @ ${debentureSummaryReport.couponRate}%`
                       : "ANNUAL INT."}
                   </th>
-                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">INT. PER DAY</th>
-                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">INTEREST PUMORI</th>
-                  <th className="py-2.5 px-3 text-right uppercase text-[11px]">TAX</th>
-                  <th className="py-2.5 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200">
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">INT. PER DAY</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">INTEREST PUMORI</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">TAX</th>
+                  <th className="py-2.5 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200 whitespace-nowrap">
                     NET INTEREST PAYABLE
                   </th>
                 </tr>
@@ -1165,27 +1165,27 @@ function InterestPage() {
               <tbody className="divide-y divide-border font-mono">
                 {debentureSummaryReport.rows.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="py-8 text-center text-muted-foreground font-sans text-xs">
+                    <td colSpan={8} className="py-8 text-center text-muted-foreground font-sans text-xs whitespace-nowrap">
                       No debenture interest payables found for the selected filter.
                     </td>
                   </tr>
                 ) : (
                   debentureSummaryReport.rows.map((row) => (
                     <tr key={row.name} className="hover:bg-muted/30 transition-colors divide-x divide-border">
-                      <td className="py-2 px-3 font-semibold font-sans">{row.name}</td>
-                      <td className="py-2 px-3 text-right">{fmt(row.kitta)}</td>
-                      <td className="py-2 px-3 text-right">{fmt(row.principalAmount)}</td>
-                      <td className="py-2 px-3 text-right">{fmt(row.annualInterest)}</td>
-                      <td className="py-2 px-3 text-right">{fmt(row.interestPerDay)}</td>
-                      <td className="py-2 px-3 text-right font-medium">{fmt(row.grossInterest)}</td>
-                      <td className="py-2 px-3 text-right">
+                      <td className="py-2 px-3 font-semibold font-sans whitespace-nowrap text-foreground">{row.name}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmt(row.kitta)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmt(row.principalAmount)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmt(row.annualInterest)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">{fmt(row.interestPerDay)}</td>
+                      <td className="py-2 px-3 text-right font-medium whitespace-nowrap">{fmt(row.grossInterest)}</td>
+                      <td className="py-2 px-3 text-right whitespace-nowrap">
                         {row.taxAmount > 0 ? (
                           <span>{fmt(row.taxAmount)} <span className="text-[10px] text-muted-foreground font-sans">({row.taxRatePercent}%)</span></span>
                         ) : (
                           <span className="text-muted-foreground font-sans">—</span>
                         )}
                       </td>
-                      <td className="py-2 px-3 text-right font-bold bg-emerald-50/70 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-200">
+                      <td className="py-2 px-3 text-right font-bold bg-emerald-50/70 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-200 whitespace-nowrap">
                         {fmt(row.netInterestPayable)}
                       </td>
                     </tr>
@@ -1195,14 +1195,14 @@ function InterestPage() {
               {debentureSummaryReport.rows.length > 0 && (
                 <tfoot>
                   <tr className="bg-muted/90 font-bold border-t-2 border-b-2 border-foreground/30 divide-x divide-border font-mono">
-                    <td className="py-2.5 px-3 font-sans uppercase">TOTAL</td>
-                    <td className="py-2.5 px-3 text-right">{fmt(debentureSummaryReport.total.kitta)}</td>
-                    <td className="py-2.5 px-3 text-right">{fmt(debentureSummaryReport.total.principalAmount)}</td>
-                    <td className="py-2.5 px-3 text-right">{fmt(debentureSummaryReport.total.annualInterest)}</td>
-                    <td className="py-2.5 px-3 text-right">{fmt(debentureSummaryReport.total.interestPerDay)}</td>
-                    <td className="py-2.5 px-3 text-right">{fmt(debentureSummaryReport.total.grossInterest)}</td>
-                    <td className="py-2.5 px-3 text-right">{fmt(debentureSummaryReport.total.taxAmount)}</td>
-                    <td className="py-2.5 px-3 text-right bg-emerald-100 text-emerald-950 dark:bg-emerald-900/60 dark:text-emerald-200">
+                    <td className="py-2.5 px-3 font-sans uppercase whitespace-nowrap">TOTAL</td>
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap">{fmt(debentureSummaryReport.total.kitta)}</td>
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap">{fmt(debentureSummaryReport.total.principalAmount)}</td>
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap">{fmt(debentureSummaryReport.total.annualInterest)}</td>
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap">{fmt(debentureSummaryReport.total.interestPerDay)}</td>
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap">{fmt(debentureSummaryReport.total.grossInterest)}</td>
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap">{fmt(debentureSummaryReport.total.taxAmount)}</td>
+                    <td className="py-2.5 px-3 text-right bg-emerald-100 text-emerald-950 dark:bg-emerald-900/60 dark:text-emerald-200 whitespace-nowrap">
                       {fmt(debentureSummaryReport.total.netInterestPayable)}
                     </td>
                   </tr>
