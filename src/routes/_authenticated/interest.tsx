@@ -373,11 +373,26 @@ function InterestPage() {
   const [summaryFaceValue, setSummaryFaceValue] = useState<string>("1000");
   const [summaryDays, setSummaryDays] = useState<string>("");
 
+  const activeDays = useMemo(() => {
+    if (summaryDays && Number(summaryDays) > 0) return Number(summaryDays);
+    if (periodPreset !== "ALL" && periodPreset !== "CUSTOM" && STANDARD_PERIODS[periodPreset]) {
+      return STANDARD_PERIODS[periodPreset].days;
+    }
+    if (fromDateFilter && toDateFilter) {
+      const from = new Date(fromDateFilter).getTime();
+      const to = new Date(toDateFilter).getTime();
+      if (!isNaN(from) && !isNaN(to) && to >= from) {
+        return Math.ceil((to - from) / (1000 * 60 * 60 * 24));
+      }
+    }
+    return undefined;
+  }, [summaryDays, periodPreset, fromDateFilter, toDateFilter]);
+
   const selectedCompany = useMemo(() => companies.find((c) => c.id === companyFilter), [companies, companyFilter]);
 
   // Automatically fetch summary data with React Query
   const { data: summaryAllRows = [], isLoading: summaryLoading, refetch: loadSummary } = useQuery({
-    queryKey: ["interest_summary_rows", companyFilter, fyFilter],
+    queryKey: ["interest_summary_rows", companyFilter, fyFilter, fromDateFilter, toDateFilter],
     queryFn: async () => {
       return fetchAllRows<Payable>((from, to) => {
         let q = (supabase as any)
@@ -386,6 +401,8 @@ function InterestPage() {
           .range(from, to);
         if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
         if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
+        if (fromDateFilter) q = q.gte("due_date", fromDateFilter);
+        if (toDateFilter) q = q.lte("due_date", toDateFilter);
         return q;
       });
     },
@@ -401,9 +418,9 @@ function InterestPage() {
         fyFilter !== "all" ? fyFilter : "",
         summaryCouponRate ? Number(summaryCouponRate) : undefined,
         summaryFaceValue ? Number(summaryFaceValue) : 1000,
-        summaryDays ? Number(summaryDays) : undefined,
+        activeDays,
       ),
-    [summaryAllRows, selectedCompany, companyFilter, fyFilter, summaryCouponRate, summaryFaceValue, summaryDays],
+    [summaryAllRows, selectedCompany, companyFilter, fyFilter, summaryCouponRate, summaryFaceValue, activeDays],
   );
 
   const upsert = useMutation({

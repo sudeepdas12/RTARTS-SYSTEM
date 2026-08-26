@@ -258,8 +258,12 @@ export const DebentureSummaryReportService = {
       const comp = grandKitta > 0 ? Math.round((g.kitta / grandKitta) * 10000) / 100 : 0;
 
       const periodGross = overrideDays && overrideDays > 0 ? Math.round(intPerDay * overrideDays * 100) / 100 : g.gross;
-      const periodTax = g.tax > 0 ? g.tax : Math.round(periodGross * (cfg.taxRatePercent / 100) * 100) / 100;
-      const periodNet = g.net > 0 ? g.net : Math.round((periodGross - periodTax) * 100) / 100;
+      const periodTax = overrideDays && overrideDays > 0
+        ? (cfg.taxRatePercent > 0 ? Math.round(periodGross * (cfg.taxRatePercent / 100) * 100) / 100 : 0)
+        : g.tax;
+      const periodNet = overrideDays && overrideDays > 0
+        ? Math.round((periodGross - periodTax) * 100) / 100
+        : (g.net > 0 ? g.net : Math.round((periodGross - periodTax) * 100) / 100);
 
       rows.push({
         name: cfg.label,
