@@ -237,6 +237,11 @@ export function formatIafDetailLine(record: IafRecord, defaultRtaRef = ''): stri
 // ──────────────────────────────────────────────
 
 export const IafGeneratorService = {
+  formatIafHeader,
+  formatIafDetailLine,
+  formatIafQuantity,
+  normalizeDateToDDMMYYYY,
+
   /**
    * Universal Excel / CSV Allotment Parser
    * Supports standard column aliases for BOID, Kitta, Lock-in, Category, and References.

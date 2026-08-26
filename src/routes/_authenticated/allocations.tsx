@@ -48,6 +48,8 @@ import {
   AllotmentSummary,
   LOCK_IN_PRESETS,
   LockInPreset,
+  formatIafHeader,
+  formatIafDetailLine,
 } from "@/lib/services/iaf-generator.service";
 
 export const Route = createFileRoute("/_authenticated/allocations")({
@@ -532,13 +534,13 @@ function AllocationsPage() {
                         Line 1 (Header: 42 chars) = [Recs: 1-10] [CurrentQty: 11-26] [LockQty: 27-42]
                       </div>
                       <div className="text-emerald-700 dark:text-emerald-300 select-all font-semibold">
-                        {IafGeneratorService.formatIafHeader(records.length, summary?.totalAllottedKitta || 0, summary?.totalLockInKitta || 0)}
+                        {formatIafHeader(records.length, summary?.totalAllottedKitta || 0, summary?.totalLockInKitta || 0)}
                       </div>
                       <div className="text-muted-foreground text-[10px] pt-1">
                         Line 2 (Detail: 124 chars) = [BOID: 1-16] [Curr: 17-32] [Lock: 33-48] [Code: 49-50] [Reason: 51-100] [Date: 101-108] [Ref: 109-124]
                       </div>
                       <div className="text-primary select-all font-semibold whitespace-pre">
-                        {IafGeneratorService.formatIafDetailLine({
+                        {formatIafDetailLine({
                           ...records[0],
                           lockInKitta: isLockAll ? records[0].currentKitta : records[0].lockInKitta,
                           lockInReasonCode: customLockCode || records[0].lockInReasonCode,
