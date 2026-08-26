@@ -490,11 +490,12 @@ function AllocationsPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="LOCAL">Local Affected (Code 09 - 3 Yrs)</SelectItem>
                         <SelectItem value="PUBLIC">General Public (Code 00 - Free)</SelectItem>
-                        <SelectItem value="EMPLOYEE">Employees (Code 02 - Locked)</SelectItem>
-                        <SelectItem value="PROMOTER">Promoter (Code 01 - Locked)</SelectItem>
-                        <SelectItem value="MUTUAL_FUND">Mutual Fund (Code 03 - 6 Mos)</SelectItem>
+                        <SelectItem value="FOREIGN">Foreign Migrant (Code 00 - Free)</SelectItem>
+                        <SelectItem value="LOCAL">Local Affected (Code 09 - 3 Yrs Locked)</SelectItem>
+                        <SelectItem value="STAFF">Staff / Employee Quota (Code 02 - Locked)</SelectItem>
+                        <SelectItem value="MUTUAL_FUND">Mutual Fund / Others (Code 99 - Locked)</SelectItem>
+                        <SelectItem value="PROMOTER">Promoter Shares (Code 01 - Locked)</SelectItem>
                         <SelectItem value="CUSTOM">Custom Rule (Code 99)</SelectItem>
                       </SelectContent>
                     </Select>

@@ -26,28 +26,39 @@ export const LOCK_IN_PRESETS: Record<string, LockInPreset> = {
     reason: '',
     isLocked: false,
   },
+  FOREIGN: {
+    code: '00',
+    reason: '',
+    isLocked: false,
+  },
   LOCAL: {
     code: '09',
     reason: 'Local Affected',
     defaultExpiryYears: 3,
     isLocked: true,
   },
+  STAFF: {
+    code: '02',
+    reason: 'EMPLOYEE QUOTA',
+    defaultExpiryYears: 3,
+    isLocked: true,
+  },
   EMPLOYEE: {
     code: '02',
-    reason: 'Employee Quota',
+    reason: 'EMPLOYEE QUOTA',
     defaultExpiryYears: 3,
+    isLocked: true,
+  },
+  MUTUAL_FUND: {
+    code: '99',
+    reason: 'OTHERS',
+    defaultExpiryYears: 0.5,
     isLocked: true,
   },
   PROMOTER: {
     code: '01',
     reason: 'Promoter Share',
     defaultExpiryYears: 3,
-    isLocked: true,
-  },
-  MUTUAL_FUND: {
-    code: '03',
-    reason: 'Mutual Fund Allocation',
-    defaultExpiryYears: 0.5,
     isLocked: true,
   },
   CUSTOM: {
