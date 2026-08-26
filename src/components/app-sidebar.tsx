@@ -78,7 +78,7 @@ const sections: NavSection[] = [
     items: [
       { title: "Payments", url: "/payments", icon: CreditCard },
       { title: "Bank Reconciliation", url: "/reconciliation", icon: ArrowLeftRight },
-      { title: "IAF Allocations", url: "/allocations", icon: Package },
+      { title: "CDSC & IAF Allotments", url: "/allocations", icon: Package },
       {
         title: "Pending Approvals",
         url: "/approvals",
