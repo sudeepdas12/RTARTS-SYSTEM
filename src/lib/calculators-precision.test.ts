@@ -1,4 +1,4 @@
-﻿import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "vitest";
 import { DividendCalculator } from "./dividend-calculator";
 import { InterestCalculator } from "./interest-calculator";
 import { formatCurrencyNPR, formatCount, parseFormattedNumber } from "./currency";
@@ -16,14 +16,16 @@ describe("DividendCalculator Precision", () => {
     expect(result.grossCashDividend).toBe(861.54);
     expect(result.cashTaxAmount).toBe(43.08);
     expect(result.netCashPayable).toBe(818.46);
-    expect(Math.round((result.grossCashDividend - result.totalTaxAmount) * 100) / 100).toBe(result.netCashPayable);
+    expect(Math.round((result.grossCashDividend - result.totalTaxAmount) * 100) / 100).toBe(
+      result.netCashPayable,
+    );
   });
 
   it("handles combined bonus and cash dividends correctly", () => {
     const result = DividendCalculator.calculate({
       sharesHeld: 1000,
       dividendType: "Combined",
-      bonusRatio: 0.10, // 10% bonus
+      bonusRatio: 0.1, // 10% bonus
       cashDividendRate: 5, // 5% cash
       cashRateIsPerShare: false, // 5% of Rs 100 face value
       taxCategory: "PUBLIC",
@@ -39,7 +41,9 @@ describe("DividendCalculator Precision", () => {
     expect(result.cashTaxAmount).toBe(275);
     expect(result.totalTaxAmount).toBe(775);
     expect(result.netCashPayable).toBe(4725);
-    expect(Math.round((result.grossCashDividend - result.totalTaxAmount) * 100) / 100).toBe(result.netCashPayable);
+    expect(Math.round((result.grossCashDividend - result.totalTaxAmount) * 100) / 100).toBe(
+      result.netCashPayable,
+    );
   });
 });
 
@@ -58,7 +62,9 @@ describe("InterestCalculator Precision", () => {
     expect(result.grossPeriodInterest).toBe(5297.95);
     expect(result.taxAmount).toBe(317.88);
     expect(result.netInterestPayable).toBe(4980.07);
-    expect(Math.round((result.grossPeriodInterest - result.taxAmount) * 100) / 100).toBe(result.netInterestPayable);
+    expect(Math.round((result.grossPeriodInterest - result.taxAmount) * 100) / 100).toBe(
+      result.netInterestPayable,
+    );
   });
 
   it("exempts mutual funds from debenture coupon tax", () => {
@@ -83,5 +89,40 @@ describe("Currency formatting utilities", () => {
     expect(formatCurrencyNPR(null)).toBe("—");
     expect(formatCount(1500000)).toBe("15,00,000");
     expect(parseFormattedNumber("10,00,000.00")).toBe(1000000);
+  });
+});
+
+describe("DividendCalculator & InterestCalculator Edge Cases", () => {
+  it("supports custom face values such as Rs 10 and Rs 50", () => {
+    const result = DividendCalculator.calculate({
+      sharesHeld: 1000,
+      dividendType: "Bonus",
+      bonusRatio: 0.1, // 100 shares bonus
+      faceValue: 10, // Rs 10 face value
+      taxCategory: "PUBLIC", // 5%
+    });
+
+    expect(result.issuedBonusShares).toBe(100);
+    // 100 bonus shares * Rs 10 face value * 5% tax = Rs 50 bonus tax (not Rs 500)
+    expect(result.bonusTaxAmount).toBe(50);
+  });
+
+  it("calculates exact calendar days between fromDate and toDate without DST overshoot", () => {
+    const fromDate = new Date("2026-01-01T00:00:00Z");
+    const toDate = new Date("2026-04-01T00:00:00Z"); // 90 days
+
+    const result = InterestCalculator.calculate({
+      debentureKitta: 100,
+      unitFaceValue: 1000,
+      annualInterestRate: 10,
+      fromDate,
+      toDate,
+      taxCategory: "PUBLIC",
+    });
+
+    expect(result.daysCount).toBe(90);
+    expect(result.grossPeriodInterest).toBe(2465.75);
+    expect(result.taxAmount).toBe(147.95);
+    expect(result.netInterestPayable).toBe(2317.8);
   });
 });

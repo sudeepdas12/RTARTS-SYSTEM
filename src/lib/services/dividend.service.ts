@@ -1,5 +1,5 @@
-import { supabase } from '@/integrations/supabase/client';
-import { RtsService } from '@/lib/services/rts.service';
+import { supabase } from "@/integrations/supabase/client";
+import { RtsService } from "@/lib/services/rts.service";
 
 /**
  * Service for dividend related backend actions beyond the UI.
@@ -14,9 +14,9 @@ export const DividendService = {
   async pushToRts(payableId: string): Promise<void> {
     // 1. Load the payable record
     const { data: payable, error: fetchError } = await supabase
-      .from('dividend_payables')
-      .select('*')
-      .eq('id', payableId)
+      .from("dividend_payables")
+      .select("*")
+      .eq("id", payableId)
       .single();
     if (fetchError) {
       throw new Error(`Failed to load payable: ${fetchError.message}`);
@@ -25,8 +25,12 @@ export const DividendService = {
     const payload = {
       company_id: payable.company_id!,
       client_id: payable.client_id!,
-      amount: Math.max(0, Math.round((Number(payable.gross_dividend ?? 0) - Number(payable.tax_amount ?? 0)) * 100) / 100),
-      fiscal_year: payable.fiscal_year ?? '',
+      amount: Math.max(
+        0,
+        Math.round((Number(payable.gross_dividend ?? 0) - Number(payable.tax_amount ?? 0)) * 100) /
+          100,
+      ),
+      fiscal_year: payable.fiscal_year ?? "",
       payment_reference: payable.payment_reference ?? null,
       payment_date: payable.payment_date ?? new Date().toISOString().slice(0, 10),
     };
@@ -36,13 +40,13 @@ export const DividendService = {
       // 4. On success, mark as submitted and clear error
       const currentAttempts = Number((payable as any).rts_attempts || 0);
       const { error: updateError } = await supabase
-        .from('dividend_payables')
+        .from("dividend_payables")
         .update({
           rts_submitted: true,
           rts_attempts: currentAttempts + 1,
           rts_error: null,
         } as any)
-        .eq('id', payableId);
+        .eq("id", payableId);
       if (updateError) {
         throw new Error(`Failed to update RTS status: ${updateError.message}`);
       }
@@ -50,16 +54,16 @@ export const DividendService = {
       // 5. On failure, increment attempts and store error message
       const currentAttempts = Number((payable as any).rts_attempts || 0);
       const { error: updateError } = await supabase
-        .from('dividend_payables')
+        .from("dividend_payables")
         .update({
           rts_submitted: false,
           rts_attempts: currentAttempts + 1,
           rts_error: err?.message ?? String(err),
         } as any)
-        .eq('id', payableId);
+        .eq("id", payableId);
       if (updateError) {
         // If we cannot store the error, surface the original error
-        console.error('Failed to record RTS error:', updateError);
+        console.error("Failed to record RTS error:", updateError);
       }
       // Re‑throw to let UI show a toast
       throw err;

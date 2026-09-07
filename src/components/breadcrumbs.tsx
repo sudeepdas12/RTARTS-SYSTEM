@@ -30,7 +30,10 @@ export function Breadcrumbs() {
   }));
 
   return (
-    <nav aria-label="Breadcrumb" className="hidden items-center gap-1 text-sm text-muted-foreground md:flex">
+    <nav
+      aria-label="Breadcrumb"
+      className="hidden items-center gap-1 text-sm text-muted-foreground md:flex"
+    >
       <Link to="/dashboard" className="flex items-center hover:text-foreground" aria-label="Home">
         <Home className="h-3.5 w-3.5" />
       </Link>

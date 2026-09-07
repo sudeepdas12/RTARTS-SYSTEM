@@ -1,5 +1,5 @@
-import { supabase, fetchAllRows } from './database';
-import { getInvestorDemographicGroup } from './investor-category';
+import { supabase, fetchAllRows } from "./database";
+import { getInvestorDemographicGroup } from "./investor-category";
 
 export interface ReportFilters {
   companyId?: string;
@@ -14,49 +14,54 @@ export interface ReportFilters {
 
 function applyDateFilter(query: any, field: string, startDate?: string, endDate?: string) {
   if (startDate) query = query.gte(field, startDate);
-  if (endDate) query = query.lte(field, endDate + 'T23:59:59');
+  if (endDate) query = query.lte(field, endDate + "T23:59:59");
   return query;
 }
 
 function applyClassificationFilter(query: any, classification?: string, tableName?: string) {
-  if (!classification || classification === 'all') return query;
-  const isInterest = tableName === 'interest_payables';
-  const isDividend = tableName === 'dividend_payables';
+  if (!classification || classification === "all") return query;
+  const isInterest = tableName === "interest_payables";
+  const isDividend = tableName === "dividend_payables";
   const hasLot = isDividend;
   const hasInstrument = isInterest;
 
-  if (classification === 'PROMOTER') {
-    const parts = ['payee_segment.eq.PROMOTER'];
-    if (hasLot) parts.push('lot_name.ilike.%PROMOT%');
-    if (hasInstrument) parts.push('instrument_ref.ilike.%PROMOT%');
-    return query.or(parts.join(','));
-  } else if (classification === 'LOCAL') {
-    const parts = ['payee_segment.eq.LOCAL'];
-    if (hasLot) parts.push('lot_name.ilike.%LOCAL%');
-    if (hasInstrument) parts.push('instrument_ref.ilike.%LOCAL%');
-    return query.or(parts.join(','));
-  } else if (classification === 'EMPLOYEE') {
-    const parts = ['payee_segment.eq.EMPLOYEE'];
-    if (hasLot) parts.push('lot_name.ilike.%STAFF%', 'lot_name.ilike.%EMPLOYEE%');
-    if (hasInstrument) parts.push('instrument_ref.ilike.%STAFF%', 'instrument_ref.ilike.%EMPLOYEE%');
-    return query.or(parts.join(','));
-  } else if (classification === 'TAX_EXEMPT') {
-    const parts = ['payee_classification.eq.TAX_EXEMPT'];
-    if (hasLot) parts.push('lot_name.ilike.%MUTUAL%', 'lot_name.ilike.%EXEMPT%');
-    if (hasInstrument) parts.push('instrument_ref.ilike.%MUTUAL%', 'instrument_ref.ilike.%EXEMPT%');
-    return query.or(parts.join(','));
-  } else if (classification === 'INSTITUTION') {
-    const parts = ['payee_classification.eq.COMPANY_INSTITUTION'];
-    if (hasLot) parts.push('lot_name.ilike.%INSTITUT%', 'lot_name.ilike.%COMPANY%');
-    if (hasInstrument) parts.push('instrument_ref.ilike.%INSTITUT%', 'instrument_ref.ilike.%COMPANY%');
-    return query.or(parts.join(','));
-  } else if (classification === 'PUBLIC') {
-    const parts = ['payee_classification.eq.NATURAL_PERSON', 'payee_classification.eq.PUBLIC_LEGAL_PERSON'];
-    if (hasLot) parts.push('lot_name.ilike.%PUBLIC%');
-    if (hasInstrument) parts.push('instrument_ref.ilike.%PUBLIC%');
-    return query.or(parts.join(','));
+  if (classification === "PROMOTER") {
+    const parts = ["payee_segment.eq.PROMOTER"];
+    if (hasLot) parts.push("lot_name.ilike.%PROMOT%");
+    if (hasInstrument) parts.push("instrument_ref.ilike.%PROMOT%");
+    return query.or(parts.join(","));
+  } else if (classification === "LOCAL") {
+    const parts = ["payee_segment.eq.LOCAL"];
+    if (hasLot) parts.push("lot_name.ilike.%LOCAL%");
+    if (hasInstrument) parts.push("instrument_ref.ilike.%LOCAL%");
+    return query.or(parts.join(","));
+  } else if (classification === "EMPLOYEE") {
+    const parts = ["payee_segment.eq.EMPLOYEE"];
+    if (hasLot) parts.push("lot_name.ilike.%STAFF%", "lot_name.ilike.%EMPLOYEE%");
+    if (hasInstrument)
+      parts.push("instrument_ref.ilike.%STAFF%", "instrument_ref.ilike.%EMPLOYEE%");
+    return query.or(parts.join(","));
+  } else if (classification === "TAX_EXEMPT") {
+    const parts = ["payee_classification.eq.TAX_EXEMPT"];
+    if (hasLot) parts.push("lot_name.ilike.%MUTUAL%", "lot_name.ilike.%EXEMPT%");
+    if (hasInstrument) parts.push("instrument_ref.ilike.%MUTUAL%", "instrument_ref.ilike.%EXEMPT%");
+    return query.or(parts.join(","));
+  } else if (classification === "INSTITUTION") {
+    const parts = ["payee_classification.eq.COMPANY_INSTITUTION"];
+    if (hasLot) parts.push("lot_name.ilike.%INSTITUT%", "lot_name.ilike.%COMPANY%");
+    if (hasInstrument)
+      parts.push("instrument_ref.ilike.%INSTITUT%", "instrument_ref.ilike.%COMPANY%");
+    return query.or(parts.join(","));
+  } else if (classification === "PUBLIC") {
+    const parts = [
+      "payee_classification.eq.NATURAL_PERSON",
+      "payee_classification.eq.PUBLIC_LEGAL_PERSON",
+    ];
+    if (hasLot) parts.push("lot_name.ilike.%PUBLIC%");
+    if (hasInstrument) parts.push("instrument_ref.ilike.%PUBLIC%");
+    return query.or(parts.join(","));
   }
-  return query.eq('payee_classification', classification);
+  return query.eq("payee_classification", classification);
 }
 
 function nr(v: unknown): number {
@@ -199,37 +204,41 @@ export interface AuditReportRow {
 // ─── Service ───────────────────────────────────────────────────────────────────
 
 export const ReportService = {
-
   // 1. Dividend Register
   async getDividendRegister(filters: ReportFilters = {}): Promise<DividendRegisterRow[]> {
     try {
       const data = await fetchAllRows<any>((from, to) => {
         let query = (supabase as any)
-          .from('dividend_payables')
-          .select('id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, payment_status, payment_date, payment_reference, fiscal_year, payee_classification, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)')
-          .order('created_at', { ascending: false })
+          .from("dividend_payables")
+          .select(
+            "id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, payment_status, payment_date, payment_reference, fiscal_year, payee_classification, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
+          )
+          .order("created_at", { ascending: false })
           .range(from, to);
 
-        if (filters.companyId && filters.companyId !== 'all') query = query.eq('company_id', filters.companyId);
-        if (filters.fiscalYear && filters.fiscalYear !== 'all') query = query.eq('fiscal_year', filters.fiscalYear);
-        if (filters.status && filters.status !== 'all') query = (query as any).eq('payment_status', filters.status as any);
+        if (filters.companyId && filters.companyId !== "all")
+          query = query.eq("company_id", filters.companyId);
+        if (filters.fiscalYear && filters.fiscalYear !== "all")
+          query = query.eq("fiscal_year", filters.fiscalYear);
+        if (filters.status && filters.status !== "all")
+          query = (query as any).eq("payment_status", filters.status as any);
         query = applyClassificationFilter(query, filters.classification);
-        query = applyDateFilter(query, 'payment_date', filters.startDate, filters.endDate);
+        query = applyDateFilter(query, "payment_date", filters.startDate, filters.endDate);
         return query;
       });
 
       return (data || []).map((row: any) => ({
         id: row.id,
         boid: row.client?.boid ?? null,
-        full_name: row.client?.full_name ?? 'Unknown',
-        company_name: row.company?.company_name ?? 'Unknown',
+        full_name: row.client?.full_name ?? "Unknown",
+        company_name: row.company?.company_name ?? "Unknown",
         shares_held: nr(row.shares_held),
         dividend_rate: nr(row.dividend_rate),
-        dividend_type: row.dividend_type ?? 'Cash',
+        dividend_type: row.dividend_type ?? "Cash",
         gross_dividend: nr(row.gross_dividend),
         tax_amount: nr(row.tax_amount),
         net_payable: nr(row.net_payable),
-        payment_status: row.payment_status ?? 'Pending',
+        payment_status: row.payment_status ?? "Pending",
         payment_date: row.payment_date ?? null,
         payment_reference: row.payment_reference ?? null,
         fiscal_year: row.fiscal_year ?? null,
@@ -238,7 +247,7 @@ export const ReportService = {
         pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
       }));
     } catch (err) {
-      console.error('getDividendRegister error:', err);
+      console.error("getDividendRegister error:", err);
       return [];
     }
   },
@@ -248,31 +257,36 @@ export const ReportService = {
     try {
       const data = await fetchAllRows<any>((from, to) => {
         let query = (supabase as any)
-          .from('mutual_fund_payables')
-          .select('id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, payment_status, payment_date, payment_reference, fiscal_year, payee_classification, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)')
-          .order('created_at', { ascending: false })
+          .from("mutual_fund_payables")
+          .select(
+            "id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, payment_status, payment_date, payment_reference, fiscal_year, payee_classification, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
+          )
+          .order("created_at", { ascending: false })
           .range(from, to);
 
-        if (filters.companyId && filters.companyId !== 'all') query = query.eq('company_id', filters.companyId);
-        if (filters.fiscalYear && filters.fiscalYear !== 'all') query = query.eq('fiscal_year', filters.fiscalYear);
-        if (filters.status && filters.status !== 'all') query = (query as any).eq('payment_status', filters.status as any);
+        if (filters.companyId && filters.companyId !== "all")
+          query = query.eq("company_id", filters.companyId);
+        if (filters.fiscalYear && filters.fiscalYear !== "all")
+          query = query.eq("fiscal_year", filters.fiscalYear);
+        if (filters.status && filters.status !== "all")
+          query = (query as any).eq("payment_status", filters.status as any);
         query = applyClassificationFilter(query, filters.classification);
-        query = applyDateFilter(query, 'payment_date', filters.startDate, filters.endDate);
+        query = applyDateFilter(query, "payment_date", filters.startDate, filters.endDate);
         return query;
       });
 
       return (data || []).map((row: any) => ({
         id: row.id,
         boid: row.client?.boid ?? null,
-        full_name: row.client?.full_name ?? 'Unknown',
-        company_name: row.company?.company_name ?? 'Unknown',
+        full_name: row.client?.full_name ?? "Unknown",
+        company_name: row.company?.company_name ?? "Unknown",
         shares_held: nr(row.shares_held),
         dividend_rate: nr(row.dividend_rate),
-        dividend_type: row.dividend_type ?? 'Distribution',
+        dividend_type: row.dividend_type ?? "Distribution",
         gross_dividend: nr(row.gross_dividend),
         tax_amount: nr(row.tax_amount),
         net_payable: nr(row.net_payable),
-        payment_status: row.payment_status ?? 'Pending',
+        payment_status: row.payment_status ?? "Pending",
         payment_date: row.payment_date ?? null,
         payment_reference: row.payment_reference ?? null,
         fiscal_year: row.fiscal_year ?? null,
@@ -281,7 +295,7 @@ export const ReportService = {
         pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
       }));
     } catch (err) {
-      console.error('getMutualFundRegister error:', err);
+      console.error("getMutualFundRegister error:", err);
       return [];
     }
   },
@@ -291,29 +305,34 @@ export const ReportService = {
     try {
       const data = await fetchAllRows<any>((from, to) => {
         let query = (supabase as any)
-          .from('interest_payables')
-          .select('id, instrument_ref, gross_interest, tax_amount, net_payable, payment_status, due_date, payment_date, payment_reference, fiscal_year, payee_classification, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)')
-          .order('due_date', { ascending: false })
+          .from("interest_payables")
+          .select(
+            "id, instrument_ref, gross_interest, tax_amount, net_payable, payment_status, due_date, payment_date, payment_reference, fiscal_year, payee_classification, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
+          )
+          .order("due_date", { ascending: false })
           .range(from, to);
 
-        if (filters.companyId && filters.companyId !== 'all') query = query.eq('company_id', filters.companyId);
-        if (filters.fiscalYear && filters.fiscalYear !== 'all') query = query.eq('fiscal_year', filters.fiscalYear);
-        if (filters.status && filters.status !== 'all') query = (query as any).eq('payment_status', filters.status as any);
+        if (filters.companyId && filters.companyId !== "all")
+          query = query.eq("company_id", filters.companyId);
+        if (filters.fiscalYear && filters.fiscalYear !== "all")
+          query = query.eq("fiscal_year", filters.fiscalYear);
+        if (filters.status && filters.status !== "all")
+          query = (query as any).eq("payment_status", filters.status as any);
         query = applyClassificationFilter(query, filters.classification);
-        query = applyDateFilter(query, 'due_date', filters.startDate, filters.endDate);
+        query = applyDateFilter(query, "due_date", filters.startDate, filters.endDate);
         return query;
       });
 
       return (data || []).map((row: any) => ({
         id: row.id,
         boid: row.client?.boid ?? null,
-        full_name: row.client?.full_name ?? 'Unknown',
-        company_name: row.company?.company_name ?? 'Unknown',
+        full_name: row.client?.full_name ?? "Unknown",
+        company_name: row.company?.company_name ?? "Unknown",
         instrument_ref: row.instrument_ref ?? null,
         gross_interest: nr(row.gross_interest),
         tax_amount: nr(row.tax_amount),
         net_payable: nr(row.net_payable),
-        payment_status: row.payment_status ?? 'Pending',
+        payment_status: row.payment_status ?? "Pending",
         due_date: row.due_date ?? null,
         payment_date: row.payment_date ?? null,
         payment_reference: row.payment_reference ?? null,
@@ -323,7 +342,7 @@ export const ReportService = {
         pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
       }));
     } catch (err) {
-      console.error('getInterestRegister error:', err);
+      console.error("getInterestRegister error:", err);
       return [];
     }
   },
@@ -333,40 +352,52 @@ export const ReportService = {
     try {
       const [divData, intData, mutualFundData] = await Promise.all([
         fetchAllRows<any>((from, to) => {
-          let q = supabase
-            .from('dividend_payables')
-            .select('id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)')
-            .neq('payment_status', 'Reversed')
-            .order('created_at', { ascending: false })
+          let q = (supabase as any)
+            .from("dividend_payables")
+            .select(
+              "id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)",
+            )
+            .neq("payment_status", "Reversed")
+            .order("created_at", { ascending: false })
             .range(from, to);
-          if (filters.companyId && filters.companyId !== 'all') q = q.eq('company_id', filters.companyId);
-          if (filters.fiscalYear && filters.fiscalYear !== 'all') q = q.eq('fiscal_year', filters.fiscalYear);
+          if (filters.companyId && filters.companyId !== "all")
+            q = q.eq("company_id", filters.companyId);
+          if (filters.fiscalYear && filters.fiscalYear !== "all")
+            q = q.eq("fiscal_year", filters.fiscalYear);
           q = applyClassificationFilter(q, filters.classification);
-          return applyDateFilter(q, 'payment_date', filters.startDate, filters.endDate);
-        }),
-        fetchAllRows<any>((from, to) => {
-          let q = supabase
-            .from('interest_payables')
-            .select('id, gross_interest, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)')
-            .neq('payment_status', 'Reversed')
-            .order('created_at', { ascending: false })
-            .range(from, to);
-          if (filters.companyId && filters.companyId !== 'all') q = q.eq('company_id', filters.companyId);
-          if (filters.fiscalYear && filters.fiscalYear !== 'all') q = q.eq('fiscal_year', filters.fiscalYear);
-          q = applyClassificationFilter(q, filters.classification);
-          return applyDateFilter(q, 'payment_date', filters.startDate, filters.endDate);
+          return applyDateFilter(q, "payment_date", filters.startDate, filters.endDate);
         }),
         fetchAllRows<any>((from, to) => {
           let q = (supabase as any)
-            .from('mutual_fund_payables')
-            .select('id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)')
-            .neq('payment_status', 'Reversed')
-            .order('created_at', { ascending: false })
+            .from("interest_payables")
+            .select(
+              "id, gross_interest, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)",
+            )
+            .neq("payment_status", "Reversed")
+            .order("created_at", { ascending: false })
             .range(from, to);
-          if (filters.companyId && filters.companyId !== 'all') q = q.eq('company_id', filters.companyId);
-          if (filters.fiscalYear && filters.fiscalYear !== 'all') q = q.eq('fiscal_year', filters.fiscalYear);
+          if (filters.companyId && filters.companyId !== "all")
+            q = q.eq("company_id", filters.companyId);
+          if (filters.fiscalYear && filters.fiscalYear !== "all")
+            q = q.eq("fiscal_year", filters.fiscalYear);
           q = applyClassificationFilter(q, filters.classification);
-          return applyDateFilter(q, 'payment_date', filters.startDate, filters.endDate);
+          return applyDateFilter(q, "payment_date", filters.startDate, filters.endDate);
+        }),
+        fetchAllRows<any>((from, to) => {
+          let q = (supabase as any)
+            .from("mutual_fund_payables")
+            .select(
+              "id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)",
+            )
+            .neq("payment_status", "Reversed")
+            .order("created_at", { ascending: false })
+            .range(from, to);
+          if (filters.companyId && filters.companyId !== "all")
+            q = q.eq("company_id", filters.companyId);
+          if (filters.fiscalYear && filters.fiscalYear !== "all")
+            q = q.eq("fiscal_year", filters.fiscalYear);
+          q = applyClassificationFilter(q, filters.classification);
+          return applyDateFilter(q, "payment_date", filters.startDate, filters.endDate);
         }),
       ]);
 
@@ -378,10 +409,10 @@ export const ReportService = {
         rows.push({
           id: row.id,
           boid: row.client?.boid ?? null,
-          full_name: row.client?.full_name ?? 'Unknown',
+          full_name: row.client?.full_name ?? "Unknown",
           pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
-          company_name: row.company?.company_name ?? 'Unknown',
-          payable_type: 'Dividend',
+          company_name: row.company?.company_name ?? "Unknown",
+          payable_type: "Dividend",
           gross_amount: gross,
           tds_rate: gross > 0 ? Math.round((tax / gross) * 100 * 100) / 100 : 0,
           tax_amount: tax,
@@ -397,10 +428,10 @@ export const ReportService = {
         rows.push({
           id: row.id,
           boid: row.client?.boid ?? null,
-          full_name: row.client?.full_name ?? 'Unknown',
+          full_name: row.client?.full_name ?? "Unknown",
           pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
-          company_name: row.company?.company_name ?? 'Unknown',
-          payable_type: 'Interest',
+          company_name: row.company?.company_name ?? "Unknown",
+          payable_type: "Interest",
           gross_amount: gross,
           tds_rate: gross > 0 ? Math.round((tax / gross) * 100 * 100) / 100 : 0,
           tax_amount: tax,
@@ -416,10 +447,10 @@ export const ReportService = {
         rows.push({
           id: row.id,
           boid: row.client?.boid ?? null,
-          full_name: row.client?.full_name ?? 'Unknown',
+          full_name: row.client?.full_name ?? "Unknown",
           pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
-          company_name: row.company?.company_name ?? 'Unknown',
-          payable_type: 'Mutual Fund',
+          company_name: row.company?.company_name ?? "Unknown",
+          payable_type: "Mutual Fund",
           gross_amount: gross,
           tds_rate: gross > 0 ? Math.round((tax / gross) * 100 * 100) / 100 : 0,
           tax_amount: tax,
@@ -431,7 +462,7 @@ export const ReportService = {
 
       return rows;
     } catch (err) {
-      console.error('getTaxRegister error:', err);
+      console.error("getTaxRegister error:", err);
       return [];
     }
   },
@@ -442,35 +473,47 @@ export const ReportService = {
       const [divData, mfData, intData] = await Promise.all([
         fetchAllRows<any>((from, to) => {
           let q = (supabase as any)
-            .from('dividend_payables')
-            .select('id, gross_dividend, tax_amount, net_payable, fiscal_year, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)')
-            .eq('payment_status', 'Pending')
-            .order('created_at', { ascending: false })
+            .from("dividend_payables")
+            .select(
+              "id, gross_dividend, tax_amount, net_payable, fiscal_year, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)",
+            )
+            .eq("payment_status", "Pending")
+            .order("created_at", { ascending: false })
             .range(from, to);
-          if (filters.companyId && filters.companyId !== 'all') q = q.eq('company_id', filters.companyId);
-          if (filters.fiscalYear && filters.fiscalYear !== 'all') q = q.eq('fiscal_year', filters.fiscalYear);
+          if (filters.companyId && filters.companyId !== "all")
+            q = q.eq("company_id", filters.companyId);
+          if (filters.fiscalYear && filters.fiscalYear !== "all")
+            q = q.eq("fiscal_year", filters.fiscalYear);
           return q;
         }),
         fetchAllRows<any>((from, to) => {
           let q = (supabase as any)
-            .from('mutual_fund_payables')
-            .select('id, gross_dividend, tax_amount, net_payable, fiscal_year, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)')
-            .eq('payment_status', 'Pending')
-            .order('created_at', { ascending: false })
+            .from("mutual_fund_payables")
+            .select(
+              "id, gross_dividend, tax_amount, net_payable, fiscal_year, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)",
+            )
+            .eq("payment_status", "Pending")
+            .order("created_at", { ascending: false })
             .range(from, to);
-          if (filters.companyId && filters.companyId !== 'all') q = q.eq('company_id', filters.companyId);
-          if (filters.fiscalYear && filters.fiscalYear !== 'all') q = q.eq('fiscal_year', filters.fiscalYear);
+          if (filters.companyId && filters.companyId !== "all")
+            q = q.eq("company_id", filters.companyId);
+          if (filters.fiscalYear && filters.fiscalYear !== "all")
+            q = q.eq("fiscal_year", filters.fiscalYear);
           return q;
         }),
         fetchAllRows<any>((from, to) => {
           let q = (supabase as any)
-            .from('interest_payables')
-            .select('id, gross_interest, tax_amount, net_payable, fiscal_year, due_date, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)')
-            .eq('payment_status', 'Pending')
-            .order('due_date', { ascending: true })
+            .from("interest_payables")
+            .select(
+              "id, gross_interest, tax_amount, net_payable, fiscal_year, due_date, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)",
+            )
+            .eq("payment_status", "Pending")
+            .order("due_date", { ascending: true })
             .range(from, to);
-          if (filters.companyId && filters.companyId !== 'all') q = q.eq('company_id', filters.companyId);
-          if (filters.fiscalYear && filters.fiscalYear !== 'all') q = q.eq('fiscal_year', filters.fiscalYear);
+          if (filters.companyId && filters.companyId !== "all")
+            q = q.eq("company_id", filters.companyId);
+          if (filters.fiscalYear && filters.fiscalYear !== "all")
+            q = q.eq("fiscal_year", filters.fiscalYear);
           return q;
         }),
       ]);
@@ -480,9 +523,9 @@ export const ReportService = {
         rows.push({
           id: row.id,
           boid: row.client?.boid ?? null,
-          full_name: row.client?.full_name ?? 'Unknown',
-          company_name: row.company?.company_name ?? 'Unknown',
-          payable_type: 'Dividend',
+          full_name: row.client?.full_name ?? "Unknown",
+          company_name: row.company?.company_name ?? "Unknown",
+          payable_type: "Dividend",
           gross_amount: nr(row.gross_dividend),
           tax_amount: nr(row.tax_amount),
           net_payable: nr(row.net_payable),
@@ -496,9 +539,9 @@ export const ReportService = {
         rows.push({
           id: row.id,
           boid: row.client?.boid ?? null,
-          full_name: row.client?.full_name ?? 'Unknown',
-          company_name: row.company?.company_name ?? 'Unknown',
-          payable_type: 'Interest',
+          full_name: row.client?.full_name ?? "Unknown",
+          company_name: row.company?.company_name ?? "Unknown",
+          payable_type: "Interest",
           gross_amount: nr(row.gross_interest),
           tax_amount: nr(row.tax_amount),
           net_payable: nr(row.net_payable),
@@ -512,9 +555,9 @@ export const ReportService = {
         rows.push({
           id: row.id,
           boid: row.client?.boid ?? null,
-          full_name: row.client?.full_name ?? 'Unknown',
-          company_name: row.company?.company_name ?? 'Unknown',
-          payable_type: 'Mutual Fund',
+          full_name: row.client?.full_name ?? "Unknown",
+          company_name: row.company?.company_name ?? "Unknown",
+          payable_type: "Mutual Fund",
           gross_amount: nr(row.gross_dividend),
           tax_amount: nr(row.tax_amount),
           net_payable: nr(row.net_payable),
@@ -527,7 +570,7 @@ export const ReportService = {
 
       return rows;
     } catch (err) {
-      console.error('getPendingPayments error:', err);
+      console.error("getPendingPayments error:", err);
       return [];
     }
   },
@@ -537,22 +580,26 @@ export const ReportService = {
     try {
       const data = await fetchAllRows<any>((from, to) => {
         let query = (supabase as any)
-          .from('payment_batches')
-          .select('id, batch_name, payment_method, status, total_payments, total_amount, fiscal_year, created_at, approved_at, processed_at')
-          .order('created_at', { ascending: false })
+          .from("payment_batches")
+          .select(
+            "id, batch_name, payment_method, status, total_payments, total_amount, fiscal_year, created_at, approved_at, processed_at",
+          )
+          .order("created_at", { ascending: false })
           .range(from, to);
 
-        if (filters.companyId && filters.companyId !== 'all') query = query.eq('company_id', filters.companyId);
-        if (filters.status && filters.status !== 'all') query = (query as any).eq('status', filters.status as any);
-        query = applyDateFilter(query, 'created_at', filters.startDate, filters.endDate);
+        if (filters.companyId && filters.companyId !== "all")
+          query = query.eq("company_id", filters.companyId);
+        if (filters.status && filters.status !== "all")
+          query = (query as any).eq("status", filters.status as any);
+        query = applyDateFilter(query, "created_at", filters.startDate, filters.endDate);
         return query;
       });
 
       return (data || []).map((row: any) => ({
         id: row.id,
-        batch_name: row.batch_name ?? '',
-        payment_method: row.payment_method ?? 'NEFT',
-        status: row.status ?? 'Draft',
+        batch_name: row.batch_name ?? "",
+        payment_method: row.payment_method ?? "NEFT",
+        status: row.status ?? "Draft",
         total_payments: nr(row.total_payments),
         total_amount: nr(row.total_amount),
         fiscal_year: row.fiscal_year ?? null,
@@ -561,7 +608,7 @@ export const ReportService = {
         processed_at: row.processed_at ?? null,
       }));
     } catch (err) {
-      console.error('getPaymentRegister error:', err);
+      console.error("getPaymentRegister error:", err);
       return [];
     }
   },
@@ -570,13 +617,17 @@ export const ReportService = {
   async getBonusShareReport(filters: ReportFilters = {}): Promise<BonusShareRow[]> {
     try {
       let query = supabase
-        .from('dividend_payables')
-        .select('id, shares_held, dividend_type, bonus_actual, bonus_issued, bonus_fraction, after_bonus_kitta, bonus_tax, net_payable, fiscal_year, payment_status, client:clients(boid, full_name), company:companies(company_name)')
-        .in('dividend_type', ['Bonus', 'Stock', 'Combined'])
-        .order('created_at', { ascending: false });
+        .from("dividend_payables")
+        .select(
+          "id, shares_held, dividend_type, bonus_actual, bonus_issued, bonus_fraction, after_bonus_kitta, bonus_tax, net_payable, fiscal_year, payment_status, client:clients(boid, full_name), company:companies(company_name)",
+        )
+        .in("dividend_type", ["Bonus", "Stock", "Combined"])
+        .order("created_at", { ascending: false });
 
-      if (filters.companyId && filters.companyId !== 'all') query = query.eq('company_id', filters.companyId);
-      if (filters.fiscalYear && filters.fiscalYear !== 'all') query = query.eq('fiscal_year', filters.fiscalYear);
+      if (filters.companyId && filters.companyId !== "all")
+        query = query.eq("company_id", filters.companyId);
+      if (filters.fiscalYear && filters.fiscalYear !== "all")
+        query = query.eq("fiscal_year", filters.fiscalYear);
 
       const { data, error } = await query;
       if (error) throw error;
@@ -584,10 +635,10 @@ export const ReportService = {
       return (data || []).map((row: any) => ({
         id: row.id,
         boid: row.client?.boid ?? null,
-        full_name: row.client?.full_name ?? 'Unknown',
-        company_name: row.company?.company_name ?? 'Unknown',
+        full_name: row.client?.full_name ?? "Unknown",
+        company_name: row.company?.company_name ?? "Unknown",
         shares_held: nr(row.shares_held),
-        dividend_type: row.dividend_type ?? 'Bonus',
+        dividend_type: row.dividend_type ?? "Bonus",
         bonus_actual: nr(row.bonus_actual),
         bonus_issued: nr(row.bonus_issued),
         bonus_fraction: nr(row.bonus_fraction),
@@ -595,25 +646,25 @@ export const ReportService = {
         bonus_tax: nr(row.bonus_tax),
         net_payable: nr(row.net_payable),
         fiscal_year: row.fiscal_year ?? null,
-        payment_status: row.payment_status ?? 'Pending',
+        payment_status: row.payment_status ?? "Pending",
       }));
     } catch (err) {
-      console.error('getBonusShareReport error:', err);
+      console.error("getBonusShareReport error:", err);
       return [];
     }
   },
 
   // 7. Cash Dividend Report
   async getCashDividendReport(filters: ReportFilters = {}): Promise<DividendRegisterRow[]> {
-    return this.getDividendRegister({ ...filters, status: undefined }).then(rows =>
-      rows.filter(r => r.dividend_type === 'Cash' || !r.dividend_type)
+    return this.getDividendRegister({ ...filters, status: undefined }).then((rows) =>
+      rows.filter((r) => r.dividend_type === "Cash" || !r.dividend_type),
     );
   },
 
   // 8. Right Share Report
   async getRightShareReport(filters: ReportFilters = {}): Promise<DividendRegisterRow[]> {
-    return this.getDividendRegister(filters).then(rows =>
-      rows.filter(r => r.dividend_type === 'Right')
+    return this.getDividendRegister(filters).then((rows) =>
+      rows.filter((r) => r.dividend_type === "Right"),
     );
   },
 
@@ -622,29 +673,38 @@ export const ReportService = {
     try {
       const data = await fetchAllRows<any>((from, to) => {
         let query = (supabase as any)
-          .from('reconciliation_results')
-          .select('id, expected_amount, actual_amount, difference, result, notes, created_at, reconciliation_date, client:clients(boid, full_name), company:companies(company_name)')
-          .order('created_at', { ascending: false })
+          .from("reconciliation_results")
+          .select(
+            "id, expected_amount, actual_amount, difference, result, notes, created_at, reconciliation_date, client:clients(boid, full_name), company:companies(company_name)",
+          )
+          .order("created_at", { ascending: false })
           .range(from, to);
 
-        if (filters.companyId && filters.companyId !== 'all') query = query.eq('company_id', filters.companyId);
-        if (filters.status && filters.status !== 'all') query = query.eq('result', filters.status);
-        return applyDateFilter(query, 'created_at', filters.startDate, filters.endDate);
+        if (filters.companyId && filters.companyId !== "all")
+          query = query.eq("company_id", filters.companyId);
+        if (filters.status && filters.status !== "all") query = query.eq("result", filters.status);
+        return applyDateFilter(query, "created_at", filters.startDate, filters.endDate);
       });
 
       return (data || []).map((row: any) => ({
         id: row.id,
         boid: row.client?.boid ?? null,
-        shareholder_name: row.client?.full_name ?? row.notes?.split('/')[0]?.replace('Category:', '').trim() ?? 'Shareholder',
-        category: (row.notes && row.notes.includes('/') ? row.notes.split('/')[1] : row.notes)?.replace('Category:', '').trim() || 'General',
+        shareholder_name:
+          row.client?.full_name ??
+          row.notes?.split("/")[0]?.replace("Category:", "").trim() ??
+          "Shareholder",
+        category:
+          (row.notes && row.notes.includes("/") ? row.notes.split("/")[1] : row.notes)
+            ?.replace("Category:", "")
+            .trim() || "General",
         excel_amount: nr(row.actual_amount),
         system_amount: nr(row.expected_amount),
         difference: nr(row.difference),
-        status: row.result ?? 'Pending',
+        status: row.result ?? "Pending",
         created_at: row.reconciliation_date || row.created_at,
       }));
     } catch (err) {
-      console.error('getReconciliationReport error:', err);
+      console.error("getReconciliationReport error:", err);
       return [];
     }
   },
@@ -654,21 +714,23 @@ export const ReportService = {
     try {
       const data = await fetchAllRows<any>((from, to) => {
         let query = (supabase as any)
-          .from('upload_history')
-          .select('id, file_name, file_type, status, total_rows, success_rows, error_rows, rows_processed, rows_failed, created_at')
-          .order('created_at', { ascending: false })
+          .from("upload_history")
+          .select(
+            "id, file_name, file_type, status, total_rows, success_rows, error_rows, rows_processed, rows_failed, created_at",
+          )
+          .order("created_at", { ascending: false })
           .range(from, to);
 
-        if (filters.status && filters.status !== 'all') query = query.eq('status', filters.status);
-        return applyDateFilter(query, 'created_at', filters.startDate, filters.endDate);
+        if (filters.status && filters.status !== "all") query = query.eq("status", filters.status);
+        return applyDateFilter(query, "created_at", filters.startDate, filters.endDate);
       });
 
       if (data && data.length > 0) {
         return data.map((row: any) => ({
           id: row.id,
-          file_name: row.file_name ?? '',
+          file_name: row.file_name ?? "",
           file_type: row.file_type ?? null,
-          status: row.status ?? '',
+          status: row.status ?? "",
           rows_processed: nr(row.success_rows ?? row.rows_processed ?? row.total_rows),
           rows_failed: nr(row.error_rows ?? row.rows_failed),
           created_at: row.created_at,
@@ -677,23 +739,26 @@ export const ReportService = {
 
       // Fallback: Query audit_logs for bulk import transactions
       const { data: auditData } = await (supabase as any)
-        .from('audit_logs')
-        .select('id, user_id, action, table_name, action_time')
-        .eq('action', 'INSERT')
-        .order('action_time', { ascending: false })
+        .from("audit_logs")
+        .select("id, user_id, action, table_name, action_time")
+        .eq("action", "INSERT")
+        .order("action_time", { ascending: false })
         .limit(2000);
 
       if (!auditData || auditData.length === 0) return [];
 
-      const map = new Map<string, { key: string; file_name: string; file_type: string; when: string; count: number }>();
+      const map = new Map<
+        string,
+        { key: string; file_name: string; file_type: string; when: string; count: number }
+      >();
       for (const r of auditData) {
-        const minute = (r.action_time || '').slice(0, 16);
+        const minute = (r.action_time || "").slice(0, 16);
         const key = `${r.table_name}|${minute}`;
         const cur = map.get(key);
         if (cur) {
           cur.count++;
         } else {
-          const typeName = (r.table_name || '').replace(/_/g, ' ').toUpperCase();
+          const typeName = (r.table_name || "").replace(/_/g, " ").toUpperCase();
           map.set(key, {
             key,
             file_name: `Bulk Insert: ${typeName}`,
@@ -710,13 +775,13 @@ export const ReportService = {
           id: `audit-batch-${idx + 1}`,
           file_name: b.file_name,
           file_type: b.file_type,
-          status: 'Completed',
+          status: "Completed",
           rows_processed: b.count,
           rows_failed: 0,
           created_at: b.when,
         }));
     } catch (err) {
-      console.error('getUploadHistoryReport error:', err);
+      console.error("getUploadHistoryReport error:", err);
       return [];
     }
   },
@@ -725,19 +790,19 @@ export const ReportService = {
   async getAuditReport(filters: ReportFilters = {}): Promise<AuditReportRow[]> {
     try {
       let query = (supabase as any)
-        .from('approval_logs')
-        .select('id, action, previous_status, new_status, remarks, performed_by, performed_at')
-        .order('performed_at', { ascending: false })
+        .from("approval_logs")
+        .select("id, action, previous_status, new_status, remarks, performed_by, performed_at")
+        .order("performed_at", { ascending: false })
         .limit(500);
 
-      query = applyDateFilter(query, 'performed_at', filters.startDate, filters.endDate);
+      query = applyDateFilter(query, "performed_at", filters.startDate, filters.endDate);
 
       const { data, error } = await query;
       if (error) throw error;
 
       return (data || []).map((row: any) => ({
         id: row.id,
-        action: row.action ?? '',
+        action: row.action ?? "",
         previous_status: row.previous_status ?? null,
         new_status: row.new_status ?? null,
         remarks: row.remarks ?? null,
@@ -745,7 +810,7 @@ export const ReportService = {
         performed_at: row.performed_at,
       }));
     } catch (err) {
-      console.error('getAuditReport error:', err);
+      console.error("getAuditReport error:", err);
       return [];
     }
   },
@@ -754,17 +819,20 @@ export const ReportService = {
   async getCompanyReport(filters: ReportFilters = {}): Promise<any[]> {
     try {
       let query = supabase
-        .from('companies')
-        .select('id, company_code, company_name, company_type, isin, listed_date, sector_type, registrar, fiscal_year, dividend_rate, debenture_rate, contact_person, phone, email, address')
-        .order('company_name', { ascending: true });
+        .from("companies")
+        .select(
+          "id, company_code, company_name, company_type, isin, listed_date, sector_type, registrar, fiscal_year, dividend_rate, debenture_rate, contact_person, phone, email, address",
+        )
+        .order("company_name", { ascending: true });
 
-      if (filters.companyId && filters.companyId !== 'all') query = query.eq('id', filters.companyId);
+      if (filters.companyId && filters.companyId !== "all")
+        query = query.eq("id", filters.companyId);
 
       const { data, error } = await query;
       if (error) throw error;
       return data || [];
     } catch (err) {
-      console.error('getCompanyReport error:', err);
+      console.error("getCompanyReport error:", err);
       return [];
     }
   },
@@ -772,20 +840,22 @@ export const ReportService = {
   // 13. Client Profile Report
   async getClientProfileReport(filters: ReportFilters = {}): Promise<any[]> {
     try {
-      let query = supabase
-        .from('clients')
-        .select('id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, email, bank_name, bank_account_no, company_id, company:companies(company_name)')
-        .order('full_name', { ascending: true });
+      let query = (supabase as any)
+        .from("clients")
+        .select(
+          "id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, email, bank_name, bank_account_no, company_id, company:companies(company_name)",
+        )
+        .order("full_name", { ascending: true });
 
-      if (filters.companyId && filters.companyId !== 'all') {
-        query = query.eq('company_id', filters.companyId);
+      if (filters.companyId && filters.companyId !== "all") {
+        query = query.eq("company_id", filters.companyId);
       }
 
       const { data, error } = await query;
       if (error) throw error;
       return data || [];
     } catch (err) {
-      console.error('getClientProfileReport error:', err);
+      console.error("getClientProfileReport error:", err);
       return [];
     }
   },
@@ -794,20 +864,26 @@ export const ReportService = {
   async getReturnedPaymentsReport(filters: ReportFilters = {}): Promise<any[]> {
     try {
       let query = (supabase as any)
-        .from('payments')
-        .select('id, batch_id, net_amount, bank_name, bank_account_no, payment_status, payment_reference, payment_date, client:clients(full_name, boid), company:companies(company_name)')
-        .eq('payment_status', 'Returned')
-        .order('payment_date', { ascending: false })
+        .from("payments")
+        .select(
+          "id, batch_id, net_amount, bank_name, bank_account_no, status, payment_reference, payment_date, client:clients(full_name, boid), company:companies(company_name)",
+        )
+        .in("status", ["Returned", "Reversed"])
+        .order("payment_date", { ascending: false })
         .limit(500);
 
-      if (filters.companyId && filters.companyId !== 'all') query = query.eq('company_id', filters.companyId);
-      query = applyDateFilter(query, 'payment_date', filters.startDate, filters.endDate);
+      if (filters.companyId && filters.companyId !== "all")
+        query = query.eq("company_id", filters.companyId);
+      query = applyDateFilter(query, "payment_date", filters.startDate, filters.endDate);
 
       const { data, error } = await query;
       if (error) throw error;
-      return data || [];
+      return (data || []).map((row: any) => ({
+        ...row,
+        payment_status: row.status,
+      }));
     } catch (err) {
-      console.error('getReturnedPaymentsReport error:', err);
+      console.error("getReturnedPaymentsReport error:", err);
       return [];
     }
   },
@@ -816,20 +892,26 @@ export const ReportService = {
   async getBouncedChequesReport(filters: ReportFilters = {}): Promise<any[]> {
     try {
       let query = (supabase as any)
-        .from('payments')
-        .select('id, batch_id, net_amount, bank_name, bank_account_no, cheque_no, payment_status, payment_reference, payment_date, client:clients(full_name, boid), company:companies(company_name)')
-        .eq('payment_status', 'Bounced')
-        .order('payment_date', { ascending: false })
+        .from("payments")
+        .select(
+          "id, batch_id, net_amount, bank_name, bank_account_no, cheque_no, status, payment_reference, payment_date, client:clients(full_name, boid), company:companies(company_name)",
+        )
+        .eq("status", "Bounced")
+        .order("payment_date", { ascending: false })
         .limit(500);
 
-      if (filters.companyId && filters.companyId !== 'all') query = query.eq('company_id', filters.companyId);
-      query = applyDateFilter(query, 'payment_date', filters.startDate, filters.endDate);
+      if (filters.companyId && filters.companyId !== "all")
+        query = query.eq("company_id", filters.companyId);
+      query = applyDateFilter(query, "payment_date", filters.startDate, filters.endDate);
 
       const { data, error } = await query;
       if (error) throw error;
-      return data || [];
+      return (data || []).map((row: any) => ({
+        ...row,
+        payment_status: row.status,
+      }));
     } catch (err) {
-      console.error('getBouncedChequesReport error:', err);
+      console.error("getBouncedChequesReport error:", err);
       return [];
     }
   },
@@ -838,16 +920,18 @@ export const ReportService = {
   async getAllocationReport(filters: ReportFilters = {}): Promise<any[]> {
     try {
       const { data, error } = await supabase
-        .from('dividend_payables')
-        .select('id, shares_held, dividend_type, bonus_actual, bonus_issued, after_bonus_kitta, fiscal_year, client:clients(full_name, boid), company:companies(company_name)')
-        .in('dividend_type', ['Bonus', 'Stock', 'Combined'])
-        .order('created_at', { ascending: false })
+        .from("dividend_payables")
+        .select(
+          "id, shares_held, dividend_type, bonus_actual, bonus_issued, after_bonus_kitta, fiscal_year, client:clients(full_name, boid), company:companies(company_name)",
+        )
+        .in("dividend_type", ["Bonus", "Stock", "Combined"])
+        .order("created_at", { ascending: false })
         .limit(1000);
 
       if (error) throw error;
       return data || [];
     } catch (err) {
-      console.error('getAllocationReport error:', err);
+      console.error("getAllocationReport error:", err);
       return [];
     }
   },
@@ -856,15 +940,17 @@ export const ReportService = {
   async getCdscReport(filters: ReportFilters = {}): Promise<any[]> {
     try {
       const { data, error } = await supabase
-        .from('dividend_payables')
-        .select('id, client_id, company_id, shares_held, gross_dividend, tax_amount, net_payable, payment_status, fiscal_year, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name, company_code)')
-        .order('created_at', { ascending: false })
+        .from("dividend_payables")
+        .select(
+          "id, client_id, company_id, shares_held, gross_dividend, tax_amount, net_payable, payment_status, fiscal_year, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name, company_code)",
+        )
+        .order("created_at", { ascending: false })
         .limit(1000);
 
       if (error) throw error;
       return data || [];
     } catch (err) {
-      console.error('getCdscReport error:', err);
+      console.error("getCdscReport error:", err);
       return [];
     }
   },
@@ -873,18 +959,20 @@ export const ReportService = {
   async getBankStatementReport(filters: ReportFilters = {}): Promise<any[]> {
     try {
       let query = (supabase as any)
-        .from('bank_statements')
-        .select('id, bank_name, account_no, statement_date, file_name, total_transactions, total_credit, total_debit, is_reconciled, created_at')
-        .order('statement_date', { ascending: false })
+        .from("bank_statements")
+        .select(
+          "id, bank_name, account_no, statement_date, file_name, total_transactions, total_credit, total_debit, is_reconciled, created_at",
+        )
+        .order("statement_date", { ascending: false })
         .limit(100);
 
-      query = applyDateFilter(query, 'statement_date', filters.startDate, filters.endDate);
+      query = applyDateFilter(query, "statement_date", filters.startDate, filters.endDate);
 
       const { data, error } = await query;
       if (error) throw error;
       return data || [];
     } catch (err) {
-      console.error('getBankStatementReport error:', err);
+      console.error("getBankStatementReport error:", err);
       return [];
     }
   },
@@ -895,12 +983,14 @@ export const ReportService = {
   async getShareholderDemographicsReport(filters: ReportFilters = {}): Promise<any[]> {
     try {
       let query = supabase
-        .from('clients')
-        .select('id, client_code, boid, full_name, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no, holder_type, company_id, company:companies(company_name, company_code)')
-        .order('full_name', { ascending: true });
+        .from("clients")
+        .select(
+          "id, client_code, boid, full_name, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no, holder_type, company_id, company:companies(company_name, company_code)",
+        )
+        .order("full_name", { ascending: true });
 
-      if (filters.companyId && filters.companyId !== 'all') {
-        query = (query as any).eq('company_id', filters.companyId);
+      if (filters.companyId && filters.companyId !== "all") {
+        query = (query as any).eq("company_id", filters.companyId);
       }
 
       const { data, error } = await query;
@@ -908,26 +998,26 @@ export const ReportService = {
 
       return (data || []).map((c: any) => ({
         id: c.id,
-        client_code: c.client_code ?? '',
-        boid: c.boid ?? '',
-        full_name: c.full_name ?? '',
-        father_name: c.father_name ?? '',
-        grandfather_name: c.grandfather_name ?? '',
-        pan_or_citizenship: c.pan_or_citizenship ?? '',
-        address: c.address ?? '',
-        district: c.district ?? '',
-        phone: c.phone ?? '',
-        bank_name: c.bank_name ?? '',
-        bank_account_no: c.bank_account_no ?? '',
-        holder_type: c.holder_type ?? '',
+        client_code: c.client_code ?? "",
+        boid: c.boid ?? "",
+        full_name: c.full_name ?? "",
+        father_name: c.father_name ?? "",
+        grandfather_name: c.grandfather_name ?? "",
+        pan_or_citizenship: c.pan_or_citizenship ?? "",
+        address: c.address ?? "",
+        district: c.district ?? "",
+        phone: c.phone ?? "",
+        bank_name: c.bank_name ?? "",
+        bank_account_no: c.bank_account_no ?? "",
+        holder_type: c.holder_type ?? "",
         investor_type: getInvestorDemographicGroup(c.holder_type),
         demographic_group: getInvestorDemographicGroup(c.holder_type),
-        company_id: c.company_id ?? '',
-        company_name: c.company?.company_name ?? '',
-        company_code: c.company?.company_code ?? '',
+        company_id: c.company_id ?? "",
+        company_name: c.company?.company_name ?? "",
+        company_code: c.company?.company_code ?? "",
       }));
     } catch (err) {
-      console.error('getShareholderDemographicsReport error:', err);
+      console.error("getShareholderDemographicsReport error:", err);
       return [];
     }
   },

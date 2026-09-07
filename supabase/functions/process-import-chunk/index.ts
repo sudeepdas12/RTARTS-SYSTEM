@@ -30,7 +30,7 @@ interface ChunkPayload {
 async function ensureUploadRecord(
   supabase: any,
   uploadId: string,
-  payload: ChunkPayload
+  payload: ChunkPayload,
 ): Promise<void> {
   // Check if the record already exists
   const { data: existing, error: checkErr } = await supabase
@@ -47,21 +47,19 @@ async function ensureUploadRecord(
   if (existing) return; // Record already exists
 
   // Create it using service_role (bypasses RLS)
-  const { error: insertErr } = await supabase
-    .from("upload_history")
-    .insert({
-      id: uploadId,
-      user_id: payload.userId || null,
-      file_name: payload.fileName || "import.xlsx",
-      file_size: payload.fileSize || 0,
-      file_type: payload.fileType || null,
-      sheet_name: payload.sheetName || payload.sheetType || null,
-      total_rows: payload.totalRows || payload.chunkData?.length || 0,
-      success_rows: 0,
-      error_rows: 0,
-      target_table: payload.targetTable,
-      status: "Processing",
-    });
+  const { error: insertErr } = await supabase.from("upload_history").insert({
+    id: uploadId,
+    user_id: payload.userId || null,
+    file_name: payload.fileName || "import.xlsx",
+    file_size: payload.fileSize || 0,
+    file_type: payload.fileType || null,
+    sheet_name: payload.sheetName || payload.sheetType || null,
+    total_rows: payload.totalRows || payload.chunkData?.length || 0,
+    success_rows: 0,
+    error_rows: 0,
+    target_table: payload.targetTable,
+    status: "Processing",
+  });
 
   if (insertErr) {
     console.warn("Could not create upload_history record:", insertErr.message);
@@ -70,12 +68,23 @@ async function ensureUploadRecord(
 
 function getMissingColumnName(error: any): string | null {
   const message = error?.message || "";
-  const match = message.match(/Could not find the '([^']+)' column/i) || message.match(/column '([^']+)' of '([^']+)'/i);
+  const match =
+    message.match(/Could not find the '([^']+)' column/i) ||
+    message.match(/column '([^']+)' of '([^']+)'/i);
   return match?.[1] ?? null;
 }
 
 function buildClientCode(row: any, boid: string): string {
-  const rawBase = String(row.client_code || row.clientCode || row.client_id || row.clientId || row.clientNo || row.client_no || boid || "INV").trim();
+  const rawBase = String(
+    row.client_code ||
+      row.clientCode ||
+      row.client_id ||
+      row.clientId ||
+      row.clientNo ||
+      row.client_no ||
+      boid ||
+      "INV",
+  ).trim();
   const base = rawBase.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 24);
   const suffix = crypto.randomUUID().replace(/-/g, "").toUpperCase();
   return base ? `${base}-${suffix}` : `INV-${suffix}`;
@@ -96,9 +105,19 @@ function buildClientCode(row: any, boid: string): string {
  */
 function detectInvestorCategory(row: any, sheetType?: string): string {
   const rawType = String(
-    row.investor_type || row.type || row.TYPE || row.CATEGORY || row.category ||
-    row.holder_type || row.HOLDER_TYPE || row.shareholder_type || row.SHAREHOLDER_TYPE || ""
-  ).trim().toUpperCase();
+    row.investor_type ||
+      row.type ||
+      row.TYPE ||
+      row.CATEGORY ||
+      row.category ||
+      row.holder_type ||
+      row.HOLDER_TYPE ||
+      row.shareholder_type ||
+      row.SHAREHOLDER_TYPE ||
+      "",
+  )
+    .trim()
+    .toUpperCase();
 
   if (rawType) {
     if (/MUTUAL|MF|FUND/i.test(rawType)) return "MUTUAL_FUND";
@@ -117,12 +136,18 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
   // 1. Natural Person indicators MUST take precedence over name heuristics.
   // Humans have father/grandfather names or citizenship; companies & mutual funds NEVER do.
   const fatherName = String(
-    row.father_name || row.fatherName || row.FATHER_NAME || row["FATHER'S NAME"] || ""
+    row.father_name || row.fatherName || row.FATHER_NAME || row["FATHER'S NAME"] || "",
   ).trim();
   const grandfatherName = String(
-    row.grandfather_name || row.grandfatherName || row.GRANDFATHER_NAME || row["GRANDFATHER'S NAME"] || ""
+    row.grandfather_name ||
+      row.grandfatherName ||
+      row.GRANDFATHER_NAME ||
+      row["GRANDFATHER'S NAME"] ||
+      "",
   ).trim();
-  const citizenship = String(row.citizenship || row.CITIZENSHIP || row.citizenship_no || row.CITIZENSHIP_NO || "").trim();
+  const citizenship = String(
+    row.citizenship || row.CITIZENSHIP || row.citizenship_no || row.CITIZENSHIP_NO || "",
+  ).trim();
 
   if (fatherName || grandfatherName) {
     return "PUBLIC";
@@ -132,13 +157,27 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
   }
 
   const legalPersonName = String(
-    row.full_name || row.fullName || row.name || row.NAME || row.client_name || row.clientName ||
-    row.company_name || row.companyName || row.company || ""
+    row.full_name ||
+      row.fullName ||
+      row.name ||
+      row.NAME ||
+      row.client_name ||
+      row.clientName ||
+      row.company_name ||
+      row.companyName ||
+      row.company ||
+      "",
   ).trim();
 
   // 2. Corporate suffixes & Partnerships
-  const isCorporateSuffix = /(PVT\.?\s*LTD|PRIVATE\s*LIMITED|P\.?\s*LTD|\bLIMITED\b|\bLTD\.?\b|\bCOMPANY\b|\bCORP\b|CORPORATION|\bINC\.?\b|\bLLC\b|\bPLC\b|\bPARTNERS\b|\bPARTNERSHIP\b)/i.test(legalPersonName);
-  const isMutualFundScheme = /(MUTUAL\s*FUND|\bMF\b|FOCUS\s*(40|30|25|\d+)|SELECT\s*(30|40|\d+)|SUPER\s*(30|40|\d+)|\bNMB\s*(50|HYBRID|SARAL|SULAV|SAMRIDDHI)|\b50\b|SAMRIDDHI\s*FUND|SAMUNNAT\s*SCHEME|PRAGATI\s*FUND|SAHABHAGITA\s*FUND|DHANABRIDDHI\s*YOJANA|SABAL\s*FUND|UNNATI\s*FUND|SARAL\s*(BACHAT|FUND)|SHUBHA\s*LAXMI\s*KOSH|EQUITY\s*(FUND|SCHEME|ORIENTED)|GROWTH\s*(FUND|SCHEME)|BALANCED\s*(FUND|SCHEME)|BLUECHIP\s*(FUND|SCHEME)|LARGE\s*CAP(\s*FUND)?|FLEXI\s*CAP(\s*FUND)?|VALUE\s*FUND|DEBT\s*FUND|FIXED\s*INCOME|DYNAMIC\s*DEBT(\s*FUND)?|SYSTEMATIC\s*INVESTMENT|DIVIDEND\s*YIELD\s*FUND|MONEY\s*MARKET\s*FUND|INDEX\s*FUND|CWEDA\s*EQUITY\s*FUND|STABLE\s*FUND|RESOURCE\s*FUND|HYBRID\s*FUND|SMART\s*FUND|\bYOJANA\b|\bSSIS\b)/i.test(legalPersonName);
+  const isCorporateSuffix =
+    /(PVT\.?\s*LTD|PRIVATE\s*LIMITED|P\.?\s*LTD|\bLIMITED\b|\bLTD\.?\b|\bCOMPANY\b|\bCORP\b|CORPORATION|\bINC\.?\b|\bLLC\b|\bPLC\b|\bPARTNERS\b|\bPARTNERSHIP\b)/i.test(
+      legalPersonName,
+    );
+  const isMutualFundScheme =
+    /(MUTUAL\s*FUND|\bMF\b|FOCUS\s*(40|30|25|\d+)|SELECT\s*(30|40|\d+)|SUPER\s*(30|40|\d+)|\bNMB\s*(50|HYBRID|SARAL|SULAV|SAMRIDDHI)|\b50\b|SAMRIDDHI\s*FUND|SAMUNNAT\s*SCHEME|PRAGATI\s*FUND|SAHABHAGITA\s*FUND|DHANABRIDDHI\s*YOJANA|SABAL\s*FUND|UNNATI\s*FUND|SARAL\s*(BACHAT|FUND)|SHUBHA\s*LAXMI\s*KOSH|EQUITY\s*(FUND|SCHEME|ORIENTED)|GROWTH\s*(FUND|SCHEME)|BALANCED\s*(FUND|SCHEME)|BLUECHIP\s*(FUND|SCHEME)|LARGE\s*CAP(\s*FUND)?|FLEXI\s*CAP(\s*FUND)?|VALUE\s*FUND|DEBT\s*FUND|FIXED\s*INCOME|DYNAMIC\s*DEBT(\s*FUND)?|SYSTEMATIC\s*INVESTMENT|DIVIDEND\s*YIELD\s*FUND|MONEY\s*MARKET\s*FUND|INDEX\s*FUND|CWEDA\s*EQUITY\s*FUND|STABLE\s*FUND|RESOURCE\s*FUND|HYBRID\s*FUND|SMART\s*FUND|\bYOJANA\b|\bSSIS\b)/i.test(
+      legalPersonName,
+    );
 
   if (isCorporateSuffix && !isMutualFundScheme) {
     return "INSTITUTION";
@@ -152,30 +191,30 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
   // 1. Tax Exempt Funds (Mutual funds & Statutory Social Funds)
   if (
     /\b(MUTUAL\s*FUND|MF|FOCUS\s*(40|30|\d+)|SELECT\s*(30|40|\d+)|SUPER\s*(30|40|\d+)|NMB\s*(50|HYBRID|SARAL)|\b50\b|SAMRIDDHI\s*FUND|DHANABRIDDHI|EQUITY\s*FUND|DYNAMIC\s*DEBT|LARGE\s*CAP|CITIZEN\s*INVESTMENT\s*TRUST|\bCIT\b|KARMACHARI\s*SANCHAYA\s*KOSH|\bEPF\b|SOCIAL\s*SECURITY\s*FUND|\bSSF\b)\b/i.test(
-      name
+      name,
     ) ||
     /MUTUAL|MF\b|TAX.?EXEMPT/i.test(explicitType)
   ) {
-    return 'TAX_EXEMPT';
+    return "TAX_EXEMPT";
   }
 
   // 2. Corporate Suffixes & Partnerships
   if (
     /\b(PVT\.?\s*LTD|PRIVATE\s*LIMITED|P\.?\s*LTD|LIMITED|LTD\.?|COMPANY|CORP|CORPORATION|INC\.?|LLC|PLC|PARTNERS|PARTNERSHIP|HOLDINGS\s*COMPANY)\b/i.test(
-      name
+      name,
     )
   ) {
-    return 'COMPANY_INSTITUTION';
+    return "COMPANY_INSTITUTION";
   }
 
   // 3. Institutional Organizations (including Army Welfare & Police Welfare trusts)
   if (
     /\b(BANK|FINANCE|MICROFINANCE|LAGHUBITTA|BITTIYA|BIMA|BEEMA|INSURANCE|REINSURANCE|HYDROPOWER|DOORSANCHAR|TELECOM|CLEARING\s*HOUSE|STOCK\s*EXCHANGE|CDS|COOPERATIVE|SAHAKARI|ENTERPRISES|TRADING|TRADERS|SECURITIES|BROKER|ARMY\s*WELFARE|SAINIK\s*KALYAN|POLICE\s*WELFARE|PRAHARI\s*KALYAN)\b/i.test(
-      name
+      name,
     ) ||
     /LEGAL|INSTIT|COMPANY|CORPORAT/i.test(explicitType)
   ) {
-    return 'COMPANY_INSTITUTION';
+    return "COMPANY_INSTITUTION";
   }
 
   // 5. Sheet Type
@@ -193,16 +232,23 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
 }
 
 function payableClassification(category: string): string {
-  const upper = String(category || "").trim().toUpperCase();
-  if (upper === "INSTITUTION" || upper === "FOREIGN" || upper === "COMPANY_INSTITUTION") return "COMPANY_INSTITUTION";
-  if (upper === "MUTUAL_FUND" || upper === "TAX_EXEMPT" || upper === "TAX_EXEMPTED") return "TAX_EXEMPT";
-  if (upper === "PUBLIC" || upper === "NATURAL_PERSON" || upper === "PUBLIC_LEGAL_PERSON") return "NATURAL_PERSON";
+  const upper = String(category || "")
+    .trim()
+    .toUpperCase();
+  if (upper === "INSTITUTION" || upper === "FOREIGN" || upper === "COMPANY_INSTITUTION")
+    return "COMPANY_INSTITUTION";
+  if (upper === "MUTUAL_FUND" || upper === "TAX_EXEMPT" || upper === "TAX_EXEMPTED")
+    return "TAX_EXEMPT";
+  if (upper === "PUBLIC" || upper === "NATURAL_PERSON" || upper === "PUBLIC_LEGAL_PERSON")
+    return "NATURAL_PERSON";
   if (upper === "PROMOTER" || upper === "LOCAL") return "NATURAL_PERSON";
   return "UNCLASSIFIED";
 }
 
 function payableSegment(category: string): string | null {
-  const upper = String(category || "").trim().toUpperCase();
+  const upper = String(category || "")
+    .trim()
+    .toUpperCase();
   if (upper === "PROMOTER") return "PROMOTER";
   if (upper === "LOCAL") return "LOCAL";
   if (upper === "PUBLIC") return "PUBLIC";
@@ -222,27 +268,43 @@ function payableSegment(category: string): string | null {
  */
 function getCategoryTdsRate(category: string, isDebenture: boolean): number {
   switch (category) {
-    case "PROMOTER": return isDebenture ? 0.06 : 0.05;
-    case "PUBLIC": return isDebenture ? 0.06 : 0.05;
-    case "LOCAL": return isDebenture ? 0.06 : 0.05;
-    case "INSTITUTION": return isDebenture ? 0.15 : 0.05; // 15% for debenture, 5% for dividend
-    case "FOREIGN": return isDebenture ? 0.15 : 0.05;    // Foreign same as institution
-    case "MUTUAL_FUND": return 0;
-    case "TAX_EXEMPT": return 0;
-    default: return isDebenture ? 0.06 : 0.05;
+    case "PROMOTER":
+      return isDebenture ? 0.06 : 0.05;
+    case "PUBLIC":
+      return isDebenture ? 0.06 : 0.05;
+    case "LOCAL":
+      return isDebenture ? 0.06 : 0.05;
+    case "INSTITUTION":
+      return isDebenture ? 0.15 : 0.05; // 15% for debenture, 5% for dividend
+    case "FOREIGN":
+      return isDebenture ? 0.15 : 0.05; // Foreign same as institution
+    case "MUTUAL_FUND":
+      return 0;
+    case "TAX_EXEMPT":
+      return 0;
+    default:
+      return isDebenture ? 0.06 : 0.05;
   }
 }
 
 function mapToHolderType(category: string): string | null {
   switch (category) {
-    case "PROMOTER": return "Natural Person - Promoter";
-    case "PUBLIC": return "Natural Person - Public";
-    case "LOCAL": return "Natural Person - Public";
-    case "INSTITUTION": return "Legal Person";
-    case "MUTUAL_FUND": return "Mutual Fund";
-    case "TAX_EXEMPT": return "Tax Exempt";
-    case "FOREIGN": return "Foreign";
-    default: return null;
+    case "PROMOTER":
+      return "Natural Person - Promoter";
+    case "PUBLIC":
+      return "Natural Person - Public";
+    case "LOCAL":
+      return "Natural Person - Public";
+    case "INSTITUTION":
+      return "Legal Person";
+    case "MUTUAL_FUND":
+      return "Mutual Fund";
+    case "TAX_EXEMPT":
+      return "Tax Exempt";
+    case "FOREIGN":
+      return "Foreign";
+    default:
+      return null;
   }
 }
 
@@ -270,17 +332,11 @@ function payableSegment(category: string): string | null {
  */
 const CLIENT_LOOKUP_BATCH = 300;
 
-async function fetchClientIdsByBoids(
-  supabase: any,
-  boids: string[]
-): Promise<Map<string, string>> {
+async function fetchClientIdsByBoids(supabase: any, boids: string[]): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   for (let i = 0; i < boids.length; i += CLIENT_LOOKUP_BATCH) {
     const part = boids.slice(i, i + CLIENT_LOOKUP_BATCH);
-    const { data } = await supabase
-      .from("clients")
-      .select("id, boid")
-      .in("boid", part);
+    const { data } = await supabase.from("clients").select("id, boid").in("boid", part);
     for (const c of data || []) {
       if (c?.boid) map.set(String(c.boid), c.id);
     }
@@ -349,7 +405,7 @@ serve(async (req) => {
     if (!uploadId) {
       return new Response(
         JSON.stringify({ success: false, error: "Missing required field: uploadId" }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
+        { status: 400, headers: { "Content-Type": "application/json" } },
       );
     }
 
@@ -369,14 +425,22 @@ serve(async (req) => {
     const filteredData = chunkData.filter((row: any) => {
       if (!row || typeof row !== "object") return false;
       const boid = String(
-        row.boid || row.BOID || row["BENEFICIARY ID"] || row["CLIENT ID"] || row.client_code || row.ClientCode || ""
+        row.boid ||
+          row.BOID ||
+          row["BENEFICIARY ID"] ||
+          row["CLIENT ID"] ||
+          row.client_code ||
+          row.ClientCode ||
+          "",
       ).trim();
       if (boid) return true; // has a BOID — keep it
       // No BOID: treat as a footer/summary row if a "TOTAL"/"SUMMARY" marker is present
       const allValues = Object.values(row).filter((v) => v !== null && v !== undefined);
       return !allValues.some((v) => {
         const s = String(v).trim().toUpperCase();
-        return s === "TOTAL" || s === "SUMMARY" || s.startsWith("TOTAL ") || s.startsWith("SUMMARY ");
+        return (
+          s === "TOTAL" || s === "SUMMARY" || s.startsWith("TOTAL ") || s.startsWith("SUMMARY ")
+        );
       });
     });
     // Mutate chunkData to the filtered set so the rest of the function processes only investor rows
@@ -401,7 +465,10 @@ serve(async (req) => {
         companyId = matchedCompanies[0].id;
       } else {
         // Generate a short code from company name (max 4 chars)
-        const code = cleanName.replace(/[^A-Za-z]/g, "").substring(0, 4).toUpperCase();
+        const code = cleanName
+          .replace(/[^A-Za-z]/g, "")
+          .substring(0, 4)
+          .toUpperCase();
         const { data: newCompany, error: compErr } = await supabase
           .from("companies")
           .insert({
@@ -422,10 +489,7 @@ serve(async (req) => {
 
     // 1b. Fallback to first existing company or create default
     if (!companyId) {
-      const { data: companies } = await supabase
-        .from("companies")
-        .select("id")
-        .limit(1);
+      const { data: companies } = await supabase.from("companies").select("id").limit(1);
 
       if (companies && companies.length > 0) {
         companyId = companies[0].id;
@@ -452,7 +516,13 @@ serve(async (req) => {
     const boids = chunkData
       .map((row: any, idx: number) => {
         const boid = String(
-          row.boid || row.BOID || row["BENEFICIARY ID"] || row["CLIENT ID"] || row.client_code || row.ClientCode || ""
+          row.boid ||
+            row.BOID ||
+            row["BENEFICIARY ID"] ||
+            row["CLIENT ID"] ||
+            row.client_code ||
+            row.ClientCode ||
+            "",
         ).trim();
         if (boid.length < 8) {
           rowErrors.push({
@@ -485,7 +555,13 @@ serve(async (req) => {
 
     for (const row of chunkData) {
       const boid = String(
-        row.boid || row.BOID || row["BENEFICIARY ID"] || row["CLIENT ID"] || row.client_code || row.ClientCode || ""
+        row.boid ||
+          row.BOID ||
+          row["BENEFICIARY ID"] ||
+          row["CLIENT ID"] ||
+          row.client_code ||
+          row.ClientCode ||
+          "",
       ).trim();
       if (!boid || boid.length < 8) continue;
 
@@ -703,8 +779,10 @@ serve(async (req) => {
           holder_type: holderType,
           payee_classification: payableClassification(investorCategory),
           payee_segment: payableSegment(investorCategory),
-          classification_status: investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
-          classification_source: investorCategory === "UNKNOWN" ? "upload_requires_review" : "upload_evidence",
+          classification_status:
+            investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
+          classification_source:
+            investorCategory === "UNKNOWN" ? "upload_requires_review" : "upload_evidence",
           status: "Active",
           verification_status: "Verified",
         });
@@ -716,8 +794,9 @@ serve(async (req) => {
     let clientsInserted = 0;
 
     if (newClients.length > 0) {
-      const { data: rpcResult, error: rpcErr } = await supabase
-        .rpc("bulk_insert_clients", { p_clients: newClients });
+      const { data: rpcResult, error: rpcErr } = await supabase.rpc("bulk_insert_clients", {
+        p_clients: newClients,
+      });
 
       if (rpcErr) {
         console.error("bulk_insert_clients RPC failed:", rpcErr);
@@ -773,7 +852,13 @@ serve(async (req) => {
 
     for (const row of chunkData) {
       const boid = String(
-        row.boid || row.BOID || row["BENEFICIARY ID"] || row["CLIENT ID"] || row.client_code || row.ClientCode || ""
+        row.boid ||
+          row.BOID ||
+          row["BENEFICIARY ID"] ||
+          row["CLIENT ID"] ||
+          row.client_code ||
+          row.ClientCode ||
+          "",
       ).trim();
       if (!boid || boid.length < 8) continue;
 
@@ -791,40 +876,89 @@ serve(async (req) => {
 
       // Read raw values from Excel — aliases cover CDS, Mutual Fund AMC and Debenture export formats
       const sharesHeld = Number(
-        row.shares_held || row.kitta || row.KITTA || row["TOTA KITTA"] || row["TOTAL KITTA"] ||
-          row.alloted_quantity || row.ALLOTED_QUANTITY ||
-          row["UNITS HELD"] || row["UNIT HELD"] || row["UNITS"] || row["UNIT"] ||
-          row["NO OF UNITS"] || row["NO. OF UNITS"] || row["NUMBER OF UNITS"] ||
-          row["UNIT BALANCE"] || row["BALANCE UNITS"] || row["FREE BALANCE"] ||
-          row["UNIT HOLDING"] || row["CURRENT HOLDING"] || row["HOLDINGS"] ||
-          row["QTY"] || row["QUANTITY"] || row["DEBENTURE UNITS"] || row["FACE VALUE UNITS"] || 0
+        row.shares_held ||
+          row.kitta ||
+          row.KITTA ||
+          row["TOTA KITTA"] ||
+          row["TOTAL KITTA"] ||
+          row.alloted_quantity ||
+          row.ALLOTED_QUANTITY ||
+          row["UNITS HELD"] ||
+          row["UNIT HELD"] ||
+          row["UNITS"] ||
+          row["UNIT"] ||
+          row["NO OF UNITS"] ||
+          row["NO. OF UNITS"] ||
+          row["NUMBER OF UNITS"] ||
+          row["UNIT BALANCE"] ||
+          row["BALANCE UNITS"] ||
+          row["FREE BALANCE"] ||
+          row["UNIT HOLDING"] ||
+          row["CURRENT HOLDING"] ||
+          row["HOLDINGS"] ||
+          row["QTY"] ||
+          row["QUANTITY"] ||
+          row["DEBENTURE UNITS"] ||
+          row["FACE VALUE UNITS"] ||
+          0,
       );
       const rawGross = Number(
-        row.gross_amount || row.amount || row.AMOUNT || row.payable_amount || row.cash_dividend ||
-          row["INTEREST AMOUNT"] || row["GROSS INTEREST"] || row["GROSS AMOUNT"] ||
-          row["DISTRIBUTION AMOUNT"] || row["INT AMOUNT"] || row["COUPON AMOUNT"] || 0
+        row.gross_amount ||
+          row.amount ||
+          row.AMOUNT ||
+          row.payable_amount ||
+          row.cash_dividend ||
+          row["INTEREST AMOUNT"] ||
+          row["GROSS INTEREST"] ||
+          row["GROSS AMOUNT"] ||
+          row["DISTRIBUTION AMOUNT"] ||
+          row["INT AMOUNT"] ||
+          row["COUPON AMOUNT"] ||
+          0,
       );
       const rawTax = Number(
-        row.tax_amount || row.tax || row.TAX || row.bon_tax || row.div_tax ||
-          row["TDS"] || row["TDS AMOUNT"] || row["WITHHOLDING TAX"] || row["TAX DEDUCTED"] || 0
+        row.tax_amount ||
+          row.tax ||
+          row.TAX ||
+          row.bon_tax ||
+          row.div_tax ||
+          row["TDS"] ||
+          row["TDS AMOUNT"] ||
+          row["WITHHOLDING TAX"] ||
+          row["TAX DEDUCTED"] ||
+          0,
       );
       const rawNet = Number(
-        row.net_payable || row.net || row.NET || row.ROUNDUP || row.ROUND_UP_DIV ||
-          row["NET INT"] || row["NET AMOUNT"] || row["NET INTEREST"] || row["NET DISTRIBUTION"] || 0
+        row.net_payable ||
+          row.net ||
+          row.NET ||
+          row.ROUNDUP ||
+          row.ROUND_UP_DIV ||
+          row["NET INT"] ||
+          row["NET AMOUNT"] ||
+          row["NET INTEREST"] ||
+          row["NET DISTRIBUTION"] ||
+          0,
       );
-      const bankName = row.bank_name || row.bankName || row.bank || row.BANK || row["BANK NAME"] || "";
+      const bankName =
+        row.bank_name || row.bankName || row.bank || row.BANK || row["BANK NAME"] || "";
       const bankAccountNo =
-        row.bank_account_no || row.bank_account || row.bankAccount ||
-        row.ACCOUNT_NUMBER || row.account_number || row["BANK A/C NO."] || row["BANK A/C NO"] || "";
+        row.bank_account_no ||
+        row.bank_account ||
+        row.bankAccount ||
+        row.ACCOUNT_NUMBER ||
+        row.account_number ||
+        row["BANK A/C NO."] ||
+        row["BANK A/C NO"] ||
+        "";
       const lotName = row.lot_name || row.lot || row.LOT || "";
       const status = row.status || row.STATUS || "Pending";
 
       // *** SMART ROW-LEVEL CATEGORIZATION ***
       const investorCategory = detectInvestorCategory(row, sheetType);
       // Determine TDS rate: explicit sheet-level override → auto-detect from row data
-      const rowTdsRate = tdsRate !== undefined
-        ? tdsRate
-        : getCategoryTdsRate(investorCategory, isDebenture);
+      const rowTdsRate =
+        tdsRate !== undefined ? tdsRate : getCategoryTdsRate(investorCategory, isDebenture);
 
       // Auto-calculate: if gross is 0 but we have shares × rate, compute it
       let grossAmount = rawGross;
@@ -870,7 +1004,8 @@ serve(async (req) => {
           payment_status: status === "SUCCESS" ? "Paid" : "Pending",
           payee_classification: payableClassification(investorCategory),
           payee_segment: payableSegment(investorCategory),
-          classification_status: investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
+          classification_status:
+            investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
         });
       } else if (targetTable === "interest_payables") {
         // Auto-calculate from shares × rate if gross missing
@@ -903,7 +1038,8 @@ serve(async (req) => {
           payment_status: status === "SUCCESS" ? "Paid" : "Pending",
           payee_classification: payableClassification(investorCategory),
           payee_segment: payableSegment(investorCategory),
-          classification_status: investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
+          classification_status:
+            investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
         });
       }
     }
@@ -950,16 +1086,13 @@ serve(async (req) => {
         clientsCreated: clientsInserted,
         errors: rowErrors,
       }),
-      { headers: { "Content-Type": "application/json" } }
+      { headers: { "Content-Type": "application/json" } },
     );
   } catch (error: any) {
     console.error("Edge function error:", error);
-    return new Response(
-      JSON.stringify({ success: false, error: error.message }),
-      {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      }
-    );
+    return new Response(JSON.stringify({ success: false, error: error.message }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 });

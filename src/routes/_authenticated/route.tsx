@@ -17,7 +17,7 @@ export const Route = createFileRoute("/_authenticated")({
       .eq("user_id", data.user.id);
 
     const roles: AppRole[] = (roleRows ?? []).map((r: any) => r.role as AppRole);
-    
+
     const userContext: UserContext = {
       id: data.user.id,
       roles,
@@ -26,15 +26,20 @@ export const Route = createFileRoute("/_authenticated")({
     // Role-based route protection
     const restrictedPaths: Record<string, AppRole[]> = {
       "/users": ["admin"],
+      "/settings/fiscal-years": ["admin", "supervisor"],
       "/settings": ["admin"],
       "/data-management": ["admin", "supervisor"],
       "/approvals": ["admin", "supervisor", "approver", "checker"],
+      "/allocations": ["admin", "supervisor", "finance_operator", "operator", "maker"],
+      "/classification-review": ["admin", "supervisor", "checker", "approver", "operator"],
+      "/audit-logs": ["admin", "auditor", "supervisor"],
       "/audit": ["admin", "auditor", "supervisor"],
     };
 
-    const matchedPath = Object.keys(restrictedPaths).find(p =>
-      location.pathname === p || location.pathname.startsWith(p + "/")
-    );
+    // Match most specific routes first
+    const matchedPath = Object.keys(restrictedPaths)
+      .sort((a, b) => b.length - a.length)
+      .find((p) => location.pathname === p || location.pathname.startsWith(p + "/"));
 
     if (matchedPath) {
       const allowedRoles = restrictedPaths[matchedPath];

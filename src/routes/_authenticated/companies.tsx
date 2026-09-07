@@ -3,6 +3,7 @@ import { useMemo, useState, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
+import { useDebounce } from "@/hooks/use-debounce";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -110,7 +111,13 @@ const emptyForm = {
 
 const num = (v: string) => (v === "" ? null : Number(v));
 
-function SectionLabel({ icon: Icon, children }: { icon?: React.ElementType; children: React.ReactNode }) {
+function SectionLabel({
+  icon: Icon,
+  children,
+}: {
+  icon?: React.ElementType;
+  children: React.ReactNode;
+}) {
   return (
     <div className="mb-2 mt-4 flex items-center gap-2 border-b pb-1">
       {Icon && <Icon className="h-3.5 w-3.5 text-primary" />}
@@ -124,13 +131,41 @@ function SectionLabel({ icon: Icon, children }: { icon?: React.ElementType; chil
 function sectorBadge(s: Sector | null) {
   switch (s) {
     case "Public":
-      return <Badge variant="secondary" className="bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 border-0">Public</Badge>;
+      return (
+        <Badge
+          variant="secondary"
+          className="bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 border-0"
+        >
+          Public
+        </Badge>
+      );
     case "Private":
-      return <Badge variant="secondary" className="bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 border-0">Private</Badge>;
+      return (
+        <Badge
+          variant="secondary"
+          className="bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 border-0"
+        >
+          Private
+        </Badge>
+      );
     case "Institution":
-      return <Badge variant="secondary" className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border-0">Institution</Badge>;
+      return (
+        <Badge
+          variant="secondary"
+          className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border-0"
+        >
+          Institution
+        </Badge>
+      );
     case "Government":
-      return <Badge variant="secondary" className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-0">Government</Badge>;
+      return (
+        <Badge
+          variant="secondary"
+          className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-0"
+        >
+          Government
+        </Badge>
+      );
     default:
       return <Badge variant="outline">{s || "—"}</Badge>;
   }
@@ -140,11 +175,12 @@ function CompaniesPage() {
   const { hasAny, isAdmin } = useAuth();
   const canWrite = hasAny(["admin", "finance_operator"]);
   const qc = useQueryClient();
-  
+
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search, 300);
   const [sectorFilter, setSectorFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
-  
+
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Company | null>(null);
   const [form, setForm] = useState(emptyForm);
@@ -167,12 +203,14 @@ function CompaniesPage() {
     const total = data.length;
     const active = data.filter((c) => c.status === "Active").length;
     const publicSectors = data.filter((c) => c.sector_type === "Public").length;
-    const withInstruments = data.filter((c) => (c.dividend_rate && c.dividend_rate > 0) || (c.coupon_rate && c.coupon_rate > 0)).length;
+    const withInstruments = data.filter(
+      (c) => (c.dividend_rate && c.dividend_rate > 0) || (c.coupon_rate && c.coupon_rate > 0),
+    ).length;
     return { total, active, publicSectors, withInstruments };
   }, [data]);
 
   const filtered = useMemo(() => {
-    const q = search.toLowerCase();
+    const q = debouncedSearch.toLowerCase().trim();
     return data.filter((c) => {
       const matchesSearch =
         !q ||
@@ -187,7 +225,7 @@ function CompaniesPage() {
 
       return matchesSearch && matchesSector && matchesStatus;
     });
-  }, [data, search, sectorFilter, statusFilter]);
+  }, [data, debouncedSearch, sectorFilter, statusFilter]);
 
   const startEdit = useCallback((c: Company) => {
     setEditing(c);
@@ -217,6 +255,8 @@ function CompaniesPage() {
 
   const upsert = useMutation({
     mutationFn: async () => {
+      if (!canWrite)
+        throw new Error("Unauthorized: You do not have permission to create or edit companies.");
       const payload = {
         company_code: form.company_code.trim(),
         company_name: form.company_name.trim(),
@@ -260,6 +300,8 @@ function CompaniesPage() {
 
   const del = useMutation({
     mutationFn: async (id: string) => {
+      if (!isAdmin)
+        throw new Error("Unauthorized: Only administrators can delete company records.");
       const toastId = toast.loading("Deleting company and associated records…");
       try {
         const results = await DataManagementService.customBulkDelete({
@@ -294,125 +336,129 @@ function CompaniesPage() {
     onError: (e: Error) => toast.error(`Delete failed: ${e.message}`),
   });
 
-  const columns: ColumnDef<Company>[] = useMemo(() => [
-    {
-      accessorKey: "company_code",
-      header: "Code",
-      cell: ({ row }) => (
-        <span className="font-mono text-xs font-semibold bg-muted px-2 py-1 rounded">
-          {row.original.company_code}
-        </span>
-      ),
-    },
-    {
-      accessorKey: "company_name",
-      header: "Company Name",
-      cell: ({ row }) => (
-        <div>
-          <div className="font-medium text-sm text-foreground">{row.original.company_name}</div>
-          {row.original.company_type && (
-            <div className="text-xs text-muted-foreground">{row.original.company_type}</div>
-          )}
-        </div>
-      ),
-    },
-    {
-      accessorKey: "isin",
-      header: "ISIN",
-      cell: ({ row }) => (
-        <span className="font-mono text-xs text-muted-foreground">
-          {row.original.isin || "—"}
-        </span>
-      ),
-    },
-    {
-      accessorKey: "sector_type",
-      header: "Sector",
-      cell: ({ row }) => sectorBadge(row.original.sector_type),
-    },
-    {
-      accessorKey: "dividend_rate",
-      header: "Div. Rate",
-      cell: ({ row }) => (
-        <span className="text-xs tabular-nums font-medium">
-          {row.original.dividend_rate != null ? `${row.original.dividend_rate}%` : "—"}
-        </span>
-      ),
-    },
-    {
-      accessorKey: "coupon_rate",
-      header: "Coupon",
-      cell: ({ row }) => (
-        <span className="text-xs tabular-nums font-medium">
-          {row.original.coupon_rate != null ? `${row.original.coupon_rate}%` : "—"}
-        </span>
-      ),
-    },
-    {
-      accessorKey: "face_value",
-      header: "Face Val.",
-      cell: ({ row }) => (
-        <span className="text-xs tabular-nums">
-          {row.original.face_value != null ? `Rs. ${Number(row.original.face_value).toLocaleString()}` : "—"}
-        </span>
-      ),
-    },
-    {
-      accessorKey: "fiscal_year",
-      header: "Fiscal Year",
-      cell: ({ row }) => (
-        <span className="text-xs text-muted-foreground font-mono">
-          {row.original.fiscal_year || "—"}
-        </span>
-      ),
-    },
-    {
-      accessorKey: "status",
-      header: "Status",
-      cell: ({ row }) => (
-        <Badge
-          variant={row.original.status === "Active" ? "default" : "secondary"}
-          className={
-            row.original.status === "Active"
-              ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border-0"
-              : ""
-          }
-        >
-          {row.original.status}
-        </Badge>
-      ),
-    },
-    {
-      id: "actions",
-      header: "Actions",
-      cell: ({ row }) => (
-        canWrite && (
-          <div className="flex items-center gap-1 justify-end">
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-8 w-8 hover:bg-muted"
-              onClick={() => startEdit(row.original)}
-              title="Edit Company"
-            >
-              <Pencil className="h-3.5 w-3.5" />
-            </Button>
-            {isAdmin && (
+  const columns: ColumnDef<Company>[] = useMemo(
+    () => [
+      {
+        accessorKey: "company_code",
+        header: "Code",
+        cell: ({ row }) => (
+          <span className="font-mono text-xs font-semibold bg-muted px-2 py-1 rounded">
+            {row.original.company_code}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "company_name",
+        header: "Company Name",
+        cell: ({ row }) => (
+          <div>
+            <div className="font-medium text-sm text-foreground">{row.original.company_name}</div>
+            {row.original.company_type && (
+              <div className="text-xs text-muted-foreground">{row.original.company_type}</div>
+            )}
+          </div>
+        ),
+      },
+      {
+        accessorKey: "isin",
+        header: "ISIN",
+        cell: ({ row }) => (
+          <span className="font-mono text-xs text-muted-foreground">
+            {row.original.isin || "—"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "sector_type",
+        header: "Sector",
+        cell: ({ row }) => sectorBadge(row.original.sector_type),
+      },
+      {
+        accessorKey: "dividend_rate",
+        header: "Div. Rate",
+        cell: ({ row }) => (
+          <span className="text-xs tabular-nums font-medium">
+            {row.original.dividend_rate != null ? `${row.original.dividend_rate}%` : "—"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "coupon_rate",
+        header: "Coupon",
+        cell: ({ row }) => (
+          <span className="text-xs tabular-nums font-medium">
+            {row.original.coupon_rate != null ? `${row.original.coupon_rate}%` : "—"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "face_value",
+        header: "Face Val.",
+        cell: ({ row }) => (
+          <span className="text-xs tabular-nums">
+            {row.original.face_value != null
+              ? `Rs. ${Number(row.original.face_value).toLocaleString()}`
+              : "—"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "fiscal_year",
+        header: "Fiscal Year",
+        cell: ({ row }) => (
+          <span className="text-xs text-muted-foreground font-mono">
+            {row.original.fiscal_year || "—"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "status",
+        header: "Status",
+        cell: ({ row }) => (
+          <Badge
+            variant={row.original.status === "Active" ? "default" : "secondary"}
+            className={
+              row.original.status === "Active"
+                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border-0"
+                : ""
+            }
+          >
+            {row.original.status}
+          </Badge>
+        ),
+      },
+      {
+        id: "actions",
+        header: "Actions",
+        cell: ({ row }) =>
+          canWrite && (
+            <div className="flex items-center gap-1 justify-end">
               <Button
                 size="icon"
                 variant="ghost"
-                className="h-8 w-8 text-destructive hover:bg-destructive/10"
-                onClick={() => setDeleteTarget(row.original)}
-                title="Delete Company (Admin Only)"
+                className="h-8 w-8 hover:bg-muted"
+                onClick={() => startEdit(row.original)}
+                title="Edit Company"
               >
-                <Trash2 className="h-3.5 w-3.5" />
+                <Pencil className="h-3.5 w-3.5" />
               </Button>
-            )}
-          </div>
-        )
-      ),
-    },
-  ], [canWrite, isAdmin, startEdit]);
+              {isAdmin && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                  onClick={() => setDeleteTarget(row.original)}
+                  title="Delete Company (Admin Only)"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </div>
+          ),
+      },
+    ],
+    [canWrite, isAdmin, startEdit],
+  );
 
   const startNew = () => {
     setEditing(null);
@@ -461,12 +507,21 @@ function CompaniesPage() {
           sector_type: (r.sector_type as Sector) ?? null,
           registrar: r.registrar ? String(r.registrar).trim() : null,
           fiscal_year: r.fiscal_year ? String(r.fiscal_year).trim() : null,
-          dividend_rate: r.dividend_rate !== undefined && r.dividend_rate !== "" ? Number(r.dividend_rate) : null,
-          debenture_rate: r.debenture_rate !== undefined && r.debenture_rate !== "" ? Number(r.debenture_rate) : null,
-          coupon_rate: r.coupon_rate !== undefined && r.coupon_rate !== "" ? Number(r.coupon_rate) : null,
+          dividend_rate:
+            r.dividend_rate !== undefined && r.dividend_rate !== ""
+              ? Number(r.dividend_rate)
+              : null,
+          debenture_rate:
+            r.debenture_rate !== undefined && r.debenture_rate !== ""
+              ? Number(r.debenture_rate)
+              : null,
+          coupon_rate:
+            r.coupon_rate !== undefined && r.coupon_rate !== "" ? Number(r.coupon_rate) : null,
           maturity_date: r.maturity_date ? String(r.maturity_date) : null,
-          face_value: r.face_value !== undefined && r.face_value !== "" ? Number(r.face_value) : null,
-          issue_size: r.issue_size !== undefined && r.issue_size !== "" ? Number(r.issue_size) : null,
+          face_value:
+            r.face_value !== undefined && r.face_value !== "" ? Number(r.face_value) : null,
+          issue_size:
+            r.issue_size !== undefined && r.issue_size !== "" ? Number(r.issue_size) : null,
           interest_tax_status: (r.interest_tax_status as TaxStatus) ?? null,
           pan_no: r.pan_no ? String(r.pan_no).trim() : null,
           bank_account_no: r.bank_account_no ? String(r.bank_account_no).trim() : null,
@@ -509,7 +564,12 @@ function CompaniesPage() {
                     e.target.value = "";
                   }}
                 />
-                <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()} className="hover-lift">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fileRef.current?.click()}
+                  className="hover-lift"
+                >
                   <Upload className="mr-2 h-4 w-4" /> Import
                 </Button>
                 <Button size="sm" onClick={startNew} className="hover-lift">
@@ -524,10 +584,34 @@ function CompaniesPage() {
       {/* KPI Stats Strip */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
-          { label: "Total Issuers", value: stats.total, icon: Building2, color: "text-primary", bg: "bg-primary/10" },
-          { label: "Active Companies", value: stats.active, icon: ShieldCheck, color: "text-emerald-600", bg: "bg-emerald-50 dark:bg-emerald-950/30" },
-          { label: "Public Sector", value: stats.publicSectors, icon: Briefcase, color: "text-blue-600", bg: "bg-blue-50 dark:bg-blue-950/30" },
-          { label: "With Distributions", value: stats.withInstruments, icon: TrendingUp, color: "text-violet-600", bg: "bg-violet-50 dark:bg-violet-950/30" },
+          {
+            label: "Total Issuers",
+            value: stats.total,
+            icon: Building2,
+            color: "text-primary",
+            bg: "bg-primary/10",
+          },
+          {
+            label: "Active Companies",
+            value: stats.active,
+            icon: ShieldCheck,
+            color: "text-emerald-600",
+            bg: "bg-emerald-50 dark:bg-emerald-950/30",
+          },
+          {
+            label: "Public Sector",
+            value: stats.publicSectors,
+            icon: Briefcase,
+            color: "text-blue-600",
+            bg: "bg-blue-50 dark:bg-blue-950/30",
+          },
+          {
+            label: "With Distributions",
+            value: stats.withInstruments,
+            icon: TrendingUp,
+            color: "text-violet-600",
+            bg: "bg-violet-50 dark:bg-violet-950/30",
+          },
         ].map((s) => (
           <Card key={s.label} className="glass-card">
             <CardContent className="flex items-center gap-3 p-4">
@@ -536,7 +620,9 @@ function CompaniesPage() {
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">{s.label}</p>
-                <p className={`text-xl font-bold tabular-nums ${s.color}`}>{s.value.toLocaleString()}</p>
+                <p className={`text-xl font-bold tabular-nums ${s.color}`}>
+                  {s.value.toLocaleString()}
+                </p>
               </div>
             </CardContent>
           </Card>
@@ -590,52 +676,84 @@ function CompaniesPage() {
 
       {/* Create / Edit Dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="max-h-[90vh] max-w-3xl flex flex-col p-0 overflow-hidden">
+          <DialogHeader className="p-6 pb-4 border-b">
             <DialogTitle className="flex items-center gap-2">
               <Building2 className="h-5 w-5 text-primary" />
               {editing ? `Edit — ${editing.company_name}` : "Add New Company"}
             </DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
             {/* General Info */}
             <SectionLabel icon={Building2}>General Information</SectionLabel>
             <div className="grid gap-3 md:grid-cols-3">
               <div className="space-y-1.5">
-                <Label>Company Code <span className="text-destructive">*</span></Label>
-                <Input placeholder="e.g. NABIL, CIT" value={form.company_code} onChange={(e) => setF("company_code", e.target.value)} />
+                <Label>
+                  Company Code <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  placeholder="e.g. NABIL, CIT"
+                  value={form.company_code}
+                  onChange={(e) => setF("company_code", e.target.value)}
+                />
               </div>
               <div className="space-y-1.5 md:col-span-2">
-                <Label>Company Name <span className="text-destructive">*</span></Label>
-                <Input placeholder="Official registered entity name" value={form.company_name} onChange={(e) => setF("company_name", e.target.value)} />
+                <Label>
+                  Company Name <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  placeholder="Official registered entity name"
+                  value={form.company_name}
+                  onChange={(e) => setF("company_name", e.target.value)}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Company Type</Label>
-                <Input placeholder="Commercial Bank, Mutual Fund…" value={form.company_type} onChange={(e) => setF("company_type", e.target.value)} />
+                <Input
+                  placeholder="Commercial Bank, Mutual Fund…"
+                  value={form.company_type}
+                  onChange={(e) => setF("company_type", e.target.value)}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>ISIN</Label>
-                <Input placeholder="NPE..." value={form.isin} onChange={(e) => setF("isin", e.target.value)} />
+                <Input
+                  placeholder="NPE..."
+                  value={form.isin}
+                  onChange={(e) => setF("isin", e.target.value)}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Listed Date</Label>
-                <Input type="date" value={form.listed_date} onChange={(e) => setF("listed_date", e.target.value)} />
+                <Input
+                  type="date"
+                  value={form.listed_date}
+                  onChange={(e) => setF("listed_date", e.target.value)}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Sector</Label>
                 <Select value={form.sector_type} onValueChange={(v) => setF("sector_type", v)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     {["Public", "Private", "Institution", "Government", "Other"].map((s) => (
-                      <SelectItem key={s} value={s}>{s}</SelectItem>
+                      <SelectItem key={s} value={s}>
+                        {s}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-1.5">
                 <Label>Registrar (RTA/RTS)</Label>
-                <Input placeholder="Registrar name" value={form.registrar} onChange={(e) => setF("registrar", e.target.value)} />
+                <Input
+                  placeholder="Registrar name"
+                  value={form.registrar}
+                  onChange={(e) => setF("registrar", e.target.value)}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Fiscal Year</Label>
@@ -644,7 +762,7 @@ function CompaniesPage() {
                   value={form.fiscal_year}
                   inputMode="numeric"
                   onChange={(e) => {
-                    const nextValue = e.target.value.replace(/[^0-9/]/g, '').slice(0, 9);
+                    const nextValue = e.target.value.replace(/[^0-9/]/g, "").slice(0, 9);
                     setF("fiscal_year", nextValue);
                   }}
                 />
@@ -656,27 +774,61 @@ function CompaniesPage() {
             <div className="grid gap-3 md:grid-cols-3">
               <div className="space-y-1.5">
                 <Label>Dividend Rate (%)</Label>
-                <Input type="number" step="0.01" placeholder="e.g. 10.5" value={form.dividend_rate} onChange={(e) => setF("dividend_rate", e.target.value)} />
+                <Input
+                  type="number"
+                  step="0.01"
+                  placeholder="e.g. 10.5"
+                  value={form.dividend_rate}
+                  onChange={(e) => setF("dividend_rate", e.target.value)}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Debenture Rate (%)</Label>
-                <Input type="number" step="0.01" placeholder="e.g. 8.5" value={form.debenture_rate} onChange={(e) => setF("debenture_rate", e.target.value)} />
+                <Input
+                  type="number"
+                  step="0.01"
+                  placeholder="e.g. 8.5"
+                  value={form.debenture_rate}
+                  onChange={(e) => setF("debenture_rate", e.target.value)}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Coupon Rate (%)</Label>
-                <Input type="number" step="0.01" placeholder="e.g. 6.0" value={form.coupon_rate} onChange={(e) => setF("coupon_rate", e.target.value)} />
+                <Input
+                  type="number"
+                  step="0.01"
+                  placeholder="e.g. 6.0"
+                  value={form.coupon_rate}
+                  onChange={(e) => setF("coupon_rate", e.target.value)}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Face Value (Rs.)</Label>
-                <Input type="number" step="0.01" placeholder="100, 1000…" value={form.face_value} onChange={(e) => setF("face_value", e.target.value)} />
+                <Input
+                  type="number"
+                  step="0.01"
+                  placeholder="100, 1000…"
+                  value={form.face_value}
+                  onChange={(e) => setF("face_value", e.target.value)}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Issue Size</Label>
-                <Input type="number" step="0.01" placeholder="Total units" value={form.issue_size} onChange={(e) => setF("issue_size", e.target.value)} />
+                <Input
+                  type="number"
+                  step="0.01"
+                  placeholder="Total units"
+                  value={form.issue_size}
+                  onChange={(e) => setF("issue_size", e.target.value)}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Maturity Date</Label>
-                <Input type="date" value={form.maturity_date} onChange={(e) => setF("maturity_date", e.target.value)} />
+                <Input
+                  type="date"
+                  value={form.maturity_date}
+                  onChange={(e) => setF("maturity_date", e.target.value)}
+                />
               </div>
             </div>
 
@@ -685,12 +837,21 @@ function CompaniesPage() {
             <div className="grid gap-3 md:grid-cols-3">
               <div className="space-y-1.5">
                 <Label>PAN No.</Label>
-                <Input placeholder="9-digit PAN" value={form.pan_no} onChange={(e) => setF("pan_no", e.target.value)} />
+                <Input
+                  placeholder="9-digit PAN"
+                  value={form.pan_no}
+                  onChange={(e) => setF("pan_no", e.target.value)}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Interest Tax Status</Label>
-                <Select value={form.interest_tax_status} onValueChange={(v) => setF("interest_tax_status", v)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select
+                  value={form.interest_tax_status}
+                  onValueChange={(v) => setF("interest_tax_status", v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="Taxable">Taxable</SelectItem>
                     <SelectItem value="Exempted">Exempted</SelectItem>
@@ -700,7 +861,9 @@ function CompaniesPage() {
               <div className="space-y-1.5">
                 <Label>Status</Label>
                 <Select value={form.status} onValueChange={(v) => setF("status", v)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="Active">Active</SelectItem>
                     <SelectItem value="Inactive">Inactive</SelectItem>
@@ -709,17 +872,31 @@ function CompaniesPage() {
               </div>
               <div className="space-y-1.5">
                 <Label>Bank Name</Label>
-                <Input placeholder="Designated bank" value={form.bank_name} onChange={(e) => setF("bank_name", e.target.value)} />
+                <Input
+                  placeholder="Designated bank"
+                  value={form.bank_name}
+                  onChange={(e) => setF("bank_name", e.target.value)}
+                />
               </div>
               <div className="space-y-1.5 md:col-span-2">
                 <Label>Bank Account Number</Label>
-                <Input placeholder="Account number for distributions" value={form.bank_account_no} onChange={(e) => setF("bank_account_no", e.target.value)} />
+                <Input
+                  placeholder="Account number for distributions"
+                  value={form.bank_account_no}
+                  onChange={(e) => setF("bank_account_no", e.target.value)}
+                />
               </div>
             </div>
           </div>
 
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => { setOpen(false); setEditing(null); }}>
+          <DialogFooter className="p-4 border-t bg-muted/20 gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setOpen(false);
+                setEditing(null);
+              }}
+            >
               Cancel
             </Button>
             <Button
@@ -733,7 +910,12 @@ function CompaniesPage() {
       </Dialog>
 
       {/* Delete Confirmation Alert Dialog */}
-      <AlertDialog open={!!deleteTarget} onOpenChange={(o) => { if (!del.isPending && !o) setDeleteTarget(null); }}>
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(o) => {
+          if (!del.isPending && !o) setDeleteTarget(null);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-destructive">
@@ -741,8 +923,9 @@ function CompaniesPage() {
               Delete Company & Associated Records
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete <strong>{deleteTarget?.company_name}</strong> ({deleteTarget?.company_code})?
-              This will safely remove the company along with all its associated payables, payments, and client distributions.
+              Are you sure you want to delete <strong>{deleteTarget?.company_name}</strong> (
+              {deleteTarget?.company_code})? This will safely remove the company along with all its
+              associated payables, payments, and client distributions.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="gap-2">

@@ -11,11 +11,7 @@ function Landing() {
     <div className="min-h-screen bg-gradient-to-b from-background to-secondary/40">
       <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-6">
         <div className="flex items-center gap-2">
-          <img
-            src="/rbb-logo.jpg"
-            alt="RBBMBL"
-            className="h-24 w-24 rounded-md object-contain"
-          />
+          <img src="/rbb-logo.jpg" alt="RBBMBL" className="h-24 w-24 rounded-md object-contain" />
           <span className="text-lg font-semibold tracking-tight">RBBMBL</span>
         </div>
         <div className="flex gap-2">
@@ -23,9 +19,7 @@ function Landing() {
             <Link to="/auth">Sign in</Link>
           </Button>
           <Button asChild>
-            <Link to="/auth" search={{ mode: "signup" } as never}>
-              Get started
-            </Link>
+            <Link to="/auth">Get started</Link>
           </Button>
         </div>
       </header>

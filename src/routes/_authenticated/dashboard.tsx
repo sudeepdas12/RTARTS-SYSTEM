@@ -7,7 +7,13 @@ import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Wallet,
   BarChart3,
@@ -28,7 +34,20 @@ import {
   Upload,
   RefreshCw,
 } from "lucide-react";
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, PieChart, Pie, Cell, AreaChart, Area } from "recharts";
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+  PieChart,
+  Pie,
+  Cell,
+  AreaChart,
+  Area,
+} from "recharts";
 import { Link } from "@tanstack/react-router";
 import { format } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -42,7 +61,10 @@ function fmt(n: number) {
 }
 
 function fmtCurrency(n: number) {
-  return new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+  return new Intl.NumberFormat("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n);
 }
 
 /** Compact currency for chart axis ticks — Nepali units: Cr (crore = 10M), L (lakh = 100K) */
@@ -70,17 +92,25 @@ function Dashboard() {
 
   const { data: companies = [] } = useQuery({
     queryKey: ["dashboard-companies"],
+    staleTime: 5 * 60 * 1000,
     queryFn: async () => {
-      const { data } = await supabase.from("companies").select("id, company_code, company_name").order("company_name");
+      const { data } = await supabase
+        .from("companies")
+        .select("id, company_code, company_name")
+        .order("company_name");
       return data || [];
     },
   });
 
   const { data: fiscalYears = [] } = useQuery({
     queryKey: ["dashboard-fiscal-years"],
+    staleTime: 5 * 60 * 1000,
     queryFn: async () => {
-      const { data } = await supabase.from("fiscal_years").select("fiscal_year").order("fiscal_year", { ascending: false });
-      return (data || []).map(f => f.fiscal_year);
+      const { data } = await supabase
+        .from("fiscal_years")
+        .select("fiscal_year")
+        .order("fiscal_year", { ascending: false });
+      return (data || []).map((f) => f.fiscal_year);
     },
   });
 
@@ -88,87 +118,208 @@ function Dashboard() {
 
   const { data, isLoading } = useQuery({
     queryKey: ["dashboard-kpis", selectedCompanyId, selectedFiscalYear],
+    staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       type Row = { net_payable: number | null; payment_status: string };
 
-      const [interestRows, dividendRows, mutualFundRows] = await Promise.all([
-        fetchAllRows<Row>((from, to) => {
-          let q = (supabase as any).from("interest_payables").select("net_payable, payment_status").range(from, to);
-          if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
-          if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
-          return q;
-        }),
-        fetchAllRows<Row>((from, to) => {
-          let q = (supabase as any).from("dividend_payables").select("net_payable, payment_status").range(from, to);
-          if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
-          if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
-          return q;
-        }),
-        fetchAllRows<Row>((from, to) => {
-          let q = (supabase as any).from("mutual_fund_payables").select("net_payable, payment_status").range(from, to);
-          if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
-          if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
-          return q;
-        }),
-      ]);
+      let interestPending = 0;
+      let interestPaid = 0;
+      let interestPartial = 0;
+      let totalInterest = 0;
+      let dividendPending = 0;
+      let dividendPaid = 0;
+      let dividendPartial = 0;
+      let totalDividend = 0;
+      let mutualFundPending = 0;
+      let mutualFundPaid = 0;
+      let mutualFundPartial = 0;
+      let totalMutualFund = 0;
 
-      let paymentsQ = (supabase as any).from("payments").select("id, net_amount, status, created_at").order("created_at", { ascending: false }).limit(5);
+      // 1. Attempt fast server-side aggregation via get_company_fiscal_summary_rpc
+      let rpcSucceeded = false;
+      try {
+        const { data: summaryData, error: rpcErr } = await (supabase as any).rpc(
+          "get_company_fiscal_summary_rpc",
+          { p_fiscal_year: selectedFiscalYear === "all" ? null : selectedFiscalYear },
+        );
+        if (!rpcErr && Array.isArray(summaryData)) {
+          const firstRow = summaryData[0];
+          const hasBreakdown =
+            summaryData.length === 0 ||
+            (firstRow &&
+              (firstRow.dividend_paid !== undefined ||
+                firstRow.interest_paid !== undefined ||
+                firstRow.mutual_fund_paid !== undefined));
+
+          if (hasBreakdown) {
+            const rpcRows =
+              selectedCompanyId === "all"
+                ? summaryData
+                : summaryData.filter((r: any) => r.company_id === selectedCompanyId);
+
+            for (const r of rpcRows) {
+              dividendPaid += Number(r.dividend_paid || 0);
+              dividendPending += Number(r.dividend_pending || 0);
+              dividendPartial += Number(r.dividend_partial || 0);
+              totalDividend += Number(r.dividend_net || 0);
+
+              interestPaid += Number(r.interest_paid || 0);
+              interestPending += Number(r.interest_pending || 0);
+              interestPartial += Number(r.interest_partial || 0);
+              totalInterest += Number(r.interest_net || 0);
+
+              mutualFundPaid += Number(r.mutual_fund_paid || 0);
+              mutualFundPending += Number(r.mutual_fund_pending || 0);
+              mutualFundPartial += Number(r.mutual_fund_partial || 0);
+              totalMutualFund += Number(r.mutual_fund_net || 0);
+            }
+            rpcSucceeded = true;
+          }
+        }
+      } catch {
+        rpcSucceeded = false;
+      }
+
+      // 2. Fallback to client-side row retrieval only if RPC is unavailable
+      if (!rpcSucceeded) {
+        const [interestRows, dividendRows, mutualFundRows] = await Promise.all([
+          fetchAllRows<Row>((from, to) => {
+            let q = (supabase as any)
+              .from("interest_payables")
+              .select("net_payable, payment_status")
+              .range(from, to);
+            if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
+            if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
+            return q;
+          }),
+          fetchAllRows<Row>((from, to) => {
+            let q = (supabase as any)
+              .from("dividend_payables")
+              .select("net_payable, payment_status")
+              .range(from, to);
+            if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
+            if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
+            return q;
+          }),
+          fetchAllRows<Row>((from, to) => {
+            let q = (supabase as any)
+              .from("mutual_fund_payables")
+              .select("net_payable, payment_status")
+              .range(from, to);
+            if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
+            if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
+            return q;
+          }),
+        ]);
+
+        const sum = (rows: Row[] | null, status: string) =>
+          (rows ?? [])
+            .filter((r) => String(r.payment_status || "").toLowerCase() === status.toLowerCase())
+            .reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
+
+        totalInterest = interestRows.reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
+        totalDividend = dividendRows.reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
+        totalMutualFund = mutualFundRows.reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
+        interestPending = sum(interestRows, "Pending");
+        interestPaid = sum(interestRows, "Paid");
+        interestPartial = sum(interestRows, "Partial");
+        dividendPending = sum(dividendRows, "Pending");
+        dividendPaid = sum(dividendRows, "Paid");
+        dividendPartial = sum(dividendRows, "Partial");
+        mutualFundPending = sum(mutualFundRows, "Pending");
+        mutualFundPaid = sum(mutualFundRows, "Paid");
+        mutualFundPartial = sum(mutualFundRows, "Partial");
+      }
+
+      let paymentsQ = (supabase as any)
+        .from("payments")
+        .select("id, net_amount, status, created_at")
+        .order("created_at", { ascending: false })
+        .limit(5);
       if (selectedCompanyId !== "all") paymentsQ = paymentsQ.eq("company_id", selectedCompanyId);
 
-      let uploadsQ = (supabase as any).from("upload_history").select("id, file_name, status, created_at").order("created_at", { ascending: false }).limit(5);
+      const uploadsQ = (supabase as any)
+        .from("upload_history")
+        .select("id, file_name, status, created_at")
+        .order("created_at", { ascending: false })
+        .limit(5);
 
-      let reconciliationsQ = (supabase as any).from("reconciliation_results").select("id, result, created_at").order("created_at", { ascending: false }).limit(5);
-      if (selectedCompanyId !== "all") reconciliationsQ = reconciliationsQ.eq("company_id", selectedCompanyId);
+      let reconciliationsQ = (supabase as any)
+        .from("reconciliation_results")
+        .select("id, result, created_at")
+        .order("created_at", { ascending: false })
+        .limit(5);
+      if (selectedCompanyId !== "all")
+        reconciliationsQ = reconciliationsQ.eq("company_id", selectedCompanyId);
 
-      let batchesQ = (supabase as any).from("payment_batches").select("id, batch_name, status, total_amount, created_at").order("created_at", { ascending: false }).limit(5);
+      let batchesQ = (supabase as any)
+        .from("payment_batches")
+        .select("id, batch_name, status, total_amount, created_at")
+        .order("created_at", { ascending: false })
+        .limit(5);
       if (selectedCompanyId !== "all") batchesQ = batchesQ.eq("company_id", selectedCompanyId);
 
-      let bankTotalQ = (supabase as any).from("reconciliation_results").select("id", { count: "exact", head: true });
-      let bankReconciledQ = (supabase as any).from("reconciliation_results").select("id", { count: "exact", head: true }).eq("result", "Matched");
+      let bankTotalQ = (supabase as any)
+        .from("reconciliation_results")
+        .select("id", { count: "exact", head: true });
+      let bankReconciledQ = (supabase as any)
+        .from("reconciliation_results")
+        .select("id", { count: "exact", head: true })
+        .eq("result", "Matched");
+      let clientsQ = (supabase.from("clients") as any).select("id", { count: "exact", head: true });
+      let reviewPendingQ = (supabase as any)
+        .from("clients")
+        .select("id", { count: "exact", head: true })
+        .or("classification_status.eq.REVIEW_REQUIRED,payee_classification.eq.UNCLASSIFIED");
+
       if (selectedCompanyId !== "all") {
         bankTotalQ = bankTotalQ.eq("company_id", selectedCompanyId);
         bankReconciledQ = bankReconciledQ.eq("company_id", selectedCompanyId);
+        clientsQ = clientsQ.eq("company_id", selectedCompanyId);
+        reviewPendingQ = reviewPendingQ.eq("company_id", selectedCompanyId);
       }
 
       const requests = [
         supabase.from("companies").select("id", { count: "exact", head: true }),
-        supabase.from("clients").select("id", { count: "exact", head: true }),
-        (supabase as any)
-          .from("clients")
-          .select("id", { count: "exact", head: true })
-          .or("classification_status.eq.REVIEW_REQUIRED,payee_classification.eq.UNCLASSIFIED"),
+        clientsQ,
+        reviewPendingQ,
         bankTotalQ,
         bankReconciledQ,
-        supabase.from("pending_approvals").select("id", { count: "exact", head: true }).eq("status", "Pending"),
+        supabase
+          .from("pending_approvals")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "Pending"),
         paymentsQ,
         uploadsQ,
         reconciliationsQ,
         batchesQ,
       ];
 
-      const [companies, clients, reviewPending, bankTotal, bankReconciled, approvals, payments, uploads, reconciliations, batches] = await Promise.all(requests);
-
-      const sum = (rows: Row[] | null, status: string) =>
-        (rows ?? [])
-          .filter((r) => r.payment_status === status)
-          .reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
-
-      const totalInterest = interestRows.reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
-      const totalDividend = dividendRows.reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
-      const totalMutualFund = mutualFundRows.reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
+      const [
+        companies,
+        clients,
+        reviewPending,
+        bankTotal,
+        bankReconciled,
+        approvals,
+        payments,
+        uploads,
+        reconciliations,
+        batches,
+      ] = await Promise.all(requests);
 
       return {
         companies: companies.count ?? 0,
         clients: clients.count ?? 0,
-        interestPending: sum(interestRows, "Pending"),
-        interestPaid: sum(interestRows, "Paid"),
-        interestPartial: sum(interestRows, "Partial"),
-        dividendPending: sum(dividendRows, "Pending"),
-        dividendPaid: sum(dividendRows, "Paid"),
-        dividendPartial: sum(dividendRows, "Partial"),
-        mutualFundPending: sum(mutualFundRows, "Pending"),
-        mutualFundPaid: sum(mutualFundRows, "Paid"),
-        mutualFundPartial: sum(mutualFundRows, "Partial"),
+        interestPending,
+        interestPaid,
+        interestPartial,
+        dividendPending,
+        dividendPaid,
+        dividendPartial,
+        mutualFundPending,
+        mutualFundPaid,
+        mutualFundPartial,
         totalInterest,
         totalDividend,
         totalMutualFund,
@@ -186,11 +337,17 @@ function Dashboard() {
     throwOnError: false,
   });
 
-  const totalPending = (data?.interestPending ?? 0) + (data?.dividendPending ?? 0) + (data?.mutualFundPending ?? 0);
-  const totalPaid = (data?.interestPaid ?? 0) + (data?.dividendPaid ?? 0) + (data?.mutualFundPaid ?? 0);
-  const totalAll = (data?.totalInterest ?? 0) + (data?.totalDividend ?? 0) + (data?.totalMutualFund ?? 0);
+  const totalPending =
+    (data?.interestPending ?? 0) + (data?.dividendPending ?? 0) + (data?.mutualFundPending ?? 0);
+  const totalPaid =
+    (data?.interestPaid ?? 0) + (data?.dividendPaid ?? 0) + (data?.mutualFundPaid ?? 0);
+  const totalAll =
+    (data?.totalInterest ?? 0) + (data?.totalDividend ?? 0) + (data?.totalMutualFund ?? 0);
   const paymentProgress = totalAll > 0 ? Math.round((totalPaid / totalAll) * 100) : 0;
-  const bankReconciledPct = (data?.bankTotal ?? 0) > 0 ? Math.round(((data?.bankReconciled ?? 0) / (data?.bankTotal ?? 1)) * 100) : 0;
+  const bankReconciledPct =
+    (data?.bankTotal ?? 0) > 0
+      ? Math.round(((data?.bankReconciled ?? 0) / (data?.bankTotal ?? 1)) * 100)
+      : 0;
 
   const kpis = [
     {
@@ -266,16 +423,37 @@ function Dashboard() {
   ];
 
   const chart = [
-    { name: "Interest", Paid: data?.interestPaid ?? 0, Pending: data?.interestPending ?? 0, Partial: data?.interestPartial ?? 0 },
-    { name: "Dividend", Paid: data?.dividendPaid ?? 0, Pending: data?.dividendPending ?? 0, Partial: data?.dividendPartial ?? 0 },
-    { name: "Mutual Fund", Paid: data?.mutualFundPaid ?? 0, Pending: data?.mutualFundPending ?? 0, Partial: data?.mutualFundPartial ?? 0 },
+    {
+      name: "Interest",
+      Paid: data?.interestPaid ?? 0,
+      Pending: data?.interestPending ?? 0,
+      Partial: data?.interestPartial ?? 0,
+    },
+    {
+      name: "Dividend",
+      Paid: data?.dividendPaid ?? 0,
+      Pending: data?.dividendPending ?? 0,
+      Partial: data?.dividendPartial ?? 0,
+    },
+    {
+      name: "Mutual Fund",
+      Paid: data?.mutualFundPaid ?? 0,
+      Pending: data?.mutualFundPending ?? 0,
+      Partial: data?.mutualFundPartial ?? 0,
+    },
   ];
 
   const pieData = [
     { name: "Paid", value: totalPaid },
     { name: "Pending", value: totalPending },
-    { name: "Partial", value: (data?.interestPartial ?? 0) + (data?.dividendPartial ?? 0) + (data?.mutualFundPartial ?? 0) },
-  ].filter(d => d.value > 0);
+    {
+      name: "Partial",
+      value:
+        (data?.interestPartial ?? 0) +
+        (data?.dividendPartial ?? 0) +
+        (data?.mutualFundPartial ?? 0),
+    },
+  ].filter((d) => d.value > 0);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -283,10 +461,18 @@ function Dashboard() {
       case "Paid":
       case "Matched":
       case "Approved":
-        return <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">{status}</Badge>;
+        return (
+          <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800">
+            {status}
+          </Badge>
+        );
       case "Pending":
       case "Processing":
-        return <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800">{status}</Badge>;
+        return (
+          <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800">
+            {status}
+          </Badge>
+        );
       case "Failed":
       case "Rejected":
       case "Missing":
@@ -431,17 +617,23 @@ function Dashboard() {
           const card = (
             <Card className="glass-card hover-lift h-full border border-border/80">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{k.title}</CardTitle>
+                <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  {k.title}
+                </CardTitle>
                 <div className={`p-2 rounded-lg ${k.bg}`}>
                   <k.icon className={`h-4 w-4 ${k.color}`} />
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="text-xl font-bold tabular-nums">
-                  {isLoading ? "—" : k.value}
-                </div>
-                <div className={`flex items-center gap-1 mt-1 text-[11px] ${k.trendUp ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
-                  {k.trendUp ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                <div className="text-xl font-bold tabular-nums">{isLoading ? "—" : k.value}</div>
+                <div
+                  className={`flex items-center gap-1 mt-1 text-[11px] ${k.trendUp ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}
+                >
+                  {k.trendUp ? (
+                    <ArrowUpRight className="h-3 w-3" />
+                  ) : (
+                    <ArrowDownRight className="h-3 w-3" />
+                  )}
                   {k.trend}
                 </div>
               </CardContent>
@@ -462,16 +654,18 @@ function Dashboard() {
       {/* Charts Row */}
       <div className="grid gap-4 md:grid-cols-1 lg:grid-cols-2">
         {/* Bar Chart */}
-        <Card className="lg:col-span-1">
+        <Card className="lg:col-span-1 min-w-0">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <BarChart3 className="h-4 w-4 text-primary" />
               Payables — Paid vs Pending vs Partial
             </CardTitle>
-            <CardDescription>Distribution of interest and dividend payables by payment status</CardDescription>
+            <CardDescription>
+              Distribution of interest and dividend payables by payment status
+            </CardDescription>
           </CardHeader>
-          <CardContent className="h-80">
-            <ResponsiveContainer width="100%" height="100%">
+          <CardContent className="h-80 min-h-[320px] w-full min-w-0">
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={280}>
               <BarChart data={chart} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
                 <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                 <XAxis
@@ -495,7 +689,7 @@ function Dashboard() {
         </Card>
 
         {/* Pie Chart */}
-        <Card>
+        <Card className="min-w-0">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Activity className="h-4 w-4 text-primary" />
@@ -503,38 +697,52 @@ function Dashboard() {
             </CardTitle>
             <CardDescription>Overall payment completion status</CardDescription>
           </CardHeader>
-          <CardContent className="h-72">
+          <CardContent className="h-80 min-h-[320px] min-w-0 flex flex-col justify-between">
             {pieData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={pieData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={90}
-                    paddingAngle={4}
-                    dataKey="value"
-                  >
-                    {pieData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(v: any) => `₨ ${fmtCurrency(Number(v))}`} />
-                </PieChart>
-              </ResponsiveContainer>
+              <div className="w-full flex-1 min-h-[220px]">
+                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={220}>
+                  <PieChart>
+                    <Pie
+                      data={pieData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={90}
+                      paddingAngle={4}
+                      dataKey="value"
+                    >
+                      {pieData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(v: any) => `₨ ${fmtCurrency(Number(v))}`} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
             ) : (
-              <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-                No payment data available
+              <div className="flex flex-col items-center justify-center flex-1 text-muted-foreground text-sm gap-2">
+                <Activity className="h-8 w-8 text-muted-foreground/40" />
+                <span>No payment transactions recorded yet</span>
               </div>
             )}
-            <div className="flex justify-center gap-4 mt-2">
-              {pieData.map((d, i) => (
-                <div key={d.name} className="flex items-center gap-1.5 text-xs">
-                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: PIE_COLORS[i % PIE_COLORS.length] }} />
-                  <span className="text-muted-foreground">{d.name}</span>
-                </div>
-              ))}
+            <div className="flex justify-center flex-wrap gap-4 pt-3 border-t">
+              {pieData.length > 0 ? (
+                pieData.map((d, i) => (
+                  <div key={d.name} className="flex items-center gap-1.5 text-xs">
+                    <span
+                      className="w-2.5 h-2.5 rounded-full"
+                      style={{ backgroundColor: PIE_COLORS[i % PIE_COLORS.length] }}
+                    />
+                    <span className="text-muted-foreground font-medium">
+                      {d.name}: ₨ {fmtCurrency(d.value)}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <span className="text-xs text-muted-foreground italic">
+                  Data will populate automatically as disbursements are imported
+                </span>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -556,7 +764,9 @@ function Dashboard() {
           <CardContent className="space-y-4">
             <div>
               <div className="flex justify-between text-sm mb-1.5">
-                <span className="text-muted-foreground">{selectedCompany ? `${selectedCompany.company_code} Payout` : "Overall System"}</span>
+                <span className="text-muted-foreground">
+                  {selectedCompany ? `${selectedCompany.company_code} Payout` : "Overall System"}
+                </span>
                 <span className="font-medium">{paymentProgress}%</span>
               </div>
               <Progress value={paymentProgress} className="h-2" />
@@ -608,11 +818,15 @@ function Dashboard() {
                       </div>
                       <div className="min-w-0">
                         <p className="text-sm font-medium truncate">{p.id.slice(0, 8)}…</p>
-                        <p className="text-xs text-muted-foreground">{p.created_at ? format(new Date(p.created_at), "dd MMM yyyy") : "—"}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {p.created_at ? format(new Date(p.created_at), "dd MMM yyyy") : "—"}
+                        </p>
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="text-sm font-semibold">₨ {fmtCurrency(Number(p.net_amount ?? 0))}</p>
+                      <p className="text-sm font-semibold">
+                        ₨ {fmtCurrency(Number(p.net_amount ?? 0))}
+                      </p>
                       {getStatusBadge(p.status)}
                     </div>
                   </div>
@@ -638,7 +852,8 @@ function Dashboard() {
                   <Skeleton className="h-10 w-full" />
                   <Skeleton className="h-10 w-full" />
                 </div>
-              ) : (data?.recentUploads ?? []).length === 0 && (data?.recentBatches ?? []).length === 0 ? (
+              ) : (data?.recentUploads ?? []).length === 0 &&
+                (data?.recentBatches ?? []).length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-4">No recent activity</p>
               ) : (
                 <>
@@ -650,7 +865,9 @@ function Dashboard() {
                         </div>
                         <div className="min-w-0">
                           <p className="text-sm font-medium truncate">{u.file_name}</p>
-                          <p className="text-xs text-muted-foreground">{format(new Date(u.created_at), "dd MMM yyyy")}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {format(new Date(u.created_at), "dd MMM yyyy")}
+                          </p>
                         </div>
                       </div>
                       {getStatusBadge(u.status)}
@@ -664,7 +881,9 @@ function Dashboard() {
                         </div>
                         <div className="min-w-0">
                           <p className="text-sm font-medium truncate">{b.batch_name}</p>
-                          <p className="text-xs text-muted-foreground">₨ {fmtCurrency(Number(b.total_amount ?? 0))}</p>
+                          <p className="text-xs text-muted-foreground">
+                            ₨ {fmtCurrency(Number(b.total_amount ?? 0))}
+                          </p>
                         </div>
                       </div>
                       {getStatusBadge(b.status)}
@@ -684,12 +903,20 @@ function Dashboard() {
             <div className="flex items-center gap-3">
               <AlertTriangle className="h-5 w-5 text-amber-600" />
               <div>
-                <p className="font-medium text-amber-800">{data?.approvals} pending approval{data?.approvals === 1 ? "" : "s"}</p>
-                <p className="text-sm text-amber-700/70">Review and process pending approvals to keep workflows moving.</p>
+                <p className="font-medium text-amber-800">
+                  {data?.approvals} pending approval{data?.approvals === 1 ? "" : "s"}
+                </p>
+                <p className="text-sm text-amber-700/70">
+                  Review and process pending approvals to keep workflows moving.
+                </p>
               </div>
             </div>
             <Link to="/approvals">
-              <Button size="sm" variant="outline" className="border-amber-300 text-amber-700 hover:bg-amber-100">
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-amber-300 text-amber-700 hover:bg-amber-100"
+              >
                 View Approvals
               </Button>
             </Link>

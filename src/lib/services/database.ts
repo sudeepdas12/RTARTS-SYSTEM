@@ -35,7 +35,7 @@ export interface Page<T> {
 export async function fetchAllRows<T>(
   queryBuilder: (from: number, to: number) => Promise<{ data: T[] | null; error: any }>,
   pageSize = 1000,
-  maxRows = 200000
+  maxRows = 200000,
 ): Promise<T[]> {
   const allRows: T[] = [];
   let from = 0;
@@ -51,4 +51,26 @@ export async function fetchAllRows<T>(
   }
 
   return allRows;
+}
+
+/**
+ * Async generator to stream pages from Supabase with near-zero memory footprint.
+ * Ideal for exporting or processing datasets with 50,000+ rows without buffer bloat.
+ */
+export async function* streamAllRows<T>(
+  queryBuilder: (from: number, to: number) => Promise<{ data: T[] | null; error: any }>,
+  pageSize = 1000,
+  maxRows = 200000,
+): AsyncGenerator<T[], void, unknown> {
+  let from = 0;
+
+  while (from < maxRows) {
+    const to = from + pageSize - 1;
+    const { data, error } = await queryBuilder(from, to);
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    yield data;
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
 }

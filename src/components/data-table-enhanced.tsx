@@ -1,10 +1,28 @@
 import { useState, useMemo, ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, Download, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Search,
+  Download,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+} from "lucide-react";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
 
@@ -57,31 +75,34 @@ export function EnhancedDataTable<T extends Record<string, any>>({
   const filtered = useMemo(() => {
     if (!searchQuery || searchKeys.length === 0) return data;
     const q = searchQuery.toLowerCase();
-    return data.filter(row =>
-      searchKeys.some(key => {
+    return data.filter((row) =>
+      searchKeys.some((key) => {
         const val = row[key];
         return val != null && String(val).toLowerCase().includes(q);
-      })
+      }),
     );
   }, [data, searchQuery, searchKeys]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSizeOption));
   const currentPage = Math.min(page, totalPages);
-  const pageItems = filtered.slice((currentPage - 1) * pageSizeOption, currentPage * pageSizeOption);
+  const pageItems = filtered.slice(
+    (currentPage - 1) * pageSizeOption,
+    currentPage * pageSizeOption,
+  );
 
   const handleExport = () => {
     if (filtered.length === 0) {
       toast.error("No data to export");
       return;
     }
-    const headers = columns.map(c => c.header);
-    const rows = filtered.map(row =>
-      columns.map(c => {
+    const headers = columns.map((c) => c.header);
+    const rows = filtered.map((row) =>
+      columns.map((c) => {
         const val = row[c.key];
         return val != null ? String(val).replace(/,/g, ",") : "";
-      })
+      }),
     );
-    const csv = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+    const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -104,7 +125,10 @@ export function EnhancedDataTable<T extends Record<string, any>>({
                 <Input
                   placeholder={searchPlaceholder}
                   value={searchQuery}
-                  onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setPage(1);
+                  }}
                   className="h-9 w-56 pl-8"
                 />
               </div>
@@ -123,16 +147,23 @@ export function EnhancedDataTable<T extends Record<string, any>>({
         <Table>
           <TableHeader>
             <TableRow>
-              {columns.map(col => (
-                <TableHead key={col.key} className={col.headerClassName}>{col.header}</TableHead>
+              {columns.map((col) => (
+                <TableHead key={col.key} className={col.headerClassName}>
+                  {col.header}
+                </TableHead>
               ))}
-              {actionsColumn && <TableHead className="text-right">{actionsColumn.header ?? "Actions"}</TableHead>}
+              {actionsColumn && (
+                <TableHead className="text-right">{actionsColumn.header ?? "Actions"}</TableHead>
+              )}
             </TableRow>
           </TableHeader>
           <TableBody>
             {pageItems.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={columns.length + (actionsColumn ? 1 : 0)} className="py-10 text-center text-muted-foreground">
+                <TableCell
+                  colSpan={columns.length + (actionsColumn ? 1 : 0)}
+                  className="py-10 text-center text-muted-foreground"
+                >
                   {emptyMessage}
                 </TableCell>
               </TableRow>
@@ -143,9 +174,13 @@ export function EnhancedDataTable<T extends Record<string, any>>({
                   className={onRowClick ? "cursor-pointer hover:bg-muted/50" : ""}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
                 >
-                  {columns.map(col => (
+                  {columns.map((col) => (
                     <TableCell key={col.key} className={col.cellClassName}>
-                      {col.render ? col.render(row) : (row[col.key] != null ? String(row[col.key]) : "-")}
+                      {col.render
+                        ? col.render(row)
+                        : row[col.key] != null
+                          ? String(row[col.key])
+                          : "-"}
                     </TableCell>
                   ))}
                   {actionsColumn && (
@@ -161,32 +196,44 @@ export function EnhancedDataTable<T extends Record<string, any>>({
       {paginationEnabled && filtered.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-muted-foreground">
-            Showing <strong>{pageItems.length}</strong> of <strong>{filtered.length}</strong> records
+            Showing <strong>{pageItems.length}</strong> of <strong>{filtered.length}</strong>{" "}
+            records
           </p>
           <div className="flex items-center gap-2">
             <Select
               value={String(pageSizeOption)}
-              onValueChange={(v) => { setPageSizeOption(Number(v)); setPage(1); }}
+              onValueChange={(v) => {
+                setPageSizeOption(Number(v));
+                setPage(1);
+              }}
             >
               <SelectTrigger className="h-8 w-[90px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {[10, 25, 50, 100].map(size => (
-                  <SelectItem key={size} value={String(size)}>{size} / page</SelectItem>
+                {[10, 25, 50, 100].map((size) => (
+                  <SelectItem key={size} value={String(size)}>
+                    {size} / page
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
             <div className="flex items-center gap-1">
               <Button
-                variant="outline" size="icon" className="h-8 w-8"
-                onClick={() => setPage(1)} disabled={currentPage === 1}
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setPage(1)}
+                disabled={currentPage === 1}
               >
                 <ChevronsLeft className="h-4 w-4" />
               </Button>
               <Button
-                variant="outline" size="icon" className="h-8 w-8"
-                onClick={() => setPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
@@ -194,14 +241,20 @@ export function EnhancedDataTable<T extends Record<string, any>>({
                 {currentPage} / {totalPages}
               </span>
               <Button
-                variant="outline" size="icon" className="h-8 w-8"
-                onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>
               <Button
-                variant="outline" size="icon" className="h-8 w-8"
-                onClick={() => setPage(totalPages)} disabled={currentPage === totalPages}
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setPage(totalPages)}
+                disabled={currentPage === totalPages}
               >
                 <ChevronsRight className="h-4 w-4" />
               </Button>

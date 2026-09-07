@@ -159,10 +159,15 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
-    font-family: 'Figtree', system-ui, sans-serif;
+    font-family: "Figtree", system-ui, sans-serif;
   }
-  h1, h2, h3, h4, h5, h6 {
-    font-family: 'Figtree', system-ui, sans-serif;
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: "Figtree", system-ui, sans-serif;
     letter-spacing: -0.02em;
   }
   /* Smooth focus rings */
@@ -172,12 +177,25 @@
     border-radius: var(--radius-sm);
   }
   /* Smooth transitions on interactive elements */
-  button, a, input, select, textarea {
-    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease,
+      color 0.15s ease,
+      box-shadow 0.15s ease;
   }
   /* Better scrollbar */
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
   ::-webkit-scrollbar-thumb {
     background: var(--color-border);
     border-radius: 99px;
@@ -215,21 +233,122 @@
     font-variant-numeric: tabular-nums;
     font-feature-settings: "tnum";
   }
-  
+
   @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
-  
+
   @keyframes slideUp {
-    from { opacity: 0; transform: translateY(8px); }
-    to { opacity: 1; transform: translateY(0); }
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   @keyframes slideInRight {
-    from { opacity: 0; transform: translateX(16px); }
-    to { opacity: 1; transform: translateX(0); }
+    from {
+      opacity: 0;
+      transform: translateX(16px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
   }
 }
 
+/*
+ * Dedicated Print Layout for Reports & Statements
+ * Clean, high-contrast, document-ready styling for paper and PDF.
+ */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 10mm 12mm 10mm 12mm;
+  }
+
+  /* Reset document flow and colors */
+  html,
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    height: auto !important;
+    min-height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* Suppress screen-only interactive chrome */
+  header,
+  nav,
+  aside,
+  [data-sidebar="sidebar"],
+  [data-sidebar="container"],
+  .no-print,
+  button,
+  .dialog-close,
+  [data-slot="dialog-close"],
+  [data-radix-collection-item] {
+    display: none !important;
+  }
+
+  /* Hide backdrop overlay */
+  .fixed.inset-0.bg-black\/80,
+  div[data-state="open"] > div:first-child:not([role="dialog"]) {
+    display: none !important;
+  }
+
+  /* Break modal out of fixed positioning so it paginates naturally */
+  .print-statement-modal,
+  [role="dialog"]:has(.print-statement-modal) {
+    position: static !important;
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: none !important;
+    height: auto !important;
+    overflow: visible !important;
+    transform: none !important;
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* Table styling for clean document printing across pages */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    page-break-inside: auto;
+  }
+
+  tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  thead {
+    display: table-header-group !important;
+  }
+
+  tfoot {
+    display: table-footer-group !important;
+  }
+
+  th,
+  td {
+    padding-top: 6px !important;
+    padding-bottom: 6px !important;
+  }
+}
 

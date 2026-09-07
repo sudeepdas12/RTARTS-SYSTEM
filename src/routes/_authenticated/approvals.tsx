@@ -10,14 +10,27 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -30,7 +43,7 @@ import {
   Wallet,
   FileCheck,
   Search,
-  X
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -72,18 +85,32 @@ function ApprovalsPage() {
     queryKey: ["pending_approvals_all"],
     queryFn: async () => {
       const [pendingApprovalsRes, paymentBatchesRes] = await Promise.all([
-        supabase.from("pending_approvals").select("*").order("created_at", { ascending: false }).limit(200),
-        (supabase as any).from("payment_batches").select("id, batch_name, total_amount, total_payments, status, created_at, created_by, payment_method").order("created_at", { ascending: false }).limit(200),
+        supabase
+          .from("pending_approvals")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .limit(200),
+        (supabase as any)
+          .from("payment_batches")
+          .select(
+            "id, batch_name, total_amount, total_payments, status, created_at, created_by, payment_method",
+          )
+          .order("created_at", { ascending: false })
+          .limit(200),
       ]);
 
       const rows: Row[] = [...((pendingApprovalsRes.data ?? []) as Row[])];
-      const existingEntityIds = new Set(rows.map(r => r.entity_id).filter(Boolean));
+      const existingEntityIds = new Set(rows.map((r) => r.entity_id).filter(Boolean));
 
       // Synthesize payment batches so batches in workflow are always visible
       (paymentBatchesRes.data || []).forEach((batch: any) => {
         if (!existingEntityIds.has(batch.id)) {
           let rowStatus: Status = "Pending";
-          if (batch.status === "Approved" || batch.status === "Processed" || batch.status === "Completed") {
+          if (
+            batch.status === "Approved" ||
+            batch.status === "Processed" ||
+            batch.status === "Completed"
+          ) {
             rowStatus = "Approved";
           } else if (batch.status === "Rejected") {
             rowStatus = "Rejected";
@@ -113,7 +140,9 @@ function ApprovalsPage() {
         }
       });
 
-      return rows.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      return rows.sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      );
     },
   });
 
@@ -150,23 +179,18 @@ function ApprovalsPage() {
         (r) =>
           r.entity_type?.toLowerCase().includes(q) ||
           r.action?.toLowerCase().includes(q) ||
-          r.id.toLowerCase().includes(q)
+          r.id.toLowerCase().includes(q),
       );
     }
     return list;
   }, [allRows, status, searchTerm]);
 
   const decide = useMutation({
-    mutationFn: async ({
-      id,
-      decision,
-    }: {
-      id: string;
-      decision: "Approved" | "Rejected";
-    }) => {
+    mutationFn: async ({ id, decision }: { id: string; decision: "Approved" | "Rejected" }) => {
       if (!viewing) return;
 
-      const entityId = viewing.entity_id || (id.startsWith("batch-") ? id.replace("batch-", "") : null);
+      const entityId =
+        viewing.entity_id || (id.startsWith("batch-") ? id.replace("batch-", "") : null);
 
       // If this is a payment batch workflow, invoke the WorkflowEngine
       if (viewing.entity_type === "payment_batches" && entityId) {
@@ -175,7 +199,7 @@ function ApprovalsPage() {
           "payment_batches",
           decision === "Approved" ? "approve" : "reject",
           notes || undefined,
-          currentUser
+          currentUser,
         );
         if (!res.success) {
           throw new Error(res.error || "Workflow transition failed");
@@ -204,6 +228,9 @@ function ApprovalsPage() {
       qc.invalidateQueries({ queryKey: ["pending_approvals_all"] });
       qc.invalidateQueries({ queryKey: ["pending_batches_count"] });
       qc.invalidateQueries({ queryKey: ["payments"] });
+      qc.invalidateQueries({ queryKey: ["dividend_payables"] });
+      qc.invalidateQueries({ queryKey: ["interest_payables"] });
+      qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
       qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -217,7 +244,10 @@ function ApprovalsPage() {
           description="Maker/checker workflow — authorized roles review changes and batches requested by operators."
         />
         {!canApprove && (
-          <Badge variant="outline" className="text-xs bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300">
+          <Badge
+            variant="outline"
+            className="text-xs bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300"
+          >
             View-only access (Approver / Supervisor / Admin role required to decide)
           </Badge>
         )}
@@ -273,11 +303,16 @@ function ApprovalsPage() {
         <Card className="glass-card hover-lift border border-border/80">
           <CardContent className="p-4 flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium uppercase text-muted-foreground">Pending Payment Batches</p>
+              <p className="text-xs font-medium uppercase text-muted-foreground">
+                Pending Payment Batches
+              </p>
               <p className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-1 tabular-nums">
                 {pendingBatches.length}
               </p>
-              <Link to="/payments" className="text-[11px] text-primary hover:underline mt-0.5 inline-block">
+              <Link
+                to="/payments"
+                className="text-[11px] text-primary hover:underline mt-0.5 inline-block"
+              >
                 View batches in Payments →
               </Link>
             </div>
@@ -410,7 +445,9 @@ function ApprovalsPage() {
               <div className="grid grid-cols-2 gap-3 text-xs bg-muted/40 p-3 rounded-lg border">
                 <div>
                   <span className="text-muted-foreground font-medium">Entity Type:</span>{" "}
-                  <span className="font-semibold capitalize">{viewing.entity_type.replace(/_/g, " ")}</span>
+                  <span className="font-semibold capitalize">
+                    {viewing.entity_type.replace(/_/g, " ")}
+                  </span>
                 </div>
                 <div>
                   <span className="text-muted-foreground font-medium">Action:</span>{" "}

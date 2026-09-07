@@ -1,15 +1,24 @@
 import { supabase } from "@/integrations/supabase/client";
 import * as XLSX from "xlsx";
 import { z } from "zod";
+import { RECONCILIATION_TOLERANCE_NPR } from "./constants";
 import { detectPayeeCategory } from "./services/payable-summary";
-import { getTaxRateFromRules, investorCategoryToClassification, isExemptFromTax } from "./services/tax-rules.service";
+import {
+  getTaxRateFromRules,
+  investorCategoryToClassification,
+  isExemptFromTax,
+} from "./services/tax-rules.service";
 
 export const excelRowSchema = z
   .object({
     boid: z
       .string()
-      .min(8, "BOID must be at least 8 alphanumeric characters")
-      .regex(/^[0-9A-Za-z]+$/, "Invalid BOID format"),
+      .min(4, "BOID or Folio identifier must be at least 4 characters")
+      .max(24, "BOID or Folio identifier cannot exceed 24 characters")
+      .regex(
+        /^[0-9A-Za-z_-]+$/,
+        "Invalid BOID format (must be 16-digit Demat BOID or valid Folio identifier)",
+      ),
     full_name: z.string().min(1, "Shareholder full name is required"),
     client_code: z
       .string()
@@ -108,18 +117,18 @@ async function hasActiveRowsForUpload(
 }
 
 async function hasActiveDuplicateFileHash(fileHash: string): Promise<boolean> {
-  const { data: uploads, error } = await (supabase as any)
+  const { data, error } = await (supabase as any)
     .from("upload_history")
     .select("id, target_table")
     .eq("file_hash", fileHash)
     .eq("status", "Completed");
 
   if (error) {
-    console.warn("Duplicate-check hash probe failed:", error.message);
+    console.warn("Failed to check duplicate file hash:", error.message);
     return false;
   }
 
-  for (const upload of uploads || []) {
+  for (const upload of data || []) {
     if (await hasActiveRowsForUpload(upload.id, upload.target_table)) {
       return true;
     }
@@ -129,7 +138,7 @@ async function hasActiveDuplicateFileHash(fileHash: string): Promise<boolean> {
 }
 
 const normalizeString = (value: unknown): string => {
-  if (value === undefined || value === null) return "";
+  if (value === null || value === undefined) return "";
   return String(value).trim();
 };
 
@@ -137,45 +146,70 @@ const cleanNumeric = (value: unknown): string =>
   normalizeString(value).replace(/,/g, "").replace(/\s+/g, "");
 
 const parseNumber = (value: unknown): number | null => {
-  const cleaned = cleanNumeric(value);
-  if (!cleaned) return null;
-  const parsed = Number(cleaned);
-  return Number.isNaN(parsed) ? null : parsed;
+  if (value === null || value === undefined || value === "") return null;
+  const num = Number(value);
+  return Number.isNaN(num) ? null : num;
 };
 
 const isValidDateString = (value: string): boolean => {
   if (!value) return true;
-  const date = new Date(value);
+  const str = value.trim();
+  // Standard ISO/Nepali date format check: YYYY-MM-DD or YYYY/MM/DD or DD-MM-YYYY or DD/MM/YYYY
+  const isFormatted =
+    /^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(str) || /^\d{1,2}[-/]\d{1,2}[-/]\d{4}$/.test(str);
+  if (!isFormatted) return false;
+
+  // Bikram Sambat (BS) calendar check (years 2050 - 2150)
+  const parts = str.split(/[-/]/).map(Number);
+  const year = parts[0] > 1000 ? parts[0] : parts[2];
+  if (year >= 2050 && year <= 2150) {
+    const month = parts[0] > 1000 ? parts[1] : parts[1];
+    const day = parts[0] > 1000 ? parts[2] : parts[0];
+    return month >= 1 && month <= 12 && day >= 1 && day <= 32;
+  }
+
+  const date = new Date(str);
   return !Number.isNaN(date.getTime());
 };
 
 const isValidBoid = (value: string): boolean => {
-  return value.length >= 6 && /^[0-9A-Za-z]+$/.test(value);
+  const v = value.trim().replace(/[, -]/g, "").split(".")[0];
+  // CDSC Nepal BOID is 16 numeric digits, but also accept 6–20 characters for legacy/physical/CDS IDs
+  return v.length >= 6 && v.length <= 20 && /^[0-9A-Za-z]+$/.test(v);
 };
 
 const isValidPAN = (value: string): boolean => {
-  // Nepali PAN format: 9 digits + 1 letter (e.g., 123456789A)
-  return /^[0-9]{9}[A-Z]$/.test(value);
+  // Nepal IRD PAN format: exactly 9 numeric digits
+  return /^[0-9]{9}$/.test(value.trim());
+};
+
+const isValidNID = (value: string): boolean => {
+  // Nepal National ID (Rastriya Parichayapatra): exactly 11 numeric digits
+  return /^[0-9]{11}$/.test(value.trim());
 };
 
 const isValidCitizenship = (value: string): boolean => {
-  // Nepali citizenship: various formats, typically alphanumeric
-  return value.length >= 6 && /^[A-Za-z0-9\-\/]+$/.test(value);
+  // Nepali citizenship: various formats, typically alphanumeric with hyphens or slashes
+  return value.length >= 4 && /^[A-Za-z0-9/-]+$/.test(value.trim());
 };
 
 const isValidPhone = (value: string): boolean => {
-  // Nepali phone: 10 digits starting with 98 or 97, or with country code +977
-  const cleaned = value.replace(/[\s\-]/g, "");
-  return /^(\+977)?[97][0-9]{8}$/.test(cleaned) || /^[0-9]{10}$/.test(cleaned);
+  // Nepali phone: 10 digits starting with 98 or 97, or landline, or with country code +977
+  const cleaned = value.replace(/[\s-]/g, "");
+  return (
+    /^(\+977)?[97][0-9]{9}$/.test(cleaned) ||
+    /^[0-9]{10}$/.test(cleaned) ||
+    /^0[1-9][0-9]{7,8}$/.test(cleaned)
+  );
 };
 
 const isValidEmail = (value: string): boolean => {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 };
 
 const isValidAccountNumber = (value: string): boolean => {
   // Bank account numbers: typically 10-20 digits
-  const cleaned = value.replace(/[\s\-]/g, "");
+  const cleaned = value.replace(/[\s-]/g, "");
   return /^[0-9]{10,25}$/.test(cleaned);
 };
 
@@ -230,7 +264,7 @@ export const ValidationEngine = {
     // blob risked a second source of truth that could silently diverge from the
     // rates applied at insert time. Derive the expected rates from the rules
     // table instead, keeping the same {dividend, interest} (percent) shape.
-    let systemTdsRates = { dividend: 5, interest: 6 };
+    const systemTdsRates = { dividend: 5, interest: 6 };
     let taxRules: any[] = [];
     try {
       const { data: rules } = await (supabase as any)
@@ -239,13 +273,12 @@ export const ValidationEngine = {
         .eq("is_active", true);
       taxRules = (rules ?? []) as any[];
 
-      const ratePct =
-        (category: string, classification: string): number | null => {
-          const hit = taxRules.find(
-            (r: any) => r.payable_category === category && r.payee_classification === classification,
-          );
-          return hit?.tax_rate != null ? Number(hit.tax_rate) * 100 : null;
-        };
+      const ratePct = (category: string, classification: string): number | null => {
+        const hit = taxRules.find(
+          (r: any) => r.payable_category === category && r.payee_classification === classification,
+        );
+        return hit?.tax_rate != null ? Number(hit.tax_rate) * 100 : null;
+      };
 
       const dividendNatural = ratePct("DIVIDEND", "NATURAL_PERSON");
       const interestNatural = ratePct("INTEREST", "NATURAL_PERSON");
@@ -294,7 +327,7 @@ export const ValidationEngine = {
       isRawInputFile?: boolean;
       isPreCalculated?: boolean;
       dividendRate?: number;
-    }
+    },
   ): Promise<ValidationError[]> {
     const errors: ValidationError[] = [];
 
@@ -334,7 +367,7 @@ export const ValidationEngine = {
 
       // Clean up BOID: strip commas, spaces, decimals, and fix scientific notation if any
       let rawBoid = normalizeString(get("boid") || get("BOID"));
-      rawBoid = rawBoid.replace(/[, \-]/g, "").split(".")[0]; // Remove commas/spaces/dashes, drop decimals
+      rawBoid = rawBoid.replace(/[, -]/g, "").split(".")[0]; // Remove commas/spaces/dashes, drop decimals
       if (rawBoid.includes("e") || rawBoid.includes("E")) {
         // If Excel converted large number to scientific notation (e.g. 1.30123e+15)
         const num = Number(rawBoid);
@@ -453,7 +486,30 @@ export const ValidationEngine = {
         }
       }
 
-      // RULE 7: PAN/Citizenship validation (Soft notice)
+      // RULE 7: PAN/Citizenship/NID validation (Soft notice)
+      const panNo = normalizeString(
+        get("pan_no") || get("pan") || (pan && /^[0-9]{9}$/.test(pan) ? pan : ""),
+      );
+      const nidNo = normalizeString(get("nid_number") || get("nid"));
+
+      if (panNo && !isValidPAN(panNo)) {
+        errors.push({
+          row: rowNum,
+          field: "pan",
+          type: "invalid_pan",
+          message: `PAN "${panNo}" notice (expected 9 numeric digits).`,
+          rawData,
+        });
+      }
+      if (nidNo && !isValidNID(nidNo)) {
+        errors.push({
+          row: rowNum,
+          field: "nid_number",
+          type: "invalid_nid",
+          message: `NID "${nidNo}" notice (expected 11 numeric digits).`,
+          rawData,
+        });
+      }
       if (pan) {
         seenPans.add(pan);
       }
@@ -489,7 +545,7 @@ export const ValidationEngine = {
         });
       }
 
-      // RULE 10: Numeric field validations (Soft notice)
+      // RULE 10: Numeric field validations & precision checks (Soft notice)
       if (gross !== null && (isNaN(gross) || gross < 0)) {
         errors.push({
           row: rowNum,
@@ -498,7 +554,16 @@ export const ValidationEngine = {
           message: "Gross amount must be a valid non-negative number.",
           rawData,
         });
+      } else if (gross !== null && !hasValidAmountPrecision(gross)) {
+        errors.push({
+          row: rowNum,
+          field: "gross_amount",
+          type: "invalid_precision",
+          message: `Gross amount ${gross} has more than 2 decimal places (fractional paisa).`,
+          rawData,
+        });
       }
+
       if (tax !== null && (isNaN(tax) || tax < 0)) {
         errors.push({
           row: rowNum,
@@ -507,7 +572,16 @@ export const ValidationEngine = {
           message: "Tax amount must be a valid non-negative number.",
           rawData,
         });
+      } else if (tax !== null && !hasValidAmountPrecision(tax)) {
+        errors.push({
+          row: rowNum,
+          field: "tax_amount",
+          type: "invalid_precision",
+          message: `Tax amount ${tax} has more than 2 decimal places (fractional paisa).`,
+          rawData,
+        });
       }
+
       if (net !== null && (isNaN(net) || net < 0)) {
         errors.push({
           row: rowNum,
@@ -516,7 +590,16 @@ export const ValidationEngine = {
           message: "Net payable must be a valid non-negative number.",
           rawData,
         });
+      } else if (net !== null && !hasValidAmountPrecision(net)) {
+        errors.push({
+          row: rowNum,
+          field: "net_payable",
+          type: "invalid_precision",
+          message: `Net payable ${net} has more than 2 decimal places (fractional paisa).`,
+          rawData,
+        });
       }
+
       if (sharesHeld !== null && (isNaN(sharesHeld) || sharesHeld < 0)) {
         errors.push({
           row: rowNum,
@@ -530,7 +613,13 @@ export const ValidationEngine = {
       // RULE 10B: Payee classification enum validation
       const rawClassification = get("payee_classification");
       if (rawClassification) {
-        const validClassifications = new Set(['NATURAL_PERSON', 'PUBLIC_LEGAL_PERSON', 'COMPANY_INSTITUTION', 'TAX_EXEMPT', 'UNCLASSIFIED']);
+        const validClassifications = new Set([
+          "NATURAL_PERSON",
+          "PUBLIC_LEGAL_PERSON",
+          "COMPANY_INSTITUTION",
+          "TAX_EXEMPT",
+          "UNCLASSIFIED",
+        ]);
         if (!validClassifications.has(rawClassification.toUpperCase())) {
           errors.push({
             row: rowNum,
@@ -546,7 +635,7 @@ export const ValidationEngine = {
       if (!options?.isRawInputFile && !options?.isPreCalculated) {
         if (gross !== null && tax !== null && net !== null) {
           const expectedNet = Math.round((gross - tax) * 100) / 100;
-          if (Math.abs(expectedNet - net) > 1) {
+          if (Math.abs(expectedNet - net) > RECONCILIATION_TOLERANCE_NPR) {
             errors.push({
               row: rowNum,
               field: "net_payable",
@@ -558,7 +647,7 @@ export const ValidationEngine = {
         }
       }
 
-            // RULE 12: Tax calculation check (Soft notice)
+      // RULE 12: Tax calculation check (Soft notice)
       if (!options?.isRawInputFile && !options?.isPreCalculated) {
         const detectedCategory = detectPayeeCategory(row, fileType);
         const classification = investorCategoryToClassification(detectedCategory);

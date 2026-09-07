@@ -22,6 +22,7 @@ import {
   BarChart3,
   ShieldCheck,
   ListChecks,
+  Landmark,
 } from "lucide-react";
 import {
   Sidebar,
@@ -79,6 +80,7 @@ const sections: NavSection[] = [
       { title: "Payments", url: "/payments", icon: CreditCard },
       { title: "Bank Reconciliation", url: "/reconciliation", icon: ArrowLeftRight },
       { title: "CDSC & IAF Allotments", url: "/allocations", icon: Package },
+      { title: "AGM Historical Studio", url: "/agm-studio", icon: Landmark },
       {
         title: "Pending Approvals",
         url: "/approvals",
@@ -119,7 +121,12 @@ const sections: NavSection[] = [
     roles: ["admin", "supervisor"] as AppRole[],
     items: [
       { title: "Users & Roles", url: "/users", icon: UserCog, roles: ["admin"] as AppRole[] },
-      { title: "Fiscal Years", url: "/settings/fiscal-years", icon: Calendar, roles: ["admin", "supervisor"] as AppRole[] },
+      {
+        title: "Fiscal Years",
+        url: "/settings/fiscal-years",
+        icon: Calendar,
+        roles: ["admin", "supervisor"] as AppRole[],
+      },
       { title: "System Settings", url: "/settings", icon: Settings, roles: ["admin"] as AppRole[] },
     ],
   },
@@ -155,7 +162,11 @@ export function AppSidebar() {
     refetchInterval: 60_000,
   });
 
-  const isActive = (url: string) => pathname === url || pathname.startsWith(url + "/");
+  const isActive = (url: string) => {
+    if (pathname === url) return true;
+    if (url === "/settings") return pathname === "/settings";
+    return pathname.startsWith(url + "/");
+  };
 
   /** Returns true if the user has at least one of the required roles (admin always passes). */
   const canSee = (requiredRoles?: AppRole[]) => {
@@ -204,9 +215,7 @@ export function AppSidebar() {
                             </Badge>
                           )}
                           {item.url === "/approvals" && pendingApprovalCount > 0 && (
-                            <Badge
-                              className="ml-auto h-5 min-w-5 px-1.5 text-[10px] bg-amber-500 hover:bg-amber-600 text-white"
-                            >
+                            <Badge className="ml-auto h-5 min-w-5 px-1.5 text-[10px] bg-amber-500 hover:bg-amber-600 text-white">
                               {pendingApprovalCount}
                             </Badge>
                           )}
@@ -228,4 +237,3 @@ export function AppSidebar() {
     </Sidebar>
   );
 }
-

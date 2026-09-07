@@ -134,7 +134,10 @@ function DeleteResultsSummary({ results }: { results: BulkDeleteResult[] }) {
           </div>
           <ul className="space-y-1">
             {successes.map((r) => (
-              <li key={r.table} className="text-xs text-emerald-600 dark:text-emerald-400 flex justify-between">
+              <li
+                key={r.table}
+                className="text-xs text-emerald-600 dark:text-emerald-400 flex justify-between"
+              >
                 <span>{r.table}</span>
                 <span className="font-mono">{r.deleted.toLocaleString()}</span>
               </li>
@@ -190,35 +193,47 @@ function DataManagementPage() {
 
   const companyMap = useMemo(
     () => Object.fromEntries(companies.map((c) => [c.id, c])),
-    [companies]
+    [companies],
   );
 
   const [explorerCompanyId, setExplorerCompanyId] = useState<string>(search.companyId || "");
   const [explorerFy, setExplorerFy] = useState<string>(search.fy || "");
-  const [explorerType, setExplorerType] = useState<"dividend" | "interest" | "mutual_fund" | "all">("all");
+  const [explorerType, setExplorerType] = useState<"dividend" | "interest" | "mutual_fund" | "all">(
+    "all",
+  );
   const [explorerSearch, setExplorerSearch] = useState<string>("");
   const [explorerPage, setExplorerPage] = useState<number>(1);
 
   useEffect(() => {
-    if (search.companyId) setExplorerCompanyId(search.companyId);
-    else if (!explorerCompanyId && companies.length > 0) setExplorerCompanyId(companies[0].id);
+    if (search.companyId) {
+      setExplorerCompanyId(search.companyId);
+    } else {
+      setExplorerCompanyId((prev) => (!prev && companies.length > 0 ? companies[0].id : prev));
+    }
 
-    if (search.fy) setExplorerFy(search.fy);
-    else if (!explorerFy && fiscalYears.length > 0) setExplorerFy(fiscalYears[0]);
-  }, [search, companies, fiscalYears]);
+    if (search.fy) {
+      setExplorerFy(search.fy);
+    } else {
+      setExplorerFy((prev) => (!prev && fiscalYears.length > 0 ? fiscalYears[0] : prev));
+    }
+  }, [search.companyId, search.fy, companies, fiscalYears]);
 
   const selectedExplorerCompany = useMemo(
     () => companies.find((c) => c.id === explorerCompanyId),
-    [companies, explorerCompanyId]
+    [companies, explorerCompanyId],
   );
 
-  const { data: clientDetail = [], isLoading: detailLoading, refetch: refetchClientDetail } = useQuery({
+  const {
+    data: clientDetail = [],
+    isLoading: detailLoading,
+    refetch: refetchClientDetail,
+  } = useQuery({
     queryKey: ["client-fiscal-detail", explorerCompanyId, explorerFy, explorerType],
     queryFn: () =>
       DataManagementService.getClientFiscalDetail(
         explorerCompanyId,
         explorerFy,
-        explorerType !== "all" ? explorerType : undefined
+        explorerType !== "all" ? explorerType : undefined,
       ),
     enabled: !!explorerCompanyId && !!explorerFy,
   });
@@ -230,14 +245,14 @@ function DataManagementPage() {
       (r) =>
         r.full_name.toLowerCase().includes(q) ||
         r.boid.toLowerCase().includes(q) ||
-        r.client_code.toLowerCase().includes(q)
+        r.client_code.toLowerCase().includes(q),
     );
   }, [clientDetail, explorerSearch]);
 
   const detailPageCount = Math.max(1, Math.ceil(filteredClientDetail.length / PAGE_SIZE));
   const pagedClientDetail = filteredClientDetail.slice(
     (explorerPage - 1) * PAGE_SIZE,
-    explorerPage * PAGE_SIZE
+    explorerPage * PAGE_SIZE,
   );
 
   const [opsFy, setOpsFy] = useState<string>("all");
@@ -245,7 +260,11 @@ function DataManagementPage() {
   const [opsSearch, setOpsSearch] = useState<string>("");
   const [opsPage, setOpsPage] = useState<number>(1);
 
-  const { data: summary = [], isLoading: summaryLoading, refetch: refetchSummary } = useQuery({
+  const {
+    data: summary = [],
+    isLoading: summaryLoading,
+    refetch: refetchSummary,
+  } = useQuery({
     queryKey: ["company-fiscal-summary", opsFy],
     queryFn: () =>
       DataManagementService.getCompanyFiscalSummary(opsFy !== "all" ? opsFy : undefined),
@@ -262,7 +281,7 @@ function DataManagementPage() {
         (s) =>
           s.company_name.toLowerCase().includes(q) ||
           s.company_code.toLowerCase().includes(q) ||
-          s.fiscal_year.toLowerCase().includes(q)
+          s.fiscal_year.toLowerCase().includes(q),
       );
     }
     return data;
@@ -306,12 +325,14 @@ function DataManagementPage() {
       setShowDeleteResults(true);
 
       if (errors.length > 0) {
-        toast.error(`Operation completed with ${errors.length} error(s). ${totalDeleted} records deleted.`);
+        toast.error(
+          `Operation completed with ${errors.length} error(s). ${totalDeleted} records deleted.`,
+        );
       } else {
         toast.success(`Successfully deleted ${totalDeleted.toLocaleString()} record(s)`);
       }
     },
-    [invalidateAll]
+    [invalidateAll],
   );
 
   const bulkDelete = useMutation({
@@ -322,7 +343,7 @@ function DataManagementPage() {
           return DataManagementService.deleteByCompanyAndFiscalYear(
             deleteDialog.companyId!,
             deleteDialog.fiscalYear!,
-            { deleteOrphanClients: deleteOrphans }
+            { deleteOrphanClients: deleteOrphans },
           );
         case "company-all":
           return DataManagementService.deleteAllCompanyData(deleteDialog.companyId!);
@@ -415,7 +436,8 @@ function DataManagementPage() {
                   Also remove orphaned client records
                 </Label>
                 <p className="text-[11px] text-muted-foreground">
-                  Deletes client profiles associated with this company that have no other payable transactions.
+                  Deletes client profiles associated with this company that have no other payable
+                  transactions.
                 </p>
               </div>
             </div>
@@ -489,9 +511,12 @@ function DataManagementPage() {
               <BarChart3 className="h-5 w-5" />
             </div>
             <div>
-              <p className="text-sm font-semibold">Looking for high-level fiscal reporting and charts?</p>
+              <p className="text-sm font-semibold">
+                Looking for high-level fiscal reporting and charts?
+              </p>
               <p className="text-xs text-muted-foreground">
-                View executive KPIs, instrument distributions, and payment status progress bars in the Analytics Workspace.
+                View executive KPIs, instrument distributions, and payment status progress bars in
+                the Analytics Workspace.
               </p>
             </div>
           </div>
@@ -517,7 +542,10 @@ function DataManagementPage() {
             <Layers className="h-4 w-4" /> Data Operations & Pruning
           </TabsTrigger>
           {isAdmin && (
-            <TabsTrigger value="danger" className="gap-2 text-xs md:text-sm text-destructive data-[state=active]:text-destructive">
+            <TabsTrigger
+              value="danger"
+              className="gap-2 text-xs md:text-sm text-destructive data-[state=active]:text-destructive"
+            >
               <ShieldAlert className="h-4 w-4" /> Danger Zone
             </TabsTrigger>
           )}
@@ -537,7 +565,8 @@ function DataManagementPage() {
                     )}
                   </CardTitle>
                   <CardDescription>
-                    {filteredClientDetail.length} client transaction record{filteredClientDetail.length !== 1 ? "s" : ""} matching selection
+                    {filteredClientDetail.length} client transaction record
+                    {filteredClientDetail.length !== 1 ? "s" : ""} matching selection
                   </CardDescription>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -548,7 +577,7 @@ function DataManagementPage() {
                     onClick={() => {
                       DataManagementService.exportClientFiscalToExcel(
                         filteredClientDetail,
-                        `clients_${selectedExplorerCompany?.company_code || "export"}_${explorerFy}`
+                        `clients_${selectedExplorerCompany?.company_code || "export"}_${explorerFy}`,
                       );
                       toast.success("Client transactions exported to Excel.");
                     }}
@@ -556,15 +585,28 @@ function DataManagementPage() {
                     <Download className="h-3.5 w-3.5 mr-1.5 text-emerald-600" />
                     Export Excel
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => refetchClientDetail()} disabled={detailLoading}>
-                    <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${detailLoading ? "animate-spin" : ""}`} />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => refetchClientDetail()}
+                    disabled={detailLoading}
+                  >
+                    <RefreshCw
+                      className={`h-3.5 w-3.5 mr-1.5 ${detailLoading ? "animate-spin" : ""}`}
+                    />
                     Refresh
                   </Button>
                 </div>
               </div>
 
               <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                <Select value={explorerCompanyId} onValueChange={(v) => { setExplorerCompanyId(v); setExplorerPage(1); }}>
+                <Select
+                  value={explorerCompanyId}
+                  onValueChange={(v) => {
+                    setExplorerCompanyId(v);
+                    setExplorerPage(1);
+                  }}
+                >
                   <SelectTrigger className="h-9 text-xs">
                     <Building2 className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
                     <SelectValue placeholder="Select company" />
@@ -578,7 +620,13 @@ function DataManagementPage() {
                   </SelectContent>
                 </Select>
 
-                <Select value={explorerFy} onValueChange={(v) => { setExplorerFy(v); setExplorerPage(1); }}>
+                <Select
+                  value={explorerFy}
+                  onValueChange={(v) => {
+                    setExplorerFy(v);
+                    setExplorerPage(1);
+                  }}
+                >
                   <SelectTrigger className="h-9 text-xs">
                     <Calendar className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
                     <SelectValue placeholder="Select fiscal year" />
@@ -616,12 +664,18 @@ function DataManagementPage() {
                   <Input
                     placeholder="Search name, BOID, code…"
                     value={explorerSearch}
-                    onChange={(e) => { setExplorerSearch(e.target.value); setExplorerPage(1); }}
+                    onChange={(e) => {
+                      setExplorerSearch(e.target.value);
+                      setExplorerPage(1);
+                    }}
                     className="pl-8 h-9 text-xs"
                   />
                   {explorerSearch && (
                     <button
-                      onClick={() => { setExplorerSearch(""); setExplorerPage(1); }}
+                      onClick={() => {
+                        setExplorerSearch("");
+                        setExplorerPage(1);
+                      }}
                       className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                     >
                       <X className="h-3.5 w-3.5" />
@@ -635,7 +689,9 @@ function DataManagementPage() {
               {!explorerCompanyId || !explorerFy ? (
                 <div className="py-20 text-center text-muted-foreground">
                   <Eye className="h-12 w-12 mx-auto mb-4 opacity-20" />
-                  <p className="text-sm font-medium">Select a company and fiscal year to explore client records.</p>
+                  <p className="text-sm font-medium">
+                    Select a company and fiscal year to explore client records.
+                  </p>
                 </div>
               ) : (
                 <>
@@ -666,28 +722,48 @@ function DataManagementPage() {
                           ))
                         ) : pagedClientDetail.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={8} className="py-16 text-center text-muted-foreground">
+                            <TableCell
+                              colSpan={8}
+                              className="py-16 text-center text-muted-foreground"
+                            >
                               <FileX2 className="h-10 w-10 mx-auto mb-3 opacity-30" />
                               <p className="text-sm">No client records found for this selection.</p>
                             </TableCell>
                           </TableRow>
                         ) : (
                           pagedClientDetail.map((row, idx) => (
-                            <TableRow key={`${row.client_id}-${row.payable_type}-${idx}`} className="hover:bg-muted/30">
-                              <TableCell className="pl-6 font-medium text-sm">{row.full_name}</TableCell>
-                              <TableCell className="font-mono text-xs text-muted-foreground">{row.boid || "—"}</TableCell>
-                              <TableCell className="font-mono text-xs">{row.client_code || "—"}</TableCell>
+                            <TableRow
+                              key={`${row.client_id}-${row.payable_type}-${idx}`}
+                              className="hover:bg-muted/30"
+                            >
+                              <TableCell className="pl-6 font-medium text-sm">
+                                {row.full_name}
+                              </TableCell>
+                              <TableCell className="font-mono text-xs text-muted-foreground">
+                                {row.boid || "—"}
+                              </TableCell>
+                              <TableCell className="font-mono text-xs">
+                                {row.client_code || "—"}
+                              </TableCell>
                               <TableCell>
                                 <Badge
                                   variant="secondary"
                                   className="text-[10px] uppercase font-mono"
                                 >
-                                  {row.payable_type === "mutual_fund" ? "Mutual Fund" : row.payable_type}
+                                  {row.payable_type === "mutual_fund"
+                                    ? "Mutual Fund"
+                                    : row.payable_type}
                                 </Badge>
                               </TableCell>
-                              <TableCell className="text-right tabular-nums text-sm">{fmt(row.gross_amount)}</TableCell>
-                              <TableCell className="text-right tabular-nums text-sm text-amber-600 font-mono">{fmt(row.tax_amount)}</TableCell>
-                              <TableCell className="text-right tabular-nums text-sm font-bold text-emerald-600">{fmt(row.net_amount)}</TableCell>
+                              <TableCell className="text-right tabular-nums text-sm">
+                                {fmt(row.gross_amount)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums text-sm text-amber-600 font-mono">
+                                {fmt(row.tax_amount)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums text-sm font-bold text-emerald-600">
+                                {fmt(row.net_amount)}
+                              </TableCell>
                               <TableCell className="pr-6">
                                 <Badge
                                   variant={
@@ -718,7 +794,8 @@ function DataManagementPage() {
                   {detailPageCount > 1 && (
                     <div className="flex items-center justify-between border-t px-6 py-3">
                       <p className="text-xs text-muted-foreground">
-                        Page {explorerPage} of {detailPageCount} · {filteredClientDetail.length} rows
+                        Page {explorerPage} of {detailPageCount} · {filteredClientDetail.length}{" "}
+                        rows
                       </p>
                       <div className="flex gap-1">
                         <Button
@@ -748,8 +825,16 @@ function DataManagementPage() {
                       <div className="grid gap-3 sm:grid-cols-3">
                         {[
                           { label: "Total Gross Amount", key: "gross_amount" as const, color: "" },
-                          { label: "Total Tax (TDS)", key: "tax_amount" as const, color: "text-amber-600 font-mono" },
-                          { label: "Total Net Payable", key: "net_amount" as const, color: "text-emerald-600 font-bold" },
+                          {
+                            label: "Total Tax (TDS)",
+                            key: "tax_amount" as const,
+                            color: "text-amber-600 font-mono",
+                          },
+                          {
+                            label: "Total Net Payable",
+                            key: "net_amount" as const,
+                            color: "text-emerald-600 font-bold",
+                          },
                         ].map(({ label, key, color }) => (
                           <div key={label} className="rounded-lg border bg-background p-3">
                             <p className="text-xs text-muted-foreground">{label}</p>
@@ -774,12 +859,20 @@ function DataManagementPage() {
                 <div>
                   <CardTitle className="text-base">Company Fiscal Dataset Operations</CardTitle>
                   <CardDescription>
-                    {filteredSummary.length} dataset{filteredSummary.length !== 1 ? "s" : ""} available for client exploration and targeted deletion
+                    {filteredSummary.length} dataset{filteredSummary.length !== 1 ? "s" : ""}{" "}
+                    available for client exploration and targeted deletion
                   </CardDescription>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" size="sm" onClick={() => refetchSummary()} disabled={summaryLoading}>
-                    <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${summaryLoading ? "animate-spin" : ""}`} />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => refetchSummary()}
+                    disabled={summaryLoading}
+                  >
+                    <RefreshCw
+                      className={`h-3.5 w-3.5 mr-1.5 ${summaryLoading ? "animate-spin" : ""}`}
+                    />
                     Refresh
                   </Button>
                 </div>
@@ -791,19 +884,31 @@ function DataManagementPage() {
                   <Input
                     placeholder="Search company or FY…"
                     value={opsSearch}
-                    onChange={(e) => { setOpsSearch(e.target.value); setOpsPage(1); }}
+                    onChange={(e) => {
+                      setOpsSearch(e.target.value);
+                      setOpsPage(1);
+                    }}
                     className="pl-8 h-8 text-sm"
                   />
                   {opsSearch && (
                     <button
-                      onClick={() => { setOpsSearch(""); setOpsPage(1); }}
+                      onClick={() => {
+                        setOpsSearch("");
+                        setOpsPage(1);
+                      }}
                       className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                     >
                       <X className="h-3.5 w-3.5" />
                     </button>
                   )}
                 </div>
-                <Select value={opsFy} onValueChange={(v) => { setOpsFy(v); setOpsPage(1); }}>
+                <Select
+                  value={opsFy}
+                  onValueChange={(v) => {
+                    setOpsFy(v);
+                    setOpsPage(1);
+                  }}
+                >
                   <SelectTrigger className="w-40 h-8 text-sm">
                     <Calendar className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
                     <SelectValue placeholder="All fiscal years" />
@@ -811,11 +916,19 @@ function DataManagementPage() {
                   <SelectContent>
                     <SelectItem value="all">All fiscal years</SelectItem>
                     {fiscalYears.map((fy) => (
-                      <SelectItem key={fy} value={fy}>{fy}</SelectItem>
+                      <SelectItem key={fy} value={fy}>
+                        {fy}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                <Select value={opsCompany} onValueChange={(v) => { setOpsCompany(v); setOpsPage(1); }}>
+                <Select
+                  value={opsCompany}
+                  onValueChange={(v) => {
+                    setOpsCompany(v);
+                    setOpsPage(1);
+                  }}
+                >
                   <SelectTrigger className="w-56 h-8 text-sm">
                     <Building2 className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
                     <SelectValue placeholder="All companies" />
@@ -867,7 +980,10 @@ function DataManagementPage() {
                       </TableRow>
                     ) : (
                       pagedSummary.map((row) => (
-                        <TableRow key={`${row.company_id}|${row.fiscal_year}`} className="group hover:bg-muted/30">
+                        <TableRow
+                          key={`${row.company_id}|${row.fiscal_year}`}
+                          className="group hover:bg-muted/30"
+                        >
                           <TableCell className="pl-6">
                             <div>
                               <span className="font-medium text-sm">{row.company_name}</span>
@@ -881,9 +997,15 @@ function DataManagementPage() {
                               {row.fiscal_year}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">{fmtCount(row.dividend_count)}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">{fmtCount(row.interest_count)}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">{fmtCount(row.mutual_fund_count)}</TableCell>
+                          <TableCell className="text-right tabular-nums text-sm">
+                            {fmtCount(row.dividend_count)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-sm">
+                            {fmtCount(row.interest_count)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-sm">
+                            {fmtCount(row.mutual_fund_count)}
+                          </TableCell>
                           <TableCell className="text-right tabular-nums text-sm font-semibold text-emerald-600">
                             {fmt(row.total_paid)}
                           </TableCell>
@@ -896,7 +1018,9 @@ function DataManagementPage() {
                                 size="sm"
                                 variant="outline"
                                 className="h-7 text-xs"
-                                onClick={() => handleInspectCompanyFy(row.company_id, row.fiscal_year)}
+                                onClick={() =>
+                                  handleInspectCompanyFy(row.company_id, row.fiscal_year)
+                                }
                               >
                                 <Eye className="h-3 w-3 mr-1" />
                                 Inspect
@@ -983,7 +1107,8 @@ function DataManagementPage() {
                 <div className="flex items-center gap-2">
                   <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
                   <p className="text-sm font-medium text-destructive">
-                    All operations in this zone are irreversible. Operations are performed server-side with full audit logging.
+                    All operations in this zone are irreversible. Operations are performed
+                    server-side with full audit logging.
                   </p>
                 </div>
               </div>
@@ -991,7 +1116,9 @@ function DataManagementPage() {
               <div className="space-y-5 p-3">
                 <div>
                   <h3 className="text-sm font-semibold mb-1 flex items-center gap-2">
-                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-destructive/10 text-destructive text-[10px] font-bold">1</span>
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-destructive/10 text-destructive text-[10px] font-bold">
+                      1
+                    </span>
                     Advanced Bulk Purge
                   </h3>
                   <p className="text-xs text-muted-foreground mb-3">
@@ -1018,7 +1145,9 @@ function DataManagementPage() {
                       </div>
 
                       <div className="space-y-1.5">
-                        <Label className="text-xs font-medium">Imported On or After (optional)</Label>
+                        <Label className="text-xs font-medium">
+                          Imported On or After (optional)
+                        </Label>
                         <Input
                           type="date"
                           value={dangerDate}
@@ -1078,7 +1207,10 @@ function DataManagementPage() {
                           checked={dangerDeleteOrphans}
                           onCheckedChange={(v) => setDangerDeleteOrphans(!!v)}
                         />
-                        <Label htmlFor="del-orphans-danger" className="text-sm cursor-pointer text-orange-600 dark:text-orange-400">
+                        <Label
+                          htmlFor="del-orphans-danger"
+                          className="text-sm cursor-pointer text-orange-600 dark:text-orange-400"
+                        >
                           Clean up orphaned client records
                         </Label>
                       </div>
@@ -1090,7 +1222,13 @@ function DataManagementPage() {
                       variant="destructive"
                       size="sm"
                       onClick={handleDangerDelete}
-                      disabled={!dangerDividends && !dangerInterests && !dangerMutualFunds && !dangerClients && !dangerDeleteCompany}
+                      disabled={
+                        !dangerDividends &&
+                        !dangerInterests &&
+                        !dangerMutualFunds &&
+                        !dangerClients &&
+                        !dangerDeleteCompany
+                      }
                     >
                       <Trash2 className="h-3.5 w-3.5 mr-1.5" />
                       Execute Purge
@@ -1100,7 +1238,9 @@ function DataManagementPage() {
 
                 <div>
                   <h3 className="text-sm font-semibold mb-1 flex items-center gap-2">
-                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-destructive/10 text-destructive text-[10px] font-bold">2</span>
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-destructive/10 text-destructive text-[10px] font-bold">
+                      2
+                    </span>
                     Global Client Purge
                   </h3>
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-destructive/20 bg-red-50 dark:bg-red-950/20 p-4">

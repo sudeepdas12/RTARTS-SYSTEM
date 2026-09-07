@@ -22,25 +22,26 @@
 
 /** Granular values persisted in `clients.holder_type` (plus legacy values). */
 export type HolderTypeValue =
-  | 'Natural Person - Public'
-  | 'Natural Person - Promoter'
-  | 'Natural Person - Local'
-  | 'Natural Person - Employee'
-  | 'Natural Person - Minor'
-  | 'Natural Person - Joint Holder'
-  | 'Legal Person'
-  | 'Legal Person - Promoter'
-  | 'Mutual Fund'
-  | 'Foreign'
-  | 'Tax Exempt'
-  | 'Public'
-  | 'Promoter'
-  | 'Local'
-  | 'Employee'
-  | 'Institution';
+  | "Natural Person - Public"
+  | "Natural Person - Promoter"
+  | "Natural Person - Local"
+  | "Natural Person - Employee"
+  | "Natural Person - Minor"
+  | "Natural Person - Joint Holder"
+  | "Legal Person"
+  | "Legal Person - Promoter"
+  | "Mutual Fund"
+  | "Foreign"
+  | "Tax Exempt"
+  | "Public"
+  | "Promoter"
+  | "Local"
+  | "Employee"
+  | "Institution";
 
 /** Coarse demographic bucket shown to the user in the report. */
-export type DemographicGroup = 'Natural Person' | 'Legal Person' | 'Mutual Fund' | 'Tax Exempt' | 'Foreign' | 'Unknown';
+export type DemographicGroup =
+  "Natural Person" | "Legal Person" | "Mutual Fund" | "Tax Exempt" | "Foreign" | "Unknown";
 
 /**
  * Map the raw detected investor category (the UPPER-CASE string returned by
@@ -49,23 +50,23 @@ export type DemographicGroup = 'Natural Person' | 'Legal Person' | 'Mutual Fund'
  */
 export function mapToHolderType(category: string): HolderTypeValue | null {
   switch (category) {
-    case 'PROMOTER':
-      return 'Natural Person - Promoter';
-    case 'PUBLIC':
-      return 'Natural Person - Public';
-    case 'LOCAL':
-      return 'Natural Person - Local';
-    case 'EMPLOYEE':
-    case 'STAFF':
-      return 'Natural Person - Employee';
-    case 'INSTITUTION':
-      return 'Legal Person';
-    case 'MUTUAL_FUND':
-      return 'Mutual Fund';
-    case 'TAX_EXEMPT':
-      return 'Tax Exempt';
-    case 'FOREIGN':
-      return 'Foreign';
+    case "PROMOTER":
+      return "Natural Person - Promoter";
+    case "PUBLIC":
+      return "Natural Person - Public";
+    case "LOCAL":
+      return "Natural Person - Local";
+    case "EMPLOYEE":
+    case "STAFF":
+      return "Natural Person - Employee";
+    case "INSTITUTION":
+      return "Legal Person";
+    case "MUTUAL_FUND":
+      return "Mutual Fund";
+    case "TAX_EXEMPT":
+      return "Tax Exempt";
+    case "FOREIGN":
+      return "Foreign";
     default:
       return null;
   }
@@ -75,53 +76,55 @@ export function mapToHolderType(category: string): HolderTypeValue | null {
  * Map any stored `holder_type` value (granular OR legacy) to a coarse
  * demographic group for reporting.
  */
-export function getInvestorDemographicGroup(holderType: HolderTypeValue | string | null | undefined): DemographicGroup {
-  if (!holderType) return 'Unknown';
+export function getInvestorDemographicGroup(
+  holderType: HolderTypeValue | string | null | undefined,
+): DemographicGroup {
+  if (!holderType) return "Unknown";
   const val = String(holderType).trim();
 
   switch (val) {
-    case 'Natural Person - Public':
-    case 'Natural Person - Promoter':
-    case 'Natural Person - Local':
-    case 'Natural Person - Employee':
-    case 'Natural Person - Minor':
-    case 'Natural Person - Joint Holder':
-    case 'Public':
-    case 'Promoter':
-    case 'Local':
-    case 'Employee':
-      return 'Natural Person';
-    case 'Legal Person':
-    case 'Legal Person - Promoter':
-    case 'Institution':
-      return 'Legal Person';
-    case 'Mutual Fund':
-      return 'Mutual Fund';
-    case 'Tax Exempt':
-      return 'Tax Exempt';
-    case 'Foreign':
-      return 'Foreign';
+    case "Natural Person - Public":
+    case "Natural Person - Promoter":
+    case "Natural Person - Local":
+    case "Natural Person - Employee":
+    case "Natural Person - Minor":
+    case "Natural Person - Joint Holder":
+    case "Public":
+    case "Promoter":
+    case "Local":
+    case "Employee":
+      return "Natural Person";
+    case "Legal Person":
+    case "Legal Person - Promoter":
+    case "Institution":
+      return "Legal Person";
+    case "Mutual Fund":
+      return "Mutual Fund";
+    case "Tax Exempt":
+      return "Tax Exempt";
+    case "Foreign":
+      return "Foreign";
     default:
-      if (val.startsWith('Natural Person')) return 'Natural Person';
-      if (val.startsWith('Legal Person')) return 'Legal Person';
-      return 'Unknown';
+      if (val.startsWith("Natural Person")) return "Natural Person";
+      if (val.startsWith("Legal Person")) return "Legal Person";
+      return "Unknown";
   }
 }
 
 /** Human-friendly label used in the report summary / table columns. */
 export function demographicGroupLabel(group: DemographicGroup): string {
   switch (group) {
-    case 'Natural Person':
-      return 'Natural Person';
-    case 'Legal Person':
-      return 'Legal Person / Company';
-    case 'Mutual Fund':
-      return 'Mutual Fund';
-    case 'Tax Exempt':
-      return 'Tax Exempt';
-    case 'Foreign':
-      return 'Foreign';
+    case "Natural Person":
+      return "Natural Person";
+    case "Legal Person":
+      return "Legal Person / Company";
+    case "Mutual Fund":
+      return "Mutual Fund";
+    case "Tax Exempt":
+      return "Tax Exempt";
+    case "Foreign":
+      return "Foreign";
     default:
-      return 'Unknown';
+      return "Unknown";
   }
 }

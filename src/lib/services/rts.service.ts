@@ -1,4 +1,4 @@
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from "@/integrations/supabase/client";
 
 /**
  * Service responsible for communicating with the RTS (Regulatory Transfer System)
@@ -32,14 +32,14 @@ export const RtsService = {
     const baseUrl = import.meta.env.VITE_RTS_API_URL;
     const apiKey = import.meta.env.VITE_RTS_API_KEY;
     if (!baseUrl) {
-      console.warn('RTS API URL not configured');
+      console.warn("RTS API URL not configured");
       return;
     }
     try {
       const response = await fetch(`${baseUrl}/dividends`, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
           ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
         },
         body: JSON.stringify(payload),
@@ -49,7 +49,7 @@ export const RtsService = {
         throw new Error(`RTS submission failed: ${response.status} ${errText}`);
       }
     } catch (err) {
-      console.error('Error submitting dividend to RTS:', err);
+      console.error("Error submitting dividend to RTS:", err);
       // Re‑throw so callers can react (e.g., show toast)
       throw err;
     }

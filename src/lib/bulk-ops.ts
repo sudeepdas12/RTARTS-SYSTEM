@@ -1,5 +1,5 @@
-import { supabase } from '@/integrations/supabase/client';
-import { BULK_CHUNK_SIZE } from './constants';
+import { supabase } from "@/integrations/supabase/client";
+import { BULK_CHUNK_SIZE } from "./constants";
 
 /**
  * Split an array into smaller chunks
@@ -20,7 +20,7 @@ export async function bulkUpdateByIds(
   tableName: string,
   ids: string[],
   payload: Record<string, any>,
-  chunkSize = BULK_CHUNK_SIZE
+  chunkSize = BULK_CHUNK_SIZE,
 ): Promise<{ updatedCount: number; errors: any[] }> {
   if (!ids || ids.length === 0) return { updatedCount: 0, errors: [] };
 
@@ -31,8 +31,8 @@ export async function bulkUpdateByIds(
   for (const chunk of chunks) {
     const { error, count } = await (supabase as any)
       .from(tableName)
-      .update(payload, { count: 'exact' })
-      .in('id', chunk);
+      .update(payload, { count: "exact" })
+      .in("id", chunk);
 
     if (error) {
       errors.push(error);
@@ -50,7 +50,7 @@ export async function bulkUpdateByIds(
 export async function bulkDeleteByIds(
   tableName: string,
   ids: string[],
-  chunkSize = BULK_CHUNK_SIZE
+  chunkSize = BULK_CHUNK_SIZE,
 ): Promise<{ deletedCount: number; errors: any[] }> {
   if (!ids || ids.length === 0) return { deletedCount: 0, errors: [] };
 
@@ -61,8 +61,8 @@ export async function bulkDeleteByIds(
   for (const chunk of chunks) {
     const { error, count } = await (supabase as any)
       .from(tableName)
-      .delete({ count: 'exact' })
-      .in('id', chunk);
+      .delete({ count: "exact" })
+      .in("id", chunk);
 
     if (error) {
       errors.push(error);

@@ -1,29 +1,31 @@
-import { createClient } from '@supabase/supabase-js';
-import { smartClassify } from '../src/lib/services/smart-classifier.ts';
+import { createClient } from "@supabase/supabase-js";
+import { smartClassify } from "../src/lib/services/smart-classifier.ts";
 
-const SUPABASE_URL = process.env.SUPABASE_URL || 'http://127.0.0.1:54321';
+const SUPABASE_URL = process.env.SUPABASE_URL || "http://127.0.0.1:54321";
 const SUPABASE_SERVICE_ROLE_KEY =
   process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU';
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 async function run() {
-  console.log('=== 1. FETCHING RBBD PAYABLES & LINKED CLIENTS ===');
-  const RBBD_COMPANY_ID = 'df9080a1-4f6c-4ca0-8a30-8d3b5de24ed6';
+  console.log("=== 1. FETCHING RBBD PAYABLES & LINKED CLIENTS ===");
+  const RBBD_COMPANY_ID = "df9080a1-4f6c-4ca0-8a30-8d3b5de24ed6";
 
   const { data: rbbdPayables, error: pErr } = await supabase
-    .from('interest_payables')
-    .select('id, client_id, gross_interest, tax_amount, net_interest, payee_classification, tds_rate')
-    .eq('company_id', RBBD_COMPANY_ID);
+    .from("interest_payables")
+    .select(
+      "id, client_id, gross_interest, tax_amount, net_interest, payee_classification, tds_rate",
+    )
+    .eq("company_id", RBBD_COMPANY_ID);
 
   if (pErr) {
-    console.error('Error fetching RBBD payables:', pErr);
+    console.error("Error fetching RBBD payables:", pErr);
     return;
   }
   console.log(`Loaded ${rbbdPayables.length} RBBD interest payable records.`);
 
-  const clientIds = Array.from(new Set(rbbdPayables.map(p => p.client_id).filter(Boolean)));
+  const clientIds = Array.from(new Set(rbbdPayables.map((p) => p.client_id).filter(Boolean)));
   console.log(`Loaded ${clientIds.length} unique client IDs linked to RBBD.`);
 
   const clientMap = new Map();
@@ -34,12 +36,14 @@ async function run() {
   for (let i = 0; i < clientIds.length; i += CHUNK_SIZE) {
     const chunkIds = clientIds.slice(i, i + CHUNK_SIZE);
     const { data: clients, error: cErr } = await supabase
-      .from('clients')
-      .select('id, boid, full_name, holder_type, payee_classification, payee_segment, father_name, grandfather_name, citizenship_no, pan_no, pan_or_citizenship, date_of_birth, gender, occupation, bank_name')
-      .in('id', chunkIds);
+      .from("clients")
+      .select(
+        "id, boid, full_name, holder_type, payee_classification, payee_segment, father_name, grandfather_name, citizenship_no, pan_no, pan_or_citizenship, date_of_birth, gender, occupation, bank_name",
+      )
+      .in("id", chunkIds);
 
     if (cErr) {
-      console.error('Error fetching clients chunk:', cErr);
+      console.error("Error fetching clients chunk:", cErr);
       continue;
     }
 
@@ -86,34 +90,34 @@ async function run() {
   for (let i = 0; i < clientUpdates.length; i += 50) {
     const chunk = clientUpdates.slice(i, i + 50);
     await Promise.all(
-      chunk.map(cu =>
+      chunk.map((cu) =>
         supabase
-          .from('clients')
+          .from("clients")
           .update({
             payee_classification: cu.new_cls,
             holder_type: cu.new_holder,
             payee_segment: cu.new_segment || null,
-            classification_status: 'CONFIRMED',
+            classification_status: "CONFIRMED",
           })
-          .eq('id', cu.id)
-      )
+          .eq("id", cu.id),
+      ),
     );
   }
-  console.log('Client updates finished.');
+  console.log("Client updates finished.");
 
-  console.log('\n=== 2. UPDATING RBBD INTEREST PAYABLES ===');
+  console.log("\n=== 2. UPDATING RBBD INTEREST PAYABLES ===");
   const payableUpdates = [];
   for (const p of rbbdPayables) {
     const client = clientMap.get(p.client_id);
-    const cls = client?.new_classification || p.payee_classification || 'NATURAL_PERSON';
+    const cls = client?.new_classification || p.payee_classification || "NATURAL_PERSON";
     const gross = Number(p.gross_interest || 0);
 
     let rate = 0.06;
     let tax = 0;
-    if (cls === 'TAX_EXEMPT') {
+    if (cls === "TAX_EXEMPT") {
       rate = 0.0;
       tax = 0.0;
-    } else if (cls === 'COMPANY_INSTITUTION') {
+    } else if (cls === "COMPANY_INSTITUTION") {
       rate = 0.15;
       tax = Math.round(gross * 0.15 * 100) / 100;
     } else {
@@ -137,9 +141,9 @@ async function run() {
   for (let i = 0; i < payableUpdates.length; i += 50) {
     const chunk = payableUpdates.slice(i, i + 50);
     await Promise.all(
-      chunk.map(pu =>
+      chunk.map((pu) =>
         supabase
-          .from('interest_payables')
+          .from("interest_payables")
           .update({
             payee_classification: pu.payee_classification,
             payee_segment: pu.payee_segment,
@@ -147,26 +151,31 @@ async function run() {
             tax_amount: pu.tax_amount,
             net_interest: pu.net_interest,
             net_payable: pu.net_payable,
-            classification_status: 'CONFIRMED',
+            classification_status: "CONFIRMED",
           })
-          .eq('id', pu.id)
-      )
+          .eq("id", pu.id),
+      ),
     );
   }
-  console.log('RBBD interest payables update complete.');
+  console.log("RBBD interest payables update complete.");
 
-  console.log('\n=== 3. VERIFYING RBBD SUMMARY BREAKDOWN ===');
+  console.log("\n=== 3. VERIFYING RBBD SUMMARY BREAKDOWN ===");
   const { data: verifiedPayables } = await supabase
-    .from('interest_payables')
-    .select('id, gross_interest, tax_amount, net_interest, tds_rate, payee_classification, client:clients(full_name, boid, holder_type)')
-    .eq('company_id', RBBD_COMPANY_ID);
+    .from("interest_payables")
+    .select(
+      "id, gross_interest, tax_amount, net_interest, tds_rate, payee_classification, client:clients(full_name, boid, holder_type)",
+    )
+    .eq("company_id", RBBD_COMPANY_ID);
 
   const nonPublic = (verifiedPayables || []).filter(
-    p => p.payee_classification !== 'NATURAL_PERSON' || (p.client?.full_name || '').includes('GROWTH') || (p.client?.full_name || '').includes('NMB 50')
+    (p) =>
+      p.payee_classification !== "NATURAL_PERSON" ||
+      (p.client?.full_name || "").includes("GROWTH") ||
+      (p.client?.full_name || "").includes("NMB 50"),
   );
 
   console.table(
-    nonPublic.map(p => ({
+    nonPublic.map((p) => ({
       Name: p.client?.full_name,
       BOID: p.client?.boid,
       HolderType: p.client?.holder_type,
@@ -174,8 +183,8 @@ async function run() {
       Gross: p.gross_interest,
       Tax: p.tax_amount,
       Net: p.net_interest,
-      TaxRate: (p.tds_rate * 100).toFixed(0) + '%',
-    }))
+      TaxRate: (p.tds_rate * 100).toFixed(0) + "%",
+    })),
   );
 }
 

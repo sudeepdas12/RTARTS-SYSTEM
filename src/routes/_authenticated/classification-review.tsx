@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useDebounce } from "@/hooks/use-debounce";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,6 +45,7 @@ import {
   adminConfirmClientClassification,
   adminListTaxExceptions,
   adminRecomputePayable,
+  adminRecomputeAllPayables,
   adminFixMisclassifiedNaturalPersons,
   type PayeeClassification,
 } from "@/lib/classification-review.functions";
@@ -74,31 +76,46 @@ const classBadge = (c: string | null | undefined) => {
   switch (c) {
     case "NATURAL_PERSON":
       return (
-        <Badge variant="secondary" className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border-0">
+        <Badge
+          variant="secondary"
+          className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border-0"
+        >
           Natural Person (Public)
         </Badge>
       );
     case "PUBLIC_LEGAL_PERSON":
       return (
-        <Badge variant="secondary" className="bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300 border-0">
+        <Badge
+          variant="secondary"
+          className="bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300 border-0"
+        >
           Public Legal Person (Statutory)
         </Badge>
       );
     case "COMPANY_INSTITUTION":
       return (
-        <Badge variant="secondary" className="bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300 border-0">
+        <Badge
+          variant="secondary"
+          className="bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300 border-0"
+        >
           Legal Person (Institution)
         </Badge>
       );
     case "TAX_EXEMPT":
       return (
-        <Badge variant="secondary" className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-0">
+        <Badge
+          variant="secondary"
+          className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-0"
+        >
           Tax Exempted (Mutual Fund)
         </Badge>
       );
     case "UNCLASSIFIED":
       return (
-        <Badge variant="outline" className="text-red-600 border-red-300 bg-red-50 dark:bg-red-950/30">
+        <Badge
+          variant="outline"
+          className="text-red-600 border-red-300 bg-red-50 dark:bg-red-950/30"
+        >
           Review Required
         </Badge>
       );
@@ -110,11 +127,26 @@ const classBadge = (c: string | null | undefined) => {
 const statusBadge = (s: string | null | undefined) => {
   switch (s) {
     case "CONFIRMED":
-      return <Badge variant="outline" className="text-emerald-700 border-emerald-300">CONFIRMED</Badge>;
+      return (
+        <Badge variant="outline" className="text-emerald-700 border-emerald-300">
+          CONFIRMED
+        </Badge>
+      );
     case "AUTO_CLASSIFIED":
-      return <Badge variant="outline" className="text-sky-700 border-sky-300">AUTO</Badge>;
+      return (
+        <Badge variant="outline" className="text-sky-700 border-sky-300">
+          AUTO
+        </Badge>
+      );
     default:
-      return <Badge variant="outline" className="text-amber-700 border-amber-300 bg-amber-50 dark:bg-amber-950/30">REVIEW REQUIRED</Badge>;
+      return (
+        <Badge
+          variant="outline"
+          className="text-amber-700 border-amber-300 bg-amber-50 dark:bg-amber-950/30"
+        >
+          REVIEW REQUIRED
+        </Badge>
+      );
   }
 };
 
@@ -152,16 +184,23 @@ function ReviewRow({
       <TableCell className="font-medium text-sm">
         <div>{client.full_name}</div>
         {client.pan_or_citizenship && (
-          <span className="text-[11px] text-muted-foreground font-mono">PAN: {client.pan_or_citizenship}</span>
+          <span className="text-[11px] text-muted-foreground font-mono">
+            PAN: {client.pan_or_citizenship}
+          </span>
         )}
       </TableCell>
-      <TableCell className="font-mono text-xs text-muted-foreground">{client.boid || "—"}</TableCell>
+      <TableCell className="font-mono text-xs text-muted-foreground">
+        {client.boid || "—"}
+      </TableCell>
       <TableCell className="text-xs">{client.company?.company_name ?? "—"}</TableCell>
       <TableCell>{classBadge(client.payee_classification)}</TableCell>
       <TableCell>{statusBadge(client.classification_status)}</TableCell>
       <TableCell>
         <div className="flex flex-wrap items-center gap-2">
-          <Select value={classification} onValueChange={(v) => setClassification(v as PayeeClassification)}>
+          <Select
+            value={classification}
+            onValueChange={(v) => setClassification(v as PayeeClassification)}
+          >
             <SelectTrigger className="h-8 w-[190px] text-xs">
               <SelectValue />
             </SelectTrigger>
@@ -204,6 +243,7 @@ function ReviewRow({
 function ClassificationReviewPage() {
   const qc = useQueryClient();
   const [searchQuery, setSearchQuery] = useState("");
+  const debouncedSearchQuery = useDebounce(searchQuery, 300);
   const [companyFilter, setCompanyFilter] = useState("all");
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -248,6 +288,16 @@ function ClassificationReviewPage() {
     onError: (err: any) => toast.error(err?.message ?? "Failed to recompute payable"),
   });
 
+  const recomputeAllMutation = useMutation({
+    mutationFn: (items: { table: string; id: string }[]) =>
+      adminRecomputeAllPayables({ data: items }),
+    onSuccess: (res: any) => {
+      toast.success(`Successfully recomputed ${res.count} payable(s).`);
+      qc.invalidateQueries({ queryKey: ["classification-tax-exceptions"] });
+    },
+    onError: (err: any) => toast.error(err?.message ?? "Failed to recompute payables"),
+  });
+
   const fixLineageMutation = useMutation({
     mutationFn: () => adminFixMisclassifiedNaturalPersons({ data: undefined }),
     onSuccess: (res: any) => {
@@ -259,11 +309,8 @@ function ClassificationReviewPage() {
     onError: (err: any) => toast.error(err?.message ?? "Failed to auto-correct shareholders"),
   });
 
-  const onConfirmed = (
-    clientId: string,
-    classification: PayeeClassification,
-    segment?: string,
-  ) => confirmMutation.mutate({ clientId, classification, segment });
+  const onConfirmed = (clientId: string, classification: PayeeClassification, segment?: string) =>
+    confirmMutation.mutate({ clientId, classification, segment });
 
   // Filter distinct companies in the client list
   const companyOptions = useMemo(() => {
@@ -281,34 +328,34 @@ function ClassificationReviewPage() {
     if (companyFilter !== "all") {
       list = list.filter((c) => c.company?.company_name === companyFilter);
     }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
+    if (debouncedSearchQuery.trim()) {
+      const q = debouncedSearchQuery.toLowerCase();
       list = list.filter(
         (c) =>
           c.full_name?.toLowerCase().includes(q) ||
           c.boid?.toLowerCase().includes(q) ||
-          c.pan_or_citizenship?.toLowerCase().includes(q)
+          c.pan_or_citizenship?.toLowerCase().includes(q),
       );
     }
     return list;
-  }, [clients.data, companyFilter, searchQuery]);
+  }, [clients.data, companyFilter, debouncedSearchQuery]);
 
   const pageCount = Math.max(1, Math.ceil(filteredClients.length / PAGE_SIZE));
   const pagedClients = filteredClients.slice(
     (currentPage - 1) * PAGE_SIZE,
-    currentPage * PAGE_SIZE
+    currentPage * PAGE_SIZE,
   );
 
   const handleExportReviewList = () => {
     if (filteredClients.length === 0) return;
     const rows = filteredClients.map((c) => ({
       "Shareholder Name": c.full_name,
-      "BOID": c.boid,
+      BOID: c.boid,
       "PAN / Citizenship": c.pan_or_citizenship || "",
-      "Company": c.company?.company_name || "",
+      Company: c.company?.company_name || "",
       "Current Classification": c.payee_classification || "",
-      "Segment": c.payee_segment || "",
-      "Status": c.classification_status || "",
+      Segment: c.payee_segment || "",
+      Status: c.classification_status || "",
     }));
     exportToExcel(rows, `classification_review_${new Date().toISOString().slice(0, 10)}`);
     toast.success("Classification review list exported.");
@@ -330,7 +377,9 @@ function ClassificationReviewPage() {
               <p className="text-2xl font-bold text-amber-600 mt-1 tabular-nums">
                 {clients.data?.length ?? 0}
               </p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">Shareholders awaiting decision</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Shareholders awaiting decision
+              </p>
             </div>
             <div className="p-3 bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400 rounded-xl">
               <ClipboardCheck className="h-5 w-5" />
@@ -345,7 +394,9 @@ function ClassificationReviewPage() {
               <p className="text-2xl font-bold text-red-600 mt-1 tabular-nums">
                 {exceptions.data?.length ?? 0}
               </p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">Payables with mathematical mismatch</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Payables with mathematical mismatch
+              </p>
             </div>
             <div className="p-3 bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400 rounded-xl">
               <AlertTriangle className="h-5 w-5" />
@@ -361,7 +412,9 @@ function ClassificationReviewPage() {
                 {(clients.data?.length ?? 0) === 0 ? "100%" : "Active"}
               </p>
               <p className="text-[11px] text-muted-foreground mt-0.5">
-                {(clients.data?.length ?? 0) === 0 ? "All shareholders verified" : "Manual verification active"}
+                {(clients.data?.length ?? 0) === 0
+                  ? "All shareholders verified"
+                  : "Manual verification active"}
               </p>
             </div>
             <div className="p-3 bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 rounded-xl">
@@ -381,7 +434,10 @@ function ClassificationReviewPage() {
               </Badge>
             ) : null}
           </TabsTrigger>
-          <TabsTrigger value="exceptions" className="gap-2 text-amber-600 data-[state=active]:text-amber-600">
+          <TabsTrigger
+            value="exceptions"
+            className="gap-2 text-amber-600 data-[state=active]:text-amber-600"
+          >
             <AlertTriangle className="w-4 h-4" /> Tax Exceptions
             {exceptions.data?.length ? (
               <Badge variant="destructive" className="ml-1 px-1.5 py-0 text-[10px]">
@@ -401,7 +457,8 @@ function ClassificationReviewPage() {
                 <div>
                   <CardTitle className="text-base">Shareholders Pending Classification</CardTitle>
                   <CardDescription>
-                    Confirming updates the shareholder master and automatically recomputes TDS for all associated payables.
+                    Confirming updates the shareholder master and automatically recomputes TDS for
+                    all associated payables.
                   </CardDescription>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -413,7 +470,9 @@ function ClassificationReviewPage() {
                     disabled={fixLineageMutation.isPending}
                     title="Automatically detect and correct natural persons with family names who were misclassified as tax-exempt"
                   >
-                    <Sparkles className={`h-3.5 w-3.5 mr-1.5 ${fixLineageMutation.isPending ? "animate-spin" : "text-emerald-600"}`} />
+                    <Sparkles
+                      className={`h-3.5 w-3.5 mr-1.5 ${fixLineageMutation.isPending ? "animate-spin" : "text-emerald-600"}`}
+                    />
                     {fixLineageMutation.isPending ? "Correcting..." : "Auto-Fix Natural Persons"}
                   </Button>
                   <Button
@@ -434,7 +493,9 @@ function ClassificationReviewPage() {
                     }}
                     disabled={clients.isLoading}
                   >
-                    <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${clients.isLoading ? "animate-spin" : ""}`} />
+                    <RefreshCw
+                      className={`h-3.5 w-3.5 mr-1.5 ${clients.isLoading ? "animate-spin" : ""}`}
+                    />
                     Refresh
                   </Button>
                 </div>
@@ -498,7 +559,9 @@ function ClassificationReviewPage() {
               ) : filteredClients.length === 0 ? (
                 <div className="py-16 text-center text-muted-foreground">
                   <CheckCircle2 className="h-10 w-10 mx-auto mb-3 text-emerald-500 opacity-80" />
-                  <p className="text-sm font-semibold text-foreground">No shareholders need review</p>
+                  <p className="text-sm font-semibold text-foreground">
+                    No shareholders need review
+                  </p>
                   <p className="text-xs text-muted-foreground mt-1">
                     Every shareholder is classified with authoritative tax rules.
                   </p>
@@ -514,7 +577,9 @@ function ClassificationReviewPage() {
                           <TableHead>Company</TableHead>
                           <TableHead>Current</TableHead>
                           <TableHead>Status</TableHead>
-                          <TableHead className="pr-6 w-[430px]">Confirm Classification & Segment</TableHead>
+                          <TableHead className="pr-6 w-[430px]">
+                            Confirm Classification & Segment
+                          </TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -570,11 +635,56 @@ function ClassificationReviewPage() {
         <TabsContent value="exceptions" className="space-y-4">
           <Card>
             <CardHeader className="pb-4">
-              <CardTitle className="text-base">Tax / TDS Consistency Exceptions</CardTitle>
-              <CardDescription>
-                Payables where the stored amounts disagree with statutory rules (net ≠ gross − tax, or tax ≠ gross × rate).
-                Click Recompute to recalculate and fix discrepancies immediately.
-              </CardDescription>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <CardTitle className="text-base">Tax / TDS Consistency Exceptions</CardTitle>
+                  <CardDescription>
+                    Payables where the stored amounts disagree with statutory rules (net ≠ gross − tax,
+                    or tax ≠ gross × rate). Click Recompute to recalculate and fix discrepancies
+                    immediately.
+                  </CardDescription>
+                </div>
+                {exceptions.data && exceptions.data.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="h-8 text-xs bg-amber-600 hover:bg-amber-700 text-white"
+                      disabled={recomputeAllMutation.isPending}
+                      onClick={() => {
+                        const items = exceptions.data.map((r: any) => ({
+                          table: r.table,
+                          id: r.id,
+                        }));
+                        recomputeAllMutation.mutate(items);
+                      }}
+                    >
+                      <RefreshCw
+                        className={`w-3.5 h-3.5 mr-1.5 ${
+                          recomputeAllMutation.isPending ? "animate-spin" : ""
+                        }`}
+                      />
+                      {recomputeAllMutation.isPending
+                        ? "Recomputing All..."
+                        : `Recompute All (${exceptions.data.length})`}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs"
+                      onClick={() =>
+                        qc.invalidateQueries({ queryKey: ["classification-tax-exceptions"] })
+                      }
+                      disabled={exceptions.isLoading}
+                    >
+                      <RefreshCw
+                        className={`w-3.5 h-3.5 mr-1.5 ${exceptions.isLoading ? "animate-spin" : ""}`}
+                      />
+                      Refresh
+                    </Button>
+                  </div>
+                )}
+              </div>
             </CardHeader>
             <CardContent className="px-0 pb-0">
               {exceptions.isLoading ? (
@@ -585,7 +695,9 @@ function ClassificationReviewPage() {
               ) : !exceptions.data || exceptions.data.length === 0 ? (
                 <div className="py-16 text-center text-muted-foreground">
                   <CheckCircle2 className="h-10 w-10 mx-auto mb-3 text-emerald-500 opacity-80" />
-                  <p className="text-sm font-semibold text-foreground">No consistency exceptions found</p>
+                  <p className="text-sm font-semibold text-foreground">
+                    No consistency exceptions found
+                  </p>
                   <p className="text-xs text-muted-foreground mt-1">
                     All payables match regulatory TDS math across all companies.
                   </p>
@@ -610,20 +722,36 @@ function ClassificationReviewPage() {
                       {exceptions.data.map((row: any) => (
                         <TableRow key={`${row.table}-${row.id}`} className="hover:bg-muted/30">
                           <TableCell className="pl-6 font-medium text-sm">{row.payee}</TableCell>
-                          <TableCell className="text-xs capitalize font-mono">{row.table.replace("_payables", "")}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">{row.gross.toFixed(2)}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm text-amber-600 font-mono">{row.tax.toFixed(2)}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm font-bold text-emerald-600">{row.net.toFixed(2)}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">{row.tds_rate != null ? `${(Number(row.tds_rate) * 100).toFixed(0)}%` : "—"}</TableCell>
+                          <TableCell className="text-xs capitalize font-mono">
+                            {row.table.replace("_payables", "")}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-sm">
+                            {Number(row.gross ?? 0).toFixed(2)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-sm text-amber-600 font-mono">
+                            {Number(row.tax ?? 0).toFixed(2)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-sm font-bold text-emerald-600">
+                            {Number(row.net ?? 0).toFixed(2)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-sm">
+                            {row.tds_rate != null
+                              ? `${(Number(row.tds_rate) * 100).toFixed(0)}%`
+                              : "—"}
+                          </TableCell>
                           <TableCell>{classBadge(row.classification)}</TableCell>
-                          <TableCell className="text-xs text-amber-700 dark:text-amber-400 font-medium">{row.reason}</TableCell>
+                          <TableCell className="text-xs text-amber-700 dark:text-amber-400 font-medium">
+                            {row.reason}
+                          </TableCell>
                           <TableCell className="pr-6 text-right">
                             <Button
                               size="sm"
                               variant="outline"
                               className="h-7 text-xs"
                               disabled={recomputeMutation.isPending}
-                              onClick={() => recomputeMutation.mutate({ table: row.table, id: row.id })}
+                              onClick={() =>
+                                recomputeMutation.mutate({ table: row.table, id: row.id })
+                              }
                             >
                               <RefreshCw className="w-3 h-3 mr-1" /> Recompute
                             </Button>
@@ -641,4 +769,3 @@ function ClassificationReviewPage() {
     </div>
   );
 }
-

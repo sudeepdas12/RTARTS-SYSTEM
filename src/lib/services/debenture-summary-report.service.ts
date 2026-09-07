@@ -1,10 +1,21 @@
-import * as XLSX from 'xlsx';
-import { PdfGenerator } from '@/lib/pdf-generator';
-import { smartClassify } from './smart-classifier';
+import * as XLSX from "xlsx";
+import { PdfGenerator } from "@/lib/pdf-generator";
+import { smartClassify } from "./smart-classifier";
+
+export type DebentureParticular =
+  | "PUBLIC"
+  | "INSTITUTION"
+  | "MUTUAL FUND"
+  | "PROMOTER"
+  | "LOCAL"
+  | "EMPLOYEE"
+  | "TAX_EXEMPTED"
+  | "PRIVATE"
+  | "OTHER";
 
 export interface DebentureSummaryRow {
   name: string;
-  category: 'PUBLIC' | 'PRIVATE' | 'MUTUAL_FUND' | 'TAX_EXEMPTED' | 'OTHER';
+  category: DebentureParticular;
   kitta: number;
   principalAmount: number;
   annualInterest: number;
@@ -38,21 +49,41 @@ export interface DebentureSummaryReport {
   };
 }
 
-export type DebentureParticular = 'PUBLIC' | 'INSTITUTION' | 'MUTUAL FUND' | 'PROMOTER' | 'LOCAL' | 'EMPLOYEE';
-
 export function determineDebentureCategory(p: any): DebentureParticular {
-  const lot = String(p.lot_name || '').trim().toUpperCase();
-  const holder = String(p.client?.holder_type || p.holder_type || '').toUpperCase();
-  const segment = String(p.payee_segment || p.client?.payee_segment || '').toUpperCase();
+  const lot = String(p.lot_name || "")
+    .trim()
+    .toUpperCase();
+  const holder = String(p.client?.holder_type || p.holder_type || "").toUpperCase();
+  const segment = String(p.payee_segment || p.client?.payee_segment || "").toUpperCase();
 
-  if (lot.includes('PROMOTER') || lot.includes('PROMOT') || holder.includes('PROMOT') || segment === 'PROMOTER') return 'PROMOTER';
-  if (lot.includes('LOCAL') || lot.includes('UNVERIFIED') || holder.includes('LOCAL') || segment === 'LOCAL') return 'LOCAL';
-  if (lot.includes('STAFF') || lot.includes('EMPLOYEE') || holder.includes('EMPLOYEE') || holder.includes('STAFF') || segment === 'EMPLOYEE') return 'EMPLOYEE';
+  if (
+    lot.includes("PROMOTER") ||
+    lot.includes("PROMOT") ||
+    holder.includes("PROMOT") ||
+    segment === "PROMOTER"
+  )
+    return "PROMOTER";
+  if (
+    lot.includes("LOCAL") ||
+    lot.includes("UNVERIFIED") ||
+    holder.includes("LOCAL") ||
+    segment === "LOCAL"
+  )
+    return "LOCAL";
+  if (
+    lot.includes("STAFF") ||
+    lot.includes("EMPLOYEE") ||
+    holder.includes("EMPLOYEE") ||
+    holder.includes("STAFF") ||
+    segment === "EMPLOYEE"
+  )
+    return "EMPLOYEE";
 
   const explicitClass = p.payee_classification || p.client?.payee_classification;
-  if (explicitClass === 'TAX_EXEMPT') return 'MUTUAL FUND';
-  if (explicitClass === 'COMPANY_INSTITUTION') return 'INSTITUTION';
-  if (explicitClass === 'NATURAL_PERSON' || explicitClass === 'PUBLIC_LEGAL_PERSON') return 'PUBLIC';
+  if (explicitClass === "TAX_EXEMPT") return "MUTUAL FUND";
+  if (explicitClass === "COMPANY_INSTITUTION") return "INSTITUTION";
+  if (explicitClass === "NATURAL_PERSON" || explicitClass === "PUBLIC_LEGAL_PERSON")
+    return "PUBLIC";
 
   const result = smartClassify({
     full_name: p.client?.full_name || p.full_name,
@@ -64,12 +95,18 @@ export function determineDebentureCategory(p: any): DebentureParticular {
     lot_name: p.lot_name,
   });
 
-  if (result.payee_classification === 'TAX_EXEMPT' || result.payee_category === 'MUTUAL_FUND') return 'MUTUAL FUND';
-  if (result.payee_classification === 'COMPANY_INSTITUTION' || result.payee_category === 'INSTITUTION' || result.payee_category === 'FOREIGN') return 'INSTITUTION';
-  if (result.payee_category === 'PROMOTER') return 'PROMOTER';
-  if (result.payee_category === 'LOCAL') return 'LOCAL';
-  if (result.payee_category === 'EMPLOYEE') return 'EMPLOYEE';
-  return 'PUBLIC';
+  if (result.payee_classification === "TAX_EXEMPT" || result.payee_category === "MUTUAL_FUND")
+    return "MUTUAL FUND";
+  if (
+    result.payee_classification === "COMPANY_INSTITUTION" ||
+    result.payee_category === "INSTITUTION" ||
+    result.payee_category === "FOREIGN"
+  )
+    return "INSTITUTION";
+  if (result.payee_category === "PROMOTER") return "PROMOTER";
+  if (result.payee_category === "LOCAL") return "LOCAL";
+  if (result.payee_category === "EMPLOYEE") return "EMPLOYEE";
+  return "PUBLIC";
 }
 
 export const DebentureSummaryReportService = {
@@ -78,12 +115,12 @@ export const DebentureSummaryReportService = {
    */
   generateReportFromPayables(
     payables: any[],
-    companyName = 'All Debentures',
-    companyCode = '',
-    fiscalYear = '',
+    companyName = "All Debentures",
+    companyCode = "",
+    fiscalYear = "",
     overrideCouponRate?: number,
     overrideFaceValue = 1000,
-    overrideDays?: number
+    overrideDays?: number,
   ): DebentureSummaryReport {
     const fv = overrideFaceValue || 1000;
 
@@ -112,20 +149,21 @@ export const DebentureSummaryReportService = {
 
     // Detect coupon rate if not overridden
     let detectedCouponRate = overrideCouponRate || 0;
-    const isAll = !companyCode || companyCode === 'All' || (companyName || '').toLowerCase().includes('all');
+    const isAll =
+      !companyCode || companyCode === "All" || (companyName || "").toLowerCase().includes("all");
 
     if (!detectedCouponRate && !isAll) {
       // 1. Try to extract coupon rate from company name (e.g. "8.5% RBB", "8 5%", "8.75% PRIME", "10% DEBENTURE")
-      const nameMatch = (companyName || '').match(/(\d+(?:[.\s]\d+)?)\s*%/);
+      const nameMatch = (companyName || "").match(/(\d+(?:[.\s]\d+)?)\s*%/);
       if (nameMatch) {
-        detectedCouponRate = parseFloat(nameMatch[1].replace(/\s+/, '.'));
+        detectedCouponRate = parseFloat(nameMatch[1].replace(/\s+/, "."));
       }
     }
     if (!detectedCouponRate && !isAll) {
       for (const p of payables) {
-        const refMatch = (p.instrument_ref || '').match(/(\d+(?:[.\s]\d+)?)\s*%/);
+        const refMatch = (p.instrument_ref || "").match(/(\d+(?:[.\s]\d+)?)\s*%/);
         if (refMatch) {
-          detectedCouponRate = parseFloat(refMatch[1].replace(/\s+/, '.'));
+          detectedCouponRate = parseFloat(refMatch[1].replace(/\s+/, "."));
           break;
         }
         const rate = Number(p.interest_rate_value || p.interest_rate || 0);
@@ -141,12 +179,12 @@ export const DebentureSummaryReportService = {
       label: string;
       taxRatePercent: number;
     }> = [
-      { key: 'PUBLIC', label: 'PUBLIC', taxRatePercent: 6 },
-      { key: 'INSTITUTION', label: 'INSTITUTION', taxRatePercent: 15 },
-      { key: 'MUTUAL FUND', label: 'MUTUAL FUND', taxRatePercent: 0 },
-      { key: 'PROMOTER', label: 'PROMOTER', taxRatePercent: 6 },
-      { key: 'LOCAL', label: 'LOCAL', taxRatePercent: 6 },
-      { key: 'EMPLOYEE', label: 'EMPLOYEE', taxRatePercent: 6 },
+      { key: "PUBLIC", label: "PUBLIC", taxRatePercent: 6 },
+      { key: "INSTITUTION", label: "INSTITUTION", taxRatePercent: 15 },
+      { key: "MUTUAL FUND", label: "MUTUAL FUND", taxRatePercent: 0 },
+      { key: "PROMOTER", label: "PROMOTER", taxRatePercent: 6 },
+      { key: "LOCAL", label: "LOCAL", taxRatePercent: 6 },
+      { key: "EMPLOYEE", label: "EMPLOYEE", taxRatePercent: 6 },
     ];
 
     const groups = new Map<
@@ -179,7 +217,7 @@ export const DebentureSummaryReportService = {
     for (const p of payables) {
       const cat = determineDebentureCategory(p);
       const clientId = p.client_id || p.id || crypto.randomUUID();
-      
+
       let kitta = Number(p.shares_held || p.kitta || p.client?.kitta || 0);
       let gross = Number(p.gross_interest || 0);
       let tax = Number(p.tax_amount || 0);
@@ -188,9 +226,11 @@ export const DebentureSummaryReportService = {
 
       // If rowRate is 0, attempt to parse percentage from instrument_ref or company name
       if (!rowRate) {
-        const refMatch = String(p.instrument_ref || p.company?.company_name || '').match(/(\d+(?:[.\s]\d+)?)\s*%/);
+        const refMatch = String(p.instrument_ref || p.company?.company_name || "").match(
+          /(\d+(?:[.\s]\d+)?)\s*%/,
+        );
         if (refMatch) {
-          rowRate = parseFloat(refMatch[1].replace(/\s+/, '.'));
+          rowRate = parseFloat(refMatch[1].replace(/\s+/, "."));
         }
       }
 
@@ -207,13 +247,13 @@ export const DebentureSummaryReportService = {
         if (kitta === 0) kitta = Math.round(principal / fv);
       }
 
-      let annualInt = rowRate > 0 ? principal * (rowRate / 100) : gross;
+      const annualInt = rowRate > 0 ? principal * (rowRate / 100) : gross;
 
       if (gross === 0 && kitta > 0) {
         gross = annualInt;
       }
-      if (tax === 0 && gross > 0 && cat !== 'MUTUAL FUND') {
-        const ratePct = cat === 'INSTITUTION' ? 0.15 : 0.06;
+      if (tax === 0 && gross > 0 && cat !== "MUTUAL FUND") {
+        const ratePct = cat === "INSTITUTION" ? 0.15 : 0.06;
         tax = Math.round(gross * ratePct * 100) / 100;
       }
       if (net === 0 && gross > 0) {
@@ -254,16 +294,27 @@ export const DebentureSummaryReportService = {
 
       const principal = g.principal;
       const annualInt = g.annualInterest;
-      const intPerDay = Math.round((annualInt / 365) * 100) / 100;
-      const comp = grandKitta > 0 ? Math.round((g.kitta / grandKitta) * 10000) / 100 : 0;
+      const rawIntPerDay = annualInt / 365;
+      const intPerDay = Math.round((rawIntPerDay + Number.EPSILON) * 100) / 100;
+      const comp =
+        grandKitta > 0 ? Math.round((g.kitta / grandKitta) * 10000 + Number.EPSILON) / 100 : 0;
 
-      const periodGross = overrideDays && overrideDays > 0 ? Math.round(intPerDay * overrideDays * 100) / 100 : g.gross;
-      const periodTax = overrideDays && overrideDays > 0
-        ? (cfg.taxRatePercent > 0 ? Math.round(periodGross * (cfg.taxRatePercent / 100) * 100) / 100 : 0)
-        : g.tax;
-      const periodNet = overrideDays && overrideDays > 0
-        ? Math.round((periodGross - periodTax) * 100) / 100
-        : (g.net > 0 ? g.net : Math.round((periodGross - periodTax) * 100) / 100);
+      const periodGross =
+        overrideDays && overrideDays > 0
+          ? Math.round((rawIntPerDay * overrideDays + Number.EPSILON) * 100) / 100
+          : g.gross;
+      const periodTax =
+        overrideDays && overrideDays > 0
+          ? cfg.taxRatePercent > 0
+            ? Math.round((periodGross * (cfg.taxRatePercent / 100) + Number.EPSILON) * 100) / 100
+            : 0
+          : g.tax;
+      const periodNet =
+        overrideDays && overrideDays > 0
+          ? Math.round((periodGross - periodTax + Number.EPSILON) * 100) / 100
+          : g.net > 0
+            ? g.net
+            : Math.round((periodGross - periodTax + Number.EPSILON) * 100) / 100;
 
       rows.push({
         name: cfg.label,
@@ -312,7 +363,16 @@ export const DebentureSummaryReportService = {
    */
   exportToExcel(report: DebentureSummaryReport): void {
     const aoa: (string | number)[][] = [
-      ['NAME', 'KITTA', 'AMOUNT', 'ANNUAL INTEREST', 'INT. PER DAY', 'INTEREST PUMORI', 'TAX', 'NET INTEREST PAYABLE'],
+      [
+        "NAME",
+        "KITTA",
+        "AMOUNT",
+        "ANNUAL INTEREST",
+        "INT. PER DAY",
+        "INTEREST PUMORI",
+        "TAX",
+        "NET INTEREST PAYABLE",
+      ],
       ...report.rows.map((r) => [
         r.name,
         r.kitta,
@@ -320,11 +380,11 @@ export const DebentureSummaryReportService = {
         r.annualInterest,
         r.interestPerDay,
         r.grossInterest,
-        r.taxAmount > 0 ? r.taxAmount : '-',
+        r.taxAmount > 0 ? r.taxAmount : "-",
         r.netInterestPayable,
       ]),
       [
-        'TOTAL',
+        "TOTAL",
         report.total.kitta,
         report.total.principalAmount,
         report.total.annualInterest,
@@ -336,7 +396,7 @@ export const DebentureSummaryReportService = {
     ];
 
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [
+    ws["!cols"] = [
       { wch: 22 }, // NAME
       { wch: 18 }, // KITTA
       { wch: 22 }, // AMOUNT
@@ -347,20 +407,23 @@ export const DebentureSummaryReportService = {
       { wch: 22 }, // NET INTEREST PAYABLE
     ];
 
-    const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+    const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
     for (let c = 1; c <= 7; c++) {
       for (let r = 1; r <= range.e.r; r++) {
         const addr = XLSX.utils.encode_cell({ r, c });
-        if (ws[addr] && typeof ws[addr].v === 'number') {
-          ws[addr].z = '#,##0.00';
+        if (ws[addr] && typeof ws[addr].v === "number") {
+          ws[addr].z = "#,##0.00";
         }
       }
     }
 
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'DEBENTURE SUMMARY');
-    const safeCode = (report.companyCode || report.companyName || 'Debenture').replace(/[^a-zA-Z0-9_-]/g, '_');
-    XLSX.writeFile(wb, safeCode + '_Debenture_Interest_Summary.xlsx');
+    XLSX.utils.book_append_sheet(wb, ws, "DEBENTURE SUMMARY");
+    const safeCode = (report.companyCode || report.companyName || "Debenture").replace(
+      /[^a-zA-Z0-9_-]/g,
+      "_",
+    );
+    XLSX.writeFile(wb, safeCode + "_Debenture_Interest_Summary.xlsx");
   },
 
   /**
@@ -368,20 +431,20 @@ export const DebentureSummaryReportService = {
    */
   exportToPdf(report: DebentureSummaryReport): void {
     const fmtNr = (n: number) =>
-      Number(n || 0).toLocaleString('en-IN', {
+      Number(n || 0).toLocaleString("en-IN", {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
       });
 
     const columns = [
-      { header: 'Holder Category', dataKey: 'name' },
-      { header: 'Kitta', dataKey: 'kitta' },
-      { header: 'Principal Amount', dataKey: 'principalAmount' },
-      { header: 'Annual Interest', dataKey: 'annualInterest' },
-      { header: 'Int. Per Day', dataKey: 'interestPerDay' },
-      { header: 'Gross Interest', dataKey: 'grossInterest' },
-      { header: 'Tax Withheld', dataKey: 'taxAmount' },
-      { header: 'Net Payable', dataKey: 'netInterestPayable' },
+      { header: "Holder Category", dataKey: "name" },
+      { header: "Kitta", dataKey: "kitta" },
+      { header: "Principal Amount", dataKey: "principalAmount" },
+      { header: "Annual Interest", dataKey: "annualInterest" },
+      { header: "Int. Per Day", dataKey: "interestPerDay" },
+      { header: "Gross Interest", dataKey: "grossInterest" },
+      { header: "Tax Withheld", dataKey: "taxAmount" },
+      { header: "Net Payable", dataKey: "netInterestPayable" },
     ];
 
     const tableData = report.rows.map((r) => ({
@@ -391,12 +454,12 @@ export const DebentureSummaryReportService = {
       annualInterest: fmtNr(r.annualInterest),
       interestPerDay: fmtNr(r.interestPerDay),
       grossInterest: fmtNr(r.grossInterest),
-      taxAmount: r.taxAmount > 0 ? fmtNr(r.taxAmount) : '-',
+      taxAmount: r.taxAmount > 0 ? fmtNr(r.taxAmount) : "-",
       netInterestPayable: fmtNr(r.netInterestPayable),
     }));
 
     tableData.push({
-      name: 'TOTAL',
+      name: "TOTAL",
       kitta: fmtNr(report.total.kitta),
       principalAmount: fmtNr(report.total.principalAmount),
       annualInterest: fmtNr(report.total.annualInterest),
@@ -408,13 +471,18 @@ export const DebentureSummaryReportService = {
 
     PdfGenerator.generate(
       {
-        title: 'Debenture Interest Distribution Summary Report',
-        subtitle: (report.companyName || '') + ' (' + (report.companyCode || 'ALL') + ')' + (report.fiscalYear ? ' — FY ' + report.fiscalYear : ''),
-        companyName: report.companyName || 'RTARTS System',
-        generatedBy: 'RTARTS System',
+        title: "Debenture Interest Distribution Summary Report",
+        subtitle:
+          (report.companyName || "") +
+          " (" +
+          (report.companyCode || "ALL") +
+          ")" +
+          (report.fiscalYear ? " — FY " + report.fiscalYear : ""),
+        companyName: report.companyName || "RTARTS System",
+        generatedBy: "RTARTS System",
       },
       columns,
-      tableData
+      tableData,
     );
   },
 };

@@ -35,7 +35,12 @@ const routes = [
   { title: "Debenture Interest", url: "/interest", icon: Wallet, group: "Payables" },
   { title: "Stock Dividend", url: "/dividend", icon: LineChart, group: "Payables" },
   { title: "Mutual Fund", url: "/mutual-fund", icon: Coins, group: "Payables" },
-  { title: "Bank Reconciliation", url: "/reconciliation", icon: ArrowLeftRight, group: "Operations" },
+  {
+    title: "Bank Reconciliation",
+    url: "/reconciliation",
+    icon: ArrowLeftRight,
+    group: "Operations",
+  },
   { title: "IAF Allocations", url: "/allocations", icon: Coins, group: "Operations" },
   { title: "Pending Approvals", url: "/approvals", icon: ClipboardCheck, group: "Operations" },
   { title: "Uploads", url: "/uploads", icon: Upload, group: "Operations" },
@@ -45,7 +50,13 @@ const routes = [
   { title: "Fiscal Years", url: "/settings/fiscal-years", icon: Calendar, group: "Administration" },
 ];
 
-export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+export function CommandPalette({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
   const navigate = useNavigate();
   const { theme, setTheme } = useTheme();
 
@@ -81,7 +92,11 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
               onOpenChange(false);
             }}
           >
-            {theme === "dark" ? <Sun className="mr-2 h-4 w-4" /> : <Moon className="mr-2 h-4 w-4" />}
+            {theme === "dark" ? (
+              <Sun className="mr-2 h-4 w-4" />
+            ) : (
+              <Moon className="mr-2 h-4 w-4" />
+            )}
             Toggle {theme === "dark" ? "light" : "dark"} mode
           </CommandItem>
         </CommandGroup>

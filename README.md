@@ -32,12 +32,12 @@ supabase status
 
 Typical local endpoints:
 
-| Part        | URL / connection                                                        |
-|-------------|-------------------------------------------------------------------------|
-| API / REST  | `http://127.0.0.1:54321/rest/v1`                                        |
-| Studio (UI) | `http://127.0.0.1:54323` (SQL editor here)                              |
-| Postgres    | `postgresql://postgres:postgres@127.0.0.1:54322/postgres`               |
-| Mailpit     | `http://127.0.0.1:54324`                                                |
+| Part        | URL / connection                                          |
+| ----------- | --------------------------------------------------------- |
+| API / REST  | `http://127.0.0.1:54321/rest/v1`                          |
+| Studio (UI) | `http://127.0.0.1:54323` (SQL editor here)                |
+| Postgres    | `postgresql://postgres:postgres@127.0.0.1:54322/postgres` |
+| Mailpit     | `http://127.0.0.1:54324`                                  |
 
 To confirm the stack is up: run `supabase status` or `docker ps` (look for the `supabase_*` containers).
 

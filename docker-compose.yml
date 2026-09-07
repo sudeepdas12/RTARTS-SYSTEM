@@ -23,5 +23,3 @@ services:
       - VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}
       - VITE_RTS_API_URL=${VITE_RTS_API_URL}
     restart: unless-stopped
-
-

@@ -34,7 +34,7 @@ export function useAuth() {
       if (!isMounted) return;
 
       if (error) {
-        console.warn('[supabase] getSession error', error.message);
+        console.warn("[supabase] getSession error", error.message);
       }
 
       const session = sessionData.session;
@@ -42,7 +42,7 @@ export function useAuth() {
         const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
         if (!isMounted) return;
         if (refreshError) {
-          console.warn('[supabase] refreshSession error', refreshError.message);
+          console.warn("[supabase] refreshSession error", refreshError.message);
         }
         setUser(refreshedData.session?.user ?? session.user ?? null);
         if (refreshedData.session?.user) {

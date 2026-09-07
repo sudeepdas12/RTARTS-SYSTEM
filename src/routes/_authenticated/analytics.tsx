@@ -7,15 +7,37 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import {
-  Download, FileX2, RefreshCw, Search, X, Building2, Calendar, TrendingUp,
-  ChevronLeft, ChevronRight, BarChart3, Layers, CheckCircle2, Clock, Eye
+  Download,
+  FileX2,
+  RefreshCw,
+  Search,
+  X,
+  Building2,
+  Calendar,
+  TrendingUp,
+  ChevronLeft,
+  ChevronRight,
+  BarChart3,
+  Layers,
+  CheckCircle2,
+  Clock,
+  Eye,
 } from "lucide-react";
 import { toast } from "sonner";
 import { DataManagementService } from "@/lib/services/data-management.service";
@@ -47,7 +69,9 @@ function StatCard({
       <CardContent className="p-5">
         <div className="flex items-start justify-between">
           <div className="space-y-1">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{title}</p>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              {title}
+            </p>
             <p className={`text-2xl font-bold tabular-nums ${colorClass}`}>{value}</p>
             {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
           </div>
@@ -85,14 +109,16 @@ function AnalyticsPage() {
     queryFn: () => DataManagementService.getDistinctFiscalYears(),
   });
 
-  const { data: summary = [], isLoading: summaryLoading, refetch: refetchSummary } = useQuery({
+  const {
+    data: summary = [],
+    isLoading: summaryLoading,
+    refetch: refetchSummary,
+  } = useQuery({
     queryKey: ["company-fiscal-summary", selectedFy],
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
     queryFn: () =>
-      DataManagementService.getCompanyFiscalSummary(
-        selectedFy !== "all" ? selectedFy : undefined
-      ),
+      DataManagementService.getCompanyFiscalSummary(selectedFy !== "all" ? selectedFy : undefined),
   });
 
   const filteredSummary = useMemo(() => {
@@ -106,20 +132,23 @@ function AnalyticsPage() {
         (s) =>
           s.company_name.toLowerCase().includes(q) ||
           s.company_code.toLowerCase().includes(q) ||
-          s.fiscal_year.toLowerCase().includes(q)
+          s.fiscal_year.toLowerCase().includes(q),
       );
     }
     return data;
   }, [summary, selectedCompany, summarySearch]);
 
   const summaryPageCount = Math.max(1, Math.ceil(filteredSummary.length / PAGE_SIZE));
-  const pagedSummary = filteredSummary.slice((summaryPage - 1) * PAGE_SIZE, summaryPage * PAGE_SIZE);
+  const pagedSummary = filteredSummary.slice(
+    (summaryPage - 1) * PAGE_SIZE,
+    summaryPage * PAGE_SIZE,
+  );
 
   const summaryStats = useMemo(() => {
     const totalCompanies = new Set(filteredSummary.map((s) => s.company_id)).size;
     const totalRecords = filteredSummary.reduce(
       (s, r) => s + r.dividend_count + r.interest_count + (r.mutual_fund_count || 0),
-      0
+      0,
     );
     const dividendGross = filteredSummary.reduce((s, r) => s + r.dividend_gross, 0);
     const interestGross = filteredSummary.reduce((s, r) => s + r.interest_gross, 0);
@@ -147,10 +176,22 @@ function AnalyticsPage() {
       />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
-        <StatCard title="Companies" value={summaryStats.totalCompanies.toString()} icon={Building2} />
+        <StatCard
+          title="Companies"
+          value={summaryStats.totalCompanies.toString()}
+          icon={Building2}
+        />
         <StatCard title="Total Records" value={fmtCount(summaryStats.totalRecords)} icon={Layers} />
-        <StatCard title="Equity Dividend" value={fmt(summaryStats.dividendGross)} icon={BarChart3} />
-        <StatCard title="Debenture Interest" value={fmt(summaryStats.interestGross)} icon={TrendingUp} />
+        <StatCard
+          title="Equity Dividend"
+          value={fmt(summaryStats.dividendGross)}
+          icon={BarChart3}
+        />
+        <StatCard
+          title="Debenture Interest"
+          value={fmt(summaryStats.interestGross)}
+          icon={TrendingUp}
+        />
         <StatCard title="Mutual Fund" value={fmt(summaryStats.mutualFundGross)} icon={Layers} />
         <StatCard
           title="Total Paid"
@@ -167,12 +208,20 @@ function AnalyticsPage() {
             <div>
               <CardTitle className="text-base">Company × Fiscal Year Breakdown</CardTitle>
               <CardDescription>
-                {filteredSummary.length} fiscal summary record{filteredSummary.length !== 1 ? "s" : ""} across all instruments
+                {filteredSummary.length} fiscal summary record
+                {filteredSummary.length !== 1 ? "s" : ""} across all instruments
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button variant="outline" size="sm" onClick={() => refetchSummary()} disabled={summaryLoading}>
-                <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${summaryLoading ? "animate-spin" : ""}`} />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => refetchSummary()}
+                disabled={summaryLoading}
+              >
+                <RefreshCw
+                  className={`h-3.5 w-3.5 mr-1.5 ${summaryLoading ? "animate-spin" : ""}`}
+                />
                 Refresh
               </Button>
               <Button
@@ -182,7 +231,7 @@ function AnalyticsPage() {
                 onClick={() => {
                   DataManagementService.exportCompanyFiscalToExcel(
                     filteredSummary,
-                    `company_fiscal_summary${selectedFy !== "all" ? `_${selectedFy}` : ""}`
+                    `company_fiscal_summary${selectedFy !== "all" ? `_${selectedFy}` : ""}`,
                   );
                   toast.success("Exported successfully");
                 }}
@@ -297,7 +346,10 @@ function AnalyticsPage() {
                   </TableRow>
                 ) : (
                   pagedSummary.map((row) => (
-                    <TableRow key={`${row.company_id}|${row.fiscal_year}`} className="group hover:bg-muted/40">
+                    <TableRow
+                      key={`${row.company_id}|${row.fiscal_year}`}
+                      className="group hover:bg-muted/40"
+                    >
                       <TableCell className="pl-6">
                         <div>
                           <span className="font-medium text-sm">{row.company_name}</span>
@@ -311,12 +363,24 @@ function AnalyticsPage() {
                           {row.fiscal_year}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-right tabular-nums text-sm">{fmtCount(row.dividend_count)}</TableCell>
-                      <TableCell className="text-right tabular-nums text-sm font-medium">{fmt(row.dividend_gross)}</TableCell>
-                      <TableCell className="text-right tabular-nums text-sm">{fmtCount(row.interest_count)}</TableCell>
-                      <TableCell className="text-right tabular-nums text-sm font-medium">{fmt(row.interest_gross)}</TableCell>
-                      <TableCell className="text-right tabular-nums text-sm">{fmtCount(row.mutual_fund_count)}</TableCell>
-                      <TableCell className="text-right tabular-nums text-sm font-medium">{fmt(row.mutual_fund_gross)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-sm">
+                        {fmtCount(row.dividend_count)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-sm font-medium">
+                        {fmt(row.dividend_gross)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-sm">
+                        {fmtCount(row.interest_count)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-sm font-medium">
+                        {fmt(row.interest_gross)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-sm">
+                        {fmtCount(row.mutual_fund_count)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-sm font-medium">
+                        {fmt(row.mutual_fund_gross)}
+                      </TableCell>
                       <TableCell className="text-right tabular-nums text-sm font-bold text-emerald-600">
                         {fmt(row.total_paid)}
                       </TableCell>
@@ -324,8 +388,15 @@ function AnalyticsPage() {
                         {fmt(row.total_pending)}
                       </TableCell>
                       <TableCell className="pr-6 text-right">
-                        <Link to="/data-management" search={{ companyId: row.company_id, fy: row.fiscal_year }}>
-                          <Button size="icon" variant="ghost" className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Link
+                          to="/data-management"
+                          search={{ companyId: row.company_id, fy: row.fiscal_year }}
+                        >
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
                             <Eye className="h-3.5 w-3.5" />
                           </Button>
                         </Link>

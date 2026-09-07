@@ -13,6 +13,9 @@ import appCss from "../styles.css?url";
 import { Toaster } from "@/components/ui/sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { ThemeProvider } from "@/hooks/use-theme";
+import { initLogger } from "@/lib/logger";
+
+initLogger();
 
 function NotFoundComponent() {
   return (

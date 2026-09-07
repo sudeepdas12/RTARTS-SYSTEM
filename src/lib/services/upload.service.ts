@@ -1,4 +1,5 @@
 import { supabase, throwIfError } from "./database";
+import { deleteInBatches } from "./data-management.service";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 
@@ -32,7 +33,6 @@ export interface UploadErrorRow {
   raw_data?: Record<string, unknown> | null;
   created_at?: string | null;
 }
-
 
 async function countRowsByUploadId(uploadId: string, targetTable?: string | null): Promise<number> {
   const tables =
@@ -273,21 +273,19 @@ export const UploadService = {
 
     for (const table of tablesToClean) {
       try {
-        await (supabase as any)
-          .from(table)
-          .delete()
-          .eq("upload_id", uploadId);
+        await deleteInBatches(table, [{ field: "upload_id", value: uploadId, op: "eq" }], 250);
       } catch (err: any) {
         console.warn(`Could not delete from ${table}:`, err?.message);
       }
     }
 
-    // Delete errors logged for this upload
+    // Delete errors logged for this upload in batches
     try {
-      await (supabase as any)
-        .from("upload_errors")
-        .delete()
-        .eq("upload_id", uploadId);
+      await deleteInBatches(
+        "upload_errors",
+        [{ field: "upload_id", value: uploadId, op: "eq" }],
+        250,
+      );
     } catch {
       // non-blocking
     }

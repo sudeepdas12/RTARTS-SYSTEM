@@ -1,17 +1,17 @@
-import * as XLSX from 'xlsx';
+import * as XLSX from "xlsx";
 
 // ──────────────────────────────────────────────
 // CDSC Types & Specifications
 // ──────────────────────────────────────────────
 
 export type LockInReasonCode =
-  | '00' // Free / No Lock-in
-  | '01' // Promoter Share Lock-in
-  | '02' // Employee Quota Lock-in
-  | '03' // Mutual Fund Lock-in
-  | '04' // Institutional / Strategic Lock-in
-  | '09' // Local Affected Residents Lock-in
-  | '99'; // Custom Lock-in
+  | "00" // Free / No Lock-in
+  | "01" // Promoter Share Lock-in
+  | "02" // Employee Quota Lock-in
+  | "03" // Mutual Fund Lock-in
+  | "04" // Institutional / Strategic Lock-in
+  | "09" // Local Affected Residents Lock-in
+  | "99"; // Custom Lock-in
 
 export interface LockInPreset {
   code: LockInReasonCode;
@@ -22,48 +22,48 @@ export interface LockInPreset {
 
 export const LOCK_IN_PRESETS: Record<string, LockInPreset> = {
   PUBLIC: {
-    code: '00',
-    reason: '',
+    code: "00",
+    reason: "",
     isLocked: false,
   },
   FOREIGN: {
-    code: '00',
-    reason: '',
+    code: "00",
+    reason: "",
     isLocked: false,
   },
   LOCAL: {
-    code: '09',
-    reason: 'Local Affected',
+    code: "09",
+    reason: "Local Affected",
     defaultExpiryYears: 3,
     isLocked: true,
   },
   STAFF: {
-    code: '02',
-    reason: 'EMPLOYEE QUOTA',
+    code: "02",
+    reason: "EMPLOYEE QUOTA",
     defaultExpiryYears: 3,
     isLocked: true,
   },
   EMPLOYEE: {
-    code: '02',
-    reason: 'EMPLOYEE QUOTA',
+    code: "02",
+    reason: "EMPLOYEE QUOTA",
     defaultExpiryYears: 3,
     isLocked: true,
   },
   MUTUAL_FUND: {
-    code: '99',
-    reason: 'OTHERS',
+    code: "99",
+    reason: "OTHERS",
     defaultExpiryYears: 0.5,
     isLocked: true,
   },
   PROMOTER: {
-    code: '01',
-    reason: 'Promoter Share',
+    code: "01",
+    reason: "Promoter Share",
     defaultExpiryYears: 3,
     isLocked: true,
   },
   CUSTOM: {
-    code: '99',
-    reason: 'Custom Lock-in',
+    code: "99",
+    reason: "Custom Lock-in",
     isLocked: true,
   },
 };
@@ -94,7 +94,7 @@ export interface IpfRecord {
   debitLockCode: string;
   debitLockReason: string;
   debitLockExpiry: string;
-  debitCrDb: 'C' | 'D';
+  debitCrDb: "C" | "D";
   creditIsin: string;
   creditCurrentQty: number;
   creditFrozenQty: number;
@@ -102,7 +102,7 @@ export interface IpfRecord {
   creditLockCode: string;
   creditLockReason: string;
   creditLockExpiry: string;
-  creditCrDb: 'C' | 'D';
+  creditCrDb: "C" | "D";
 }
 
 export interface AllotmentSummary {
@@ -126,9 +126,9 @@ export interface AllotmentSummary {
  */
 export function formatIafQuantity(qty: number): string {
   const safeQty = Math.max(0, isNaN(qty) ? 0 : qty);
-  const parts = safeQty.toFixed(3).split('.');
-  const intPart = parts[0].padStart(12, '0');
-  const decPart = (parts[1] || '000').slice(0, 3).padEnd(3, '0');
+  const parts = safeQty.toFixed(3).split(".");
+  const intPart = parts[0].padStart(12, "0");
+  const decPart = (parts[1] || "000").slice(0, 3).padEnd(3, "0");
   return `${intPart}.${decPart}`;
 }
 
@@ -136,14 +136,14 @@ export function formatIafQuantity(qty: number): string {
  * Normalize Date to CDSC DDMMYYYY format (8 chars)
  */
 export function normalizeDateToDDMMYYYY(dateInput?: string | Date | number | null): string {
-  if (!dateInput) return '00000000';
+  if (!dateInput) return "00000000";
 
-  if (typeof dateInput === 'string') {
+  if (typeof dateInput === "string") {
     const raw = dateInput.trim();
-    if (!raw || raw === '00000000' || raw === '0') return '00000000';
+    if (!raw || raw === "00000000" || raw === "0") return "00000000";
 
     // Handle delimited strings: DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, YYYY-MM-DD, YYYY/MM/DD
-    const delimMatch = raw.match(/^(\d{1,4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,4})$/);
+    const delimMatch = raw.match(/^(\d{1,4})[/.-](\d{1,2})[/.-](\d{1,4})$/);
     if (delimMatch) {
       const p1 = delimMatch[1];
       const p2 = delimMatch[2];
@@ -151,28 +151,28 @@ export function normalizeDateToDDMMYYYY(dateInput?: string | Date | number | nul
       if (p1.length === 4) {
         // YYYY-MM-DD
         const yyyy = p1;
-        const mm = p2.padStart(2, '0');
-        const dd = p3.padStart(2, '0');
+        const mm = p2.padStart(2, "0");
+        const dd = p3.padStart(2, "0");
         return `${dd}${mm}${yyyy}`;
       } else {
         // DD/MM/YYYY
-        const dd = p1.padStart(2, '0');
-        const mm = p2.padStart(2, '0');
-        const yyyy = p3.length === 2 ? `20${p3}` : p3.padStart(4, '20');
+        const dd = p1.padStart(2, "0");
+        const mm = p2.padStart(2, "0");
+        const yyyy = p3.length === 2 ? `20${p3}` : p3.padStart(4, "20");
         return `${dd}${mm}${yyyy}`;
       }
     }
 
-    const clean = raw.replace(/[^0-9]/g, '');
+    const clean = raw.replace(/[^0-9]/g, "");
     if (clean.length === 8) {
       // If ends with 4-digit year 19XX or 20XX (e.g. 19042029 or 20112026), it is already DDMMYYYY
       const endYear = clean.slice(4, 8);
-      if (endYear.startsWith('20') || endYear.startsWith('19')) {
+      if (endYear.startsWith("20") || endYear.startsWith("19")) {
         return clean;
       }
       // If starts with 4-digit year (e.g. 20290419), convert YYYYMMDD to DDMMYYYY
       const startYear = clean.slice(0, 4);
-      if (startYear.startsWith('20') || startYear.startsWith('19')) {
+      if (startYear.startsWith("20") || startYear.startsWith("19")) {
         const yyyy = startYear;
         const mm = clean.slice(4, 6);
         const dd = clean.slice(6, 8);
@@ -183,19 +183,19 @@ export function normalizeDateToDDMMYYYY(dateInput?: string | Date | number | nul
   }
 
   // Handle Excel Serial date number
-  if (typeof dateInput === 'number' && dateInput > 30000 && dateInput < 60000) {
+  if (typeof dateInput === "number" && dateInput > 30000 && dateInput < 60000) {
     const jsDate = new Date((dateInput - 25569) * 86400 * 1000);
-    const dd = String(jsDate.getUTCDate()).padStart(2, '0');
-    const mm = String(jsDate.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(jsDate.getUTCDate()).padStart(2, "0");
+    const mm = String(jsDate.getUTCMonth() + 1).padStart(2, "0");
     const yyyy = String(jsDate.getUTCFullYear());
     return `${dd}${mm}${yyyy}`;
   }
 
   const parsed = new Date(dateInput);
-  if (isNaN(parsed.getTime())) return '00000000';
+  if (isNaN(parsed.getTime())) return "00000000";
 
-  const dd = String(parsed.getDate()).padStart(2, '0');
-  const mm = String(parsed.getMonth() + 1).padStart(2, '0');
+  const dd = String(parsed.getDate()).padStart(2, "0");
+  const mm = String(parsed.getMonth() + 1).padStart(2, "0");
   const yyyy = String(parsed.getFullYear());
   return `${dd}${mm}${yyyy}`;
 }
@@ -204,8 +204,12 @@ export function normalizeDateToDDMMYYYY(dateInput?: string | Date | number | nul
  * Generate CDSC Control Record (Header Line — Exactly 42 Characters)
  * Format: TotalRecords(10) + TotalCurrentQty(16.3) + TotalLockInQty(16.3)
  */
-export function formatIafHeader(totalRecords: number, totalCurrentQty: number, totalLockInQty: number): string {
-  const recStr = String(Math.max(0, totalRecords)).padStart(10, '0');
+export function formatIafHeader(
+  totalRecords: number,
+  totalCurrentQty: number,
+  totalLockInQty: number,
+): string {
+  const recStr = String(Math.max(0, totalRecords)).padStart(10, "0");
   const currStr = formatIafQuantity(totalCurrentQty);
   const lockStr = formatIafQuantity(totalLockInQty);
   return `${recStr}${currStr}${lockStr}`;
@@ -222,24 +226,31 @@ export function formatIafHeader(totalRecords: number, totalCurrentQty: number, t
  * - LOCK IN EXPIRY DATE: Char(8) - DDMMYYYY
  * - RTA INT REF NO: Char(16) - space padded
  */
-export function formatIafDetailLine(record: IafRecord, defaultRtaRef = ''): string {
-  const boid = String(record.boid || '').trim().replace(/[^0-9A-Za-z]/g, '').padStart(16, '0').slice(0, 16);
+export function formatIafDetailLine(record: IafRecord, defaultRtaRef = ""): string {
+  const boid = String(record.boid || "")
+    .trim()
+    .replace(/[^0-9A-Za-z]/g, "")
+    .slice(0, 16);
   const currentQty = formatIafQuantity(record.currentKitta);
   const lockInQty = formatIafQuantity(record.lockInKitta);
-  
-  let lockCode = '00';
-  let reason = ''.padEnd(50, ' ');
-  let expiry = '00000000';
+
+  let lockCode = "00";
+  let reason = "".padEnd(50, " ");
+  let expiry = "00000000";
 
   if (record.lockInKitta > 0) {
-    lockCode = String(record.lockInReasonCode || '09').padStart(2, '0').slice(0, 2);
-    const rawReason = record.lockInReason || 'Local Affected';
-    reason = rawReason.padEnd(50, ' ').slice(0, 50);
-    expiry = normalizeDateToDDMMYYYY(record.lockInExpiryDate || '00000000').padEnd(8, '0').slice(0, 8);
+    lockCode = String(record.lockInReasonCode || "09")
+      .padStart(2, "0")
+      .slice(0, 2);
+    const rawReason = record.lockInReason || "Local Affected";
+    reason = rawReason.padEnd(50, " ").slice(0, 50);
+    expiry = normalizeDateToDDMMYYYY(record.lockInExpiryDate || "00000000")
+      .padEnd(8, "0")
+      .slice(0, 8);
   }
 
-  const rawRef = (record.rtaIntRefNo || defaultRtaRef || '').trim();
-  const rtaRef = rawRef.slice(0, 16).padStart(16, ' ');
+  const rawRef = (record.rtaIntRefNo || defaultRtaRef || "").trim();
+  const rtaRef = rawRef.slice(0, 16).padStart(16, " ");
 
   return `${boid}${currentQty}${lockInQty}${lockCode}${reason}${expiry}${rtaRef}`;
 }
@@ -252,9 +263,9 @@ export function formatIpfHeader(
   totalRecords: number,
   totalQty: number,
   totalFrozenQty = 0,
-  totalLockQty = 0
+  totalLockQty = 0,
 ): string {
-  const recStr = String(Math.max(0, totalRecords)).padStart(10, '0');
+  const recStr = String(Math.max(0, totalRecords)).padStart(10, "0");
   const qtyStr = formatIafQuantity(totalQty);
   const frozStr = formatIafQuantity(totalFrozenQty);
   const lockStr = formatIafQuantity(totalLockQty);
@@ -265,28 +276,49 @@ export function formatIpfHeader(
  * Generate Corporate Action Allotment Detail Record (IPF Line 2..N — Exactly 274 Characters)
  */
 export function formatIpfDetailLine(record: IpfRecord): string {
-  const boid = String(record.boid || '').trim().replace(/[^0-9A-Za-z]/g, '').padStart(16, '0').slice(0, 16);
-  const rtaRef = String(record.rtaRefNo || '').trim().slice(0, 16).padEnd(16, ' ');
+  const boid = String(record.boid || "")
+    .trim()
+    .replace(/[^0-9A-Za-z]/g, "")
+    .padStart(16, "0")
+    .slice(0, 16);
+  const rtaRef = String(record.rtaRefNo || "")
+    .trim()
+    .slice(0, 16)
+    .padEnd(16, " ");
 
   // Debit fields
-  const debitIsin = String(record.debitIsin || '').trim().padEnd(12, ' ').slice(0, 12);
+  const debitIsin = String(record.debitIsin || "")
+    .trim()
+    .padEnd(12, " ")
+    .slice(0, 12);
   const debitCurr = formatIafQuantity(record.debitCurrentQty);
   const debitFroz = formatIafQuantity(record.debitFrozenQty);
   const debitLock = formatIafQuantity(record.debitLockInQty);
-  const debitCode = String(record.debitLockCode || '00').padStart(2, '0').slice(0, 2);
-  const debitReason = (record.debitLockReason || '').padEnd(50, ' ').slice(0, 50);
-  const debitExpiry = normalizeDateToDDMMYYYY(record.debitLockExpiry || '00000000').padEnd(8, '0').slice(0, 8);
-  const debitCrDb = (record.debitCrDb || 'C').slice(0, 1).toUpperCase();
+  const debitCode = String(record.debitLockCode || "00")
+    .padStart(2, "0")
+    .slice(0, 2);
+  const debitReason = (record.debitLockReason || "").padEnd(50, " ").slice(0, 50);
+  const debitExpiry = normalizeDateToDDMMYYYY(record.debitLockExpiry || "00000000")
+    .padEnd(8, "0")
+    .slice(0, 8);
+  const debitCrDb = (record.debitCrDb || "C").slice(0, 1).toUpperCase();
 
   // Credit fields
-  const creditIsin = String(record.creditIsin || '').trim().padEnd(12, ' ').slice(0, 12);
+  const creditIsin = String(record.creditIsin || "")
+    .trim()
+    .padEnd(12, " ")
+    .slice(0, 12);
   const creditCurr = formatIafQuantity(record.creditCurrentQty);
   const creditFroz = formatIafQuantity(record.creditFrozenQty);
   const creditLock = formatIafQuantity(record.creditLockInQty);
-  const creditCode = String(record.creditLockCode || '00').padStart(2, '0').slice(0, 2);
-  const creditReason = (record.creditLockReason || '').padEnd(50, ' ').slice(0, 50);
-  const creditExpiry = normalizeDateToDDMMYYYY(record.creditLockExpiry || '00000000').padEnd(8, '0').slice(0, 8);
-  const creditCrDb = (record.creditCrDb || 'C').slice(0, 1).toUpperCase();
+  const creditCode = String(record.creditLockCode || "00")
+    .padStart(2, "0")
+    .slice(0, 2);
+  const creditReason = (record.creditLockReason || "").padEnd(50, " ").slice(0, 50);
+  const creditExpiry = normalizeDateToDDMMYYYY(record.creditLockExpiry || "00000000")
+    .padEnd(8, "0")
+    .slice(0, 8);
+  const creditCrDb = (record.creditCrDb || "C").slice(0, 1).toUpperCase();
 
   return `${boid}${rtaRef}${debitIsin}${debitCurr}${debitFroz}${debitLock}${debitCode}${debitReason}${debitExpiry}${debitCrDb}${creditIsin}${creditCurr}${creditFroz}${creditLock}${creditCode}${creditReason}${creditExpiry}${creditCrDb}`;
 }
@@ -313,7 +345,7 @@ export const IafGeneratorService = {
       defaultLockPreset?: LockInPreset;
       defaultRtaRef?: string;
       customExpiryDate?: string;
-    }
+    },
   ): Promise<{ records: IafRecord[]; summary: AllotmentSummary; detectedRtaRef?: string }> {
     let data: ArrayBuffer;
     if (fileOrBuffer instanceof File) {
@@ -322,17 +354,20 @@ export const IafGeneratorService = {
       data = fileOrBuffer;
     }
 
-    const workbook = XLSX.read(data, { type: 'array' });
+    const workbook = XLSX.read(data, { type: "array" });
     const records: IafRecord[] = [];
-    let detectedRtaRef = options?.defaultRtaRef || '';
+    let detectedRtaRef = options?.defaultRtaRef || "";
 
     // Helper to normalize keys (e.g. "BO ACCT NO " -> "boacctno")
-    const norm = (str: string) => String(str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const norm = (str: string) =>
+      String(str || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "");
 
     for (const sheetName of workbook.SheetNames) {
       if (/SUMMARY|TOTAL|REPORT/i.test(sheetName)) continue;
       const ws = workbook.Sheets[sheetName];
-      const rawMatrix: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      const rawMatrix: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
 
       if (rawMatrix.length === 0) continue;
 
@@ -340,8 +375,10 @@ export const IafGeneratorService = {
       let headerRowIdx = 0;
       for (let r = 0; r < Math.min(rawMatrix.length, 10); r++) {
         const rowStrings = rawMatrix[r].map((c) => String(c).trim());
-        const hasBoidHeader = rowStrings.some((s) => /boid|demat|beneficiary|client.*id|bo.*acct|account|shareholder/i.test(s));
-        const has16DigitBoid = rowStrings.some((s) => /^\d{16}$/.test(s.replace(/[^0-9]/g, '')));
+        const hasBoidHeader = rowStrings.some((s) =>
+          /boid|demat|beneficiary|client.*id|bo.*acct|account|shareholder/i.test(s),
+        );
+        const has16DigitBoid = rowStrings.some((s) => /^\d{16}$/.test(s.replace(/[^0-9]/g, "")));
         if (hasBoidHeader) {
           headerRowIdx = r;
           break;
@@ -355,7 +392,7 @@ export const IafGeneratorService = {
 
       let parsedRows: Record<string, any>[] = [];
       if (headerRowIdx >= 0) {
-        parsedRows = XLSX.utils.sheet_to_json(ws, { range: headerRowIdx, defval: '' });
+        parsedRows = XLSX.utils.sheet_to_json(ws, { range: headerRowIdx, defval: "" });
       } else {
         // Headerless rows: map col 0 -> boid, col 1 -> kitta
         parsedRows = rawMatrix.map((cols) => ({
@@ -378,60 +415,126 @@ export const IafGeneratorService = {
 
         const getVal = (aliases: string[]): any => {
           for (const a of aliases) {
-            if (row[a] !== undefined && row[a] !== '') return row[a];
+            if (row[a] !== undefined && row[a] !== "") return row[a];
             const nk = norm(a);
-            if (nMap[nk] !== undefined && nMap[nk] !== '') return nMap[nk];
+            if (nMap[nk] !== undefined && nMap[nk] !== "") return nMap[nk];
           }
           return undefined;
         };
 
         // 1. BOID lookup
         const rawBoidVal = getVal([
-          'boid', 'bo_id', 'bo id', 'boid no', 'boid number',
-          'bo acct no', 'bo acct no ', 'bo_acct_no', 'bo account no',
-          'demat', 'demat no', 'demat account', 'demat_account',
-          'beneficiary id', 'beneficiary_id', 'beneficiary owner id',
-          'client id', 'client_id', 'client code', 'account no', 'acct no',
-          'sh no', 'shareholder no', 'applicant no', 'dp id'
+          "boid",
+          "bo_id",
+          "bo id",
+          "boid no",
+          "boid number",
+          "bo acct no",
+          "bo acct no ",
+          "bo_acct_no",
+          "bo account no",
+          "demat",
+          "demat no",
+          "demat account",
+          "demat_account",
+          "beneficiary id",
+          "beneficiary_id",
+          "beneficiary owner id",
+          "client id",
+          "client_id",
+          "client code",
+          "account no",
+          "acct no",
+          "sh no",
+          "shareholder no",
+          "applicant no",
+          "dp id",
         ]);
 
-        const rawBoid = String(rawBoidVal ?? '').trim().replace(/[^0-9A-Za-z]/g, '');
+        const rawBoid = String(rawBoidVal ?? "")
+          .trim()
+          .replace(/[^0-9A-Za-z]/g, "");
         if (!rawBoid || rawBoid.length < 8) continue;
 
         // 2. Allotted Kitta lookup
         const rawKittaVal = getVal([
-          'curr_kitta', 'currkitta', 'current kitta', 'current_kitta',
-          'allotedkitta', 'alloted_kitta', 'alloted kitta',
-          'allottedkitta', 'allotted_kitta', 'allotted kitta',
-          'current quan', 'current_quan', 'current qty', 'current_qty',
-          'kitta', 'shares', 'total shares', 'total kitta',
-          'allotment', 'allotted', 'alloted', 'units', 'qty', 'quantity', 'balance'
+          "curr_kitta",
+          "currkitta",
+          "current kitta",
+          "current_kitta",
+          "allotedkitta",
+          "alloted_kitta",
+          "alloted kitta",
+          "allottedkitta",
+          "allotted_kitta",
+          "allotted kitta",
+          "current quan",
+          "current_quan",
+          "current qty",
+          "current_qty",
+          "kitta",
+          "shares",
+          "total shares",
+          "total kitta",
+          "allotment",
+          "allotted",
+          "alloted",
+          "units",
+          "qty",
+          "quantity",
+          "balance",
         ]);
 
-        let rawCurrentKitta = Number(rawKittaVal ?? 10);
-        if (isNaN(rawCurrentKitta) || rawCurrentKitta <= 0) {
-          rawCurrentKitta = 10; // default to 10 shares if column missing but BOID exists
+        const cleanKittaStr =
+          rawKittaVal !== null && rawKittaVal !== undefined
+            ? String(rawKittaVal).replace(/,/g, "").trim()
+            : "";
+        let rawCurrentKitta = cleanKittaStr !== "" ? Number(cleanKittaStr) : 0;
+        if (isNaN(rawCurrentKitta) || rawCurrentKitta < 0) {
+          rawCurrentKitta = 0;
         }
 
         // 3. Lock-in Kitta lookup
         const rawLockVal = getVal([
-          'lock_kitta', 'lockkitta', 'locked kitta', 'locked_kitta',
-          'lock in quan', 'lock_in_quan', 'lock in qty', 'lock_in_qty',
-          'locked shares', 'lock in', 'lockin', 'lock_in_kitta'
+          "lock_kitta",
+          "lockkitta",
+          "locked kitta",
+          "locked_kitta",
+          "lock in quan",
+          "lock_in_quan",
+          "lock in qty",
+          "lock_in_qty",
+          "locked shares",
+          "lock in",
+          "lockin",
+          "lock_in_kitta",
         ]);
-        let lockInKitta = rawLockVal !== undefined && rawLockVal !== '' ? Number(rawLockVal) : 0;
+        let lockInKitta = rawLockVal !== undefined && rawLockVal !== "" ? Number(rawLockVal) : 0;
 
         // 4. Lock Code lookup
-        let lockCode = String(getVal(['lock_code', 'lock code', 'lockcode', 'code']) ?? '').trim();
+        let lockCode = String(getVal(["lock_code", "lock code", "lockcode", "code"]) ?? "").trim();
 
         // 5. Lock Reason lookup
-        let lockReason = String(getVal(['lock_reason', 'lock in reason', 'lockreason', 'reason', 'remarks']) ?? '').trim();
+        let lockReason = String(
+          getVal(["lock_reason", "lock in reason", "lockreason", "reason", "remarks"]) ?? "",
+        ).trim();
 
         // 6. Lock Date lookup
-        let rawLockDate = getVal(['lock_date', 'lock in expiry', 'lock_expiry', 'expiry date', 'expiry', 'lock date']);
+        let rawLockDate = getVal([
+          "lock_date",
+          "lock in expiry",
+          "lock_expiry",
+          "expiry date",
+          "expiry",
+          "lock date",
+        ]);
 
         // 7. RTA Reference lookup
-        const rtaRef = String(getVal(['rta_reg', 'rtarefno', 'rta_ref', 'rta_ref_no', 'rta ref', 'reference', 'ref']) ?? options?.defaultRtaRef ?? '').trim();
+        const rtaRef = String(
+          getVal(["rta_reg", "rtarefno", "rta_ref", "rta_ref_no", "rta ref", "reference", "ref"]) ??
+            options?.defaultRtaRef ??
+            "",
+        ).trim();
         if (rtaRef && !detectedRtaRef) detectedRtaRef = rtaRef;
 
         // Apply preset defaults if lock settings not in spreadsheet
@@ -443,16 +546,29 @@ export const IafGeneratorService = {
           } else {
             // Free Public / No lock-in
             lockInKitta = 0;
-            lockCode = '00';
-            lockReason = '';
-            rawLockDate = '00000000';
+            lockCode = "00";
+            lockReason = "";
+            rawLockDate = "00000000";
           }
         }
 
         // 8. Name and category
-        const name = String(getVal(['name', 'shareholder name', 'shareholder_name', 'applicant name', 'applicant_name', 'investor name', 'full name', 'client name']) ?? '').trim();
-        const applicantNo = String(getVal(['applicant_no', 'app_no', 'app no', 'form no', 'application no']) ?? '').trim();
-        const category = String(getVal(['category', 'quota', 'group', 'type']) ?? sheetName).trim();
+        const name = String(
+          getVal([
+            "name",
+            "shareholder name",
+            "shareholder_name",
+            "applicant name",
+            "applicant_name",
+            "investor name",
+            "full name",
+            "client name",
+          ]) ?? "",
+        ).trim();
+        const applicantNo = String(
+          getVal(["applicant_no", "app_no", "app no", "form no", "application no"]) ?? "",
+        ).trim();
+        const category = String(getVal(["category", "quota", "group", "type"]) ?? sheetName).trim();
 
         // Validation errors
         const errors: string[] = [];
@@ -460,7 +576,9 @@ export const IafGeneratorService = {
           errors.push(`Invalid BOID length (${rawBoid.length} digits, expected 16)`);
         }
         if (lockInKitta > rawCurrentKitta) {
-          errors.push(`Lock-in kitta (${lockInKitta}) exceeds total allotted kitta (${rawCurrentKitta})`);
+          errors.push(
+            `Lock-in kitta (${lockInKitta}) exceeds total allotted kitta (${rawCurrentKitta})`,
+          );
         }
 
         records.push({
@@ -468,8 +586,8 @@ export const IafGeneratorService = {
           name,
           currentKitta: rawCurrentKitta,
           lockInKitta: Math.max(0, lockInKitta),
-          lockInReasonCode: lockCode || (lockInKitta > 0 ? '09' : '00'),
-          lockInReason: lockReason || (lockInKitta > 0 ? 'Local Affected' : ''),
+          lockInReasonCode: lockCode || (lockInKitta > 0 ? "09" : "00"),
+          lockInReason: lockReason || (lockInKitta > 0 ? "Local Affected" : ""),
           lockInExpiryDate: normalizeDateToDDMMYYYY(rawLockDate || options?.customExpiryDate),
           rtaIntRefNo: rtaRef || detectedRtaRef,
           category,
@@ -493,7 +611,7 @@ export const IafGeneratorService = {
     let totalLocked = 0;
     let validCount = 0;
     let invalidCount = 0;
-    const categoryBreakdown: AllotmentSummary['categoryBreakdown'] = {};
+    const categoryBreakdown: AllotmentSummary["categoryBreakdown"] = {};
 
     for (const r of records) {
       totalAllotted += r.currentKitta;
@@ -504,7 +622,7 @@ export const IafGeneratorService = {
         invalidCount++;
       }
 
-      const cat = r.category || r.lotName || 'General';
+      const cat = r.category || r.lotName || "General";
       if (!categoryBreakdown[cat]) {
         categoryBreakdown[cat] = { count: 0, allottedKitta: 0, lockedKitta: 0 };
       }
@@ -535,9 +653,9 @@ export const IafGeneratorService = {
       lockReason?: string;
       lockExpiryDate?: string;
       lockAll?: boolean;
-    }
+    },
   ): string {
-    const validRecords = records.filter(r => r.currentKitta > 0);
+    const validRecords = records.filter((r) => r.currentKitta > 0);
     const totalRecords = validRecords.length;
 
     let totalCurrent = 0;
@@ -549,7 +667,7 @@ export const IafGeneratorService = {
       const currentKitta = rec.currentKitta;
       let lockKitta = rec.lockInKitta;
 
-      if (options?.lockCode === '00') {
+      if (options?.lockCode === "00") {
         lockKitta = 0;
       } else if (options?.lockAll === true) {
         lockKitta = currentKitta;
@@ -563,9 +681,19 @@ export const IafGeneratorService = {
       const recordToFormat: IafRecord = {
         ...rec,
         lockInKitta: lockKitta,
-        lockInReasonCode: lockKitta > 0 ? (options?.lockCode || rec.lockInReasonCode || '09') : '00',
-        lockInReason: lockKitta > 0 ? (options?.lockReason !== undefined ? options.lockReason : rec.lockInReason) : '',
-        lockInExpiryDate: lockKitta > 0 ? (options?.lockExpiryDate ? normalizeDateToDDMMYYYY(options.lockExpiryDate) : rec.lockInExpiryDate) : '00000000',
+        lockInReasonCode: lockKitta > 0 ? options?.lockCode || rec.lockInReasonCode || "09" : "00",
+        lockInReason:
+          lockKitta > 0
+            ? options?.lockReason !== undefined
+              ? options.lockReason
+              : rec.lockInReason
+            : "",
+        lockInExpiryDate:
+          lockKitta > 0
+            ? options?.lockExpiryDate
+              ? normalizeDateToDDMMYYYY(options.lockExpiryDate)
+              : rec.lockInExpiryDate
+            : "00000000",
         rtaIntRefNo: options?.rtaRef || rec.rtaIntRefNo,
       };
 
@@ -573,7 +701,7 @@ export const IafGeneratorService = {
     }
 
     const header = formatIafHeader(totalRecords, totalCurrent, totalLocked);
-    return [header, ...lines].join('\r\n') + '\r\n';
+    return [header, ...lines].join("\r\n") + "\r\n";
   },
 
   /**
@@ -583,32 +711,39 @@ export const IafGeneratorService = {
    */
   generateIvfContent(records: Array<{ boid: string }>): string {
     const validBoids = records
-      .map(r => String(r.boid || '').trim().replace(/[^0-9A-Za-z]/g, ''))
-      .filter(b => b.length === 16);
+      .map((r) =>
+        String(r.boid || "")
+          .trim()
+          .replace(/[^0-9A-Za-z]/g, ""),
+      )
+      .filter((b) => b.length === 16);
 
-    const header = String(validBoids.length).padStart(10, '0');
-    const lines = validBoids.map(b => b.padStart(16, '0'));
-    return [header, ...lines].join('\r\n') + '\r\n';
+    const header = String(validBoids.length).padStart(10, "0");
+    const lines = validBoids.map((b) => b.padStart(16, "0"));
+    return [header, ...lines].join("\r\n") + "\r\n";
   },
 
   /**
    * Generate Web Allotee CSV Content (for CDS online result upload)
    */
   generateWebAlloteeCsv(records: IafRecord[]): string {
-    const headers = ['BOID', 'AllotedKitta', 'ShareholderName', 'Status'];
-    const rows = records.map(r => [
+    const headers = ["BOID", "AllotedKitta", "ShareholderName", "Status"];
+    const rows = records.map((r) => [
       `"${r.boid}"`,
       r.currentKitta,
-      `"${(r.name || '').replace(/"/g, '""')}"`,
+      `"${(r.name || "").replace(/"/g, '""')}"`,
       r.lockInKitta > 0 ? '"Allotted (Locked)"' : '"Allotted (Free)"',
     ]);
-    return [headers.join(','), ...rows.map(row => row.join(','))].join('\r\n');
+    return [headers.join(","), ...rows.map((row) => row.join(","))].join("\r\n");
   },
 
   /**
    * Split a large record set into multiple CDSC lots
    */
-  splitRecordsByLot(records: IafRecord[], maxPerLot = 50000): Array<{ lotNumber: number; records: IafRecord[] }> {
+  splitRecordsByLot(
+    records: IafRecord[],
+    maxPerLot = 50000,
+  ): Array<{ lotNumber: number; records: IafRecord[] }> {
     const lots: Array<{ lotNumber: number; records: IafRecord[] }> = [];
     for (let i = 0; i < records.length; i += maxPerLot) {
       lots.push({
@@ -622,10 +757,10 @@ export const IafGeneratorService = {
   /**
    * Trigger browser file download
    */
-  downloadFile(content: string, filename: string, mimeType = 'text/plain;charset=utf-8') {
+  downloadFile(content: string, filename: string, mimeType = "text/plain;charset=utf-8") {
     const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
     a.download = filename;
     document.body.appendChild(a);

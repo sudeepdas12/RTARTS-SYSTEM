@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/page-header";
 import { DragDropZone } from "@/components/upload/drag-drop-zone";
@@ -123,6 +124,10 @@ const SOFT_ERROR_TYPES = new Set([
   "invalid_net",
   "invalid_shares",
   "missing_name",
+  "invalid_pan",
+  "invalid_nid",
+  "invalid_citizenship",
+  "invalid_payee_classification",
 ]);
 
 /** Multi-sheet import progress */
@@ -140,6 +145,9 @@ interface AllSheetsProgress {
 
 function UploadRoute() {
   const queryClient = useQueryClient();
+  const { hasAny, isAdmin } = useAuth();
+  const canWrite = isAdmin || hasAny(["admin", "finance_operator"]);
+
   const [file, setFile] = useState<File | null>(null);
   const [parsedData, setParsedData] = useState<ParsedExcelData | null>(null);
   const [selectedSheetIndex, setSelectedSheetIndex] = useState(0);
@@ -170,9 +178,13 @@ function UploadRoute() {
     return `${nepaliYear}/${nepaliYear + 1}`;
   });
   const [dividendRate, setDividendRate] = useState("");
-  const [dividendType, setDividendType] = useState<"Cash" | "Bonus" | "Right" | "Debenture" | "MutualFund">("Cash");
+  const [dividendType, setDividendType] = useState<
+    "Cash" | "Bonus" | "Right" | "Debenture" | "MutualFund"
+  >("Cash");
 
-  const handlePayableTypeChange = (newType: "Cash" | "Bonus" | "Right" | "Debenture" | "MutualFund") => {
+  const handlePayableTypeChange = (
+    newType: "Cash" | "Bonus" | "Right" | "Debenture" | "MutualFund",
+  ) => {
     setDividendType(newType);
     if (parsedData) {
       const defaultRate = newType === "Debenture" ? 0.06 : newType === "MutualFund" ? 0.0 : 0.05;
@@ -213,7 +225,8 @@ function UploadRoute() {
     // 1. Match by ISIN
     if (parsedData.detectedIsin) {
       const isinMatch = companies.find(
-        (c) => c.isin && c.isin.trim().toUpperCase() === parsedData.detectedIsin!.trim().toUpperCase(),
+        (c) =>
+          c.isin && c.isin.trim().toUpperCase() === parsedData.detectedIsin!.trim().toUpperCase(),
       );
       if (isinMatch) {
         setSelectedCompanyId(isinMatch.id);
@@ -308,17 +321,21 @@ function UploadRoute() {
       }
       const fileHash = await computeFileHash(file);
       const sheetDivRate = sheetDividendRates[selectedSheetIndex];
-      const rate = sheetDivRate ? Number(sheetDivRate) : dividendRate ? Number(dividendRate) : undefined;
+      const rate = sheetDivRate
+        ? Number(sheetDivRate)
+        : dividendRate
+          ? Number(dividendRate)
+          : undefined;
       const errors = await ValidationEngine.validateBatch(
-        sheet.rows, 
-        sheet.mapping, 
-        fileHash, 
+        sheet.rows,
+        sheet.mapping,
+        fileHash,
         parsedData.fileType,
         {
           isRawInputFile: sheet.isRawInputFile,
           isPreCalculated: sheet.isPreCalculated,
-          dividendRate: rate
-        }
+          dividendRate: rate,
+        },
       );
       setValidationErrors(errors);
       // Apply the SAME severity gate as the actual import so the validator reports
@@ -368,7 +385,9 @@ function UploadRoute() {
           : undefined,
       tdsRate,
       dividendType:
-        effectiveFileType !== "debenture" && effectiveFileType !== "interest" && dividendType !== "MutualFund"
+        effectiveFileType !== "debenture" &&
+        effectiveFileType !== "interest" &&
+        dividendType !== "MutualFund"
           ? (dividendType as "Cash" | "Bonus" | "Right")
           : undefined,
       // Direct company UUID (bypasses name-based lookup and avoids accidental company creation)
@@ -380,7 +399,7 @@ function UploadRoute() {
           : parsedData!.detectedCompanyName,
       companyIsin: sheet?.detectedIsin || parsedData!.detectedIsin,
       fileHash: undefined as string | undefined,
-      sheetType: sheet?.sheetName || sheet?.sheetType || undefined,
+      sheetType: sheet?.sheetType || sheet?.sheetName || undefined,
       fileName: file?.name,
       fileSize: file?.size,
       fileType: effectiveFileType,
@@ -393,6 +412,10 @@ function UploadRoute() {
   }
 
   const handleImport = async () => {
+    if (!canWrite) {
+      toast.error("Unauthorized: You do not have permission to upload or import files.");
+      return;
+    }
     if (!file || !parsedData || !parsedData.sheets[selectedSheetIndex]) return;
 
     const sheet = parsedData.sheets[selectedSheetIndex];
@@ -413,7 +436,11 @@ function UploadRoute() {
     setImportSummary(null);
 
     const sheetDivRate = sheetDividendRates[selectedSheetIndex];
-    const rate = sheetDivRate ? Number(sheetDivRate) : dividendRate ? Number(dividendRate) : undefined;
+    const rate = sheetDivRate
+      ? Number(sheetDivRate)
+      : dividendRate
+        ? Number(dividendRate)
+        : undefined;
     const effectiveFileType =
       dividendType === "Debenture"
         ? "debenture"
@@ -429,14 +456,12 @@ function UploadRoute() {
       {
         isRawInputFile: sheet.isRawInputFile,
         isPreCalculated: sheet.isPreCalculated,
-        dividendRate: rate
-      }
+        dividendRate: rate,
+      },
     );
-    
+
     // Severity gating: only *blocking* validation errors stop the import.
-    const hardErrors = validationErrorsForImport.filter(
-      (e) => !SOFT_ERROR_TYPES.has(e.type),
-    );
+    const hardErrors = validationErrorsForImport.filter((e) => !SOFT_ERROR_TYPES.has(e.type));
 
     const softErrorCount = validationErrorsForImport.length - hardErrors.length;
     if (softErrorCount > 0) {
@@ -444,15 +469,19 @@ function UploadRoute() {
         `Continuing upload — ${softErrorCount} recommended check${softErrorCount === 1 ? "" : "s"} skipped (address, precision, bank account).`,
       );
     }
-    
+
     // Create Upload Record FIRST so we can log validation errors to it
     let uploadId: string = crypto.randomUUID();
     let userId: string | undefined;
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       userId = user?.id;
       const targetTable =
-        dividendType === "Debenture" || effectiveFileType === "debenture" || effectiveFileType === "interest"
+        dividendType === "Debenture" ||
+        effectiveFileType === "debenture" ||
+        effectiveFileType === "interest"
           ? "interest_payables"
           : dividendType === "MutualFund" || effectiveFileType === "mutual_fund"
             ? "mutual_fund_payables"
@@ -482,16 +511,16 @@ function UploadRoute() {
     // Filter out rows with hard errors
     const invalidRowIndices = new Set(hardErrors.map((e) => e.row - 1)); // row is 1-indexed
     const validRows = sheet.rows.filter((_, idx) => !invalidRowIndices.has(idx));
-    
+
     // Log ALL validation errors to history
     if (validationErrorsForImport.length > 0) {
-      const dbErrors = validationErrorsForImport.map(e => ({
+      const dbErrors = validationErrorsForImport.map((e) => ({
         upload_id: uploadId,
         row_number: e.row,
         field_name: e.field,
         error_type: e.type,
         error_message: e.message,
-        raw_data: e.rawData
+        raw_data: e.rawData,
       }));
       await UploadService.logUploadErrors(dbErrors);
     }
@@ -503,8 +532,6 @@ function UploadRoute() {
       errorRows: hardErrors.length,
       status: "Processing",
     });
-
-
 
     try {
       const duplicate = await ImportService.checkDuplicateFile(fileHash);
@@ -576,6 +603,7 @@ function UploadRoute() {
         queryClient.invalidateQueries({ queryKey: ["mutual_fund_payables"] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard-kpis"] }),
         queryClient.invalidateQueries({ queryKey: ["upload-history"] }),
+        queryClient.invalidateQueries({ queryKey: ["classification-review-count"] }),
       ]);
 
       if (result.successRows <= 0 && result.errorRows > 0) {
@@ -604,6 +632,10 @@ function UploadRoute() {
 
   /** Import ALL non-summary sheets sequentially */
   const handleImportAllSheets = async () => {
+    if (!canWrite) {
+      toast.error("Unauthorized: You do not have permission to upload or import files.");
+      return;
+    }
     if (!file || !parsedData) return;
 
     const dataSheets = parsedData.sheets.filter((s) => s.sheetType !== "SUMMARY");
@@ -630,15 +662,22 @@ function UploadRoute() {
           : parsedData.fileType;
 
     const targetTable =
-      dividendType === "Debenture" || effectiveFileType === "debenture" || effectiveFileType === "interest"
+      dividendType === "Debenture" ||
+      effectiveFileType === "debenture" ||
+      effectiveFileType === "interest"
         ? "interest_payables"
         : dividendType === "MutualFund" || effectiveFileType === "mutual_fund"
           ? "mutual_fund_payables"
           : "dividend_payables";
 
     // One shared client cache across all sheets so we don't re-insert clients
-    const sharedContext: { companyId?: string; clientIdCache: Map<string, string> } = {
+    const sharedContext: {
+      companyId?: string;
+      clientIdCache: Map<string, string>;
+      clientInfoCache: Map<string, any>;
+    } = {
       clientIdCache: new Map(),
+      clientInfoCache: new Map(),
     };
     if (selectedCompanyId !== "auto") {
       sharedContext.companyId = selectedCompanyId;
@@ -690,7 +729,11 @@ function UploadRoute() {
       }
 
       const sheetDivRate = sheetDividendRates[sheetIdxInParsed];
-      const rate = sheetDivRate ? Number(sheetDivRate) : dividendRate ? Number(dividendRate) : undefined;
+      const rate = sheetDivRate
+        ? Number(sheetDivRate)
+        : dividendRate
+          ? Number(dividendRate)
+          : undefined;
       const validationErrorsForSheet = await ValidationEngine.validateBatch(
         sheet.rows,
         sheet.mapping,
@@ -699,12 +742,10 @@ function UploadRoute() {
         {
           isRawInputFile: sheet.isRawInputFile,
           isPreCalculated: sheet.isPreCalculated,
-          dividendRate: rate
-        }
+          dividendRate: rate,
+        },
       );
-      const hardErrors = validationErrorsForSheet.filter(
-        (e) => !SOFT_ERROR_TYPES.has(e.type),
-      );
+      const hardErrors = validationErrorsForSheet.filter((e) => !SOFT_ERROR_TYPES.has(e.type));
 
       // Log errors to upload_errors so the user can download them
       if (validationErrorsForSheet.length > 0) {
@@ -734,13 +775,17 @@ function UploadRoute() {
             error_rows: hardErrors.length,
             error_message: `All rows failed validation: ${hardErrors.length} error(s) found.`,
           });
-        } catch {}
+        } catch {
+          // Ignore secondary status update errors
+        }
         continue; // Move to the next sheet
       }
 
       const softErrorCount = validationErrorsForSheet.length - hardErrors.length;
       if (softErrorCount > 0) {
-        toast.warning(`Sheet "${sheet.sheetName}": ${softErrorCount} recommended check(s) skipped.`);
+        toast.warning(
+          `Sheet "${sheet.sheetName}": ${softErrorCount} recommended check(s) skipped.`,
+        );
       }
 
       const opts = buildOptions(sheetIdxInParsed);
@@ -767,14 +812,16 @@ function UploadRoute() {
             );
           },
           opts,
+          sharedContext,
         );
 
         if (result.successRows <= 0 && result.errorRows > 0) {
           throw new Error(`Sheet "${sheet.sheetName}" completed without inserting any rows.`);
         }
         overallProcessed += sheet.rowCount;
-        overallSuccess += sheet.rowCount;
-        toast.success(`Sheet "${sheet.sheetName}" imported (${sheet.rowCount} rows)`);
+        overallSuccess += result.successRows;
+        overallErrors += result.errorRows;
+        toast.success(`Sheet "${sheet.sheetName}" imported (${result.successRows} rows)`);
       } catch (err: any) {
         overallProcessed += sheet.rowCount;
         overallErrors += sheet.rowCount;
@@ -809,6 +856,7 @@ function UploadRoute() {
       queryClient.invalidateQueries({ queryKey: ["mutual_fund_payables"] }),
       queryClient.invalidateQueries({ queryKey: ["dashboard-kpis"] }),
       queryClient.invalidateQueries({ queryKey: ["upload-history"] }),
+      queryClient.invalidateQueries({ queryKey: ["classification-review-count"] }),
     ]);
     setIsImporting(false);
 
@@ -835,7 +883,10 @@ function UploadRoute() {
 
   const currentSheet = parsedData?.sheets[selectedSheetIndex];
   const dataSheets = parsedData?.sheets.filter((s) => s.sheetType !== "SUMMARY") || [];
-  const isDebenture = parsedData?.fileType === "debenture" || parsedData?.fileType === "interest" || dividendType === "Debenture";
+  const isDebenture =
+    parsedData?.fileType === "debenture" ||
+    parsedData?.fileType === "interest" ||
+    dividendType === "Debenture";
   const isMutualFund = parsedData?.fileType === "mutual_fund" || dividendType === "MutualFund";
 
   return (
@@ -972,7 +1023,7 @@ function UploadRoute() {
           </div>
 
           {parsedData.fileType === "mutual_fund" && (
-            <Card className="border-l-4 border-emerald-500 bg-emerald-50">
+            <Card className="border-l-4 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm">Mutual Fund Upload Section</CardTitle>
               </CardHeader>
@@ -1003,7 +1054,7 @@ function UploadRoute() {
                     <SelectTrigger>
                       <SelectValue placeholder="Auto-detect from file" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="max-h-60 overflow-y-auto">
                       <SelectItem value="auto">
                         Auto-detect: {parsedData.detectedCompanyName || "from file name"}
                         {parsedData.detectedIsin ? ` (ISIN: ${parsedData.detectedIsin})` : ""}
@@ -1016,7 +1067,7 @@ function UploadRoute() {
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    {parsedData.detectedIsin 
+                    {parsedData.detectedIsin
                       ? `Detected ISIN "${parsedData.detectedIsin}" will be automatically linked to the company profile.`
                       : "Select a company to assign this upload to, or use auto-detect."}
                   </p>
@@ -1034,19 +1085,25 @@ function UploadRoute() {
           </Card>
 
           {currentSheet?.isRawInputFile && (
-            <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-md">
-              <h4 className="font-medium text-blue-900 text-sm">Raw Data File Detected</h4>
-              <p className="text-sm text-blue-800 mt-1">
-                This sheet does not contain pre-calculated financial columns. Enter the rate below and the system will automatically calculate the gross, tax, and net payable amounts.
+            <div className="bg-blue-50 dark:bg-blue-950/40 border-l-4 border-blue-500 p-4 rounded-md">
+              <h4 className="font-medium text-blue-900 dark:text-blue-200 text-sm">
+                Raw Data File Detected
+              </h4>
+              <p className="text-sm text-blue-800 dark:text-blue-300 mt-1">
+                This sheet does not contain pre-calculated financial columns. Enter the rate below
+                and the system will automatically calculate the gross, tax, and net payable amounts.
               </p>
             </div>
           )}
 
           {currentSheet?.isPreCalculated && (
-            <div className="bg-emerald-50 border-l-4 border-emerald-500 p-4 rounded-md">
-              <h4 className="font-medium text-emerald-900 text-sm">Pre-Calculated Values Detected</h4>
-              <p className="text-sm text-emerald-800 mt-1">
-                This sheet already contains calculated values. The system will verify them against the configured rates instead of overwriting them.
+            <div className="bg-emerald-50 dark:bg-emerald-950/40 border-l-4 border-emerald-500 p-4 rounded-md">
+              <h4 className="font-medium text-emerald-900 dark:text-emerald-200 text-sm">
+                Pre-Calculated Values Detected
+              </h4>
+              <p className="text-sm text-emerald-800 dark:text-emerald-300 mt-1">
+                This sheet already contains calculated values. The system will verify them against
+                the configured rates instead of overwriting them.
               </p>
             </div>
           )}
@@ -1055,7 +1112,13 @@ function UploadRoute() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
-                Fiscal Year &amp; {isDebenture ? "Debenture Interest" : isMutualFund ? "Mutual Fund Distribution" : "Dividend"} Declaration
+                Fiscal Year &amp;{" "}
+                {isDebenture
+                  ? "Debenture Interest"
+                  : isMutualFund
+                    ? "Mutual Fund Distribution"
+                    : "Dividend"}{" "}
+                Declaration
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -1090,7 +1153,11 @@ function UploadRoute() {
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">
-                    {isDebenture ? "Coupon / Interest Rate (%)" : isMutualFund ? "Fund Distribution Rate (%)" : "Dividend Rate (%)"}
+                    {isDebenture
+                      ? "Coupon / Interest Rate (%)"
+                      : isMutualFund
+                        ? "Fund Distribution Rate (%)"
+                        : "Dividend Rate (%)"}
                   </Label>
                   <Input
                     type="number"
@@ -1100,18 +1167,19 @@ function UploadRoute() {
                     onChange={(e) => setDividendRate(e.target.value)}
                   />
                   <p className="text-xs text-muted-foreground">
-                    {isDebenture 
-                      ? "Face value Rs. 1,000 assumed (e.g. 8.75% = Rs. 87.50/unit)" 
-                      : isMutualFund 
-                        ? "Distribution rate applied to fund units" 
+                    {isDebenture
+                      ? "Face value Rs. 1,000 assumed (e.g. 8.75% = Rs. 87.50/unit)"
+                      : isMutualFund
+                        ? "Distribution rate applied to fund units"
                         : "Used to calculate gross if not in file"}
                   </p>
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">
-                    Payable Type
-                  </Label>
-                  <Select value={dividendType} onValueChange={(v) => handlePayableTypeChange(v as any)}>
+                  <Label className="text-xs">Payable Type</Label>
+                  <Select
+                    value={dividendType}
+                    onValueChange={(v) => handlePayableTypeChange(v as any)}
+                  >
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -1120,7 +1188,9 @@ function UploadRoute() {
                       <SelectItem value="Bonus">Bonus Share (Stock Dividend)</SelectItem>
                       <SelectItem value="Right">Right Share</SelectItem>
                       <SelectItem value="Debenture">Debenture Interest (6% / 15% TDS)</SelectItem>
-                      <SelectItem value="MutualFund">Mutual Fund Distribution (0% / 5% TDS)</SelectItem>
+                      <SelectItem value="MutualFund">
+                        Mutual Fund Distribution (0% / 5% TDS)
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
@@ -1142,7 +1212,9 @@ function UploadRoute() {
                     }}
                   />
                   <p className="text-xs text-muted-foreground">
-                    {isDebenture ? "Standard 6% Natural, 15% Legal (overrideable)" : "Auto-set by sheet type (max 50%)"}
+                    {isDebenture
+                      ? "Standard 6% Natural, 15% Legal (overrideable)"
+                      : "Auto-set by sheet type (max 50%)"}
                   </p>
                 </div>
                 <div className="space-y-1.5">
@@ -1160,7 +1232,9 @@ function UploadRoute() {
                       }))
                     }
                   />
-                  <p className="text-xs text-muted-foreground">Overrides global rate for this sheet</p>
+                  <p className="text-xs text-muted-foreground">
+                    Overrides global rate for this sheet
+                  </p>
                 </div>
               </div>
             </CardContent>
@@ -1479,5 +1553,3 @@ function UploadRoute() {
     </div>
   );
 }
-
-

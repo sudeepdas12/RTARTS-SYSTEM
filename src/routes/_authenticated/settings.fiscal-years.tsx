@@ -10,20 +10,45 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Pencil, Plus, Trash2, Calendar, CheckCircle2, Clock, CalendarDays, Search, X } from "lucide-react";
+import {
+  Pencil,
+  Plus,
+  Trash2,
+  Calendar,
+  CheckCircle2,
+  Clock,
+  CalendarDays,
+  Search,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/settings/fiscal-years")({
   component: FYPage,
 });
 
-type Row = { id: string; fiscal_year: string; start_date: string; end_date: string; is_active: boolean };
+type Row = {
+  id: string;
+  fiscal_year: string;
+  start_date: string;
+  end_date: string;
+  is_active: boolean;
+};
 
 function FYPage() {
   const qc = useQueryClient();
@@ -31,12 +56,20 @@ function FYPage() {
   const [open, setOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [editing, setEditing] = useState<Row | null>(null);
-  const [form, setForm] = useState({ fiscal_year: "", start_date: "", end_date: "", is_active: false });
+  const [form, setForm] = useState({
+    fiscal_year: "",
+    start_date: "",
+    end_date: "",
+    is_active: false,
+  });
 
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ["fiscal_years"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("fiscal_years").select("*").order("start_date", { ascending: false });
+      const { data, error } = await supabase
+        .from("fiscal_years")
+        .select("*")
+        .order("start_date", { ascending: false });
       if (error) throw error;
       return (data ?? []) as Row[];
     },
@@ -50,15 +83,32 @@ function FYPage() {
     return rows.filter((r) => r.fiscal_year.toLowerCase().includes(q));
   }, [rows, searchTerm]);
 
-  const openNew = () => { setEditing(null); setForm({ fiscal_year: "", start_date: "", end_date: "", is_active: false }); setOpen(true); };
-  const openEdit = (r: Row) => { setEditing(r); setForm({ fiscal_year: r.fiscal_year, start_date: r.start_date, end_date: r.end_date, is_active: r.is_active }); setOpen(true); };
+  const openNew = () => {
+    setEditing(null);
+    setForm({ fiscal_year: "", start_date: "", end_date: "", is_active: false });
+    setOpen(true);
+  };
+  const openEdit = (r: Row) => {
+    setEditing(r);
+    setForm({
+      fiscal_year: r.fiscal_year,
+      start_date: r.start_date,
+      end_date: r.end_date,
+      is_active: r.is_active,
+    });
+    setOpen(true);
+  };
 
   const setActiveFY = useMutation({
     mutationFn: async (targetId: string) => {
+      if (!isAdmin) throw new Error("Unauthorized: Only administrators can modify fiscal years.");
       // Deactivate all others
       await supabase.from("fiscal_years").update({ is_active: false }).neq("id", targetId);
       // Activate the selected one
-      const { error } = await supabase.from("fiscal_years").update({ is_active: true }).eq("id", targetId);
+      const { error } = await supabase
+        .from("fiscal_years")
+        .update({ is_active: true })
+        .eq("id", targetId);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -71,13 +121,14 @@ function FYPage() {
 
   const save = useMutation({
     mutationFn: async () => {
+      if (!isAdmin) throw new Error("Unauthorized: Only administrators can modify fiscal years.");
       if (form.is_active) {
         await supabase
           .from("fiscal_years")
           .update({ is_active: false })
           .neq("id", editing?.id || "00000000-0000-0000-0000-000000000000");
       }
-      
+
       const payload = { ...form };
       if (editing) {
         const { error } = await supabase.from("fiscal_years").update(payload).eq("id", editing.id);
@@ -87,9 +138,9 @@ function FYPage() {
         if (error) throw error;
       }
     },
-    onSuccess: () => { 
-      toast.success("Fiscal year saved successfully"); 
-      setOpen(false); 
+    onSuccess: () => {
+      toast.success("Fiscal year saved successfully");
+      setOpen(false);
       qc.invalidateQueries({ queryKey: ["fiscal_years"] });
       qc.invalidateQueries({ queryKey: ["active_fiscal_year"] });
     },
@@ -98,12 +149,13 @@ function FYPage() {
 
   const del = useMutation({
     mutationFn: async (id: string) => {
+      if (!isAdmin) throw new Error("Unauthorized: Only administrators can delete fiscal years.");
       const { error } = await supabase.from("fiscal_years").delete().eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => { 
-      toast.success("Fiscal year deleted"); 
-      qc.invalidateQueries({ queryKey: ["fiscal_years"] }); 
+    onSuccess: () => {
+      toast.success("Fiscal year deleted");
+      qc.invalidateQueries({ queryKey: ["fiscal_years"] });
       qc.invalidateQueries({ queryKey: ["active_fiscal_year"] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -131,7 +183,9 @@ function FYPage() {
         <Card className="glass-card hover-lift border border-border/80">
           <CardContent className="p-4 flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium uppercase text-muted-foreground">Active Fiscal Year</p>
+              <p className="text-xs font-medium uppercase text-muted-foreground">
+                Active Fiscal Year
+              </p>
               <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1 font-mono">
                 {activeFY ? activeFY.fiscal_year : "None Set"}
               </p>
@@ -146,7 +200,9 @@ function FYPage() {
         <Card className="glass-card hover-lift border border-border/80">
           <CardContent className="p-4 flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium uppercase text-muted-foreground">Active Period Range</p>
+              <p className="text-xs font-medium uppercase text-muted-foreground">
+                Active Period Range
+              </p>
               <p className="text-sm font-semibold mt-1 font-mono">
                 {activeFY ? `${activeFY.start_date} → ${activeFY.end_date}` : "—"}
               </p>
@@ -161,7 +217,9 @@ function FYPage() {
         <Card className="glass-card hover-lift border border-border/80">
           <CardContent className="p-4 flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium uppercase text-muted-foreground">Total Defined Periods</p>
+              <p className="text-xs font-medium uppercase text-muted-foreground">
+                Total Defined Periods
+              </p>
               <p className="text-2xl font-bold mt-1 tabular-nums">{rows.length}</p>
               <p className="text-[11px] text-muted-foreground mt-0.5">Historical & current years</p>
             </div>
@@ -221,8 +279,12 @@ function FYPage() {
               filteredRows.map((r) => (
                 <TableRow key={r.id} className="hover:bg-muted/30">
                   <TableCell className="font-semibold font-mono text-sm">{r.fiscal_year}</TableCell>
-                  <TableCell className="font-mono text-xs text-muted-foreground">{r.start_date}</TableCell>
-                  <TableCell className="font-mono text-xs text-muted-foreground">{r.end_date}</TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">
+                    {r.start_date}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">
+                    {r.end_date}
+                  </TableCell>
                   <TableCell>
                     {r.is_active ? (
                       <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 text-[11px]">
@@ -248,7 +310,13 @@ function FYPage() {
                             Set Active
                           </Button>
                         )}
-                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => openEdit(r)} title="Edit">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 w-7 p-0"
+                          onClick={() => openEdit(r)}
+                          title="Edit"
+                        >
                           <Pencil className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
                         </Button>
                         <Button
@@ -257,7 +325,7 @@ function FYPage() {
                           className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10"
                           onClick={() => del.mutate(r.id)}
                           title="Delete"
-                          disabled={r.is_active}
+                          disabled={r.is_active || del.isPending}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>

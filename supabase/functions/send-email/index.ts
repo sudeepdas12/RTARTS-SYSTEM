@@ -8,7 +8,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-send-token",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-send-token",
 };
 
 interface EmailPayload {
@@ -79,7 +80,12 @@ async function loadSmtpConfig(): Promise<SmtpConfig> {
         port: Number(v.smtp_port) || parseInt(Deno.env.get("SMTP_PORT") || "587"),
         user: (v.smtp_user as string) || Deno.env.get("SMTP_USER") || "",
         pass: (v.smtp_pass as string) || Deno.env.get("SMTP_PASS") || "",
-        from: (v.smtp_from as string) || Deno.env.get("SMTP_FROM") || (v.smtp_user as string) || Deno.env.get("SMTP_USER") || "",
+        from:
+          (v.smtp_from as string) ||
+          Deno.env.get("SMTP_FROM") ||
+          (v.smtp_user as string) ||
+          Deno.env.get("SMTP_USER") ||
+          "",
       };
     } catch {
       // DB read failed — fall through to env secrets.
@@ -95,17 +101,38 @@ async function loadSmtpConfig(): Promise<SmtpConfig> {
   };
 }
 
-// Lightweight authorization guard: if SEND_EMAIL_TOKEN is configured, require it in
-// the x-send-token header (constant-time compare). This prevents anyone from using
-// the public anon key to trigger emails/spam through your SMTP account.
-function isAuthorized(req: Request): boolean {
+// Lightweight authorization guard: verifies SEND_EMAIL_TOKEN or user session JWT.
+// This prevents anyone from using the public anon key to trigger emails/spam through your SMTP account.
+async function isAuthorized(req: Request): Promise<boolean> {
   const token = Deno.env.get("SEND_EMAIL_TOKEN");
-  if (!token) return true; // not configured -> allow (compat mode)
   const provided = req.headers.get("x-send-token") || "";
-  if (provided.length !== token.length) return false;
-  let diff = 0;
-  for (let i = 0; i < token.length; i++) diff |= provided.charCodeAt(i) ^ token.charCodeAt(i);
-  return diff === 0;
+  if (token && provided && provided.length === token.length) {
+    let diff = 0;
+    for (let i = 0; i < token.length; i++) diff |= provided.charCodeAt(i) ^ token.charCodeAt(i);
+    if (diff === 0) return true;
+  }
+
+  // Check Bearer token with Supabase Auth
+  const authHeader = req.headers.get("Authorization") || "";
+  const jwt = authHeader.replace(/^Bearer\s+/i, "");
+  if (jwt) {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (supabaseUrl && supabaseKey) {
+      try {
+        const supabase = createClient(supabaseUrl, supabaseKey);
+        const { data, error } = await supabase.auth.getUser(jwt);
+        if (!error && data?.user) return true;
+      } catch {
+        // Fall through
+      }
+    }
+  }
+
+  const isDev = !Deno.env.get("DENO_DEPLOYMENT_ID");
+  if (!token && isDev) return true;
+
+  return false;
 }
 
 serve(async (req) => {
@@ -114,18 +141,21 @@ serve(async (req) => {
   }
 
   try {
-    if (!isAuthorized(req)) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Unauthorized" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    const authorized = await isAuthorized(req);
+    if (!authorized) {
+      return new Response(JSON.stringify({ success: false, error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     const payload: EmailPayload = await req.json();
     const smtpConfig = await loadSmtpConfig();
 
     if (!smtpConfig.user || !smtpConfig.pass) {
-      throw new Error("SMTP credentials not configured. Add the SMTP password in System Settings > Notifications.");
+      throw new Error(
+        "SMTP credentials not configured. Add the SMTP password in System Settings > Notifications.",
+      );
     }
 
     if (!payload.to || !payload.subject || !payload.html) {
@@ -134,16 +164,14 @@ serve(async (req) => {
 
     await sendViaSMTP(smtpConfig, payload);
 
-    return new Response(
-      JSON.stringify({ success: true, message: "Email sent successfully" }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return new Response(JSON.stringify({ success: true, message: "Email sent successfully" }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   } catch (error) {
     console.error("Email send error:", error);
-    return new Response(
-      JSON.stringify({ success: false, error: (error as Error).message }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return new Response(JSON.stringify({ success: false, error: (error as Error).message }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 });
-

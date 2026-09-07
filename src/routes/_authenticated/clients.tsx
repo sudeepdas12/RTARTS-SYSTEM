@@ -9,13 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetFooter,
-} from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import {
   Select,
   SelectContent,
@@ -92,40 +86,127 @@ type Holder =
 type Status = "Active" | "Inactive";
 type Residency = "Resident" | "Non-Resident";
 type Verification = "Pending" | "Verified" | "Rejected";
-type PayeeClassification = "NATURAL_PERSON" | "PUBLIC_LEGAL_PERSON" | "COMPANY_INSTITUTION" | "TAX_EXEMPT" | "UNCLASSIFIED";
+type PayeeClassification =
+  "NATURAL_PERSON" | "PUBLIC_LEGAL_PERSON" | "COMPANY_INSTITUTION" | "TAX_EXEMPT" | "UNCLASSIFIED";
 
 function classificationBadge(c: PayeeClassification | null) {
   switch (c) {
     case "NATURAL_PERSON":
-      return <Badge variant="secondary" className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border-0 text-[10px]">Natural Person (5% Div / 6% Deb)</Badge>;
+      return (
+        <Badge
+          variant="secondary"
+          className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border-0 text-[10px]"
+        >
+          Natural Person (5% Div / 6% Deb)
+        </Badge>
+      );
     case "PUBLIC_LEGAL_PERSON":
-      return <Badge variant="secondary" className="bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300 border-0 text-[10px]">Public Legal Person (Statutory)</Badge>;
+      return (
+        <Badge
+          variant="secondary"
+          className="bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300 border-0 text-[10px]"
+        >
+          Public Legal Person (Statutory)
+        </Badge>
+      );
     case "COMPANY_INSTITUTION":
-      return <Badge variant="secondary" className="bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300 border-0 text-[10px]">Legal Person (5% Div / 15% Deb)</Badge>;
+      return (
+        <Badge
+          variant="secondary"
+          className="bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300 border-0 text-[10px]"
+        >
+          Legal Person (5% Div / 15% Deb)
+        </Badge>
+      );
     case "TAX_EXEMPT":
-      return <Badge variant="secondary" className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-0 text-[10px]">Tax Exempted (0% TDS)</Badge>;
+      return (
+        <Badge
+          variant="secondary"
+          className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-0 text-[10px]"
+        >
+          Tax Exempted (0% TDS)
+        </Badge>
+      );
     case "UNCLASSIFIED":
-      return <Badge variant="outline" className="text-red-600 border-red-300 bg-red-50 dark:bg-red-950/30 text-[10px]">Review Required</Badge>;
+      return (
+        <Badge
+          variant="outline"
+          className="text-red-600 border-red-300 bg-red-50 dark:bg-red-950/30 text-[10px]"
+        >
+          Review Required
+        </Badge>
+      );
     default:
-      return <Badge variant="outline" className="text-muted-foreground border-muted text-[10px]">Unclassified</Badge>;
+      return (
+        <Badge variant="outline" className="text-muted-foreground border-muted text-[10px]">
+          Unclassified
+        </Badge>
+      );
   }
 }
 
 function holderBadge(h: Holder | null) {
   const type = String(h || "Public").trim();
   if (/Local/i.test(type))
-    return <Badge variant="secondary" className="bg-cyan-100 text-cyan-800 dark:bg-cyan-900/40 dark:text-cyan-300 border-0 gap-1 text-[11px]"><MapPin className="h-3 w-3" />Local Affected</Badge>;
+    return (
+      <Badge
+        variant="secondary"
+        className="bg-cyan-100 text-cyan-800 dark:bg-cyan-900/40 dark:text-cyan-300 border-0 gap-1 text-[11px]"
+      >
+        <MapPin className="h-3 w-3" />
+        Local Affected
+      </Badge>
+    );
   if (/Employee|Staff/i.test(type))
-    return <Badge variant="secondary" className="bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 border-0 gap-1 text-[11px]"><User className="h-3 w-3" />Employee Quota</Badge>;
+    return (
+      <Badge
+        variant="secondary"
+        className="bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 border-0 gap-1 text-[11px]"
+      >
+        <User className="h-3 w-3" />
+        Employee Quota
+      </Badge>
+    );
   if (/Promoter/i.test(type))
-    return <Badge variant="secondary" className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-0 gap-1 text-[11px]"><ShieldCheck className="h-3 w-3" />Promoter</Badge>;
+    return (
+      <Badge
+        variant="secondary"
+        className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-0 gap-1 text-[11px]"
+      >
+        <ShieldCheck className="h-3 w-3" />
+        Promoter
+      </Badge>
+    );
   if (/Mutual Fund/i.test(type))
-    return <Badge variant="secondary" className="bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300 border-0 gap-1 text-[11px]"><Landmark className="h-3 w-3" />Mutual Fund</Badge>;
+    return (
+      <Badge
+        variant="secondary"
+        className="bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300 border-0 gap-1 text-[11px]"
+      >
+        <Landmark className="h-3 w-3" />
+        Mutual Fund
+      </Badge>
+    );
   if (/Foreign/i.test(type))
-    return <Badge variant="outline" className="text-purple-700 border-purple-300 gap-1 text-[11px]"><User className="h-3 w-3" />Foreign</Badge>;
+    return (
+      <Badge variant="outline" className="text-purple-700 border-purple-300 gap-1 text-[11px]">
+        <User className="h-3 w-3" />
+        Foreign
+      </Badge>
+    );
   if (/Legal Person|Institution/i.test(type))
-    return <Badge variant="outline" className="text-indigo-700 border-indigo-300 gap-1 text-[11px]"><Building2 className="h-3 w-3" />Institution</Badge>;
-  return <Badge variant="outline" className="text-emerald-700 border-emerald-300 gap-1 text-[11px]"><User className="h-3 w-3" />Public</Badge>;
+    return (
+      <Badge variant="outline" className="text-indigo-700 border-indigo-300 gap-1 text-[11px]">
+        <Building2 className="h-3 w-3" />
+        Institution
+      </Badge>
+    );
+  return (
+    <Badge variant="outline" className="text-emerald-700 border-emerald-300 gap-1 text-[11px]">
+      <User className="h-3 w-3" />
+      Public
+    </Badge>
+  );
 }
 
 interface Client {
@@ -219,7 +300,13 @@ function verificationBadge(v: Verification) {
   );
 }
 
-function SectionLabel({ icon: Icon, children }: { icon?: React.ElementType; children: React.ReactNode }) {
+function SectionLabel({
+  icon: Icon,
+  children,
+}: {
+  icon?: React.ElementType;
+  children: React.ReactNode;
+}) {
   return (
     <div className="mb-2.5 mt-5 flex items-center gap-2 border-b pb-1">
       {Icon && <Icon className="h-4 w-4 text-primary" />}
@@ -257,6 +344,7 @@ function ClientsPage() {
   const [form, setForm] = useState(emptyForm);
   const [deleteTarget, setDeleteTarget] = useState<Client | null>(null);
   const [selectedStatementBoid, setSelectedStatementBoid] = useState<string | null>(null);
+  const [counterQuery, setCounterQuery] = useState("");
 
   const fileRef = useRef<HTMLInputElement>(null);
   const debouncedSearch = useDebounce(search, 400);
@@ -274,74 +362,130 @@ function ClientsPage() {
     },
   });
 
-  const { data: stats = { total: 0, verified: 0, pending: 0, natural: 0, institutions: 0 } } = useQuery({
-    queryKey: ["clients-stats", companyFilter],
-    queryFn: async () => {
-      if (companyFilter === "all") {
+  const { data: stats = { total: 0, verified: 0, pending: 0, natural: 0, institutions: 0 } } =
+    useQuery({
+      queryKey: ["clients-stats", companyFilter],
+      queryFn: async () => {
+        // 1. First attempt dedicated server-side aggregation RPC for instant response
+        try {
+          const { data: rpcStats, error: rpcErr } = await (supabase as any).rpc(
+            "get_company_client_stats",
+            { p_company_id: companyFilter === "all" ? null : companyFilter },
+          );
+          if (!rpcErr && rpcStats) {
+            return {
+              total: Number(rpcStats.total || 0),
+              verified: Number(rpcStats.verified || 0),
+              pending: Number(rpcStats.pending || 0),
+              natural: Number(rpcStats.natural || 0),
+              institutions: Number(rpcStats.institutions || 0),
+            };
+          }
+        } catch {
+          // Fall back to direct queries below
+        }
+
+        if (companyFilter === "all") {
+          const [totalRes, verifiedRes, pendingRes, naturalRes, instRes] = await Promise.all([
+            (supabase as any).from("clients").select("id", { count: "exact", head: true }),
+            (supabase as any)
+              .from("clients")
+              .select("id", { count: "exact", head: true })
+              .eq("verification_status", "Verified"),
+            (supabase as any)
+              .from("clients")
+              .select("id", { count: "exact", head: true })
+              .eq("verification_status", "Pending"),
+            (supabase as any)
+              .from("clients")
+              .select("id", { count: "exact", head: true })
+              .eq("payee_classification", "NATURAL_PERSON"),
+            (supabase as any)
+              .from("clients")
+              .select("id", { count: "exact", head: true })
+              .in("payee_classification", ["COMPANY_INSTITUTION", "PUBLIC_LEGAL_PERSON"]),
+          ]);
+
+          return {
+            total: totalRes.count || 0,
+            verified: verifiedRes.count || 0,
+            pending: pendingRes.count || 0,
+            natural: naturalRes.count || 0,
+            institutions: instRes.count || 0,
+          };
+        }
+
+        // Company selected: Query via get_clients_paginated with p_limit = 1
         const [totalRes, verifiedRes, pendingRes, naturalRes, instRes] = await Promise.all([
-          (supabase as any).from("clients").select("id", { count: "exact", head: true }),
-          (supabase as any).from("clients").select("id", { count: "exact", head: true }).eq("verification_status", "Verified"),
-          (supabase as any).from("clients").select("id", { count: "exact", head: true }).eq("verification_status", "Pending"),
-          (supabase as any).from("clients").select("id", { count: "exact", head: true }).eq("payee_classification", "NATURAL_PERSON"),
-          (supabase as any).from("clients").select("id", { count: "exact", head: true }).in("payee_classification", ["COMPANY_INSTITUTION", "PUBLIC_LEGAL_PERSON"]),
+          (supabase as any).rpc("get_clients_paginated", {
+            p_company_id: companyFilter,
+            p_limit: 1,
+            p_offset: 0,
+          }),
+          (supabase as any).rpc("get_clients_paginated", {
+            p_company_id: companyFilter,
+            p_verification: "Verified",
+            p_limit: 1,
+            p_offset: 0,
+          }),
+          (supabase as any).rpc("get_clients_paginated", {
+            p_company_id: companyFilter,
+            p_verification: "Pending",
+            p_limit: 1,
+            p_offset: 0,
+          }),
+          (supabase as any).rpc("get_clients_paginated", {
+            p_company_id: companyFilter,
+            p_holder_type: "PUBLIC",
+            p_limit: 1,
+            p_offset: 0,
+          }),
+          (supabase as any).rpc("get_clients_paginated", {
+            p_company_id: companyFilter,
+            p_holder_type: "INSTITUTION",
+            p_limit: 1,
+            p_offset: 0,
+          }),
         ]);
 
         return {
-          total: totalRes.count || 0,
-          verified: verifiedRes.count || 0,
-          pending: pendingRes.count || 0,
-          natural: naturalRes.count || 0,
-          institutions: instRes.count || 0,
+          total:
+            totalRes.data && totalRes.data.length > 0 ? Number(totalRes.data[0].total_count) : 0,
+          verified:
+            verifiedRes.data && verifiedRes.data.length > 0
+              ? Number(verifiedRes.data[0].total_count)
+              : 0,
+          pending:
+            pendingRes.data && pendingRes.data.length > 0
+              ? Number(pendingRes.data[0].total_count)
+              : 0,
+          natural:
+            naturalRes.data && naturalRes.data.length > 0
+              ? Number(naturalRes.data[0].total_count)
+              : 0,
+          institutions:
+            instRes.data && instRes.data.length > 0 ? Number(instRes.data[0].total_count) : 0,
         };
-      }
-
-      // Company selected: Query via get_clients_paginated with p_limit = 1
-      const [totalRes, verifiedRes, pendingRes, naturalRes, instRes] = await Promise.all([
-        (supabase as any).rpc("get_clients_paginated", { p_company_id: companyFilter, p_limit: 1, p_offset: 0 }),
-        (supabase as any).rpc("get_clients_paginated", { p_company_id: companyFilter, p_verification: "Verified", p_limit: 1, p_offset: 0 }),
-        (supabase as any).rpc("get_clients_paginated", { p_company_id: companyFilter, p_verification: "Pending", p_limit: 1, p_offset: 0 }),
-        (supabase as any).rpc("get_clients_paginated", { p_company_id: companyFilter, p_classification: "NATURAL_PERSON", p_limit: 1, p_offset: 0 }),
-        (supabase as any).rpc("get_clients_paginated", { p_company_id: companyFilter, p_classification: "COMPANY_INSTITUTION", p_limit: 1, p_offset: 0 }),
-      ]);
-
-      return {
-        total: totalRes.data && totalRes.data.length > 0 ? Number(totalRes.data[0].total_count) : 0,
-        verified: verifiedRes.data && verifiedRes.data.length > 0 ? Number(verifiedRes.data[0].total_count) : 0,
-        pending: pendingRes.data && pendingRes.data.length > 0 ? Number(pendingRes.data[0].total_count) : 0,
-        natural: naturalRes.data && naturalRes.data.length > 0 ? Number(naturalRes.data[0].total_count) : 0,
-        institutions: instRes.data && instRes.data.length > 0 ? Number(instRes.data[0].total_count) : 0,
-      };
-    },
-  });
+      },
+    });
 
   const { data: pageData = { rows: [], count: 0 }, isLoading } = useQuery({
-    queryKey: ["clients", page, pageSize, debouncedSearch, companyFilter, categoryFilter, statusFilter, verFilter],
+    queryKey: [
+      "clients",
+      page,
+      pageSize,
+      debouncedSearch,
+      companyFilter,
+      categoryFilter,
+      statusFilter,
+      verFilter,
+    ],
     queryFn: async () => {
-      let effectiveHolderType = "all";
-      let effectiveClassification = "all";
-
-      if (categoryFilter === "PUBLIC") {
-        effectiveHolderType = "Natural Person - Public";
-      } else if (categoryFilter === "PROMOTER") {
-        effectiveHolderType = "Natural Person - Promoter";
-      } else if (categoryFilter === "LOCAL") {
-        effectiveHolderType = "Natural Person - Local";
-      } else if (categoryFilter === "EMPLOYEE") {
-        effectiveHolderType = "Natural Person - Employee";
-      } else if (categoryFilter === "INSTITUTION") {
-        effectiveClassification = "COMPANY_INSTITUTION";
-      } else if (categoryFilter === "MUTUAL_FUND") {
-        effectiveHolderType = "Mutual Fund";
-      } else if (categoryFilter === "TAX_EXEMPT") {
-        effectiveClassification = "TAX_EXEMPT";
-      } else if (categoryFilter === "FOREIGN") {
-        effectiveHolderType = "Foreign";
-      }
-
+      // Pass the unified categoryFilter key to get_clients_paginated (which handles full multi-label matching)
       const { data, error } = await (supabase as any).rpc("get_clients_paginated", {
         p_company_id: companyFilter === "all" ? null : companyFilter,
-        p_holder_type: effectiveHolderType,
-        p_classification: effectiveClassification,
+        p_holder_type: categoryFilter,
+        p_classification: "all",
         p_status: statusFilter,
         p_verification: verFilter,
         p_search: debouncedSearch || "",
@@ -357,8 +501,25 @@ function ClientsPage() {
           .range((page - 1) * pageSize, page * pageSize - 1);
 
         if (companyFilter !== "all") query = query.eq("company_id", companyFilter);
-        if (effectiveHolderType !== "all") query = query.eq("holder_type", effectiveHolderType as any);
-        if (effectiveClassification !== "all") query = query.eq("payee_classification", effectiveClassification as any);
+        if (categoryFilter !== "all") {
+          if (categoryFilter === "INSTITUTION") {
+            query = query.or("payee_classification.in.(COMPANY_INSTITUTION,PUBLIC_LEGAL_PERSON),holder_type.ilike.%Institution%,holder_type.ilike.%Legal Person%");
+          } else if (categoryFilter === "PUBLIC") {
+            query = query.or("payee_classification.eq.NATURAL_PERSON,holder_type.eq.Natural Person - Public,holder_type.eq.Public");
+          } else if (categoryFilter === "PROMOTER") {
+            query = query.ilike("holder_type", "%Promoter%");
+          } else if (categoryFilter === "LOCAL") {
+            query = query.ilike("holder_type", "%Local%");
+          } else if (categoryFilter === "EMPLOYEE") {
+            query = query.or("holder_type.ilike.%Employee%,holder_type.ilike.%Staff%");
+          } else if (categoryFilter === "MUTUAL_FUND") {
+            query = query.ilike("holder_type", "%Mutual Fund%");
+          } else if (categoryFilter === "TAX_EXEMPT") {
+            query = query.or("payee_classification.eq.TAX_EXEMPT,holder_type.ilike.%Tax Exempt%");
+          } else if (categoryFilter === "FOREIGN") {
+            query = query.ilike("holder_type", "%Foreign%");
+          }
+        }
         if (statusFilter !== "all") query = query.eq("status", statusFilter as any);
         if (verFilter !== "all") query = query.eq("verification_status", verFilter as any);
 
@@ -368,7 +529,9 @@ function ClientsPage() {
 
       const rows = (data || []).map((r: any) => ({
         ...r,
-        company: r.company_name ? { company_name: r.company_name, company_code: r.company_code } : null,
+        company: r.company_name
+          ? { company_name: r.company_name, company_code: r.company_code }
+          : null,
       }));
       const count = data && data.length > 0 ? Number(data[0].total_count) : 0;
 
@@ -402,8 +565,12 @@ function ClientsPage() {
       kitta: c.kitta != null ? String(c.kitta) : "",
       holder_type: (c.holder_type ?? "Natural Person - Public") as Holder,
       payee_classification: (c.payee_classification ?? "NATURAL_PERSON") as PayeeClassification,
-      pan_no: c.pan_no ?? (c.pan_or_citizenship && c.pan_or_citizenship.length === 9 ? c.pan_or_citizenship : ""),
-      citizenship_no: c.citizenship_no ?? (c.pan_or_citizenship && c.pan_or_citizenship.length !== 9 ? c.pan_or_citizenship : ""),
+      pan_no:
+        c.pan_no ??
+        (c.pan_or_citizenship && c.pan_or_citizenship.length === 9 ? c.pan_or_citizenship : ""),
+      citizenship_no:
+        c.citizenship_no ??
+        (c.pan_or_citizenship && c.pan_or_citizenship.length !== 9 ? c.pan_or_citizenship : ""),
       pan_or_citizenship: c.pan_or_citizenship ?? "",
       nid_number: c.nid_number ?? "",
       address: c.address ?? "",
@@ -427,6 +594,8 @@ function ClientsPage() {
 
   const upsert = useMutation({
     mutationFn: async () => {
+      if (!canWrite)
+        throw new Error("Unauthorized: You do not have permission to create or edit clients.");
       const panNo = form.pan_no.trim() || null;
       const citizenshipNo = form.citizenship_no.trim() || null;
       const kittaVal = form.kitta !== "" ? Number(form.kitta) : 0;
@@ -463,7 +632,10 @@ function ClientsPage() {
         status: form.status,
       };
       if (editing) {
-        const { error } = await supabase.from("clients").update(payload as never).eq("id", editing.id);
+        const { error } = await supabase
+          .from("clients")
+          .update(payload as never)
+          .eq("id", editing.id);
         if (error) throw error;
       } else {
         const { error } = await supabase.from("clients").insert(payload as never);
@@ -484,6 +656,7 @@ function ClientsPage() {
 
   const del = useMutation({
     mutationFn: async (id: string) => {
+      if (!isAdmin) throw new Error("Unauthorized: Only administrators can delete client records.");
       const toastId = toast.loading("Deleting shareholder record…");
       try {
         const { error } = await supabase.from("clients").delete().eq("id", id);
@@ -552,8 +725,10 @@ function ClientsPage() {
             .range(i * batchSize, (i + 1) * batchSize - 1);
 
           if (companyFilter !== "all") query = query.eq("company_id", companyFilter);
-          if (effectiveHolderType !== "all") query = query.eq("holder_type", effectiveHolderType as any);
-          if (effectiveClassification !== "all") query = query.eq("payee_classification", effectiveClassification as any);
+          if (effectiveHolderType !== "all")
+            query = query.eq("holder_type", effectiveHolderType as any);
+          if (effectiveClassification !== "all")
+            query = query.eq("payee_classification", effectiveClassification as any);
           if (statusFilter !== "all") query = query.eq("status", statusFilter as any);
           if (verFilter !== "all") query = query.eq("verification_status", verFilter as any);
           const fallback = await query;
@@ -579,8 +754,16 @@ function ClientsPage() {
           date_of_birth: d.date_of_birth,
           gender: d.gender,
           occupation: d.occupation,
-          pan_no: d.pan_no || (d.pan_or_citizenship && String(d.pan_or_citizenship).length === 9 ? d.pan_or_citizenship : ""),
-          citizenship_no: d.citizenship_no || (d.pan_or_citizenship && String(d.pan_or_citizenship).length !== 9 ? d.pan_or_citizenship : ""),
+          pan_no:
+            d.pan_no ||
+            (d.pan_or_citizenship && String(d.pan_or_citizenship).length === 9
+              ? d.pan_or_citizenship
+              : ""),
+          citizenship_no:
+            d.citizenship_no ||
+            (d.pan_or_citizenship && String(d.pan_or_citizenship).length !== 9
+              ? d.pan_or_citizenship
+              : ""),
           nid_number: d.nid_number,
           phone: d.phone,
           email: d.email,
@@ -596,7 +779,7 @@ function ClientsPage() {
           verification_status: d.verification_status,
           status: d.status,
         })),
-        "clients_register"
+        "clients_register",
       );
       toast.success(`Successfully exported ${allData.length.toLocaleString()} clients`);
     } catch (e: any) {
@@ -610,8 +793,24 @@ function ClientsPage() {
       const clean = rows
         .filter((r) => r.client_code && r.full_name)
         .map((r) => {
-          const pan = r.pan_no ? String(r.pan_no).trim() : (r.pan ? String(r.pan).trim() : (r.PAN ? String(r.PAN).trim() : (r["PAN NO"] ? String(r["PAN NO"]).trim() : null)));
-          const ctz = r.citizenship_no ? String(r.citizenship_no).trim() : (r.citizenship ? String(r.citizenship).trim() : (r.CITIZENSHIP ? String(r.CITIZENSHIP).trim() : (r["CITIZENSHIP NO"] ? String(r["CITIZENSHIP NO"]).trim() : null)));
+          const pan = r.pan_no
+            ? String(r.pan_no).trim()
+            : r.pan
+              ? String(r.pan).trim()
+              : r.PAN
+                ? String(r.PAN).trim()
+                : r["PAN NO"]
+                  ? String(r["PAN NO"]).trim()
+                  : null;
+          const ctz = r.citizenship_no
+            ? String(r.citizenship_no).trim()
+            : r.citizenship
+              ? String(r.citizenship).trim()
+              : r.CITIZENSHIP
+                ? String(r.CITIZENSHIP).trim()
+                : r["CITIZENSHIP NO"]
+                  ? String(r["CITIZENSHIP NO"]).trim()
+                  : null;
           const legacyPanCtz = r.pan_or_citizenship ? String(r.pan_or_citizenship).trim() : null;
           return {
             client_code: String(r.client_code).trim(),
@@ -624,11 +823,18 @@ function ClientsPage() {
             occupation: r.occupation ? String(r.occupation).trim() : null,
             boid: r.boid ? String(r.boid).trim() : null,
             holder_type: (r.holder_type as Holder) ?? null,
-            payee_classification: (r.payee_classification as PayeeClassification) ?? "NATURAL_PERSON",
+            payee_classification:
+              (r.payee_classification as PayeeClassification) ?? "NATURAL_PERSON",
             pan_no: pan,
             citizenship_no: ctz,
             pan_or_citizenship: pan || ctz || legacyPanCtz,
-            nid_number: r.nid_number ? String(r.nid_number).trim() : (r.nid ? String(r.nid).trim() : (r.NID ? String(r.NID).trim() : null)),
+            nid_number: r.nid_number
+              ? String(r.nid_number).trim()
+              : r.nid
+                ? String(r.nid).trim()
+                : r.NID
+                  ? String(r.NID).trim()
+                  : null,
             address: r.address ? String(r.address).trim() : null,
             province: r.province ? String(r.province).trim() : null,
             district: r.district ? String(r.district).trim() : null,
@@ -678,7 +884,12 @@ function ClientsPage() {
                     e.target.value = "";
                   }}
                 />
-                <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()} className="hover-lift">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fileRef.current?.click()}
+                  className="hover-lift"
+                >
                   <Upload className="mr-2 h-4 w-4" /> Import
                 </Button>
                 <Button size="sm" onClick={openNew} className="hover-lift">
@@ -693,10 +904,34 @@ function ClientsPage() {
       {/* KPI Stats Strip */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
-          { label: "Total Shareholders", value: stats.total, icon: Users, color: "text-primary", bg: "bg-primary/10" },
-          { label: "KYC Verified", value: stats.verified, icon: ShieldCheck, color: "text-emerald-600", bg: "bg-emerald-50 dark:bg-emerald-950/30" },
-          { label: "Pending Review", value: stats.pending, icon: Clock, color: "text-amber-600", bg: "bg-amber-50 dark:bg-amber-950/30" },
-          { label: "Natural Persons", value: stats.natural, icon: User, color: "text-violet-600", bg: "bg-violet-50 dark:bg-violet-950/30" },
+          {
+            label: "Total Shareholders",
+            value: stats.total,
+            icon: Users,
+            color: "text-primary",
+            bg: "bg-primary/10",
+          },
+          {
+            label: "KYC Verified",
+            value: stats.verified,
+            icon: ShieldCheck,
+            color: "text-emerald-600",
+            bg: "bg-emerald-50 dark:bg-emerald-950/30",
+          },
+          {
+            label: "Pending Review",
+            value: stats.pending,
+            icon: Clock,
+            color: "text-amber-600",
+            bg: "bg-amber-50 dark:bg-amber-950/30",
+          },
+          {
+            label: "Natural Persons",
+            value: stats.natural,
+            icon: User,
+            color: "text-violet-600",
+            bg: "bg-violet-50 dark:bg-violet-950/30",
+          },
         ].map((s) => (
           <Card key={s.label} className="glass-card">
             <CardContent className="flex items-center gap-3 p-4">
@@ -705,12 +940,55 @@ function ClientsPage() {
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">{s.label}</p>
-                <p className={`text-xl font-bold tabular-nums ${s.color}`}>{s.value.toLocaleString()}</p>
+                <p className={`text-xl font-bold tabular-nums ${s.color}`}>
+                  {s.value.toLocaleString()}
+                </p>
               </div>
             </CardContent>
           </Card>
         ))}
       </div>
+
+      {/* RTS Walk-in Counter 360° Quick Lookup */}
+      <Card className="border-primary/30 bg-primary/5 shadow-sm">
+        <CardContent className="p-4">
+          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                <Landmark className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold">RTS Shareholder 360° Counter Lookup</h3>
+                <p className="text-xs text-muted-foreground">
+                  Instantly retrieve consolidated holdings, distribution history & print official ledger statements.
+                </p>
+              </div>
+            </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (counterQuery.trim()) {
+                  setSelectedStatementBoid(counterQuery.trim());
+                }
+              }}
+              className="flex items-center gap-2"
+            >
+              <div className="relative min-w-[260px]">
+                <Input
+                  placeholder="Enter 16-digit BOID, PAN, or Citizenship..."
+                  value={counterQuery}
+                  onChange={(e) => setCounterQuery(e.target.value)}
+                  className="h-9 text-xs font-mono bg-background"
+                />
+              </div>
+              <Button type="submit" size="sm" className="h-9 text-xs gap-1.5 shrink-0">
+                <FileText className="h-3.5 w-3.5" />
+                View 360° Statement
+              </Button>
+            </form>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Filter Toolbar */}
       <Card className="glass-card">
@@ -721,24 +999,41 @@ function ClientsPage() {
               <Input
                 placeholder="Search by name, code, BOID, PAN, phone…"
                 value={search}
-                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(1);
+                }}
                 className="pl-9"
               />
             </div>
 
-            <Select value={companyFilter} onValueChange={(v) => { setCompanyFilter(v); setPage(1); }}>
+            <Select
+              value={companyFilter}
+              onValueChange={(v) => {
+                setCompanyFilter(v);
+                setPage(1);
+              }}
+            >
               <SelectTrigger className="w-40 h-9">
                 <SelectValue placeholder="Company" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Companies</SelectItem>
                 {companies.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>{c.company_code} — {c.company_name}</SelectItem>
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.company_code} — {c.company_name}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
 
-            <Select value={categoryFilter} onValueChange={(v) => { setCategoryFilter(v); setPage(1); }}>
+            <Select
+              value={categoryFilter}
+              onValueChange={(v) => {
+                setCategoryFilter(v);
+                setPage(1);
+              }}
+            >
               <SelectTrigger className="w-52 h-9">
                 <SelectValue placeholder="Category" />
               </SelectTrigger>
@@ -755,7 +1050,13 @@ function ClientsPage() {
               </SelectContent>
             </Select>
 
-            <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1); }}>
+            <Select
+              value={statusFilter}
+              onValueChange={(v) => {
+                setStatusFilter(v);
+                setPage(1);
+              }}
+            >
               <SelectTrigger className="w-28 h-9">
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
@@ -819,7 +1120,9 @@ function ClientsPage() {
                   >
                     <TableCell>
                       <div className="font-medium text-sm text-foreground">{c.full_name}</div>
-                      {c.father_name && <div className="text-[11px] text-muted-foreground">s/o {c.father_name}</div>}
+                      {c.father_name && (
+                        <div className="text-[11px] text-muted-foreground">s/o {c.father_name}</div>
+                      )}
                     </TableCell>
                     <TableCell className="font-mono text-xs">
                       {c.boid ? (
@@ -848,10 +1151,16 @@ function ClientsPage() {
                         {c.company?.company_code || c.company?.company_name || "—"}
                       </span>
                     </TableCell>
-                    <TableCell className="text-xs font-mono">{c.pan_or_citizenship ?? "—"}</TableCell>
+                    <TableCell className="text-xs font-mono">
+                      {c.pan_or_citizenship ?? "—"}
+                    </TableCell>
                     <TableCell>
                       <div className="text-xs font-medium">{c.bank_name ?? "—"}</div>
-                      {c.bank_account_no && <div className="font-mono text-[10px] text-muted-foreground">{c.bank_account_no}</div>}
+                      {c.bank_account_no && (
+                        <div className="font-mono text-[10px] text-muted-foreground">
+                          {c.bank_account_no}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell>{verificationBadge(c.verification_status)}</TableCell>
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
@@ -900,21 +1209,29 @@ function ClientsPage() {
             <span>Rows per page:</span>
             <Select
               value={String(pageSize)}
-              onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}
+              onValueChange={(v) => {
+                setPageSize(Number(v));
+                setPage(1);
+              }}
             >
               <SelectTrigger className="h-7 w-16 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {PAGE_SIZE_OPTIONS.map((s) => (
-                  <SelectItem key={s} value={String(s)}>{s}</SelectItem>
+                  <SelectItem key={s} value={String(s)}>
+                    {s}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
           <div className="flex items-center gap-3 text-xs">
             <span className="text-muted-foreground">
-              {pageData.count === 0 ? "0" : `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, pageData.count)}`} of {pageData.count.toLocaleString()}
+              {pageData.count === 0
+                ? "0"
+                : `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, pageData.count)}`}{" "}
+              of {pageData.count.toLocaleString()}
             </span>
             <div className="flex gap-1">
               <Button
@@ -941,7 +1258,13 @@ function ClientsPage() {
       </Card>
 
       {/* Client Edit/Create Sheet */}
-      <Sheet open={sheetOpen} onOpenChange={(o) => { setSheetOpen(o); if (!o) setEditing(null); }}>
+      <Sheet
+        open={sheetOpen}
+        onOpenChange={(o) => {
+          setSheetOpen(o);
+          if (!o) setEditing(null);
+        }}
+      >
         <SheetContent
           side="right"
           className="w-full sm:max-w-2xl overflow-y-auto p-0 flex flex-col"
@@ -958,8 +1281,14 @@ function ClientsPage() {
             <SectionLabel icon={User}>Identity & Demographics</SectionLabel>
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="space-y-1.5">
-                <Label>Client Code <span className="text-destructive">*</span></Label>
-                <Input value={form.client_code} onChange={(e) => setF("client_code", e.target.value)} placeholder="e.g. C001234" />
+                <Label>
+                  Client Code <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  value={form.client_code}
+                  onChange={(e) => setF("client_code", e.target.value)}
+                  placeholder="e.g. C001234"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>BOID (16 Digits)</Label>
@@ -974,39 +1303,71 @@ function ClientsPage() {
               <div className="space-y-1.5">
                 <Label>Linked Company</Label>
                 <Select value={form.company_id} onValueChange={(v) => setF("company_id", v)}>
-                  <SelectTrigger><SelectValue placeholder="— None —" /></SelectTrigger>
-                  <SelectContent>
+                  <SelectTrigger>
+                    <SelectValue placeholder="— None —" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-60 overflow-y-auto">
                     <SelectItem value="">— None —</SelectItem>
                     {companies.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>{c.company_code} — {c.company_name}</SelectItem>
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.company_code} — {c.company_name}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-1.5 sm:col-span-2">
-                <Label>Full Name <span className="text-destructive">*</span></Label>
-                <Input value={form.full_name} onChange={(e) => setF("full_name", e.target.value)} placeholder="As per citizenship / PAN" />
+                <Label>
+                  Full Name <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  value={form.full_name}
+                  onChange={(e) => setF("full_name", e.target.value)}
+                  placeholder="As per citizenship / PAN"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>PAN Number (Permanent Account No)</Label>
-                <Input value={form.pan_no} onChange={(e) => setF("pan_no", e.target.value)} placeholder="9-digit PAN (e.g. 102938475)" maxLength={15} className="font-mono" />
+                <Input
+                  value={form.pan_no}
+                  onChange={(e) => setF("pan_no", e.target.value)}
+                  placeholder="9-digit PAN (e.g. 102938475)"
+                  maxLength={15}
+                  className="font-mono"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Citizenship Number</Label>
-                <Input value={form.citizenship_no} onChange={(e) => setF("citizenship_no", e.target.value)} placeholder="e.g. 27-01-75-01234" />
+                <Input
+                  value={form.citizenship_no}
+                  onChange={(e) => setF("citizenship_no", e.target.value)}
+                  placeholder="e.g. 27-01-75-01234"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>NID Number (National ID)</Label>
-                <Input value={form.nid_number} onChange={(e) => setF("nid_number", e.target.value)} placeholder="10-digit NID Number" maxLength={15} className="font-mono" />
+                <Input
+                  value={form.nid_number}
+                  onChange={(e) => setF("nid_number", e.target.value)}
+                  placeholder="10-digit NID Number"
+                  maxLength={15}
+                  className="font-mono"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Date of Birth (BS / AD)</Label>
-                <Input value={form.date_of_birth} onChange={(e) => setF("date_of_birth", e.target.value)} placeholder="YYYY-MM-DD" />
+                <Input
+                  value={form.date_of_birth}
+                  onChange={(e) => setF("date_of_birth", e.target.value)}
+                  placeholder="YYYY-MM-DD"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Gender</Label>
                 <Select value={form.gender} onValueChange={(v) => setF("gender", v)}>
-                  <SelectTrigger><SelectValue placeholder="Select Gender" /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select Gender" />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="Male">Male</SelectItem>
                     <SelectItem value="Female">Female</SelectItem>
@@ -1016,20 +1377,32 @@ function ClientsPage() {
               </div>
               <div className="space-y-1.5">
                 <Label>Occupation</Label>
-                <Input value={form.occupation} onChange={(e) => setF("occupation", e.target.value)} placeholder="e.g. Service / Business" />
+                <Input
+                  value={form.occupation}
+                  onChange={(e) => setF("occupation", e.target.value)}
+                  placeholder="e.g. Service / Business"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Father's Name</Label>
-                <Input value={form.father_name} onChange={(e) => setF("father_name", e.target.value)} />
+                <Input
+                  value={form.father_name}
+                  onChange={(e) => setF("father_name", e.target.value)}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Grandfather's Name</Label>
-                <Input value={form.grandfather_name} onChange={(e) => setF("grandfather_name", e.target.value)} />
+                <Input
+                  value={form.grandfather_name}
+                  onChange={(e) => setF("grandfather_name", e.target.value)}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Residency</Label>
                 <Select value={form.residency} onValueChange={(v) => setF("residency", v)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="Resident">Resident</SelectItem>
                     <SelectItem value="Non-Resident">Non-Resident</SelectItem>
@@ -1053,26 +1426,47 @@ function ClientsPage() {
               </div>
               <div className="space-y-1.5">
                 <Label>Tax Classification (TDS Rate)</Label>
-                <Select value={form.payee_classification} onValueChange={(v) => setF("payee_classification", v)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select
+                  value={form.payee_classification}
+                  onValueChange={(v) => setF("payee_classification", v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="NATURAL_PERSON">Natural Person (Public) — 5% Div / 6% Deb</SelectItem>
-                    <SelectItem value="COMPANY_INSTITUTION">Legal Person (Institution / Company) — 5% Div / 15% Deb</SelectItem>
-                    <SelectItem value="TAX_EXEMPT">Tax Exempted (Mutual Fund / Retirement) — 0% TDS</SelectItem>
+                    <SelectItem value="NATURAL_PERSON">
+                      Natural Person (Public) — 5% Div / 6% Deb
+                    </SelectItem>
+                    <SelectItem value="COMPANY_INSTITUTION">
+                      Legal Person (Institution / Company) — 5% Div / 15% Deb
+                    </SelectItem>
+                    <SelectItem value="TAX_EXEMPT">
+                      Tax Exempted (Mutual Fund / Retirement) — 0% TDS
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-1.5">
                 <Label>Holder Type (Segment)</Label>
                 <Select value={form.holder_type} onValueChange={(v) => setF("holder_type", v)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="Natural Person - Public">Public (Natural Person)</SelectItem>
                     <SelectItem value="Natural Person - Local">Local Affected</SelectItem>
-                    <SelectItem value="Natural Person - Employee">Employee / Staff Quota</SelectItem>
-                    <SelectItem value="Natural Person - Promoter">Promoter (Natural Person)</SelectItem>
-                    <SelectItem value="Legal Person">Institution (Legal Person / Corporate)</SelectItem>
-                    <SelectItem value="Legal Person - Promoter">Promoter (Legal Person / Corporate)</SelectItem>
+                    <SelectItem value="Natural Person - Employee">
+                      Employee / Staff Quota
+                    </SelectItem>
+                    <SelectItem value="Natural Person - Promoter">
+                      Promoter (Natural Person)
+                    </SelectItem>
+                    <SelectItem value="Legal Person">
+                      Institution (Legal Person / Corporate)
+                    </SelectItem>
+                    <SelectItem value="Legal Person - Promoter">
+                      Promoter (Legal Person / Corporate)
+                    </SelectItem>
                     <SelectItem value="Mutual Fund">Mutual Fund (Tax Exempt)</SelectItem>
                     <SelectItem value="Foreign">Foreign / Non-Resident</SelectItem>
                     <SelectItem value="Tax Exempt">Tax Exempt (Statutory / Pension)</SelectItem>
@@ -1086,27 +1480,51 @@ function ClientsPage() {
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="space-y-1.5 sm:col-span-3">
                 <Label>Full Address</Label>
-                <Input value={form.address} onChange={(e) => setF("address", e.target.value)} placeholder="Street, Ward No., Area" />
+                <Input
+                  value={form.address}
+                  onChange={(e) => setF("address", e.target.value)}
+                  placeholder="Street, Ward No., Area"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Province</Label>
-                <Input value={form.province} onChange={(e) => setF("province", e.target.value)} placeholder="e.g. Bagmati" />
+                <Input
+                  value={form.province}
+                  onChange={(e) => setF("province", e.target.value)}
+                  placeholder="e.g. Bagmati"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>District</Label>
-                <Input value={form.district} onChange={(e) => setF("district", e.target.value)} placeholder="e.g. Kathmandu" />
+                <Input
+                  value={form.district}
+                  onChange={(e) => setF("district", e.target.value)}
+                  placeholder="e.g. Kathmandu"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Municipality / Local Body</Label>
-                <Input value={form.municipality} onChange={(e) => setF("municipality", e.target.value)} />
+                <Input
+                  value={form.municipality}
+                  onChange={(e) => setF("municipality", e.target.value)}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Phone / Mobile</Label>
-                <Input value={form.phone} onChange={(e) => setF("phone", e.target.value)} placeholder="+977-98..." />
+                <Input
+                  value={form.phone}
+                  onChange={(e) => setF("phone", e.target.value)}
+                  placeholder="+977-98..."
+                />
               </div>
               <div className="space-y-1.5 sm:col-span-2">
                 <Label>Email Address</Label>
-                <Input type="email" value={form.email} onChange={(e) => setF("email", e.target.value)} placeholder="investor@example.com" />
+                <Input
+                  type="email"
+                  value={form.email}
+                  onChange={(e) => setF("email", e.target.value)}
+                  placeholder="investor@example.com"
+                />
               </div>
             </div>
 
@@ -1115,19 +1533,36 @@ function ClientsPage() {
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="space-y-1.5">
                 <Label>Bank Name</Label>
-                <Input value={form.bank_name} onChange={(e) => setF("bank_name", e.target.value)} placeholder="e.g. Nabil Bank" />
+                <Input
+                  value={form.bank_name}
+                  onChange={(e) => setF("bank_name", e.target.value)}
+                  placeholder="e.g. Nabil Bank"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Branch</Label>
-                <Input value={form.bank_branch} onChange={(e) => setF("bank_branch", e.target.value)} placeholder="Branch name" />
+                <Input
+                  value={form.bank_branch}
+                  onChange={(e) => setF("bank_branch", e.target.value)}
+                  placeholder="Branch name"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Account Type</Label>
-                <Input placeholder="Saving / Current" value={form.account_type} onChange={(e) => setF("account_type", e.target.value)} />
+                <Input
+                  placeholder="Saving / Current"
+                  value={form.account_type}
+                  onChange={(e) => setF("account_type", e.target.value)}
+                />
               </div>
               <div className="space-y-1.5 sm:col-span-3">
                 <Label>Account Number</Label>
-                <Input value={form.bank_account_no} onChange={(e) => setF("bank_account_no", e.target.value)} className="font-mono" placeholder="Bank account number" />
+                <Input
+                  value={form.bank_account_no}
+                  onChange={(e) => setF("bank_account_no", e.target.value)}
+                  className="font-mono"
+                  placeholder="Bank account number"
+                />
               </div>
             </div>
 
@@ -1136,8 +1571,13 @@ function ClientsPage() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>Verification Status</Label>
-                <Select value={form.verification_status} onValueChange={(v) => setF("verification_status", v)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select
+                  value={form.verification_status}
+                  onValueChange={(v) => setF("verification_status", v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="Pending">Pending</SelectItem>
                     <SelectItem value="Verified">Verified</SelectItem>
@@ -1148,7 +1588,9 @@ function ClientsPage() {
               <div className="space-y-1.5">
                 <Label>Account Status</Label>
                 <Select value={form.status} onValueChange={(v) => setF("status", v)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="Active">Active</SelectItem>
                     <SelectItem value="Inactive">Inactive</SelectItem>
@@ -1161,7 +1603,10 @@ function ClientsPage() {
           <SheetFooter className="sticky bottom-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-t px-6 py-4 flex flex-row justify-end gap-2">
             <Button
               variant="outline"
-              onClick={() => { setSheetOpen(false); setEditing(null); }}
+              onClick={() => {
+                setSheetOpen(false);
+                setEditing(null);
+              }}
             >
               Cancel
             </Button>
@@ -1176,7 +1621,12 @@ function ClientsPage() {
       </Sheet>
 
       {/* Delete Confirmation */}
-      <AlertDialog open={!!deleteTarget} onOpenChange={(o) => { if (!del.isPending && !o) setDeleteTarget(null); }}>
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(o) => {
+          if (!del.isPending && !o) setDeleteTarget(null);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-destructive">
@@ -1184,8 +1634,9 @@ function ClientsPage() {
               Delete Shareholder Record
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete <strong>{deleteTarget?.full_name}</strong> ({deleteTarget?.client_code})?
-              This action will permanently remove this shareholder record.
+              Are you sure you want to delete <strong>{deleteTarget?.full_name}</strong> (
+              {deleteTarget?.client_code})? This action will permanently remove this shareholder
+              record.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="gap-2">

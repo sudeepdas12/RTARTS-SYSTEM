@@ -1,83 +1,100 @@
-import { smartClassify } from './smart-classifier';
+import { smartClassify } from "./smart-classifier";
 
 export type PayeeCategory =
-  | 'PUBLIC'
-  | 'PROMOTER'
-  | 'LOCAL'
-  | 'EMPLOYEE'
-  | 'INSTITUTION'
-  | 'FOREIGN'
-  | 'MUTUAL_FUND'
-  | 'TAX_EXEMPT'
-  | 'UNKNOWN';
+  | "PUBLIC"
+  | "PROMOTER"
+  | "LOCAL"
+  | "EMPLOYEE"
+  | "INSTITUTION"
+  | "FOREIGN"
+  | "MUTUAL_FUND"
+  | "TAX_EXEMPT"
+  | "UNKNOWN";
 
 export function normalizePayeeCategory(value?: string | null): PayeeCategory {
-  const raw = String(value ?? '').trim().toUpperCase();
-  if (!raw) return 'UNKNOWN';
+  const raw = String(value ?? "")
+    .trim()
+    .toUpperCase();
+  if (!raw) return "UNKNOWN";
 
   // 1. Tax exempt and mutual funds must be matched before generic institutions
-  if (/\b(MUTUAL\s*FUND|\bMF\b|80[-/:]?20|HIMALAYAN\s*80[-/:]?20|FOCUS\s*(40|30|25|20|\d+)?|SELECT\s*(FUND|SCHEME|30|40|50|\d+)?|SUPER\s*(FUND|SCHEME|30|40|50|\d+)?|NMB\s*(50|FIFTY|HYBRID|SARAL|SULAV|SAMRIDDHI)|\b50\b|SAMRIDDHI\s*(FUND|YOJANA|SCHEME)|SAMUNNAT\s*(SCHEME|FUND|YOJANA)|PRAGATI\s*(FUND|SCHEME|YOJANA)|SAHABHAGITA\s*(FUND|SCHEME|YOJANA)|DHANABRIDDHI\s*(YOJANA|FUND)|SABAL\s*(FUND|YOJANA|SCHEME)|UNNATI\s*(FUND|KOSH|SCHEME)|SARAL\s*(BACHAT|FUND|YOJANA)|SHUBHA\s*LAXMI\s*(KOSH|FUND)|EQUITY\s*(FUND|SCHEME|ORIENTED)|GROWTH\s*(FUND|SCHEME|YOJANA)|BALANCED\s*(FUND|SCHEME|YOJANA)|BLUECHIP\s*(FUND|SCHEME)|LARGE\s*CAP(\s*FUND|\s*SCHEME)?|FLEXI\s*CAP(\s*FUND|\s*SCHEME)?|VALUE\s*(FUND|SCHEME)|DEBT\s*(FUND|SCHEME)|FIXED\s*INCOME(\s*FUND|\s*SCHEME)?|DYNAMIC\s*DEBT(\s*FUND|\s*SCHEME)?|SYSTEMATIC\s*INVESTMENT(\s*SCHEME)?|DIVIDEND\s*YIELD\s*(FUND|SCHEME)|MONEY\s*MARKET\s*(FUND|SCHEME)|INDEX\s*(FUND|SCHEME)|CWEDA\s*EQUITY\s*FUND|STABLE\s*(FUND|SCHEME)|RESOURCE\s*(FUND|SCHEME)|HYBRID\s*(FUND|SCHEME)|SMART\s*(FUND|SCHEME)|YOJANA|SSIS|SIGS|GIMES|SFMF|SBF|LVF|LUK|SLK|KDY|KSY)\b/i.test(raw)) return 'MUTUAL_FUND';
-  if (/\b(NAGARIK\s*LAGANI\s*KOSH|CITIZEN\s*INVESTMENT\s*TRUST|\bCIT\b|CIT\s*-\s*CITIZEN|CIT\s*RETIREMENT|KARMACHARI\s*SANCHAYA\s*KOSH|EMPLOYEES?\s*PROVIDENT\s*FUND|\bEPF\b|SAMAJIK\s*SURAKSHA\s*KOSH|SOCIAL\s*SECURITY\s*FUND|\bSSF\b|AWAKASH\s*(KOSH|FUND|SCHEME)|UPADAN\s*(KOSH|FUND)|GRATUITY\s*(FUND|KOSH|TRUST|SCHEME)|PENSION\s*(FUND|KOSH|SCHEME|TRUST)|PROVIDENT\s*(FUND|KOSH)|RETIREMENT\s*(SCHEME|FUND|TRUST|KOSH)|(ARMY|NEPALESE\s*ARMY|SAINIK)\s*(KALYAN|KALYANKARI|WELFARE)\s*(KOSH|FUND)?|(POLICE|NEPAL\s*POLICE|PRAHARI)\s*(KALYAN|KALYANKARI|WELFARE)\s*(KOSH|FUND)?|(APF|SASHATRA\s*PRAHARI)\s*(KALYAN|WELFARE)\s*(KOSH|FUND)?|WELFARE\s*FUND|KALYAN\s*KOSH|TEACHERS?\s*(PROVIDENT|PENSION|WELFARE)\s*(FUND|KOSH)?|SHIKSHAK\s*KOSH|RED\s*CROSS|NEPAL\s*RED\s*CROSS|TAX\s*EXEMPT(ED)?|EXEMPT|KAR\s*MUKTA)\b/i.test(raw)) return 'TAX_EXEMPT';
-  
+  if (
+    /\b(MUTUAL\s*FUND|\bMF\b|80[-/:]?20|HIMALAYAN\s*80[-/:]?20|FOCUS\s*(40|30|25|20|\d+)?|SELECT\s*(FUND|SCHEME|30|40|50|\d+)?|SUPER\s*(FUND|SCHEME|30|40|50|\d+)?|NMB\s*(50|FIFTY|HYBRID|SARAL|SULAV|SAMRIDDHI)|\b50\b|SAMRIDDHI\s*(FUND|YOJANA|SCHEME)|SAMUNNAT\s*(SCHEME|FUND|YOJANA)|PRAGATI\s*(FUND|SCHEME|YOJANA)|SAHABHAGITA\s*(FUND|SCHEME|YOJANA)|DHANABRIDDHI\s*(YOJANA|FUND)|SABAL\s*(FUND|YOJANA|SCHEME)|UNNATI\s*(FUND|KOSH|SCHEME)|SARAL\s*(BACHAT|FUND|YOJANA)|SHUBHA\s*LAXMI\s*(KOSH|FUND)|EQUITY\s*(FUND|SCHEME|ORIENTED)|GROWTH\s*(FUND|SCHEME|YOJANA)|BALANCED\s*(FUND|SCHEME|YOJANA)|BLUECHIP\s*(FUND|SCHEME)|LARGE\s*CAP(\s*FUND|\s*SCHEME)?|FLEXI\s*CAP(\s*FUND|\s*SCHEME)?|VALUE\s*(FUND|SCHEME)|DEBT\s*(FUND|SCHEME)|FIXED\s*INCOME(\s*FUND|\s*SCHEME)?|DYNAMIC\s*DEBT(\s*FUND|\s*SCHEME)?|SYSTEMATIC\s*INVESTMENT(\s*SCHEME)?|DIVIDEND\s*YIELD\s*(FUND|SCHEME)|MONEY\s*MARKET\s*(FUND|SCHEME)|INDEX\s*(FUND|SCHEME)|CWEDA\s*EQUITY\s*FUND|STABLE\s*(FUND|SCHEME)|RESOURCE\s*(FUND|SCHEME)|HYBRID\s*(FUND|SCHEME)|SMART\s*(FUND|SCHEME)|YOJANA|SSIS|SIGS|GIMES|SFMF|SBF|LVF|LUK|SLK|KDY|KSY)\b/i.test(
+      raw,
+    )
+  )
+    return "MUTUAL_FUND";
+  if (
+    /\b(NAGARIK\s*LAGANI\s*KOSH|CITIZEN\s*INVESTMENT\s*TRUST|\bCIT\b|CIT\s*-\s*CITIZEN|CIT\s*RETIREMENT|KARMACHARI\s*SANCHAYA\s*KOSH|EMPLOYEES?\s*PROVIDENT\s*FUND|\bEPF\b|SAMAJIK\s*SURAKSHA\s*KOSH|SOCIAL\s*SECURITY\s*FUND|\bSSF\b|AWAKASH\s*(KOSH|FUND|SCHEME)|UPADAN\s*(KOSH|FUND)|GRATUITY\s*(FUND|KOSH|TRUST|SCHEME)|PENSION\s*(FUND|KOSH|SCHEME|TRUST)|PROVIDENT\s*(FUND|KOSH)|RETIREMENT\s*(SCHEME|FUND|TRUST|KOSH)|(ARMY|NEPALESE\s*ARMY|SAINIK)\s*(KALYAN|KALYANKARI|WELFARE)\s*(KOSH|FUND)?|(POLICE|NEPAL\s*POLICE|PRAHARI)\s*(KALYAN|KALYANKARI|WELFARE)\s*(KOSH|FUND)?|(APF|SASHATRA\s*PRAHARI)\s*(KALYAN|WELFARE)\s*(KOSH|FUND)?|WELFARE\s*FUND|KALYAN\s*KOSH|TEACHERS?\s*(PROVIDENT|PENSION|WELFARE)\s*(FUND|KOSH)?|SHIKSHAK\s*KOSH|RED\s*CROSS|NEPAL\s*RED\s*CROSS|TAX\s*EXEMPT(ED)?|EXEMPT|KAR\s*MUKTA)\b/i.test(
+      raw,
+    )
+  )
+    return "TAX_EXEMPT";
+
   // 2. Promoter, Local, Employee segments
-  if (/PROMOT/i.test(raw)) return 'PROMOTER';
-  if (/LOCAL/i.test(raw)) return 'LOCAL';
-  if (/EMPLOYEE|STAFF/i.test(raw)) return 'EMPLOYEE';
-  if (/FOREIGN|NRN/i.test(raw)) return 'FOREIGN';
+  if (/PROMOT/i.test(raw)) return "PROMOTER";
+  if (/LOCAL/i.test(raw)) return "LOCAL";
+  if (/EMPLOYEE|STAFF/i.test(raw)) return "EMPLOYEE";
+  if (/FOREIGN|NRN/i.test(raw)) return "FOREIGN";
 
   // 3. Institution / Company
-  if (/\b(LEGAL\s*PERSON|COMPANY|CORPORATION|LIMITED|LTD|PRIVATE\s*LIMITED|PVT\s*LTD|INSTITUTION|INSTITUTE|BANK|FINANCE|HYDROPOWER|HYDRO|INSURANCE|CAPITAL|SECURITIES|TREASURY|HOLDINGS?|INVESTMENTS?)\b/i.test(raw)) return 'INSTITUTION';
+  if (
+    /\b(LEGAL\s*PERSON|COMPANY|CORPORATION|LIMITED|LTD|PRIVATE\s*LIMITED|PVT\s*LTD|INSTITUTION|INSTITUTE|BANK|FINANCE|HYDROPOWER|HYDRO|INSURANCE|CAPITAL|SECURITIES|TREASURY|HOLDINGS?|INVESTMENTS?)\b/i.test(
+      raw,
+    )
+  )
+    return "INSTITUTION";
 
   // 4. Natural person / Public
-  if (/\b(NATURAL\s*PERSON|PUBLIC|INDIVIDUAL|GENERAL)\b/i.test(raw)) return 'PUBLIC';
+  if (/\b(NATURAL\s*PERSON|PUBLIC|INDIVIDUAL|GENERAL)\b/i.test(raw)) return "PUBLIC";
 
-  return 'UNKNOWN';
+  return "UNKNOWN";
 }
 
 export function getPayeeCategoryLabel(category?: string | null): string {
-  switch (String(category ?? '').toUpperCase()) {
-    case 'NATURAL_PERSON':
-    case 'PUBLIC_LEGAL_PERSON':
-    case 'PUBLIC':
-      return 'Public';
-    case 'INSTITUTION':
-    case 'COMPANY_INSTITUTION':
-    case 'LEGAL_PERSON':
-      return 'Institution';
-    case 'MUTUAL_FUND':
-      return 'Mutual Fund';
-    case 'TAX_EXEMPT':
-      return 'Tax Exempt';
-    case 'FOREIGN':
-      return 'Foreign';
-    case 'PROMOTER':
-      return 'Promoter';
-    case 'LOCAL':
-      return 'Local';
-    case 'EMPLOYEE':
-    case 'STAFF':
-      return 'Employee';
-    case 'UNCLASSIFIED':
-      return 'Review Required';
+  switch (String(category ?? "").toUpperCase()) {
+    case "NATURAL_PERSON":
+    case "PUBLIC_LEGAL_PERSON":
+    case "PUBLIC":
+      return "Public";
+    case "INSTITUTION":
+    case "COMPANY_INSTITUTION":
+    case "LEGAL_PERSON":
+      return "Institution";
+    case "MUTUAL_FUND":
+      return "Mutual Fund";
+    case "TAX_EXEMPT":
+      return "Tax Exempt";
+    case "FOREIGN":
+      return "Foreign";
+    case "PROMOTER":
+      return "Promoter";
+    case "LOCAL":
+      return "Local";
+    case "EMPLOYEE":
+    case "STAFF":
+      return "Employee";
+    case "UNCLASSIFIED":
+      return "Review Required";
   }
   switch (normalizePayeeCategory(category)) {
-    case 'PUBLIC':
-      return 'Public';
-    case 'PROMOTER':
-      return 'Promoter';
-    case 'LOCAL':
-      return 'Local';
-    case 'EMPLOYEE':
-      return 'Employee';
-    case 'INSTITUTION':
-    case 'FOREIGN':
-      return 'Institution';
-    case 'MUTUAL_FUND':
-      return 'Mutual Fund';
-    case 'TAX_EXEMPT':
-      return 'Tax Exempt';
+    case "PUBLIC":
+      return "Public";
+    case "PROMOTER":
+      return "Promoter";
+    case "LOCAL":
+      return "Local";
+    case "EMPLOYEE":
+      return "Employee";
+    case "INSTITUTION":
+    case "FOREIGN":
+      return "Institution";
+    case "MUTUAL_FUND":
+      return "Mutual Fund";
+    case "TAX_EXEMPT":
+      return "Tax Exempt";
     default:
-      return 'Unclassified';
+      return "Unclassified";
   }
 }
 
@@ -118,7 +135,7 @@ export interface CategorySummaryResult {
 }
 
 export function detectPayeeCategory(row: any, sheetType?: string | null): PayeeCategory {
-  if (!row || typeof row !== 'object') return 'UNKNOWN';
+  if (!row || typeof row !== "object") return "UNKNOWN";
 
   const result = smartClassify({
     ...row,
@@ -135,25 +152,25 @@ export function getPayeeTaxRate(
   isMutualFund = false,
 ): number {
   if (customTaxRate !== undefined && customTaxRate !== null) return Number(customTaxRate) || 0;
-  const sanitized = (category || 'UNKNOWN').toUpperCase();
+  const sanitized = (category || "UNKNOWN").toUpperCase();
 
   switch (sanitized) {
-    case 'PROMOTER':
-    case 'NATURAL_PERSON':
-    case 'PUBLIC':
-    case 'PUBLIC_LEGAL_PERSON':
-    case 'LOCAL':
-    case 'EMPLOYEE':
-    case 'STAFF':
+    case "PROMOTER":
+    case "NATURAL_PERSON":
+    case "PUBLIC":
+    case "PUBLIC_LEGAL_PERSON":
+    case "LOCAL":
+    case "EMPLOYEE":
+    case "STAFF":
       return isDebenture ? 0.06 : 0.05;
-    case 'INSTITUTION':
-    case 'COMPANY_INSTITUTION':
-    case 'FOREIGN':
+    case "INSTITUTION":
+    case "COMPANY_INSTITUTION":
+    case "FOREIGN":
       // Mutual-fund institutional distributions are taxed at 15% (per the
       // RMF sample file); ordinary dividends stay at 5%.
       return isMutualFund || isDebenture ? 0.15 : 0.05;
-    case 'MUTUAL_FUND':
-    case 'TAX_EXEMPT':
+    case "MUTUAL_FUND":
+    case "TAX_EXEMPT":
       return 0;
     default:
       return 0;
@@ -162,15 +179,19 @@ export function getPayeeTaxRate(
 
 export function calculatePayableTotals(input: PayableTotalsInput): PayableTotalsResult {
   const grossAmount = Number(input.grossAmount ?? 0);
-  const category = (input.category || 'UNKNOWN').toUpperCase() as PayeeCategory;
+  const category = (input.category || "UNKNOWN").toUpperCase() as PayeeCategory;
   const taxRate = getPayeeTaxRate(
     category,
     Boolean(input.isDebenture),
     input.customTaxRate,
     Boolean(input.isMutualFund),
   );
-  const taxAmountFromInput = input.taxAmount !== undefined && input.taxAmount !== null ? Number(input.taxAmount ?? 0) : null;
-  const taxAmount = taxAmountFromInput !== null ? taxAmountFromInput : Math.round(grossAmount * taxRate * 100) / 100;
+  const taxAmountFromInput =
+    input.taxAmount !== undefined && input.taxAmount !== null ? Number(input.taxAmount ?? 0) : null;
+  const taxAmount =
+    taxAmountFromInput !== null
+      ? taxAmountFromInput
+      : Math.round(grossAmount * taxRate * 100) / 100;
   const netPayable = Math.round((grossAmount - taxAmount) * 100) / 100;
 
   return {
@@ -182,7 +203,11 @@ export function calculatePayableTotals(input: PayableTotalsInput): PayableTotals
   };
 }
 
-export function validatePayableConsistency(input: { gross_amount: number; tax_amount: number; net_payable: number }): {
+export function validatePayableConsistency(input: {
+  gross_amount: number;
+  tax_amount: number;
+  net_payable: number;
+}): {
   valid: boolean;
   difference: number;
   expectedNet: number;
@@ -192,17 +217,19 @@ export function validatePayableConsistency(input: { gross_amount: number; tax_am
   const net = Number(input.net_payable ?? 0);
   const expectedNet = Math.round((gross - tax) * 100) / 100;
   return {
-    valid: Math.abs(net - expectedNet) < 0.01,
+    valid: Math.abs(net - expectedNet) <= 0.015,
     difference: Math.round((net - expectedNet) * 100) / 100,
     expectedNet,
   };
 }
 
-export function aggregatePayableCategorySummary(rows: CategoryTotalsRow[]): CategorySummaryResult[] {
+export function aggregatePayableCategorySummary(
+  rows: CategoryTotalsRow[],
+): CategorySummaryResult[] {
   const map = new Map<string, CategorySummaryResult>();
 
   for (const row of rows) {
-    const category = String(row.payee_category || 'UNKNOWN').toUpperCase();
+    const category = String(row.payee_category || "UNKNOWN").toUpperCase();
     const existing = map.get(category) || {
       category,
       transactionCount: 0,

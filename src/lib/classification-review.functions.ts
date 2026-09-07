@@ -16,10 +16,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
  */
 
 export type PayeeClassification =
-  | "NATURAL_PERSON"
-  | "PUBLIC_LEGAL_PERSON"
-  | "COMPANY_INSTITUTION"
-  | "TAX_EXEMPT";
+  "NATURAL_PERSON" | "PUBLIC_LEGAL_PERSON" | "COMPANY_INSTITUTION" | "TAX_EXEMPT";
 
 export type PayeeSegment = "PROMOTER" | "LOCAL" | "PUBLIC" | null;
 
@@ -156,7 +153,6 @@ export const adminConfirmClientClassification = createServerFn({ method: "POST" 
     return { ok: true, recomputed };
   });
 
-
 /**
  * Non-destructive "hard backstop": list any payable where the numbers fall out
  * of agreement with the rule (net !== gross − tax, zero TDS on a taxable class,
@@ -186,13 +182,22 @@ export const adminListTaxExceptions = createServerFn({ method: "GET" })
         const clientCls = row.client?.payee_classification ?? null;
         const rate = Number(row.tds_rate ?? 0);
 
+        // Check against the authoritative rule rate if known, or stored rate.
+        const effectiveRate = rate > 0 ? rate : 0;
+        const expectedTax = round2(gross * effectiveRate);
+
         const netBad = Math.abs(gross - tax - net) > 0.011;
-        const zeroTaxWithGross = gross > 0.001 && tax === 0 && cls !== "TAX_EXEMPT";
-        const taxBad = gross > 0.001 && tax > 0 && Math.abs(tax - round2(gross * rate)) > 0.51;
+        // Zero tax is only an exception if the expected tax is greater than 0.00 (paisa rounding).
+        // Micro dividends (e.g. 0.04 NPR * 5% = 0.002 NPR -> rounds to 0.00) are NOT exceptions.
+        const zeroTaxWithGross = expectedTax > 0 && tax === 0 && cls !== "TAX_EXEMPT";
+        const taxBad = gross > 0.001 && tax > 0 && Math.abs(tax - expectedTax) > 0.51;
         // Payable snapshot drifted from the confirmed client master (the DB
         // trigger would have written the client's classification).
         const clientMismatch =
-          clientCls != null && clientCls !== "UNCLASSIFIED" && cls !== "UNCLASSIFIED" && cls !== clientCls;
+          clientCls != null &&
+          clientCls !== "UNCLASSIFIED" &&
+          cls !== "UNCLASSIFIED" &&
+          cls !== clientCls;
 
         if (netBad || zeroTaxWithGross || taxBad || clientMismatch) {
           out.push({
@@ -248,7 +253,8 @@ export const adminRecomputePayable = createServerFn({ method: "POST" })
       .select("payee_classification")
       .eq("id", pay.client_id)
       .maybeSingle();
-    const classification = client?.payee_classification ?? pay.payee_classification ?? "UNCLASSIFIED";
+    const classification =
+      client?.payee_classification ?? pay.payee_classification ?? "UNCLASSIFIED";
 
     if (classification === "UNCLASSIFIED") {
       throw new Error("Client is UNCLASSIFIED — confirm the classification first.");
@@ -261,7 +267,8 @@ export const adminRecomputePayable = createServerFn({ method: "POST" })
       .eq("payee_classification", classification)
       .eq("is_active", true)
       .maybeSingle();
-    if (ruleErr || !rule) throw new Error(`No active tax rule for ${meta.category} / ${classification}.`);
+    if (ruleErr || !rule)
+      throw new Error(`No active tax rule for ${meta.category} / ${classification}.`);
 
     const gross = Number(pay[meta.grossCol] ?? 0);
     const rate = Number(rule.tax_rate);
@@ -281,6 +288,70 @@ export const adminRecomputePayable = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
 
     return { ok: true };
+  });
+
+/**
+ * Batch recompute all flagged payables.
+ */
+export const adminRecomputeAllPayables = createServerFn({ method: "POST" })
+  .validator((items: { table: string; id: string }[]) => items)
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ data: items, context }) => {
+    await assertAdmin(context);
+    const { supabaseAdmin }: any = await import("@/integrations/supabase/client.server");
+
+    // Fetch active rules
+    const { data: rules } = await supabaseAdmin
+      .from("payable_tax_rules")
+      .select("payable_category, payee_classification, tax_rate")
+      .eq("is_active", true);
+    const ruleMap = new Map<string, number>();
+    for (const r of rules ?? []) {
+      ruleMap.set(`${r.payable_category}|${r.payee_classification}`, Number(r.tax_rate));
+    }
+
+    let successCount = 0;
+    for (const item of items) {
+      const meta = PAYABLE_TABLES[item.table];
+      if (!meta) continue;
+
+      const { data: pay } = await supabaseAdmin
+        .from(item.table)
+        .select(`id, client_id, ${meta.grossCol}, payee_classification`)
+        .eq("id", item.id)
+        .maybeSingle();
+      if (!pay) continue;
+
+      const { data: client } = await supabaseAdmin
+        .from("clients")
+        .select("payee_classification")
+        .eq("id", pay.client_id)
+        .maybeSingle();
+      const classification =
+        client?.payee_classification ?? pay.payee_classification ?? "UNCLASSIFIED";
+
+      if (classification === "UNCLASSIFIED") continue;
+      const rate = ruleMap.get(`${meta.category}|${classification}`);
+      if (rate === undefined) continue;
+
+      const gross = Number(pay[meta.grossCol] ?? 0);
+      const tax = round2(gross * rate);
+      const net = round2(gross - tax);
+
+      const { error } = await supabaseAdmin
+        .from(item.table)
+        .update({
+          payee_classification: classification,
+          classification_status: "CONFIRMED",
+          tds_rate: rate,
+          tax_amount: tax,
+          net_payable: net,
+        })
+        .eq("id", item.id);
+      if (!error) successCount++;
+    }
+
+    return { ok: true, count: successCount };
   });
 
 /**
@@ -307,7 +378,10 @@ export const adminFixMisclassifiedNaturalPersons = createServerFn({ method: "POS
       const hasFather = Boolean(c.father_name && String(c.father_name).trim());
       const hasGrandfather = Boolean(c.grandfather_name && String(c.grandfather_name).trim());
       const name = String(c.full_name || "").toUpperCase();
-      const isRealFund = /(MUTUAL\s*FUND|\bMF\b|FOCUS\s*(40|30)|SELECT\s*30|SUPER\s*30|SAMRIDDHI|SAMUNNAT|PRAGATI|SAHABHAGITA|DHANABRIDDHI|SABAL|EQUITY\s*(FUND|SCHEME|ORIENTED)|GROWTH\s*(FUND|SCHEME)|BALANCED\s*(FUND|SCHEME)|BLUECHIP|LARGE\s*CAP|FLEXI\s*CAP|VALUE\s*FUND|DEBT\s*FUND|FIXED\s*INCOME|DYNAMIC\s*DEBT|SYSTEMATIC\s*INVESTMENT|SANCHAYA\s*KOSH|NAGARIK\s*LAGANI|CITIZEN\s*INVESTMENT|\bCIT\b|\bEPF\b|\bSSF\b|SOCIAL\s*SECURITY\s*FUND|AWAKASH\s*KOSH|AWAKASH\s*FUND|KALYAN\s*KOSH|KOSH\s*BYAWASTHAPAN)/i.test(name);
+      const isRealFund =
+        /(MUTUAL\s*FUND|\bMF\b|FOCUS\s*(40|30)|SELECT\s*30|SUPER\s*30|SAMRIDDHI|SAMUNNAT|PRAGATI|SAHABHAGITA|DHANABRIDDHI|SABAL|EQUITY\s*(FUND|SCHEME|ORIENTED)|GROWTH\s*(FUND|SCHEME)|BALANCED\s*(FUND|SCHEME)|BLUECHIP|LARGE\s*CAP|FLEXI\s*CAP|VALUE\s*FUND|DEBT\s*FUND|FIXED\s*INCOME|DYNAMIC\s*DEBT|SYSTEMATIC\s*INVESTMENT|SANCHAYA\s*KOSH|NAGARIK\s*LAGANI|CITIZEN\s*INVESTMENT|\bCIT\b|\bEPF\b|\bSSF\b|SOCIAL\s*SECURITY\s*FUND|AWAKASH\s*KOSH|AWAKASH\s*FUND|KALYAN\s*KOSH|KOSH\s*BYAWASTHAPAN)/i.test(
+          name,
+        );
       return (hasFather || hasGrandfather) && !isRealFund;
     });
 
@@ -356,4 +430,3 @@ export const adminFixMisclassifiedNaturalPersons = createServerFn({ method: "POS
       message: `Successfully corrected ${eligible.length} individual shareholder(s) to Natural Person (Public).`,
     };
   });
-

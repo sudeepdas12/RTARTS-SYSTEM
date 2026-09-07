@@ -58,7 +58,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/lib/auth-context";
+import { useAuth } from "@/hooks/use-auth";
 
 export const Route = createFileRoute("/_authenticated/upload-history")({
   component: UploadHistoryRoute,
@@ -269,7 +269,8 @@ function UploadHistoryRoute() {
 
   const markFailedMutation = useMutation({
     mutationFn: async (id: string) => {
-      if (!isAdmin) throw new Error("Only administrators are authorized to mark uploads as failed.");
+      if (!isAdmin)
+        throw new Error("Only administrators are authorized to mark uploads as failed.");
       const { error } = await (supabase as any)
         .from("upload_history")
         .update({
@@ -708,10 +709,7 @@ function UploadHistoryRoute() {
       </AlertDialog>
 
       {/* View error records (persisted per-row failures) */}
-      <Dialog
-        open={!!viewErrorsRecord}
-        onOpenChange={(open) => !open && setViewErrorsRecord(null)}
-      >
+      <Dialog open={!!viewErrorsRecord} onOpenChange={(open) => !open && setViewErrorsRecord(null)}>
         <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Error Records — {viewErrorsRecord?.file_name ?? ""}</DialogTitle>

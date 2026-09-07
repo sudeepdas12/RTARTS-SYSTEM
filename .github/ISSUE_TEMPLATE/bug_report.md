@@ -1,15 +1,17 @@
 ---
 name: Bug report
 about: Create a report to help us improve
-title: ''
+title: ""
 labels: bug
-assignees: ''
+assignees: ""
 ---
 
 ### Bug Description
+
 A clear and concise description of what the bug is.
 
 ### Affected Area
+
 - [ ] Classification & Demographics
 - [ ] Dividend / Interest Calculation
 - [ ] Tax (TDS) Rules
@@ -20,13 +22,16 @@ A clear and concise description of what the bug is.
 - [ ] Workflow & Approvals
 
 ### Steps to Reproduce
+
 1. Go to '...'
 2. Click on '...'
 3. Upload/Select '...'
 4. See error
 
 ### Expected Behavior
+
 A clear and concise description of what you expected to happen.
 
 ### Screenshots or Data Context
+
 If applicable, add screenshots or sample data to help explain your problem.

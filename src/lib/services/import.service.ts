@@ -1,6 +1,11 @@
 import { supabase, throwIfError } from "./database";
 import { mapToHolderType } from "./investor-category";
-import { calculatePayableTotals, detectPayeeCategory, getPayeeTaxRate, normalizePayeeCategory } from "./payable-summary";
+import {
+  calculatePayableTotals,
+  detectPayeeCategory,
+  getPayeeTaxRate,
+  normalizePayeeCategory,
+} from "./payable-summary";
 import {
   getTaxRateFromRules,
   investorCategoryToClassification,
@@ -8,7 +13,7 @@ import {
   type TaxRule,
 } from "./tax-rules.service";
 
-const EDGE_CHUNK_TIMEOUT_MS = 30000;
+const EDGE_CHUNK_TIMEOUT_MS = 5000;
 
 function getMissingColumnName(error: any): string | null {
   const message = error?.message || "";
@@ -49,7 +54,9 @@ async function fetchClientInfoByBoids(boids: string[]): Promise<Map<string, Clie
     const part = boids.slice(i, i + CLIENT_LOOKUP_BATCH);
     const { data } = await (supabase as any)
       .from("clients")
-      .select("id, boid, client_code, holder_type, payee_classification, payee_segment, nid_number, pan_no, citizenship_no")
+      .select(
+        "id, boid, client_code, holder_type, payee_classification, payee_segment, nid_number, pan_no, citizenship_no",
+      )
       .in("boid", part);
     for (const c of data || []) {
       if (c?.boid) map.set(String(c.boid), c);
@@ -66,7 +73,6 @@ async function fetchClientIdsByBoids(boids: string[]): Promise<Map<string, strin
   }
   return idMap;
 }
-
 
 function buildClientCode(row: any, boid: string): string {
   const rawBase = String(
@@ -145,7 +151,12 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
  *   Legal Person / Company (Institution):           5%  ← same as natural person
  *   Mutual Fund / Tax Exempt:                        0%
  */
-function getCategoryTdsRate(category: string, isDebenture: boolean, isMutualFund = false, rules?: TaxRule[]): number {
+function getCategoryTdsRate(
+  category: string,
+  isDebenture: boolean,
+  isMutualFund = false,
+  rules?: TaxRule[],
+): number {
   // Authoritative: centralized payable_tax_rules. Fall back to the hardcoded
   // map only when rules can't be loaded or the category is unknown.
   if (rules && rules.length) {
@@ -160,20 +171,28 @@ function getCategoryTdsRate(category: string, isDebenture: boolean, isMutualFund
 }
 
 function payableClassification(category: string): string {
-  const upper = String(category || '').trim().toUpperCase();
-  if (upper === 'INSTITUTION' || upper === 'FOREIGN' || upper === 'COMPANY_INSTITUTION') return 'COMPANY_INSTITUTION';
-  if (upper === 'MUTUAL_FUND' || upper === 'TAX_EXEMPT' || upper === 'TAX_EXEMPTED') return 'TAX_EXEMPT';
-  if (upper === 'PUBLIC' || upper === 'NATURAL_PERSON' || upper === 'PUBLIC_LEGAL_PERSON') return 'NATURAL_PERSON';
-  if (upper === 'PROMOTER' || upper === 'LOCAL' || upper === 'EMPLOYEE' || upper === 'STAFF') return 'NATURAL_PERSON';
-  return 'UNCLASSIFIED';
+  const upper = String(category || "")
+    .trim()
+    .toUpperCase();
+  if (upper === "INSTITUTION" || upper === "FOREIGN" || upper === "COMPANY_INSTITUTION")
+    return "COMPANY_INSTITUTION";
+  if (upper === "MUTUAL_FUND" || upper === "TAX_EXEMPT" || upper === "TAX_EXEMPTED")
+    return "TAX_EXEMPT";
+  if (upper === "PUBLIC" || upper === "NATURAL_PERSON" || upper === "PUBLIC_LEGAL_PERSON")
+    return "NATURAL_PERSON";
+  if (upper === "PROMOTER" || upper === "LOCAL" || upper === "EMPLOYEE" || upper === "STAFF")
+    return "NATURAL_PERSON";
+  return "UNCLASSIFIED";
 }
 
 function payableSegment(category: string): string | null {
-  const upper = String(category || '').trim().toUpperCase();
-  if (upper === 'PROMOTER') return 'PROMOTER';
-  if (upper === 'LOCAL') return 'LOCAL';
-  if (upper === 'EMPLOYEE' || upper === 'STAFF') return 'EMPLOYEE';
-  if (upper === 'PUBLIC') return 'PUBLIC';
+  const upper = String(category || "")
+    .trim()
+    .toUpperCase();
+  if (upper === "PROMOTER") return "PROMOTER";
+  if (upper === "LOCAL") return "LOCAL";
+  if (upper === "EMPLOYEE" || upper === "STAFF") return "EMPLOYEE";
+  if (upper === "PUBLIC") return "PUBLIC";
   return null;
 }
 
@@ -199,10 +218,11 @@ async function insertRowsWithSchemaFallback(targetTable: string, rows: any[]) {
   let insertedCount = 0;
 
   for (const row of rows) {
-    let currentRow = { ...row };
+    const currentRow = { ...row };
     let attempts = 0;
+    const strippedColumns = new Set<string>();
 
-    while (attempts < 4) {
+    while (attempts < 20) {
       const { error } = await (supabase.from(targetTable as any) as any).insert(currentRow as any);
       if (!error) {
         insertedCount += 1;
@@ -210,11 +230,16 @@ async function insertRowsWithSchemaFallback(targetTable: string, rows: any[]) {
       }
 
       const missingColumn = getMissingColumnName(error);
-      if (!missingColumn || currentRow[missingColumn] === undefined) {
+      if (
+        !missingColumn ||
+        currentRow[missingColumn] === undefined ||
+        strippedColumns.has(missingColumn)
+      ) {
         console.error("Failed to insert payable row:", error.message);
         break;
       }
 
+      strippedColumns.add(missingColumn);
       delete currentRow[missingColumn];
       attempts += 1;
     }
@@ -356,20 +381,34 @@ export const ImportService = {
     let companyId = sharedContext?.companyId || options?.companyId || "";
     const detectedIsin =
       options?.companyIsin ||
-      (chunkData[0]?.isin || chunkData[0]?.["ISIN NO."] || chunkData[0]?.["ISIN NO"] || chunkData[0]?.["ISIN"]
-        ? String(chunkData[0]?.isin || chunkData[0]?.["ISIN NO."] || chunkData[0]?.["ISIN NO"] || chunkData[0]?.["ISIN"]).trim()
+      (chunkData[0]?.isin ||
+      chunkData[0]?.["ISIN NO."] ||
+      chunkData[0]?.["ISIN NO"] ||
+      chunkData[0]?.["ISIN"]
+        ? String(
+            chunkData[0]?.isin ||
+              chunkData[0]?.["ISIN NO."] ||
+              chunkData[0]?.["ISIN NO"] ||
+              chunkData[0]?.["ISIN"],
+          ).trim()
         : undefined);
 
     if (!companyId) {
-      const cleanName = (options?.companyName || "NECO Insurance Ltd.").trim();
-      
+      const cleanName = (options?.companyName || "Unknown Company").trim();
+
       // Generate a distinct code for new companies (e.g., "PRIM10" or "NECO")
       const words = cleanName.split(/\s+/).filter(Boolean);
       let baseCode = "";
       if (words.length >= 2) {
-        baseCode = (words[0].slice(0, 3) + words[1].replace(/[^A-Za-z0-9]/g, "").slice(0, 3)).toUpperCase();
+        baseCode = (
+          words[0].slice(0, 3) + words[1].replace(/[^A-Za-z0-9]/g, "").slice(0, 3)
+        ).toUpperCase();
       } else {
-        baseCode = cleanName.replace(/[^A-Za-z0-9]/g, "").slice(0, 6).toUpperCase() || "COMP";
+        baseCode =
+          cleanName
+            .replace(/[^A-Za-z0-9]/g, "")
+            .slice(0, 6)
+            .toUpperCase() || "COMP";
       }
 
       // 1. If ISIN detected, try lookup by exact ISIN
@@ -418,6 +457,35 @@ export const ImportService = {
             candidateCode = `${baseCode.slice(0, 4)}${Math.floor(10 + Math.random() * 90)}`;
           }
 
+          const cleanLower = cleanName.toLowerCase();
+          let companyType = "Equity";
+          let sectorType = "Other";
+          let faceValue = 100;
+
+          if (
+            targetTable === "interest_payables" ||
+            options?.fileType === "debenture" ||
+            cleanLower.includes("debenture") ||
+            cleanLower.includes("bond")
+          ) {
+            companyType = "Debenture";
+            sectorType = "Institution";
+            faceValue = 1000;
+          } else if (
+            targetTable === "mutual_fund_payables" ||
+            options?.fileType === "mutual_fund" ||
+            cleanLower.includes("fund") ||
+            cleanLower.includes("scheme") ||
+            cleanLower.includes("yojana")
+          ) {
+            companyType = "Mutual Fund";
+            sectorType = "Institution";
+            faceValue = 10;
+          } else {
+            companyType = "Equity";
+            sectorType = "Public";
+          }
+
           const { data: createdComp, error: createErr } = await (supabase as any)
             .from("companies")
             .insert({
@@ -425,8 +493,21 @@ export const ImportService = {
               company_code: candidateCode,
               isin: detectedIsin || null,
               status: "Active",
-              debenture_rate: targetTable === "interest_payables" && options?.dividendRate ? Number(options.dividendRate) : null,
-              coupon_rate: targetTable === "interest_payables" && options?.dividendRate ? Number(options.dividendRate) : null,
+              company_type: companyType,
+              sector_type: sectorType,
+              face_value: faceValue,
+              dividend_rate:
+                targetTable === "dividend_payables" && options?.dividendRate
+                  ? Number(options.dividendRate)
+                  : null,
+              debenture_rate:
+                targetTable === "interest_payables" && options?.dividendRate
+                  ? Number(options.dividendRate)
+                  : null,
+              coupon_rate:
+                targetTable === "interest_payables" && options?.dividendRate
+                  ? Number(options.dividendRate)
+                  : null,
             })
             .select("id")
             .maybeSingle();
@@ -441,7 +522,7 @@ export const ImportService = {
 
       // 4. Fallback warning if resolution/creation was unsuccessful
       if (!companyId) {
-        console.warn("Could not determine or create company for import:", companyName);
+        console.warn("Could not determine or create company for import:", cleanName);
       }
 
       if (sharedContext) {
@@ -449,16 +530,22 @@ export const ImportService = {
       }
     }
 
-    // If company exists and an ISIN was detected from the sheet, update ISIN if it is empty
-    if (companyId && detectedIsin) {
+    // If company exists, update ISIN or missing rates/metadata
+    if (companyId) {
       try {
-        await (supabase as any)
-          .from("companies")
-          .update({ isin: detectedIsin })
-          .eq("id", companyId)
-          .is("isin", null);
+        const updatePayload: any = {};
+        if (detectedIsin) updatePayload.isin = detectedIsin;
+        if (targetTable === "interest_payables" && options?.dividendRate) {
+          updatePayload.debenture_rate = Number(options.dividendRate);
+          updatePayload.coupon_rate = Number(options.dividendRate);
+        } else if (targetTable === "dividend_payables" && options?.dividendRate) {
+          updatePayload.dividend_rate = Number(options.dividendRate);
+        }
+        if (Object.keys(updatePayload).length > 0) {
+          await (supabase as any).from("companies").update(updatePayload).eq("id", companyId);
+        }
       } catch (err: any) {
-        console.warn("Could not update company ISIN:", err?.message);
+        console.warn("Could not update company metadata:", err?.message);
       }
     }
 
@@ -502,7 +589,9 @@ export const ImportService = {
 
     const missingBoids = uniqueBoids.filter((boid) => !sharedContext?.clientIdCache?.has(boid));
     const existingClientMap =
-      missingBoids.length > 0 ? await fetchClientInfoByBoids(missingBoids) : new Map<string, ClientRecordMeta>();
+      missingBoids.length > 0
+        ? await fetchClientInfoByBoids(missingBoids)
+        : new Map<string, ClientRecordMeta>();
 
     if (sharedContext && !sharedContext.clientInfoCache) {
       sharedContext.clientInfoCache = new Map<string, ClientRecordMeta>();
@@ -517,31 +606,31 @@ export const ImportService = {
     const newClientRecords: any[] = [];
     const resolvedClientIds = new Map<string, string>();
 
-function extractRowField(row: any, keys: string[]): string {
-  if (!row || typeof row !== "object") return "";
-  for (const k of keys) {
-    if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== "") {
-      return String(row[k]).trim();
-    }
-  }
-  // Case-insensitive / normalized lookup
-  const rowKeys = Object.keys(row);
-  for (const targetKey of keys) {
-    const cleanTarget = targetKey.toUpperCase().replace(/[_\s\-\.\/]/g, "");
-    for (const rk of rowKeys) {
-      const cleanRk = rk.toUpperCase().replace(/[_\s\-\.\/]/g, "");
-      if (
-        cleanRk === cleanTarget &&
-        row[rk] !== undefined &&
-        row[rk] !== null &&
-        String(row[rk]).trim() !== ""
-      ) {
-        return String(row[rk]).trim();
+    function extractRowField(row: any, keys: string[]): string {
+      if (!row || typeof row !== "object") return "";
+      for (const k of keys) {
+        if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== "") {
+          return String(row[k]).trim();
+        }
       }
+      // Case-insensitive / normalized lookup
+      const rowKeys = Object.keys(row);
+      for (const targetKey of keys) {
+        const cleanTarget = targetKey.toUpperCase().replace(/[_\s\-./]/g, "");
+        for (const rk of rowKeys) {
+          const cleanRk = rk.toUpperCase().replace(/[_\s\-./]/g, "");
+          if (
+            cleanRk === cleanTarget &&
+            row[rk] !== undefined &&
+            row[rk] !== null &&
+            String(row[rk]).trim() !== ""
+          ) {
+            return String(row[rk]).trim();
+          }
+        }
+      }
+      return "";
     }
-  }
-  return "";
-}
 
     for (const boid of uniqueBoids) {
       const row = boidMap.get(boid);
@@ -585,6 +674,11 @@ function extractRowField(row: any, keys: string[]): string {
         "NAGARIKTA",
       ]);
 
+      const panOrCitizenship =
+        panNo ||
+        citizenshipNo ||
+        extractRowField(row, ["pan_or_citizenship", "REGISTRATION NO", "COMPANY REG NO"]);
+
       const rowKitta = Number(
         row.shares_held ||
           row.kitta ||
@@ -601,6 +695,264 @@ function extractRowField(row: any, keys: string[]): string {
           0,
       );
 
+      const fullName =
+        extractRowField(row, [
+          "full_name",
+          "name",
+          "NAME",
+          "SHAREHOLDER NAME",
+          "HOLDER NAME",
+          "UNIT HOLDER NAME",
+          "DEBENTURE HOLDER",
+          "INVESTOR NAME",
+          "ACCOUNT HOLDER",
+          "APPLICANT_NAME",
+          "ApplicantName",
+        ]) || "Unknown Investor";
+
+      const dob = extractRowField(row, [
+        "date_of_birth",
+        "dob",
+        "DATE OF BIRTH",
+        "DATE_OF_BIRTH",
+        "BIRTH DATE",
+        "BIRTH_DATE",
+        "D.O.B",
+        "D.O.B.",
+        "DOB (BS)",
+        "DOB (AD)",
+        "BIRTHDATE",
+        "DATE_OF_BIRTH_BS",
+        "DATE_OF_BIRTH_AD",
+      ]);
+
+      const fatherName = extractRowField(row, [
+        "father_name",
+        "fatherName",
+        "FATHER'S NAME",
+        "FATHERS NAME",
+        "FATHER_NAME",
+        "FATHER NAME",
+        "FATHER",
+      ]);
+
+      const grandfatherName = extractRowField(row, [
+        "grandfather_name",
+        "grandfatherName",
+        "GRANDFATHER'S NAME",
+        "GRANDFATHERS NAME",
+        "GRANDFATHER_NAME",
+        "GRANDFATHER NAME",
+        "GRAND FATHER NAME",
+        "GRAND FATHER'S NAME",
+      ]);
+
+      const rawGender = extractRowField(row, [
+        "gender",
+        "GENDER",
+        "SEX",
+        "M/F",
+        "GENDER (M/F)",
+        "GENDER(M/F)",
+      ]);
+      let gender: string | null = null;
+      if (rawGender) {
+        const upperGen = rawGender.toUpperCase().trim();
+        if (
+          upperGen === "M" ||
+          upperGen === "MALE" ||
+          upperGen === "M." ||
+          upperGen.startsWith("M /") ||
+          upperGen === "PURUSH"
+        ) {
+          gender = "Male";
+        } else if (
+          upperGen === "F" ||
+          upperGen === "FEMALE" ||
+          upperGen === "F." ||
+          upperGen.startsWith("F /") ||
+          upperGen === "MAHILA"
+        ) {
+          gender = "Female";
+        } else if (
+          upperGen === "O" ||
+          upperGen === "OTHER" ||
+          upperGen === "OTHERS" ||
+          upperGen === "T" ||
+          upperGen === "THIRD" ||
+          upperGen === "ENTITY"
+        ) {
+          gender = "Other";
+        } else {
+          gender = rawGender.trim();
+        }
+      }
+
+      const occupation = extractRowField(row, [
+        "occupation",
+        "OCCUPATION",
+        "PROFESSION",
+        "OCCUPATION / PROFESSION",
+        "OCCUPATION/PROFESSION",
+        "DESIGNATION",
+      ]);
+
+      const address = extractRowField(row, [
+        "address",
+        "ADDRESS",
+        "FULL ADDRESS",
+        "PERMANENT ADDRESS",
+        "LOCATION",
+      ]);
+
+      const province = extractRowField(row, ["province", "PROVINCE", "STATE", "PROVINCE NO"]);
+      const district = extractRowField(row, ["district", "DISTRICT"]);
+      const municipality = extractRowField(row, [
+        "municipality",
+        "MUNICIPALITY",
+        "VDC",
+        "MUNICIPALITY / VDC",
+        "LOCAL BODY",
+      ]);
+
+      const phone = extractRowField(row, [
+        "phone",
+        "mobile",
+        "contact",
+        "PHONE",
+        "MOBILE",
+        "CONTACT",
+        "MOBILE NO",
+        "PHONE NO",
+        "CONTACT NO",
+        "MOBILE NUMBER",
+        "PHONE NUMBER",
+      ]);
+
+      const email = extractRowField(row, [
+        "email",
+        "EMAIL",
+        "EMAIL ADDRESS",
+        "E-MAIL",
+        "E-MAIL ADDRESS",
+        "EMAIL ID",
+      ]);
+
+      const clientId = extractRowField(row, [
+        "client_id",
+        "clientId",
+        "CLIENT ID",
+        "CLIENT NO",
+        "MEMBER ID",
+      ]);
+
+      const bankName = extractRowField(row, [
+        "bank_name",
+        "bank",
+        "BANK NAME",
+        "BANK",
+        "NAME OF BANK",
+        "BANK/FINANCIAL INSTITUTION",
+        "BANK / FINANCIAL INSTITUTION",
+        "BANK DETAILS",
+        "BANK_TITLE",
+      ]);
+
+      let bankBranch = extractRowField(row, [
+        "bank_branch",
+        "branch",
+        "BANK BRANCH",
+        "BRANCH NAME",
+        "BRANCH",
+        "BANK_BRANCH",
+        "BANK BRANCH NAME",
+        "BRANCH ",
+        "CREDITOR BRANCH",
+        "CREDITORBRANCH",
+        "BRANCH_TITLE",
+      ]);
+
+      if (!bankBranch && bankName) {
+        if (
+          bankName.includes(" - ") ||
+          bankName.includes(".-") ||
+          (bankName.includes("-") && bankName.toLowerCase().includes("branch"))
+        ) {
+          const parts = bankName.split(/-\s*|\.-\s*/);
+          if (parts.length > 1 && parts[parts.length - 1].toLowerCase().includes("branch")) {
+            bankBranch = parts[parts.length - 1].trim();
+          }
+        }
+      }
+
+      const bankAccountNo = extractRowField(row, [
+        "bank_account_no",
+        "bank_account",
+        "account_number",
+        "account_no",
+        "acc_no",
+        "ac_no",
+        "BANK A/C NO.",
+        "BANK A/C NO",
+        "BANK ACCOUNT NO",
+        "BANK ACCOUNT NO.",
+        "ACCOUNT NUMBER",
+        "ACCOUNT NO",
+        "A/C NO",
+        "A/C NO.",
+        "ACC NO",
+        "ACC NO.",
+        "BANK ACC NO",
+        "BANK ACC NO.",
+        "BANK A/C NUMBER",
+        "BANK ACCOUNT NUMBER",
+      ]);
+
+      const rawAccountType = extractRowField(row, [
+        "account_type",
+        "ACCOUNT TYPE",
+        "A/C TYPE",
+        "ACC TYPE",
+        "A/C_TYPE",
+        "AC_TYPE",
+        "ACCOUNT_TYPE",
+        "ACC_TYPE",
+        "SCHEME_TYPE",
+        "TYPE OF ACCOUNT",
+        "ACCOUNT_TITLE",
+      ]);
+
+      let accountType = rawAccountType || null;
+      if (rawAccountType) {
+        const upperAcc = rawAccountType.toUpperCase().trim();
+        if (upperAcc === "01" || upperAcc === "SB" || upperAcc.includes("SAVING"))
+          accountType = "Savings";
+        else if (upperAcc === "02" || upperAcc === "CA" || upperAcc.includes("CURRENT"))
+          accountType = "Current";
+        else if (upperAcc === "03" || upperAcc.includes("CALL")) accountType = "Call";
+      }
+
+      const bankCode = extractRowField(row, ["bank_code", "BANK CODE", "BANK_CODE", "BANKCODE"]);
+      const rawResidency = extractRowField(row, [
+        "residency",
+        "RESIDENCY",
+        "RESIDENT_TYPE",
+        "RESIDENT TYPE",
+        "NATIONALITY",
+      ]);
+      let residency = "Resident";
+      if (rawResidency) {
+        const upperRes = rawResidency.toUpperCase();
+        if (
+          upperRes.includes("NON") ||
+          upperRes.includes("FOREIGN") ||
+          upperRes.includes("NRE") ||
+          upperRes.includes("NRI")
+        ) {
+          residency = "Non-Resident";
+        }
+      }
+
       const cachedClientId = sharedContext?.clientIdCache?.get(boid);
       if (cachedClientId) {
         resolvedClientIds.set(boid, cachedClientId);
@@ -610,28 +962,41 @@ function extractRowField(row: any, keys: string[]): string {
         sharedContext?.clientInfoCache?.set(boid, clientMeta);
         resolvedClientIds.set(boid, clientMeta.id);
 
-        // If existing client lacks NID, PAN, Citizenship or has new Kitta, queue update
-        const needsNidUpdate = nidNumber && !clientMeta.nid_number;
-        const needsPanUpdate = panNo && !clientMeta.pan_no;
-        const needsCtzUpdate = citizenshipNo && !clientMeta.citizenship_no;
-        const needsKittaUpdate = rowKitta > 0;
+        // Queue update for existing client so bulk_insert_clients COALESCE fills any newly available information
+        newClientRecords.push({
+          id: clientMeta.id,
+          boid: boid,
+          kitta: rowKitta > 0 ? rowKitta : undefined,
+          company_id: companyId || undefined,
+          full_name: fullName !== "Unknown Investor" ? fullName : undefined,
+          client_code: clientMeta.client_code || buildClientCode(row, boid),
+          client_id: clientId || undefined,
+          father_name: fatherName || undefined,
+          grandfather_name: grandfatherName || undefined,
+          pan_no: panNo || clientMeta.pan_no || undefined,
+          citizenship_no: citizenshipNo || clientMeta.citizenship_no || undefined,
+          pan_or_citizenship: panNo || citizenshipNo || undefined,
+          nid_number: nidNumber || clientMeta.nid_number || undefined,
+          date_of_birth: dob || undefined,
+          gender: gender || undefined,
+          occupation: occupation || undefined,
+          address: address || undefined,
+          province: province || undefined,
+          district: district || undefined,
+          municipality: municipality || undefined,
+          phone: phone || undefined,
+          email: email || undefined,
+          bank_name: bankName || undefined,
+          bank_branch: bankBranch || undefined,
+          bank_account_no: bankAccountNo || undefined,
+          bank_code: bankCode || undefined,
+          account_type: accountType || undefined,
+          residency: residency || undefined,
+        });
 
-        if (needsNidUpdate || needsPanUpdate || needsCtzUpdate || needsKittaUpdate) {
-          newClientRecords.push({
-            id: clientMeta.id,
-            boid: boid,
-            kitta: rowKitta > 0 ? rowKitta : undefined,
-            nid_number: nidNumber || clientMeta.nid_number || null,
-            pan_no: panNo || clientMeta.pan_no || null,
-            citizenship_no: citizenshipNo || clientMeta.citizenship_no || null,
-            pan_or_citizenship: panNo || citizenshipNo || null,
-            client_code: clientMeta.client_code || buildClientCode(row, boid),
-            full_name: extractRowField(row, ["full_name", "name", "NAME", "SHAREHOLDER NAME"]) || "Existing Investor",
-          });
-          if (needsNidUpdate) clientMeta.nid_number = nidNumber;
-          if (needsPanUpdate) clientMeta.pan_no = panNo;
-          if (needsCtzUpdate) clientMeta.citizenship_no = citizenshipNo;
-        }
+        if (nidNumber) clientMeta.nid_number = nidNumber;
+        if (panNo) clientMeta.pan_no = panNo;
+        if (citizenshipNo) clientMeta.citizenship_no = citizenshipNo;
       } else {
         const tempId = crypto.randomUUID();
         sharedContext?.clientIdCache?.set(boid, tempId);
@@ -639,253 +1004,6 @@ function extractRowField(row: any, keys: string[]): string {
         // Smart categorization: detect investor type from row data or sheet name
         const investorCategory = detectInvestorCategory(row, options?.sheetType);
         const holderType = mapToHolderType(investorCategory);
-
-        const fullName =
-          extractRowField(row, [
-            "full_name",
-            "name",
-            "NAME",
-            "SHAREHOLDER NAME",
-            "HOLDER NAME",
-            "UNIT HOLDER NAME",
-            "DEBENTURE HOLDER",
-            "INVESTOR NAME",
-            "ACCOUNT HOLDER",
-            "APPLICANT_NAME",
-            "ApplicantName",
-          ]) || "Unknown Investor";
-
-        const dob = extractRowField(row, [
-          "date_of_birth",
-          "dob",
-          "DATE OF BIRTH",
-          "DATE_OF_BIRTH",
-          "BIRTH DATE",
-          "BIRTH_DATE",
-          "D.O.B",
-          "D.O.B.",
-          "DOB (BS)",
-          "DOB (AD)",
-          "BIRTHDATE",
-          "DATE_OF_BIRTH_BS",
-          "DATE_OF_BIRTH_AD",
-        ]);
-
-        const bankName = extractRowField(row, [
-          "bank_name",
-          "bank",
-          "BANK NAME",
-          "BANK",
-          "NAME OF BANK",
-          "BANK/FINANCIAL INSTITUTION",
-          "BANK / FINANCIAL INSTITUTION",
-          "BANK DETAILS",
-          "BANK_TITLE",
-        ]);
-
-        let bankBranch = extractRowField(row, [
-          "bank_branch",
-          "branch",
-          "BANK BRANCH",
-          "BRANCH NAME",
-          "BRANCH",
-          "BANK_BRANCH",
-          "BANK BRANCH NAME",
-          "BRANCH ",
-          "CREDITOR BRANCH",
-          "CREDITORBRANCH",
-          "BRANCH_TITLE",
-        ]);
-
-        // Auto-extract branch from combined Bank Name (e.g. "Prime Commercial Bank Ltd.-New Road Branch")
-        if (!bankBranch && bankName) {
-          if (bankName.includes(" - ") || bankName.includes(".-") || (bankName.includes("-") && bankName.toLowerCase().includes("branch"))) {
-            const parts = bankName.split(/-\s*|\.-\s*/);
-            if (parts.length > 1 && parts[parts.length - 1].toLowerCase().includes("branch")) {
-              bankBranch = parts[parts.length - 1].trim();
-            }
-          }
-        }
-
-        const bankAccountNo = extractRowField(row, [
-          "bank_account_no",
-          "bank_account",
-          "account_number",
-          "account_no",
-          "acc_no",
-          "ac_no",
-          "BANK A/C NO.",
-          "BANK A/C NO",
-          "BANK ACCOUNT NO",
-          "BANK ACCOUNT NO.",
-          "ACCOUNT NUMBER",
-          "ACCOUNT NO",
-          "A/C NO",
-          "A/C NO.",
-          "ACC NO",
-          "ACC NO.",
-          "BANK ACC NO",
-          "BANK ACC NO.",
-          "BANK A/C NUMBER",
-          "BANK ACCOUNT NUMBER",
-        ]);
-
-        const rawAccountType = extractRowField(row, [
-          "account_type",
-          "ACCOUNT TYPE",
-          "A/C TYPE",
-          "ACC TYPE",
-          "A/C_TYPE",
-          "AC_TYPE",
-          "ACCOUNT_TYPE",
-          "ACC_TYPE",
-          "SCHEME_TYPE",
-          "TYPE OF ACCOUNT",
-          "ACCOUNT_TITLE",
-        ]);
-
-        let accountType = rawAccountType || null;
-        if (rawAccountType) {
-          const upperAcc = rawAccountType.toUpperCase().trim();
-          if (upperAcc === "01" || upperAcc === "SB" || upperAcc.includes("SAVING")) accountType = "Savings";
-          else if (upperAcc === "02" || upperAcc === "CA" || upperAcc.includes("CURRENT")) accountType = "Current";
-          else if (upperAcc === "03" || upperAcc.includes("CALL")) accountType = "Call";
-        }
-
-        const panNo = extractRowField(row, [
-          "pan_no",
-          "pan",
-          "PAN",
-          "PAN NO",
-          "PAN NO.",
-          "PAN_NO",
-          "PERMANENT ACCOUNT NUMBER",
-          "PERMANENT_ACCOUNT_NUMBER",
-        ]);
-
-        const citizenshipNo = extractRowField(row, [
-          "citizenship_no",
-          "citizenship",
-          "CITIZENSHIP",
-          "CITIZENSHIP NO",
-          "CITIZENSHIP NO.",
-          "CITIZENSHIP_NO",
-          "CITIZENSHIP NUMBER",
-          "NAGARIKTA NO",
-          "NAGARIKTA_NO",
-          "NAGARIKTA",
-        ]);
-
-        const panOrCitizenship = panNo || citizenshipNo || extractRowField(row, [
-          "pan_or_citizenship",
-          "REGISTRATION NO",
-          "COMPANY REG NO",
-        ]);
-
-        const nidNumber = extractRowField(row, [
-          "nid_number",
-          "nid",
-          "NID",
-          "NID_NO",
-          "NID NO",
-          "NID NO.",
-          "NID_NUMBER",
-          "NATIONAL ID",
-          "NATIONAL_ID",
-          "NATIONAL ID NO",
-          "NATIONAL ID NUMBER",
-          "RASTRIYA PARICHAYAPATRA",
-          "RASTRIYA_PARICHAYAPATRA",
-        ]);
-
-        const fatherName = extractRowField(row, [
-          "father_name",
-          "fatherName",
-          "FATHER'S NAME",
-          "FATHERS NAME",
-          "FATHER_NAME",
-          "FATHER NAME",
-          "FATHER",
-        ]);
-
-        const grandfatherName = extractRowField(row, [
-          "grandfather_name",
-          "grandfatherName",
-          "GRANDFATHER'S NAME",
-          "GRANDFATHERS NAME",
-          "GRANDFATHER_NAME",
-          "GRANDFATHER NAME",
-          "GRAND FATHER NAME",
-          "GRAND FATHER'S NAME",
-        ]);
-
-        const rawGender = extractRowField(row, ["gender", "GENDER", "SEX", "M/F", "GENDER (M/F)", "GENDER(M/F)"]);
-        let gender: string | null = null;
-        if (rawGender) {
-          const upperGen = rawGender.toUpperCase().trim();
-          if (upperGen === "M" || upperGen === "MALE" || upperGen === "M." || upperGen.startsWith("M /") || upperGen === "PURUSH") {
-            gender = "Male";
-          } else if (upperGen === "F" || upperGen === "FEMALE" || upperGen === "F." || upperGen.startsWith("F /") || upperGen === "MAHILA") {
-            gender = "Female";
-          } else if (upperGen === "O" || upperGen === "OTHER" || upperGen === "OTHERS" || upperGen === "T" || upperGen === "THIRD" || upperGen === "ENTITY") {
-            gender = "Other";
-          } else {
-            gender = rawGender.trim();
-          }
-        }
-
-        const occupation = extractRowField(row, [
-          "occupation",
-          "OCCUPATION",
-          "PROFESSION",
-          "OCCUPATION / PROFESSION",
-          "OCCUPATION/PROFESSION",
-          "DESIGNATION",
-        ]);
-        const address = extractRowField(row, [
-          "address",
-          "ADDRESS",
-          "FULL ADDRESS",
-          "PERMANENT ADDRESS",
-          "LOCATION",
-        ]);
-        const province = extractRowField(row, ["province", "PROVINCE", "STATE", "PROVINCE NO"]);
-        const district = extractRowField(row, ["district", "DISTRICT"]);
-        const municipality = extractRowField(row, [
-          "municipality",
-          "MUNICIPALITY",
-          "VDC",
-          "MUNICIPALITY / VDC",
-          "LOCAL BODY",
-        ]);
-        const phone = extractRowField(row, [
-          "phone",
-          "mobile",
-          "contact",
-          "PHONE",
-          "MOBILE",
-          "CONTACT",
-          "MOBILE NO",
-          "PHONE NO",
-          "CONTACT NO",
-          "MOBILE NUMBER",
-          "PHONE NUMBER",
-        ]);
-        const email = extractRowField(row, [
-          "email",
-          "EMAIL",
-          "EMAIL ADDRESS",
-          "E-MAIL",
-          "E-MAIL ADDRESS",
-          "EMAIL ID",
-        ]);
-        const clientId = extractRowField(row, [
-          "client_id",
-          "clientId",
-          "CLIENT ID",
-          "CLIENT NO",
-          "MEMBER ID",
-        ]);
 
         newClientRecords.push({
           id: tempId,
@@ -913,12 +1031,16 @@ function extractRowField(row: any, keys: string[]): string {
           bank_name: bankName || null,
           bank_branch: bankBranch || null,
           bank_account_no: bankAccountNo || null,
+          bank_code: bankCode || null,
           account_type: accountType || null,
+          residency: residency || "Resident",
           holder_type: holderType,
           payee_classification: payableClassification(investorCategory),
           payee_segment: payableSegment(investorCategory),
-          classification_status: investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
-          classification_source: investorCategory === "UNKNOWN" ? "upload_requires_review" : "upload_evidence",
+          classification_status:
+            investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
+          classification_source:
+            investorCategory === "UNKNOWN" ? "upload_requires_review" : "upload_evidence",
           status: "Active",
           verification_status: "Verified",
         });
@@ -934,7 +1056,10 @@ function extractRowField(row: any, keys: string[]): string {
           { p_clients: newClientRecords },
         );
         if (rpcErr) {
-          console.warn("bulk_insert_clients RPC failed, falling back to direct upserts:", rpcErr.message);
+          console.warn(
+            "bulk_insert_clients RPC failed, falling back to direct upserts:",
+            rpcErr.message,
+          );
         } else {
           if (rpcResult?.errors && rpcResult.errors.length > 0) {
             console.warn("Some client inserts reported RPC errors:", rpcResult.errors);
@@ -942,7 +1067,10 @@ function extractRowField(row: any, keys: string[]): string {
           clientsInserted = Number(rpcResult?.inserted ?? 0);
         }
       } catch (rpcEx: any) {
-        console.warn("bulk_insert_clients RPC exception, falling back to direct upserts:", rpcEx?.message);
+        console.warn(
+          "bulk_insert_clients RPC exception, falling back to direct upserts:",
+          rpcEx?.message,
+        );
       }
 
       // Direct fallback if RPC inserted 0 or failed
@@ -955,26 +1083,40 @@ function extractRowField(row: any, keys: string[]): string {
             if (!insErr) {
               clientsInserted++;
             } else {
-              // Strip dynamic columns if table doesn't have them
               const baseClient = {
                 id: clientRec.id,
                 boid: clientRec.boid,
                 company_id: clientRec.company_id || null,
                 full_name: clientRec.full_name,
                 client_code: clientRec.client_code,
-                father_name: clientRec.father_name,
-                grandfather_name: clientRec.grandfather_name,
-                pan_or_citizenship: clientRec.pan_or_citizenship,
-                address: clientRec.address,
-                district: clientRec.district,
-                phone: clientRec.phone,
-                bank_name: clientRec.bank_name,
-                bank_account_no: clientRec.bank_account_no,
+                client_id: clientRec.client_id || null,
+                father_name: clientRec.father_name || null,
+                grandfather_name: clientRec.grandfather_name || null,
+                pan_no: clientRec.pan_no || null,
+                citizenship_no: clientRec.citizenship_no || null,
+                pan_or_citizenship: clientRec.pan_or_citizenship || null,
+                nid_number: clientRec.nid_number || null,
+                date_of_birth: clientRec.date_of_birth || null,
+                gender: clientRec.gender || null,
+                occupation: clientRec.occupation || null,
+                address: clientRec.address || null,
+                province: clientRec.province || null,
+                district: clientRec.district || null,
+                municipality: clientRec.municipality || null,
+                phone: clientRec.phone || null,
+                email: clientRec.email || null,
+                bank_name: clientRec.bank_name || null,
+                bank_branch: clientRec.bank_branch || null,
+                bank_account_no: clientRec.bank_account_no || null,
+                bank_code: clientRec.bank_code || null,
+                account_type: clientRec.account_type || null,
+                residency: clientRec.residency || "Resident",
                 holder_type: clientRec.holder_type,
                 payee_classification: clientRec.payee_classification,
                 payee_segment: clientRec.payee_segment,
                 status: clientRec.status,
                 verification_status: clientRec.verification_status,
+                kitta: clientRec.kitta || 0,
               };
               const { error: insErr2 } = await (supabase as any)
                 .from("clients")
@@ -1006,7 +1148,9 @@ function extractRowField(row: any, keys: string[]): string {
         }
       }
       if (unconfirmedCount > 0) {
-        console.warn(`Warning: ${unconfirmedCount}/${newBoids.length} newly inserted BOIDs could not be confirmed in DB.`);
+        console.warn(
+          `Warning: ${unconfirmedCount}/${newBoids.length} newly inserted BOIDs could not be confirmed in DB.`,
+        );
       }
     }
 
@@ -1097,13 +1241,16 @@ function extractRowField(row: any, keys: string[]): string {
       );
       const bankName = extractRowField(row, [
         "bank_name",
-        "bankName",
         "bank",
-        "BANK",
         "BANK NAME",
+        "BANK",
         "NAME OF BANK",
         "BANK/FINANCIAL INSTITUTION",
+        "BANK / FINANCIAL INSTITUTION",
         "BANK DETAILS",
+        "BANK_TITLE",
+        "CREDITOR BANK",
+        "CREDITOR BANK NAME",
       ]);
       const bankAccountNo = extractRowField(row, [
         "bank_account_no",
@@ -1124,6 +1271,9 @@ function extractRowField(row: any, keys: string[]): string {
         "BANK ACC NO",
         "BANK ACC NO.",
         "BANK A/C NUMBER",
+        "BANK_ACCOUNT_NO",
+        "ACCT NO",
+        "ACCOUNT_NO",
       ]);
       let bankBranch = extractRowField(row, [
         "bank_branch",
@@ -1140,7 +1290,11 @@ function extractRowField(row: any, keys: string[]): string {
       ]);
 
       if (!bankBranch && bankName) {
-        if (bankName.includes(" - ") || bankName.includes(".-") || (bankName.includes("-") && bankName.toLowerCase().includes("branch"))) {
+        if (
+          bankName.includes(" - ") ||
+          bankName.includes(".-") ||
+          (bankName.includes("-") && bankName.toLowerCase().includes("branch"))
+        ) {
           const parts = bankName.split(/-\s*|\.-\s*/);
           if (parts.length > 1 && parts[parts.length - 1].toLowerCase().includes("branch")) {
             bankBranch = parts[parts.length - 1].trim();
@@ -1148,13 +1302,61 @@ function extractRowField(row: any, keys: string[]): string {
         }
       }
       const lotName = extractRowField(row, ["lot_name", "lot", "LOT", "LOT NAME"]);
+      const remarks = extractRowField(row, [
+        "remarks",
+        "REMARKS",
+        "REMARK",
+        "NOTE",
+        "NOTES",
+        "STATUS REMARKS",
+        "DESCRIPTION",
+        "COMMENTS",
+        "REMARKS 2",
+        "STATUS / REMARKS 1",
+      ]);
+      const instrumentRef = extractRowField(row, [
+        "instrument_ref",
+        "instrument",
+        "INSTRUMENT",
+        "INSTRUMENT REF",
+        "INSTRUMENT_REF",
+        "INSTRUMENT NO",
+        "DEBENTURE NAME",
+        "SECURITY",
+        "SECURITY NAME",
+        "SERIES",
+      ]);
       const status = extractRowField(row, ["status", "STATUS"]) || "Pending";
+
+      const rawDueDate = extractRowField(row, [
+        "due_date",
+        "dueDate",
+        "DUE DATE",
+        "DUE_DATE",
+        "MATURITY DATE",
+        "MATURITY_DATE",
+        "PAYMENT DATE",
+        "PAYMENT_DATE",
+        "INTEREST DATE",
+        "INTEREST_DATE",
+        "DUE DT",
+      ]);
+      let dueDate: string = new Date().toISOString().split("T")[0];
+      if (rawDueDate) {
+        const parsed = new Date(rawDueDate);
+        if (!isNaN(parsed.getTime())) {
+          dueDate = parsed.toISOString().split("T")[0];
+        }
+      }
 
       let investorCategory = detectInvestorCategory(row, options?.sheetType);
       if (investorCategory === "UNKNOWN") {
         const cachedClient = sharedContext?.clientInfoCache?.get(boid);
         if (cachedClient) {
-          if (cachedClient.payee_classification && cachedClient.payee_classification !== "UNCLASSIFIED") {
+          if (
+            cachedClient.payee_classification &&
+            cachedClient.payee_classification !== "UNCLASSIFIED"
+          ) {
             investorCategory = cachedClient.payee_classification;
           } else if (cachedClient.holder_type) {
             investorCategory = normalizePayeeCategory(cachedClient.holder_type);
@@ -1165,7 +1367,12 @@ function extractRowField(row: any, keys: string[]): string {
       const rowTdsRate =
         options?.tdsRate !== undefined
           ? options.tdsRate
-          : getCategoryTdsRate(investorCategory, isDebenture, targetTable === 'mutual_fund_payables', taxRules);
+          : getCategoryTdsRate(
+              investorCategory,
+              isDebenture,
+              targetTable === "mutual_fund_payables",
+              taxRules,
+            );
 
       let grossAmount = rawGross;
       let taxAmount = rawTax;
@@ -1174,7 +1381,9 @@ function extractRowField(row: any, keys: string[]): string {
       if (targetTable === "dividend_payables" || targetTable === "mutual_fund_payables") {
         if (!options?.isPreCalculated) {
           if (!grossAmount && sharesHeld && options?.dividendRate) {
-            grossAmount = Math.round(sharesHeld * options.dividendRate * 100) / 100;
+            const faceVal = targetTable === "mutual_fund_payables" ? 10 : 100;
+            grossAmount =
+              Math.round(sharesHeld * (faceVal * (options.dividendRate / 100)) * 100) / 100;
           }
           if (!taxAmount && grossAmount && rowTdsRate > 0) {
             taxAmount = Math.round(grossAmount * rowTdsRate * 100) / 100;
@@ -1186,15 +1395,23 @@ function extractRowField(row: any, keys: string[]): string {
           if (!netPayable) netPayable = Math.round((grossAmount - taxAmount) * 100) / 100;
         }
 
-        const totals = options?.isPreCalculated && rawGross > 0 ? 
-          { grossAmount: rawGross, taxAmount: rawTax, netPayable: rawNet, taxRate: rowTdsRate, category: investorCategory } :
-          calculatePayableTotals({
-            grossAmount,
-            taxAmount,
-            category: investorCategory,
-            isDebenture: false,
-            isMutualFund: targetTable === 'mutual_fund_payables',
-            customTaxRate: options?.tdsRate,
+        const totals =
+          options?.isPreCalculated && (rawGross > 0 || rawNet > 0)
+            ? {
+                grossAmount: rawGross,
+                taxAmount: rawTax,
+                netPayable: rawNet,
+                taxRate: rowTdsRate,
+                category: investorCategory,
+              }
+            : calculatePayableTotals({
+                grossAmount,
+                taxAmount,
+                category: investorCategory,
+                isDebenture: false,
+                isMutualFund: targetTable === "mutual_fund_payables",
+                customTaxRate: options?.tdsRate,
+              });
         if (totals.grossAmount <= 0 && totals.netPayable <= 0 && (!sharesHeld || sharesHeld <= 0)) {
           continue;
         }
@@ -1218,17 +1435,20 @@ function extractRowField(row: any, keys: string[]): string {
           bonus_tax: Number(row.bon_tax || 0) || null,
           bank_name: bankName || null,
           bank_account_no: bankAccountNo || null,
+          bank_branch: bankBranch || null,
           lot_name: lotName || null,
+          remarks: remarks || null,
           payment_status: status === "SUCCESS" ? "Paid" : "Pending",
           payee_classification: payableClassification(investorCategory),
           payee_segment: payableSegment(investorCategory),
-          classification_status: investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
+          classification_status:
+            investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
         });
       } else if (targetTable === "interest_payables") {
         if (!options?.isPreCalculated) {
           if (!grossAmount && sharesHeld && options?.dividendRate) {
-            const multiplier = options.dividendRate <= 20 ? 10 : 1;
-            grossAmount = Math.round(sharesHeld * (options.dividendRate * multiplier) * 100) / 100;
+            // Debenture face value is NPR 1,000; dividendRate is the annual coupon percentage
+            grossAmount = Math.round(sharesHeld * 1000 * (options.dividendRate / 100) * 100) / 100;
           }
           if (!taxAmount && grossAmount && rowTdsRate > 0) {
             taxAmount = Math.round(grossAmount * rowTdsRate * 100) / 100;
@@ -1240,14 +1460,22 @@ function extractRowField(row: any, keys: string[]): string {
           if (!netPayable) netPayable = Math.round((grossAmount - taxAmount) * 100) / 100;
         }
 
-        const totals = options?.isPreCalculated && rawGross > 0 ? 
-          { grossAmount: rawGross, taxAmount: rawTax, netPayable: rawNet, taxRate: rowTdsRate, category: investorCategory } :
-          calculatePayableTotals({
-            grossAmount,
-            taxAmount,
-            category: investorCategory,
-            isDebenture: true,
-            customTaxRate: options?.tdsRate,
+        const totals =
+          options?.isPreCalculated && (rawGross > 0 || rawNet > 0)
+            ? {
+                grossAmount: rawGross,
+                taxAmount: rawTax,
+                netPayable: rawNet,
+                taxRate: rowTdsRate,
+                category: investorCategory,
+              }
+            : calculatePayableTotals({
+                grossAmount,
+                taxAmount,
+                category: investorCategory,
+                isDebenture: true,
+                customTaxRate: options?.tdsRate,
+              });
         if (totals.grossAmount <= 0 && totals.netPayable <= 0 && (!sharesHeld || sharesHeld <= 0)) {
           continue;
         }
@@ -1262,16 +1490,19 @@ function extractRowField(row: any, keys: string[]): string {
           tax_amount: totals.taxAmount,
           net_payable: totals.netPayable,
           tds_rate: totals.taxRate,
-          due_date: new Date().toISOString().split("T")[0],
+          due_date: dueDate,
           fiscal_year: options?.fiscalYear ?? null,
           bank_name: bankName || null,
           bank_account_no: bankAccountNo || null,
           bank_branch: bankBranch || null,
           lot_name: lotName || null,
+          instrument_ref: instrumentRef || null,
+          remarks: remarks || null,
           payment_status: status === "SUCCESS" ? "Paid" : "Pending",
           payee_classification: payableClassification(investorCategory),
           payee_segment: payableSegment(investorCategory),
-          classification_status: investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
+          classification_status:
+            investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
         });
       }
     }
@@ -1301,7 +1532,13 @@ function extractRowField(row: any, keys: string[]): string {
             const boidToRowNum = new Map<string, number>();
             chunkData.forEach((row, idx) => {
               const b = String(
-                row.boid || row.BOID || row["BENEFICIARY ID"] || row["CLIENT ID"] || row.client_code || row.ClientCode || "",
+                row.boid ||
+                  row.BOID ||
+                  row["BENEFICIARY ID"] ||
+                  row["CLIENT ID"] ||
+                  row.client_code ||
+                  row.ClientCode ||
+                  "",
               ).trim();
               if (b && !boidToRowNum.has(b)) boidToRowNum.set(b, idx + 1);
             });
@@ -1320,16 +1557,24 @@ function extractRowField(row: any, keys: string[]): string {
             }
           }
         } else if (rpcErr) {
-          console.warn(`${rpcName} RPC failed, attempting direct table insert fallback:`, rpcErr.message);
+          console.warn(
+            `${rpcName} RPC failed, attempting direct table insert fallback:`,
+            rpcErr.message,
+          );
         }
       } catch (rpcEx: any) {
-        console.warn(`${rpcName} RPC exception, attempting direct table insert fallback:`, rpcEx?.message);
+        console.warn(
+          `${rpcName} RPC exception, attempting direct table insert fallback:`,
+          rpcEx?.message,
+        );
       }
 
       // Direct fallback if RPC inserted 0 rows
       if (payablesInserted === 0 && payablesToInsert.length > 0) {
         try {
-          console.log(`Running direct insert fallback for ${payablesToInsert.length} ${targetTable} rows...`);
+          console.log(
+            `Running direct insert fallback for ${payablesToInsert.length} ${targetTable} rows...`,
+          );
           payablesInserted = await insertRowsWithSchemaFallback(targetTable, payablesToInsert);
         } catch (fallbackEx: any) {
           console.error("Direct payable insert fallback failed:", fallbackEx);

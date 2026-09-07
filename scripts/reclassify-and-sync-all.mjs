@@ -1,10 +1,10 @@
-import { createClient } from '@supabase/supabase-js';
-import { smartClassify } from '../src/lib/services/smart-classifier.ts';
+import { createClient } from "@supabase/supabase-js";
+import { smartClassify } from "../src/lib/services/smart-classifier.ts";
 
-const SUPABASE_URL = process.env.SUPABASE_URL || 'http://127.0.0.1:54321';
+const SUPABASE_URL = process.env.SUPABASE_URL || "http://127.0.0.1:54321";
 const SUPABASE_SERVICE_ROLE_KEY =
   process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU';
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -38,14 +38,14 @@ async function fetchAll(table, columns) {
 }
 
 async function run() {
-  console.log('===================================================================');
-  console.log('   RECLASSIFYING & SYNCHRONIZING ALL CLIENTS & PAYABLES (RBBD / ALL) ');
-  console.log('===================================================================\n');
+  console.log("===================================================================");
+  console.log("   RECLASSIFYING & SYNCHRONIZING ALL CLIENTS & PAYABLES (RBBD / ALL) ");
+  console.log("===================================================================\n");
 
   // 1. Fetch all clients
   const clients = await fetchAll(
-    'clients',
-    'id, boid, full_name, holder_type, payee_classification, payee_segment, father_name, grandfather_name, citizenship_no, pan_no, pan_or_citizenship, date_of_birth, gender, occupation, bank_name, company_id'
+    "clients",
+    "id, boid, full_name, holder_type, payee_classification, payee_segment, father_name, grandfather_name, citizenship_no, pan_no, pan_or_citizenship, date_of_birth, gender, occupation, bank_name, company_id",
   );
   console.log(`Loaded ${clients.length} total client records.`);
 
@@ -94,57 +94,59 @@ async function run() {
 
   console.log(`Identified ${clientUpdates.length} clients needing classification updates.`);
   if (clientUpdates.length > 0) {
-    console.log('Sample updated clients:');
-    console.table(clientUpdates.slice(0, 15).map(u => ({
-      Name: u.full_name,
-      BOID: u.boid,
-      OldClass: u.old_cls,
-      NewClass: u.new_cls,
-      NewHolder: u.new_holder,
-      Rule: u.rule,
-    })));
+    console.log("Sample updated clients:");
+    console.table(
+      clientUpdates.slice(0, 15).map((u) => ({
+        Name: u.full_name,
+        BOID: u.boid,
+        OldClass: u.old_cls,
+        NewClass: u.new_cls,
+        NewHolder: u.new_holder,
+        Rule: u.rule,
+      })),
+    );
 
-    console.log('Applying batch updates to clients table...');
+    console.log("Applying batch updates to clients table...");
     const BATCH_SIZE = 100;
     for (let i = 0; i < clientUpdates.length; i += BATCH_SIZE) {
       const chunk = clientUpdates.slice(i, i + BATCH_SIZE);
       await Promise.all(
-        chunk.map(u =>
+        chunk.map((u) =>
           supabase
-            .from('clients')
+            .from("clients")
             .update({
               payee_classification: u.new_cls,
               holder_type: u.new_holder,
-              classification_status: 'CONFIRMED',
+              classification_status: "CONFIRMED",
             })
-            .eq('id', u.id)
-        )
+            .eq("id", u.id),
+        ),
       );
     }
-    console.log('Clients update complete.\n');
+    console.log("Clients update complete.\n");
   }
 
   // 2. Synchronize all Interest / Debenture Payables
-  console.log('2. SYNCHRONIZING DEBENTURE / INTEREST PAYABLES...');
+  console.log("2. SYNCHRONIZING DEBENTURE / INTEREST PAYABLES...");
   const interestPayables = await fetchAll(
-    'interest_payables',
-    'id, company_id, client_id, gross_interest, tax_amount, net_interest, payee_classification, payee_segment, tds_rate'
+    "interest_payables",
+    "id, company_id, client_id, gross_interest, tax_amount, net_interest, payee_classification, payee_segment, tds_rate",
   );
   console.log(`Loaded ${interestPayables.length} interest payable records.`);
 
   const intUpdates = [];
   for (const p of interestPayables) {
     const client = clientMap.get(p.client_id);
-    const cls = client?.payee_classification || p.payee_classification || 'NATURAL_PERSON';
-    const seg = client?.payee_segment || p.payee_segment || 'PUBLIC';
+    const cls = client?.payee_classification || p.payee_classification || "NATURAL_PERSON";
+    const seg = client?.payee_segment || p.payee_segment || "PUBLIC";
     const gross = Number(p.gross_interest || 0);
 
     let rate = 0.06;
     let tax = 0;
-    if (cls === 'TAX_EXEMPT') {
+    if (cls === "TAX_EXEMPT") {
       rate = 0.0;
       tax = 0.0;
-    } else if (cls === 'COMPANY_INSTITUTION') {
+    } else if (cls === "COMPANY_INSTITUTION") {
       rate = 0.15;
       tax = Math.round(gross * 0.15 * 100) / 100;
     } else {
@@ -176,61 +178,72 @@ async function run() {
 
   console.log(`Identified ${intUpdates.length} interest payables needing updates.`);
   if (intUpdates.length > 0) {
-    console.log('Sample updated interest payables:');
-    console.table(intUpdates.slice(0, 15).map(u => ({
-      Name: u.name,
-      Gross: u.gross,
-      OldTax: u.old_tax,
-      NewTax: u.new_tax,
-      OldCls: u.old_cls,
-      NewCls: u.new_cls,
-      Rate: (u.rate * 100).toFixed(0) + '%',
-      Net: u.net,
-    })));
+    console.log("Sample updated interest payables:");
+    console.table(
+      intUpdates.slice(0, 15).map((u) => ({
+        Name: u.name,
+        Gross: u.gross,
+        OldTax: u.old_tax,
+        NewTax: u.new_tax,
+        OldCls: u.old_cls,
+        NewCls: u.new_cls,
+        Rate: (u.rate * 100).toFixed(0) + "%",
+        Net: u.net,
+      })),
+    );
 
-    console.log('Applying batch updates to interest_payables table...');
+    console.log("Applying batch updates to interest_payables table...");
     const BATCH_SIZE = 100;
     for (let i = 0; i < intUpdates.length; i += BATCH_SIZE) {
       const chunk = intUpdates.slice(i, i + BATCH_SIZE);
       await Promise.all(
-        chunk.map(u =>
+        chunk.map((u) =>
           supabase
-            .from('interest_payables')
+            .from("interest_payables")
             .update({
               payee_classification: u.new_cls,
               tds_rate: u.rate,
               tax_amount: u.new_tax,
               net_interest: u.net,
               net_payable: u.net,
-              classification_status: 'CONFIRMED',
+              classification_status: "CONFIRMED",
             })
-            .eq('id', u.id)
-        )
+            .eq("id", u.id),
+        ),
       );
     }
-    console.log('Interest payables update complete.\n');
+    console.log("Interest payables update complete.\n");
   }
 
   // 3. Verify the Target Entities directly
-  console.log('3. VERIFYING TARGET ENTITIES:');
+  console.log("3. VERIFYING TARGET ENTITIES:");
   const { data: verifiedGrowth } = await supabase
-    .from('clients')
-    .select('boid, full_name, holder_type, payee_classification')
-    .ilike('full_name', '%GROWTH EQUITY%');
-  console.log('GROWTH EQUITY PARTNERS in clients:', verifiedGrowth);
+    .from("clients")
+    .select("boid, full_name, holder_type, payee_classification")
+    .ilike("full_name", "%GROWTH EQUITY%");
+  console.log("GROWTH EQUITY PARTNERS in clients:", verifiedGrowth);
 
   const { data: verifiedNmb50 } = await supabase
-    .from('clients')
-    .select('boid, full_name, holder_type, payee_classification')
-    .ilike('full_name', '%NMB 50%');
-  console.log('NMB 50 in clients:', verifiedNmb50);
+    .from("clients")
+    .select("boid, full_name, holder_type, payee_classification")
+    .ilike("full_name", "%NMB 50%");
+  console.log("NMB 50 in clients:", verifiedNmb50);
 
   const { data: targetPayables } = await supabase
-    .from('interest_payables')
-    .select('id, gross_interest, tax_amount, net_interest, tds_rate, payee_classification, client:clients(full_name, boid)')
-    .or('client_id.in.(' + [...verifiedGrowth || [], ...verifiedNmb50 || []].map(c => c.id || '').filter(Boolean).join(',') + ')');
+    .from("interest_payables")
+    .select(
+      "id, gross_interest, tax_amount, net_interest, tds_rate, payee_classification, client:clients(full_name, boid)",
+    )
+    .or(
+      "client_id.in.(" +
+        [...(verifiedGrowth || []), ...(verifiedNmb50 || [])]
+          .map((c) => c.id || "")
+          .filter(Boolean)
+          .join(",") +
+        ")",
+    );
 
-  console.log('\nTarget Payables in database:');
+  console.log("\nTarget Payables in database:");
   for (const tp of targetPayables || []) {
     console.log({
       name: tp.client?.full_name,

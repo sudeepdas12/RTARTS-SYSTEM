@@ -1,10 +1,25 @@
-import { supabase } from './services/database';
-import { RBACService, UserContext } from './rbac-service';
-import { NotificationService } from './services/notification.service';
-import { SettingsService } from './services/settings.service';
+import { supabase } from "./services/database";
+import { RBACService, UserContext } from "./rbac-service";
+import { NotificationService } from "./services/notification.service";
+import { SettingsService } from "./services/settings.service";
 
-export type ApprovalAction = 'submit' | 'approve' | 'reject' | 'return' | 'process' | 'complete';
-export type ApprovalStatus = 'Draft' | 'Pending' | 'Approved' | 'Rejected' | 'Returned' | 'Processed' | 'Completed' | 'Processing' | 'Failed' | 'Matched' | 'Not_Matched' | 'Missing' | 'Duplicate' | 'Over_Paid' | 'Under_Paid';
+export type ApprovalAction = "submit" | "approve" | "reject" | "return" | "process" | "complete";
+export type ApprovalStatus =
+  | "Draft"
+  | "Pending"
+  | "Approved"
+  | "Rejected"
+  | "Returned"
+  | "Processed"
+  | "Completed"
+  | "Processing"
+  | "Failed"
+  | "Matched"
+  | "Not_Matched"
+  | "Missing"
+  | "Duplicate"
+  | "Over_Paid"
+  | "Under_Paid";
 
 export interface WorkflowTransition {
   from: ApprovalStatus;
@@ -21,35 +36,105 @@ export interface WorkflowConfig {
 
 const WORKFLOW_CONFIGS: Record<string, WorkflowConfig> = {
   payment_batches: {
-    table: 'payment_batches',
-    statusField: 'status',
+    table: "payment_batches",
+    statusField: "status",
     transitions: [
-      { from: 'Draft', to: 'Pending', action: 'submit', requiredRole: ['maker', 'operator', 'supervisor', 'admin'] },
-      { from: 'Returned', to: 'Pending', action: 'submit', requiredRole: ['maker', 'operator', 'supervisor', 'admin'] },
-      { from: 'Pending', to: 'Approved', action: 'approve', requiredRole: ['checker', 'approver', 'supervisor', 'admin'] },
-      { from: 'Pending', to: 'Rejected', action: 'reject', requiredRole: ['checker', 'approver', 'supervisor', 'admin'] },
-      { from: 'Pending', to: 'Returned', action: 'return', requiredRole: ['checker', 'approver', 'supervisor', 'admin'] },
-      { from: 'Approved', to: 'Processed', action: 'process', requiredRole: ['approver', 'supervisor', 'admin'] },
-      { from: 'Processed', to: 'Completed', action: 'complete', requiredRole: ['approver', 'supervisor', 'admin'] },
+      {
+        from: "Draft",
+        to: "Pending",
+        action: "submit",
+        requiredRole: ["maker", "operator", "supervisor", "admin"],
+      },
+      {
+        from: "Returned",
+        to: "Pending",
+        action: "submit",
+        requiredRole: ["maker", "operator", "supervisor", "admin"],
+      },
+      {
+        from: "Pending",
+        to: "Approved",
+        action: "approve",
+        requiredRole: ["checker", "approver", "supervisor", "admin"],
+      },
+      {
+        from: "Pending",
+        to: "Rejected",
+        action: "reject",
+        requiredRole: ["checker", "approver", "supervisor", "admin"],
+      },
+      {
+        from: "Pending",
+        to: "Returned",
+        action: "return",
+        requiredRole: ["checker", "approver", "supervisor", "admin"],
+      },
+      {
+        from: "Approved",
+        to: "Processed",
+        action: "process",
+        requiredRole: ["approver", "supervisor", "admin"],
+      },
+      {
+        from: "Processed",
+        to: "Completed",
+        action: "complete",
+        requiredRole: ["approver", "supervisor", "admin"],
+      },
     ],
   },
   upload_history: {
-    table: 'upload_history',
-    statusField: 'status',
+    table: "upload_history",
+    statusField: "status",
     transitions: [
-      { from: 'Pending', to: 'Processing', action: 'process', requiredRole: ['operator', 'supervisor', 'admin', 'finance_operator'] },
-      { from: 'Pending', to: 'Completed', action: 'complete', requiredRole: ['operator', 'supervisor', 'admin', 'finance_operator'] },
-      { from: 'Pending', to: 'Failed', action: 'reject', requiredRole: ['operator', 'supervisor', 'admin', 'finance_operator'] },
-      { from: 'Processing', to: 'Completed', action: 'complete', requiredRole: ['operator', 'supervisor', 'admin', 'finance_operator'] },
-      { from: 'Processing', to: 'Failed', action: 'reject', requiredRole: ['operator', 'supervisor', 'admin', 'finance_operator'] },
+      {
+        from: "Pending",
+        to: "Processing",
+        action: "process",
+        requiredRole: ["operator", "supervisor", "admin", "finance_operator"],
+      },
+      {
+        from: "Pending",
+        to: "Completed",
+        action: "complete",
+        requiredRole: ["operator", "supervisor", "admin", "finance_operator"],
+      },
+      {
+        from: "Pending",
+        to: "Failed",
+        action: "reject",
+        requiredRole: ["operator", "supervisor", "admin", "finance_operator"],
+      },
+      {
+        from: "Processing",
+        to: "Completed",
+        action: "complete",
+        requiredRole: ["operator", "supervisor", "admin", "finance_operator"],
+      },
+      {
+        from: "Processing",
+        to: "Failed",
+        action: "reject",
+        requiredRole: ["operator", "supervisor", "admin", "finance_operator"],
+      },
     ],
   },
   reconciliation_results: {
-    table: 'reconciliation_results',
-    statusField: 'result',
+    table: "reconciliation_results",
+    statusField: "result",
     transitions: [
-      { from: 'Pending', to: 'Matched', action: 'approve', requiredRole: ['reconciliation_officer', 'supervisor', 'admin'] },
-      { from: 'Pending', to: 'Rejected', action: 'reject', requiredRole: ['reconciliation_officer', 'supervisor', 'admin'] },
+      {
+        from: "Pending",
+        to: "Matched",
+        action: "approve",
+        requiredRole: ["reconciliation_officer", "supervisor", "admin"],
+      },
+      {
+        from: "Pending",
+        to: "Rejected",
+        action: "reject",
+        requiredRole: ["reconciliation_officer", "supervisor", "admin"],
+      },
     ],
   },
 };
@@ -59,13 +144,18 @@ export const WorkflowEngine = {
     return WORKFLOW_CONFIGS[table] || null;
   },
 
-  canTransition(user: UserContext | null, table: string, from: ApprovalStatus, action: ApprovalAction): boolean {
+  canTransition(
+    user: UserContext | null,
+    table: string,
+    from: ApprovalStatus,
+    action: ApprovalAction,
+  ): boolean {
     const config = this.getConfig(table);
     if (!config) return false;
-    
-    const transition = config.transitions.find(t => t.from === from && t.action === action);
+
+    const transition = config.transitions.find((t) => t.from === from && t.action === action);
     if (!transition) return false;
-    
+
     return RBACService.hasRole(user, transition.requiredRole as any);
   },
 
@@ -74,7 +164,7 @@ export const WorkflowEngine = {
     table: string,
     action: ApprovalAction,
     remarks?: string,
-    user?: UserContext | null
+    user?: UserContext | null,
   ): Promise<{ success: boolean; newStatus?: ApprovalStatus; error?: string }> {
     const config = this.getConfig(table);
     if (!config) {
@@ -85,15 +175,20 @@ export const WorkflowEngine = {
     const { data: record, error: fetchError } = await (supabase as any)
       .from(config.table)
       .select(config.statusField)
-      .eq('id', recordId)
+      .eq("id", recordId)
       .single();
 
     if (fetchError || !record) {
-      return { success: false, error: `Failed to fetch record: ${fetchError?.message || 'not found'}` };
+      return {
+        success: false,
+        error: `Failed to fetch record: ${fetchError?.message || "not found"}`,
+      };
     }
 
     const currentStatus = record[config.statusField] as ApprovalStatus;
-    const transition = config.transitions.find(t => t.from === currentStatus && t.action === action);
+    const transition = config.transitions.find(
+      (t) => t.from === currentStatus && t.action === action,
+    );
 
     if (!transition) {
       return { success: false, error: `Invalid transition: ${currentStatus} → ${action}` };
@@ -101,33 +196,44 @@ export const WorkflowEngine = {
 
     // Check role permission (Fail-closed: user must exist and have the required role)
     if (!user || !RBACService.hasRole(user, transition.requiredRole as any)) {
-      return { success: false, error: 'Insufficient permissions for this action' };
+      return { success: false, error: "Insufficient permissions for this action" };
     }
 
     // ─── MAKER-CHECKER SEGREGATION ─────────────────────────────────────────────
     // If require_maker_checker is enabled globally, block checker actions
     // (approve, process, complete, reject, return) when acting user is creator.
-    if (action === 'approve' || action === 'process' || action === 'complete' || action === 'reject' || action === 'return') {
+    if (
+      action === "approve" ||
+      action === "process" ||
+      action === "complete" ||
+      action === "reject" ||
+      action === "return"
+    ) {
       try {
         const settings = await SettingsService.getSettings();
         if (settings.require_maker_checker && user) {
           // Fetch the created_by field to compare with the acting user
           const { data: creatorData } = await (supabase as any)
             .from(config.table)
-            .select('created_by')
-            .eq('id', recordId)
+            .select("created_by")
+            .eq("id", recordId)
             .single();
 
           const createdBy = creatorData?.created_by;
           if (createdBy && createdBy === user.id) {
             return {
               success: false,
-              error: 'Maker and Checker cannot be the same user. This batch was created by you and must be reviewed by a different user.'
+              error:
+                "Maker and Checker cannot be the same user. This batch was created by you and must be reviewed by a different user.",
             };
           }
         }
       } catch (settingsErr) {
-        console.warn('Failed to check maker-checker settings:', settingsErr);
+        console.warn("Failed to check maker-checker settings:", settingsErr);
+        return {
+          success: false,
+          error: "System error: Unable to verify maker-checker compliance settings. Action blocked for security.",
+        };
       }
     }
 
@@ -135,28 +241,38 @@ export const WorkflowEngine = {
 
     // Update the record status
     const updateData: any = { [config.statusField]: newStatus };
-    if (action === 'approve') {
+    if (action === "approve") {
       updateData.approved_by = user?.id || null;
       updateData.approved_at = new Date().toISOString();
-    } else if (action === 'process') {
+    } else if (action === "process") {
       updateData.processed_at = new Date().toISOString();
-    } else if (action === 'complete') {
+    } else if (action === "complete") {
       updateData.completed_at = new Date().toISOString();
       updateData.processed_at = updateData.processed_at || new Date().toISOString();
     }
 
-    const { error: updateError } = await (supabase as any)
+    // Atomic update: only apply if the record is still in currentStatus
+    const { data: updatedRows, error: updateError } = await (supabase as any)
       .from(config.table)
       .update(updateData)
-      .eq('id', recordId);
+      .eq("id", recordId)
+      .eq(config.statusField, currentStatus)
+      .select("id");
 
     if (updateError) {
       return { success: false, error: `Failed to update record: ${updateError.message}` };
     }
 
+    if (!updatedRows || updatedRows.length === 0) {
+      return {
+        success: false,
+        error: `Action failed: The record was already modified by another user (expected status: ${currentStatus}). Please refresh.`,
+      };
+    }
+
     // Log the approval action
     try {
-      await (supabase as any).from('approval_logs').insert({
+      await (supabase as any).from("approval_logs").insert({
         approval_id: recordId,
         action,
         previous_status: currentStatus,
@@ -166,57 +282,72 @@ export const WorkflowEngine = {
         performed_at: new Date().toISOString(),
       });
     } catch (logErr) {
-      console.warn('Failed to write approval log:', logErr);
+      console.warn("Failed to write approval log:", logErr);
     }
 
     // Sync pending_approvals table for maker-checker review
     try {
-      if (action === 'submit') {
-        await (supabase as any).from('pending_approvals').insert({
+      if (action === "submit") {
+        await (supabase as any).from("pending_approvals").insert({
           entity_type: table,
           entity_id: recordId,
-          action: 'Batch Submission',
-          payload: { recordId, table, previousStatus: currentStatus, status: newStatus, remarks: remarks || null },
-          status: 'Pending',
+          action: "Batch Submission",
+          payload: {
+            recordId,
+            table,
+            previousStatus: currentStatus,
+            status: newStatus,
+            remarks: remarks || null,
+          },
+          status: "Pending",
           requested_by: user?.id || null,
         });
-      } else if (action === 'approve' || action === 'reject' || action === 'return') {
-        const mappedPendingStatus = action === 'approve' ? 'Approved' : action === 'return' ? 'Returned' : 'Rejected';
-        await (supabase as any).from('pending_approvals')
+      } else if (action === "approve" || action === "reject" || action === "return") {
+        const mappedPendingStatus =
+          action === "approve" ? "Approved" : action === "return" ? "Returned" : "Rejected";
+        await (supabase as any)
+          .from("pending_approvals")
           .update({
             status: mappedPendingStatus,
             review_notes: remarks || null,
             reviewed_by: user?.id || null,
             reviewed_at: new Date().toISOString(),
           })
-          .eq('entity_id', recordId)
-          .eq('status', 'Pending');
+          .eq("entity_id", recordId)
+          .eq("status", "Pending");
       }
     } catch (paErr) {
-      console.warn('Failed to sync pending_approvals record:', paErr);
+      console.warn("Failed to sync pending_approvals record:", paErr);
     }
 
     // Send notification
     try {
-      const actionPast = action === 'submit' ? 'submitted'
-        : action === 'approve' ? 'approved'
-        : action === 'reject' ? 'rejected'
-        : action === 'return' ? 'returned'
-        : action === 'process' ? 'processed'
-        : action === 'complete' ? 'completed'
-        : `${action}ed`;
+      const actionPast =
+        action === "submit"
+          ? "submitted"
+          : action === "approve"
+            ? "approved"
+            : action === "reject"
+              ? "rejected"
+              : action === "return"
+                ? "returned"
+                : action === "process"
+                  ? "processed"
+                  : action === "complete"
+                    ? "completed"
+                    : `${action}ed`;
 
       await NotificationService.sendNotification({
         user_id: user?.id || null,
-        title: `${table.replace('_', ' ')} ${action}`,
+        title: `${table.replace("_", " ")} ${action}`,
         message: `Record ${recordId.slice(0, 8)} was ${actionPast}. Status: ${currentStatus} → ${newStatus}`,
-        channel: 'System',
-        category: 'approval_pending',
+        channel: "System",
+        category: "approval_pending",
         reference_type: table,
         reference_id: recordId,
       });
     } catch (notifErr) {
-      console.warn('Failed to send notification:', notifErr);
+      console.warn("Failed to send notification:", notifErr);
     }
 
     return { success: true, newStatus };
@@ -225,19 +356,19 @@ export const WorkflowEngine = {
   async getApprovalLogs(recordId: string, limit = 20): Promise<any[]> {
     try {
       const { data, error } = await (supabase as any)
-        .from('approval_logs')
-        .select('*')
-        .eq('approval_id', recordId)
-        .order('performed_at', { ascending: false })
+        .from("approval_logs")
+        .select("*")
+        .eq("approval_id", recordId)
+        .order("performed_at", { ascending: false })
         .limit(limit);
-      
+
       if (error) {
-        console.warn('Failed to fetch approval logs:', error.message);
+        console.warn("Failed to fetch approval logs:", error.message);
         return [];
       }
       return data || [];
     } catch (err: any) {
-      console.warn('Failed to fetch approval logs:', err?.message || err);
+      console.warn("Failed to fetch approval logs:", err?.message || err);
       return [];
     }
   },
@@ -245,8 +376,6 @@ export const WorkflowEngine = {
   getAvailableActions(table: string, currentStatus: ApprovalStatus): ApprovalAction[] {
     const config = this.getConfig(table);
     if (!config) return [];
-    return config.transitions
-      .filter(t => t.from === currentStatus)
-      .map(t => t.action);
-  }
+    return config.transitions.filter((t) => t.from === currentStatus).map((t) => t.action);
+  },
 };

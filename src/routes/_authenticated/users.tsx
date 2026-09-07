@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo } from "react";
+import { useDebounce } from "@/hooks/use-debounce";
 import { PageHeader } from "@/components/page-header";
 import {
   Table,
@@ -115,14 +116,23 @@ function generatePassword(): string {
   const symbols = "!@#$%^&*";
   const all = upper + lower + digits + symbols;
 
-  let pwd = "";
-  pwd += upper[Math.floor(Math.random() * upper.length)];
-  pwd += lower[Math.floor(Math.random() * lower.length)];
-  pwd += digits[Math.floor(Math.random() * digits.length)];
-  pwd += symbols[Math.floor(Math.random() * symbols.length)];
+  const getRandomChar = (charset: string): string => {
+    const array = new Uint32Array(1);
+    if (typeof window !== "undefined" && window.crypto) {
+      window.crypto.getRandomValues(array);
+      return charset[array[0] % charset.length];
+    }
+    return charset[Math.floor(Math.random() * charset.length)];
+  };
 
-  for (let i = 4; i < 14; i++) {
-    pwd += all[Math.floor(Math.random() * all.length)];
+  let pwd = "";
+  pwd += getRandomChar(upper);
+  pwd += getRandomChar(lower);
+  pwd += getRandomChar(digits);
+  pwd += getRandomChar(symbols);
+
+  for (let i = 4; i < 16; i++) {
+    pwd += getRandomChar(all);
   }
   return pwd;
 }
@@ -141,6 +151,7 @@ function UsersRoute() {
   const [inviteOpen, setInviteOpen] = useState(false);
 
   const [searchTerm, setSearchTerm] = useState("");
+  const debouncedSearchTerm = useDebounce(searchTerm, 300);
   const [roleFilter, setRoleFilter] = useState("all");
 
   // Password reset dialog state
@@ -149,10 +160,7 @@ function UsersRoute() {
   const [newPassword, setNewPassword] = useState("");
   const [showResetPassword, setShowResetPassword] = useState(false);
 
-  const {
-    data: users = [],
-    isLoading,
-  } = useQuery({
+  const { data: users = [], isLoading } = useQuery({
     queryKey: ["admin-users"],
     queryFn: () => adminListUsers(),
     enabled: !!isAdmin,
@@ -262,16 +270,14 @@ function UsersRoute() {
     if (roleFilter !== "all") {
       list = list.filter((u) => u.role === roleFilter);
     }
-    if (searchTerm.trim()) {
-      const q = searchTerm.toLowerCase();
+    if (debouncedSearchTerm.trim()) {
+      const q = debouncedSearchTerm.toLowerCase();
       list = list.filter(
-        (u) =>
-          u.full_name?.toLowerCase().includes(q) ||
-          u.email?.toLowerCase().includes(q)
+        (u) => u.full_name?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q),
       );
     }
     return list;
-  }, [users, roleFilter, searchTerm]);
+  }, [users, roleFilter, debouncedSearchTerm]);
 
   const kpis = useMemo(() => {
     const total = users.length;
@@ -299,7 +305,8 @@ function UsersRoute() {
         </div>
         <h2 className="text-xl font-bold tracking-tight">Administrator Access Required</h2>
         <p className="text-sm text-muted-foreground mt-1.5 max-w-md">
-          User account provisioning, privilege assignments, and credential management require the <span className="font-semibold text-foreground">admin</span> role.
+          User account provisioning, privilege assignments, and credential management require the{" "}
+          <span className="font-semibold text-foreground">admin</span> role.
         </p>
         <Button asChild variant="outline" className="mt-5">
           <Link to="/dashboard">Return to Dashboard</Link>
@@ -331,11 +338,16 @@ function UsersRoute() {
                 Provision Platform User
               </DialogTitle>
               <DialogDescription>
-                Invite a colleague via email or provision an account directly for intranet/offline environments.
+                Invite a colleague via email or provision an account directly for intranet/offline
+                environments.
               </DialogDescription>
             </DialogHeader>
 
-            <Tabs value={createMode} onValueChange={(v) => setCreateMode(v as any)} className="mt-2">
+            <Tabs
+              value={createMode}
+              onValueChange={(v) => setCreateMode(v as any)}
+              className="mt-2"
+            >
               <TabsList className="grid grid-cols-2 h-9">
                 <TabsTrigger value="invite" className="text-xs gap-1.5">
                   <Mail className="h-3.5 w-3.5" /> Email Invitation
@@ -348,7 +360,9 @@ function UsersRoute() {
               {/* TAB 1: EMAIL INVITATION */}
               <TabsContent value="invite" className="space-y-3 pt-2">
                 <div className="grid gap-1.5">
-                  <Label htmlFor="email" className="text-xs">Email Address *</Label>
+                  <Label htmlFor="email" className="text-xs">
+                    Email Address *
+                  </Label>
                   <Input
                     id="email"
                     type="email"
@@ -359,7 +373,9 @@ function UsersRoute() {
                   />
                 </div>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="name" className="text-xs">Full Name</Label>
+                  <Label htmlFor="name" className="text-xs">
+                    Full Name
+                  </Label>
                   <Input
                     id="name"
                     placeholder="e.g. Sudeep Das"
@@ -385,10 +401,19 @@ function UsersRoute() {
                 </div>
 
                 <DialogFooter className="pt-2">
-                  <Button variant="outline" size="sm" onClick={() => setInviteOpen(false)} disabled={inviting}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setInviteOpen(false)}
+                    disabled={inviting}
+                  >
                     Cancel
                   </Button>
-                  <Button size="sm" onClick={() => inviteUser()} disabled={!inviteEmail || inviting}>
+                  <Button
+                    size="sm"
+                    onClick={() => inviteUser()}
+                    disabled={!inviteEmail || inviting}
+                  >
                     {inviting ? "Sending..." : "Send Invite"}
                   </Button>
                 </DialogFooter>
@@ -397,7 +422,9 @@ function UsersRoute() {
               {/* TAB 2: DIRECT ACCOUNT CREATION */}
               <TabsContent value="direct" className="space-y-3 pt-2">
                 <div className="grid gap-1.5">
-                  <Label htmlFor="direct-email" className="text-xs">Email Address *</Label>
+                  <Label htmlFor="direct-email" className="text-xs">
+                    Email Address *
+                  </Label>
                   <Input
                     id="direct-email"
                     type="email"
@@ -408,7 +435,9 @@ function UsersRoute() {
                   />
                 </div>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="direct-name" className="text-xs">Full Name</Label>
+                  <Label htmlFor="direct-name" className="text-xs">
+                    Full Name
+                  </Label>
                   <Input
                     id="direct-name"
                     placeholder="e.g. Sudeep Das"
@@ -434,7 +463,9 @@ function UsersRoute() {
                 </div>
                 <div className="grid gap-1.5">
                   <div className="flex items-center justify-between">
-                    <Label htmlFor="direct-pwd" className="text-xs">Initial Password *</Label>
+                    <Label htmlFor="direct-pwd" className="text-xs">
+                      Initial Password *
+                    </Label>
                     <Button
                       type="button"
                       variant="ghost"
@@ -459,19 +490,30 @@ function UsersRoute() {
                       onClick={() => setShowDirectPassword(!showDirectPassword)}
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                     >
-                      {showDirectPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                      {showDirectPassword ? (
+                        <EyeOff className="h-3.5 w-3.5" />
+                      ) : (
+                        <Eye className="h-3.5 w-3.5" />
+                      )}
                     </button>
                   </div>
                 </div>
 
                 <DialogFooter className="pt-2">
-                  <Button variant="outline" size="sm" onClick={() => setInviteOpen(false)} disabled={creatingDirect}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setInviteOpen(false)}
+                    disabled={creatingDirect}
+                  >
                     Cancel
                   </Button>
                   <Button
                     size="sm"
                     onClick={() => createDirectUser()}
-                    disabled={!inviteEmail || !directPassword || directPassword.length < 6 || creatingDirect}
+                    disabled={
+                      !inviteEmail || !directPassword || directPassword.length < 6 || creatingDirect
+                    }
                   >
                     {creatingDirect ? "Provisioning..." : "Provision Account"}
                   </Button>
@@ -499,8 +541,12 @@ function UsersRoute() {
         <Card className="border border-border/80 shadow-sm">
           <CardContent className="p-4 flex items-center justify-between">
             <div>
-              <p className="text-[11px] font-medium uppercase text-muted-foreground">Administrators</p>
-              <p className="text-2xl font-bold text-red-600 dark:text-red-400 mt-1 tabular-nums">{kpis.admins}</p>
+              <p className="text-[11px] font-medium uppercase text-muted-foreground">
+                Administrators
+              </p>
+              <p className="text-2xl font-bold text-red-600 dark:text-red-400 mt-1 tabular-nums">
+                {kpis.admins}
+              </p>
               <p className="text-[11px] text-muted-foreground mt-0.5">Full privilege access</p>
             </div>
             <div className="p-2.5 rounded-lg bg-red-500/10 text-red-600 dark:text-red-400">
@@ -511,8 +557,12 @@ function UsersRoute() {
         <Card className="border border-border/80 shadow-sm">
           <CardContent className="p-4 flex items-center justify-between">
             <div>
-              <p className="text-[11px] font-medium uppercase text-muted-foreground">Active Signed-In</p>
-              <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1 tabular-nums">{kpis.active}</p>
+              <p className="text-[11px] font-medium uppercase text-muted-foreground">
+                Active Signed-In
+              </p>
+              <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1 tabular-nums">
+                {kpis.active}
+              </p>
               <p className="text-[11px] text-muted-foreground mt-0.5">Confirmed credentials</p>
             </div>
             <div className="p-2.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
@@ -523,8 +573,12 @@ function UsersRoute() {
         <Card className="border border-border/80 shadow-sm">
           <CardContent className="p-4 flex items-center justify-between">
             <div>
-              <p className="text-[11px] font-medium uppercase text-muted-foreground">Pending Invites</p>
-              <p className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1 tabular-nums">{kpis.pending}</p>
+              <p className="text-[11px] font-medium uppercase text-muted-foreground">
+                Pending Invites
+              </p>
+              <p className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1 tabular-nums">
+                {kpis.pending}
+              </p>
               <p className="text-[11px] text-muted-foreground mt-0.5">Awaiting initial login</p>
             </div>
             <div className="p-2.5 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
@@ -569,7 +623,7 @@ function UsersRoute() {
       </div>
 
       {/* Users Table */}
-      <div className="border rounded-lg bg-card overflow-hidden shadow-sm">
+      <div className="border rounded-lg bg-card overflow-x-auto shadow-sm">
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/40 text-xs hover:bg-transparent">
@@ -617,12 +671,17 @@ function UsersRoute() {
                               {user.full_name || "Unassigned Name"}
                             </span>
                             {isSelf && (
-                              <Badge variant="secondary" className="text-[9px] px-1 py-0 font-normal">
+                              <Badge
+                                variant="secondary"
+                                className="text-[9px] px-1 py-0 font-normal"
+                              >
                                 You
                               </Badge>
                             )}
                           </div>
-                          <span className="text-[11px] text-muted-foreground font-mono truncate">{user.email}</span>
+                          <span className="text-[11px] text-muted-foreground font-mono truncate">
+                            {user.email}
+                          </span>
                         </div>
                       </div>
                     </TableCell>
@@ -631,7 +690,9 @@ function UsersRoute() {
                     <TableCell>
                       <Select
                         value={user.role || ""}
-                        onValueChange={(val) => updateRole({ userId: user.id, role: val as AppRole })}
+                        onValueChange={(val) =>
+                          updateRole({ userId: user.id, role: val as AppRole })
+                        }
                         disabled={updating || isSelf}
                       >
                         <SelectTrigger className="w-40 h-7 text-xs border border-border/60">
@@ -667,7 +728,9 @@ function UsersRoute() {
                           Invited
                         </Badge>
                       ) : (
-                        <Badge variant="outline" className="text-[10px]">Pending</Badge>
+                        <Badge variant="outline" className="text-[10px]">
+                          Pending
+                        </Badge>
                       )}
                     </TableCell>
 
@@ -727,11 +790,7 @@ function UsersRoute() {
                               size="sm"
                               className="h-7 w-7 p-0 cursor-pointer text-muted-foreground hover:text-rose-600"
                               disabled={isSelf}
-                              title={
-                                isSelf
-                                  ? "You cannot delete your own account"
-                                  : "Delete user"
-                              }
+                              title={isSelf ? "You cannot delete your own account" : "Delete user"}
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </Button>
@@ -775,13 +834,17 @@ function UsersRoute() {
               Reset User Password
             </DialogTitle>
             <DialogDescription>
-              Set a new password for <strong className="text-foreground">{userToReset?.email}</strong>. The user will be able to sign in with this password immediately.
+              Set a new password for{" "}
+              <strong className="text-foreground">{userToReset?.email}</strong>. The user will be
+              able to sign in with this password immediately.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 pt-2">
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <Label htmlFor="new-password" className="text-xs">New Password *</Label>
+                <Label htmlFor="new-password" className="text-xs">
+                  New Password *
+                </Label>
                 <Button
                   type="button"
                   variant="ghost"
@@ -806,7 +869,11 @@ function UsersRoute() {
                   onClick={() => setShowResetPassword(!showResetPassword)}
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 >
-                  {showResetPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  {showResetPassword ? (
+                    <EyeOff className="h-3.5 w-3.5" />
+                  ) : (
+                    <Eye className="h-3.5 w-3.5" />
+                  )}
                 </button>
               </div>
             </div>
@@ -832,7 +899,11 @@ function UsersRoute() {
             <Button variant="outline" size="sm" onClick={() => setResetOpen(false)}>
               Cancel
             </Button>
-            <Button size="sm" onClick={() => resetPassword()} disabled={resetting || !newPassword || newPassword.length < 6}>
+            <Button
+              size="sm"
+              onClick={() => resetPassword()}
+              disabled={resetting || !newPassword || newPassword.length < 6}
+            >
               {resetting ? "Resetting..." : "Save Password"}
             </Button>
           </DialogFooter>

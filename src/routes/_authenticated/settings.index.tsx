@@ -1,29 +1,36 @@
-import { createFileRoute } from '@tanstack/react-router';
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { PageHeader } from '@/components/page-header';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Button } from '@/components/ui/button';
-import { Switch } from '@/components/ui/switch';
+import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { PageHeader } from "@/components/page-header";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from '@/components/ui/table';
-import { SettingsService, SystemSettings } from '@/lib/services/settings.service';
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { SettingsService, SystemSettings } from "@/lib/services/settings.service";
 import {
   TAX_CATEGORY_LABEL,
   TAX_CLASSIFICATION_LABEL,
   invalidateTaxRuleCache,
   loadTaxRules,
   updateTaxRule,
-} from '@/lib/services/tax-rules.service';
-import { toast } from 'sonner';
-import { Loader2, Save, Send } from 'lucide-react';
+} from "@/lib/services/tax-rules.service";
+import { useAuth } from "@/hooks/use-auth";
+import { toast } from "sonner";
+import { Loader2, Save, Send } from "lucide-react";
 
 function TaxRulesEditor() {
   const qc = useQueryClient();
+  const { isAdmin } = useAuth();
   const { data: rules, isLoading } = useQuery({
     queryKey: ["tax-rules"],
     queryFn: () => loadTaxRules(true),
@@ -34,6 +41,7 @@ function TaxRulesEditor() {
 
   const { mutate: save, isPending } = useMutation({
     mutationFn: async () => {
+      if (!isAdmin) throw new Error("Unauthorized: Only administrators can update tax rules.");
       for (const [id, edit] of Object.entries(edits)) {
         await updateTaxRule(id, {
           tax_rate: Math.max(0, Math.min(100, Number(edit.ratePct) || 0)) / 100,
@@ -60,9 +68,10 @@ function TaxRulesEditor() {
       <CardHeader>
         <CardTitle>Tax / TDS Rules (Centralized)</CardTitle>
         <CardDescription>
-          Every payable resolves its rate automatically as: <strong>Payable Type + Investor Category = Tax
-          Rate</strong>. Import and the database trigger both use these rules, so changing a rate here is the
-          only place needed — no calculation logic changes. Rates are in % (e.g. 6 = 6% TDS).
+          Every payable resolves its rate automatically as:{" "}
+          <strong>Payable Type + Investor Category = Tax Rate</strong>. Import and the database
+          trigger both use these rules, so changing a rate here is the only place needed — no
+          calculation logic changes. Rates are in % (e.g. 6 = 6% TDS).
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -88,7 +97,8 @@ function TaxRulesEditor() {
                       {TAX_CATEGORY_LABEL[rule.payable_category] ?? rule.payable_category}
                     </TableCell>
                     <TableCell>
-                      {TAX_CLASSIFICATION_LABEL[rule.payee_classification] ?? rule.payee_classification}
+                      {TAX_CLASSIFICATION_LABEL[rule.payee_classification] ??
+                        rule.payee_classification}
                     </TableCell>
                     <TableCell className="text-right">
                       <Input
@@ -99,7 +109,10 @@ function TaxRulesEditor() {
                         className="ml-auto w-24 h-8 text-right"
                         value={edit.ratePct}
                         onChange={(e) =>
-                          setEdits((prev) => ({ ...prev, [rule.id]: { ...edit, ratePct: e.target.value } }))
+                          setEdits((prev) => ({
+                            ...prev,
+                            [rule.id]: { ...edit, ratePct: e.target.value },
+                          }))
                         }
                       />
                     </TableCell>
@@ -122,7 +135,11 @@ function TaxRulesEditor() {
             {dirtyCount} unsaved change{dirtyCount === 1 ? "" : "s"}
           </p>
           <Button onClick={() => save()} disabled={isPending || dirtyCount === 0}>
-            {isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+            {isPending ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Save className="w-4 h-4 mr-2" />
+            )}
             Save Tax Rules
           </Button>
         </div>
@@ -131,43 +148,63 @@ function TaxRulesEditor() {
   );
 }
 
-export const Route = createFileRoute('/_authenticated/settings/')({
+export const Route = createFileRoute("/_authenticated/settings/")({
   component: SettingsRoute,
 });
 
 function SettingsRoute() {
   const qc = useQueryClient();
+  const { isAdmin } = useAuth();
 
   const { data: settings, isLoading } = useQuery({
-    queryKey: ['system-settings'],
+    queryKey: ["system-settings"],
     queryFn: () => SettingsService.getSettings(),
   });
 
   const [form, setForm] = useState<Partial<SystemSettings>>({});
-  const [testEmail, setTestEmail] = useState('');
+  const [testEmail, setTestEmail] = useState("");
 
-  const merged: SystemSettings = { ...(settings || {} as SystemSettings), ...form };
+  const merged: SystemSettings = { ...(settings || ({} as SystemSettings)), ...form };
 
   const update = (key: keyof SystemSettings, value: unknown) =>
-    setForm(prev => ({ ...prev, [key]: value }));
+    setForm((prev) => ({ ...prev, [key]: value }));
 
   const { mutate: saveSettings, isPending } = useMutation({
-    mutationFn: () => SettingsService.saveSettings(merged),
-    onSuccess: () => {
-      toast.success('Settings saved successfully.');
-      setForm({});
-      qc.invalidateQueries({ queryKey: ['system-settings'] });
+    mutationFn: () => {
+      if (!isAdmin)
+        throw new Error("Unauthorized: Only administrators can modify system settings.");
+      const payload: SystemSettings = { ...(settings || ({} as SystemSettings)), ...form };
+      // Preserve existing masked secrets if the user didn't type a replacement
+      if (!form.connectips_token && settings?.connectips_token) {
+        payload.connectips_token = settings.connectips_token;
+      }
+      if (!form.connectips_cert_pass && settings?.connectips_cert_pass) {
+        payload.connectips_cert_pass = settings.connectips_cert_pass;
+      }
+      if (!form.smtp_pass && settings?.smtp_pass) {
+        payload.smtp_pass = settings.smtp_pass;
+      }
+      return SettingsService.saveSettings(payload);
     },
-    onError: () => toast.error('Failed to save settings.'),
+    onSuccess: () => {
+      toast.success("Settings saved successfully.");
+      setForm({});
+      qc.invalidateQueries({ queryKey: ["system-settings"] });
+    },
+    onError: () => toast.error("Failed to save settings."),
   });
 
   const { mutate: sendTest, isPending: sendingTest } = useMutation({
-    mutationFn: () => SettingsService.sendTestEmail(testEmail.trim()),
-    onSuccess: () => toast.success('Test email sent successfully.'),
+    mutationFn: () => {
+      if (!isAdmin) throw new Error("Unauthorized: Only administrators can test email settings.");
+      return SettingsService.sendTestEmail(testEmail.trim());
+    },
+    onSuccess: () => toast.success("Test email sent successfully."),
     onError: (err) => toast.error(`Failed to send test email: ${(err as Error).message}`),
   });
 
-  if (isLoading) return <div className="p-6 text-sm text-muted-foreground">Loading settings...</div>;
+  if (isLoading)
+    return <div className="p-6 text-sm text-muted-foreground">Loading settings...</div>;
 
   return (
     <div className="flex flex-col gap-6 p-6 animate-fade-in">
@@ -177,7 +214,11 @@ function SettingsRoute() {
           description="Configure global application preferences, taxes, and workflows."
         />
         <Button onClick={() => saveSettings()} disabled={isPending} className="hover-lift">
-          {isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+          {isPending ? (
+            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+          ) : (
+            <Save className="w-4 h-4 mr-2" />
+          )}
           Save All Changes
         </Button>
       </div>
@@ -195,27 +236,37 @@ function SettingsRoute() {
         </Card>
         <Card className="glass-card hover-lift border border-border/80">
           <CardContent className="p-4">
-            <p className="text-xs font-medium uppercase text-muted-foreground">Equity Dividend TDS</p>
+            <p className="text-xs font-medium uppercase text-muted-foreground">
+              Equity Dividend TDS
+            </p>
             <p className="text-xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">
               {merged.dividend_tds_natural ?? 5}% / {merged.dividend_tds_legal ?? 5}%
             </p>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Public (5%) / Institution (5%)</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              Public (5%) / Institution (5%)
+            </p>
           </CardContent>
         </Card>
         <Card className="glass-card hover-lift border border-border/80">
           <CardContent className="p-4">
-            <p className="text-xs font-medium uppercase text-muted-foreground">Debenture Interest TDS</p>
+            <p className="text-xs font-medium uppercase text-muted-foreground">
+              Debenture Interest TDS
+            </p>
             <p className="text-xl font-bold text-blue-600 dark:text-blue-400 mt-1">
               {merged.interest_tds_natural ?? 6}% / {merged.interest_tds_legal ?? 15}%
             </p>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Public (6%) / Institution (15%)</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              Public (6%) / Institution (15%)
+            </p>
           </CardContent>
         </Card>
         <Card className="glass-card hover-lift border border-border/80">
           <CardContent className="p-4">
             <p className="text-xs font-medium uppercase text-muted-foreground">Tax Rules Engine</p>
             <p className="text-xl font-bold text-violet-600 dark:text-violet-400 mt-1">Active</p>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Authoritative Nepal TDS Rules</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              Authoritative Nepal TDS Rules
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -233,7 +284,9 @@ function SettingsRoute() {
           <Card>
             <CardHeader>
               <CardTitle>Regional Formatting & Calendar</CardTitle>
-              <CardDescription>Configure how dates, calendars, and numbers are displayed across the system.</CardDescription>
+              <CardDescription>
+                Configure how dates, calendars, and numbers are displayed across the system.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5 max-w-md">
               <div className="flex items-center justify-between">
@@ -245,7 +298,7 @@ function SettingsRoute() {
                 </div>
                 <Switch
                   checked={merged.enable_nepali_dates}
-                  onCheckedChange={v => update('enable_nepali_dates', v)}
+                  onCheckedChange={(v) => update("enable_nepali_dates", v)}
                 />
               </div>
             </CardContent>
@@ -263,14 +316,15 @@ function SettingsRoute() {
                 <div>
                   <CardTitle>NCHL ConnectIPS Direct Banking Gateway</CardTitle>
                   <CardDescription>
-                    Configure credentials provided by Nepal Clearing House Ltd. (NCHL) for direct one-click batch disbursements.
+                    Configure credentials provided by Nepal Clearing House Ltd. (NCHL) for direct
+                    one-click batch disbursements.
                   </CardDescription>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-muted-foreground">Gateway Active:</span>
                   <Switch
                     checked={merged.connectips_enabled}
-                    onCheckedChange={v => update('connectips_enabled', v)}
+                    onCheckedChange={(v) => update("connectips_enabled", v)}
                   />
                 </div>
               </div>
@@ -280,14 +334,14 @@ function SettingsRoute() {
                 <div className="space-y-2">
                   <Label>Gateway Environment</Label>
                   <select
-                    value={merged.connectips_mode || 'SANDBOX'}
-                    onChange={e => {
-                      const mode = e.target.value as 'SANDBOX' | 'PRODUCTION';
-                      update('connectips_mode', mode);
-                      if (mode === 'PRODUCTION' && merged.connectips_base_url.includes('uat')) {
-                        update('connectips_base_url', 'https://login.connectips.com:7443');
-                      } else if (mode === 'SANDBOX') {
-                        update('connectips_base_url', 'https://uat.connectips.com:7443');
+                    value={merged.connectips_mode || "SANDBOX"}
+                    onChange={(e) => {
+                      const mode = e.target.value as "SANDBOX" | "PRODUCTION";
+                      update("connectips_mode", mode);
+                      if (mode === "PRODUCTION" && merged.connectips_base_url.includes("uat")) {
+                        update("connectips_base_url", "https://login.connectips.com:7443");
+                      } else if (mode === "SANDBOX") {
+                        update("connectips_base_url", "https://uat.connectips.com:7443");
                       }
                     }}
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
@@ -300,8 +354,8 @@ function SettingsRoute() {
                   <Label>Gateway Base URL</Label>
                   <Input
                     placeholder="https://uat.connectips.com:7443"
-                    value={merged.connectips_base_url || ''}
-                    onChange={e => update('connectips_base_url', e.target.value)}
+                    value={merged.connectips_base_url || ""}
+                    onChange={(e) => update("connectips_base_url", e.target.value)}
                   />
                 </div>
               </div>
@@ -311,16 +365,16 @@ function SettingsRoute() {
                   <Label>Merchant ID</Label>
                   <Input
                     placeholder="e.g., M101 / NECO_MERCHANT"
-                    value={merged.connectips_merchant_id || ''}
-                    onChange={e => update('connectips_merchant_id', e.target.value)}
+                    value={merged.connectips_merchant_id || ""}
+                    onChange={(e) => update("connectips_merchant_id", e.target.value)}
                   />
                 </div>
                 <div className="space-y-2">
                   <Label>App ID</Label>
                   <Input
                     placeholder="e.g., APP_RTARTS"
-                    value={merged.connectips_app_id || ''}
-                    onChange={e => update('connectips_app_id', e.target.value)}
+                    value={merged.connectips_app_id || ""}
+                    onChange={(e) => update("connectips_app_id", e.target.value)}
                   />
                 </div>
               </div>
@@ -330,8 +384,8 @@ function SettingsRoute() {
                   <Label>App Name / Initiator ID</Label>
                   <Input
                     placeholder="RTARTS System"
-                    value={merged.connectips_app_name || ''}
-                    onChange={e => update('connectips_app_name', e.target.value)}
+                    value={merged.connectips_app_name || ""}
+                    onChange={(e) => update("connectips_app_name", e.target.value)}
                   />
                 </div>
                 <div className="space-y-2">
@@ -339,9 +393,20 @@ function SettingsRoute() {
                   <Input
                     type="password"
                     autoComplete="new-password"
-                    placeholder="Enter Secret Key / Bearer Token"
-                    value={merged.connectips_token || ''}
-                    onChange={e => update('connectips_token', e.target.value)}
+                    placeholder={
+                      settings?.connectips_token
+                        ? "•••••••••••• (Configured — enter new to change)"
+                        : "Enter Secret Key / Bearer Token"
+                    }
+                    value={
+                      form.connectips_token ?? (settings?.connectips_token ? "••••••••••••" : "")
+                    }
+                    onChange={(e) => update("connectips_token", e.target.value)}
+                    onFocus={(e) => {
+                      if (form.connectips_token === undefined && settings?.connectips_token) {
+                        update("connectips_token", "");
+                      }
+                    }}
                   />
                 </div>
               </div>
@@ -351,20 +416,45 @@ function SettingsRoute() {
                 <Input
                   type="password"
                   autoComplete="new-password"
-                  placeholder="Enter Certificate Password"
-                  value={merged.connectips_cert_pass || ''}
-                  onChange={e => update('connectips_cert_pass', e.target.value)}
+                  placeholder={
+                    settings?.connectips_cert_pass
+                      ? "•••••••••••• (Configured — enter new to change)"
+                      : "Enter Certificate Password"
+                  }
+                  value={
+                    form.connectips_cert_pass ??
+                    (settings?.connectips_cert_pass ? "••••••••••••" : "")
+                  }
+                  onChange={(e) => update("connectips_cert_pass", e.target.value)}
+                  onFocus={(e) => {
+                    if (form.connectips_cert_pass === undefined && settings?.connectips_cert_pass) {
+                      update("connectips_cert_pass", "");
+                    }
+                  }}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Used on the backend server for cryptographic SHA-256 RSA signing of disbursement payloads.
+                  Used on the backend server for cryptographic SHA-256 RSA signing of disbursement
+                  payloads.
                 </p>
               </div>
 
               <div className="rounded-lg border bg-muted/30 p-3.5 text-xs text-muted-foreground space-y-1.5">
-                <p className="font-semibold text-foreground">💡 How to activate direct disbursement:</p>
-                <p>1. When your bank/NCHL provides you with your Merchant ID, App ID, and Token, paste them into these fields.</p>
-                <p>2. Click <strong>Test Connection Handshake</strong> to verify credential authentication.</p>
-                <p>3. Once verified, you can click <strong>"Disburse via Direct ConnectIPS API"</strong> inside any Approved payment batch.</p>
+                <p className="font-semibold text-foreground">
+                  💡 How to activate direct disbursement:
+                </p>
+                <p>
+                  1. When your bank/NCHL provides you with your Merchant ID, App ID, and Token,
+                  paste them into these fields.
+                </p>
+                <p>
+                  2. Click <strong>Test Connection Handshake</strong> to verify credential
+                  authentication.
+                </p>
+                <p>
+                  3. Once verified, you can click{" "}
+                  <strong>"Disburse via Direct ConnectIPS API"</strong> inside any Approved payment
+                  batch.
+                </p>
               </div>
 
               <div className="pt-2 border-t flex items-center justify-between">
@@ -372,7 +462,9 @@ function SettingsRoute() {
                   type="button"
                   variant="outline"
                   onClick={async () => {
-                    const res = await (await import('@/lib/services/connectips.service')).ConnectIPSService.testConnection(merged);
+                    const res = await (
+                      await import("@/lib/services/connectips.service")
+                    ).ConnectIPSService.testConnection(merged);
                     if (res.success) {
                       toast.success(res.message);
                     } else {
@@ -384,7 +476,11 @@ function SettingsRoute() {
                   Test Connection Handshake
                 </Button>
                 <Button onClick={() => saveSettings()} disabled={isPending}>
-                  {isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                  {isPending ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Save className="w-4 h-4 mr-2" />
+                  )}
                   Save Gateway Settings
                 </Button>
               </div>
@@ -396,27 +492,33 @@ function SettingsRoute() {
           <Card>
             <CardHeader>
               <CardTitle>Approval Workflow Levels</CardTitle>
-              <CardDescription>Configure how many approval stages are required before actions are committed.</CardDescription>
+              <CardDescription>
+                Configure how many approval stages are required before actions are committed.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5 max-w-md">
               <div className="flex items-center justify-between">
                 <div>
                   <Label>Require Maker-Checker (2-Level)</Label>
-                  <p className="text-xs text-muted-foreground mt-1">A checker must review before approving.</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    A checker must review before approving.
+                  </p>
                 </div>
                 <Switch
                   checked={merged.require_maker_checker}
-                  onCheckedChange={v => update('require_maker_checker', v)}
+                  onCheckedChange={(v) => update("require_maker_checker", v)}
                 />
               </div>
               <div className="flex items-center justify-between">
                 <div>
                   <Label>Require Final Approver (3-Level)</Label>
-                  <p className="text-xs text-muted-foreground mt-1">An additional approver is required after checker.</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    An additional approver is required after checker.
+                  </p>
                 </div>
                 <Switch
                   checked={merged.require_final_approver}
-                  onCheckedChange={v => update('require_final_approver', v)}
+                  onCheckedChange={(v) => update("require_final_approver", v)}
                 />
               </div>
             </CardContent>
@@ -427,7 +529,9 @@ function SettingsRoute() {
           <Card>
             <CardHeader>
               <CardTitle>Email (SMTP) Configuration</CardTitle>
-              <CardDescription>Configure outgoing email settings for notifications and reports.</CardDescription>
+              <CardDescription>
+                Configure outgoing email settings for notifications and reports.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5 max-w-md">
               <div className="grid grid-cols-2 gap-4">
@@ -435,8 +539,8 @@ function SettingsRoute() {
                   <Label>SMTP Host</Label>
                   <Input
                     placeholder="smtp.example.com"
-                    value={merged.smtp_host || ''}
-                    onChange={e => update('smtp_host', e.target.value)}
+                    value={merged.smtp_host || ""}
+                    onChange={(e) => update("smtp_host", e.target.value)}
                   />
                 </div>
                 <div className="space-y-2">
@@ -444,7 +548,7 @@ function SettingsRoute() {
                   <Input
                     type="number"
                     value={merged.smtp_port || 587}
-                    onChange={e => update('smtp_port', parseInt(e.target.value))}
+                    onChange={(e) => update("smtp_port", parseInt(e.target.value))}
                   />
                 </div>
               </div>
@@ -452,16 +556,16 @@ function SettingsRoute() {
                 <Label>SMTP Username</Label>
                 <Input
                   placeholder="user@example.com"
-                  value={merged.smtp_user || ''}
-                  onChange={e => update('smtp_user', e.target.value)}
+                  value={merged.smtp_user || ""}
+                  onChange={(e) => update("smtp_user", e.target.value)}
                 />
               </div>
               <div className="space-y-2">
                 <Label>From Email Address</Label>
                 <Input
                   placeholder="noreply@company.com"
-                  value={merged.smtp_from || ''}
-                  onChange={e => update('smtp_from', e.target.value)}
+                  value={merged.smtp_from || ""}
+                  onChange={(e) => update("smtp_from", e.target.value)}
                 />
               </div>
               <div className="space-y-2">
@@ -469,12 +573,22 @@ function SettingsRoute() {
                 <Input
                   type="password"
                   autoComplete="new-password"
-                  placeholder="Enter SMTP password"
-                  value={merged.smtp_pass || ''}
-                  onChange={e => update('smtp_pass', e.target.value)}
+                  placeholder={
+                    settings?.smtp_pass
+                      ? "•••••••••••• (Configured — enter new to change)"
+                      : "Enter SMTP password"
+                  }
+                  value={form.smtp_pass ?? (settings?.smtp_pass ? "••••••••••••" : "")}
+                  onChange={(e) => update("smtp_pass", e.target.value)}
+                  onFocus={(e) => {
+                    if (form.smtp_pass === undefined && settings?.smtp_pass) {
+                      update("smtp_pass", "");
+                    }
+                  }}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Stored securely and never displayed again. Leave blank to keep the existing password.
+                  Stored securely and never displayed in plaintext. Leave blank to keep the existing
+                  password.
                 </p>
               </div>
               <div className="pt-2 mt-2 border-t space-y-3">
@@ -484,7 +598,7 @@ function SettingsRoute() {
                     type="email"
                     placeholder="recipient@example.com"
                     value={testEmail}
-                    onChange={e => setTestEmail(e.target.value)}
+                    onChange={(e) => setTestEmail(e.target.value)}
                   />
                 </div>
                 <Button
@@ -493,7 +607,11 @@ function SettingsRoute() {
                   onClick={() => sendTest()}
                   disabled={!testEmail.trim() || sendingTest}
                 >
-                  {sendingTest ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />}
+                  {sendingTest ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Send className="w-4 h-4 mr-2" />
+                  )}
                   Send Test Email
                 </Button>
               </div>

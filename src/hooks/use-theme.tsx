@@ -10,7 +10,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>("light");
 
   useEffect(() => {
-    const stored = (typeof window !== "undefined" && localStorage.getItem(STORAGE_KEY)) as Theme | null;
+    const stored = (typeof window !== "undefined" &&
+      localStorage.getItem(STORAGE_KEY)) as Theme | null;
     const initial: Theme = stored ?? "light";
     setThemeState(initial);
   }, []);
@@ -20,13 +21,17 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.classList.toggle("dark", theme === "dark");
     try {
       localStorage.setItem(STORAGE_KEY, theme);
-    } catch {}
+    } catch {
+      // Ignore localStorage write errors in private browsing
+    }
   }, [theme]);
 
   const setTheme = (t: Theme) => setThemeState(t);
   const toggle = () => setThemeState((t) => (t === "dark" ? "light" : "dark"));
 
-  return <ThemeContext.Provider value={{ theme, toggle, setTheme }}>{children}</ThemeContext.Provider>;
+  return (
+    <ThemeContext.Provider value={{ theme, toggle, setTheme }}>{children}</ThemeContext.Provider>
+  );
 }
 
 export function useTheme() {

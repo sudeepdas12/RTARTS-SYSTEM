@@ -3,7 +3,7 @@
  */
 
 // Reconciliation matching tolerance in NPR (e.g. 50 paisa)
-export const RECONCILIATION_TOLERANCE_NPR = 0.50;
+export const RECONCILIATION_TOLERANCE_NPR = 0.5;
 
 // Maximum number of items in a single Supabase query `.in('id', chunk)` to prevent URL length limits
 export const BULK_CHUNK_SIZE = 200;

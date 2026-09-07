@@ -23,6 +23,7 @@ export type TaxClassification =
   | "NATURAL_PERSON"
   | "PUBLIC_LEGAL_PERSON"
   | "COMPANY_INSTITUTION"
+  | "FOREIGN_INVESTOR"
   | "TAX_EXEMPT";
 
 export interface TaxRule {
@@ -43,6 +44,7 @@ export const TAX_CLASSIFICATION_LABEL: Record<TaxClassification, string> = {
   NATURAL_PERSON: "Natural Person (Public / Individual)",
   PUBLIC_LEGAL_PERSON: "Public Legal Person (Semi-Govt / Statutory)",
   COMPANY_INSTITUTION: "Legal Person (Company / Institution)",
+  FOREIGN_INVESTOR: "Foreign Investor",
   TAX_EXEMPT: "Tax Exempt (Mutual Fund / Retirement Fund)",
 };
 
@@ -88,9 +90,7 @@ export function getTaxRateFromRules(
  * Pure & side-effect-free so the import engine, validation engine and
  * summary reports all agree on what counts as exempt.
  */
-export function isExemptFromTax(
-  classification: TaxClassification | null | undefined,
-): boolean {
+export function isExemptFromTax(classification: TaxClassification | null | undefined): boolean {
   return classification === "TAX_EXEMPT";
 }
 
@@ -102,11 +102,17 @@ export function isExemptFromTax(
 export function investorCategoryToClassification(
   category: string | null | undefined,
 ): TaxClassification | null {
-  switch (String(category ?? "").trim().toUpperCase()) {
+  switch (
+    String(category ?? "")
+      .trim()
+      .toUpperCase()
+  ) {
+    case "FOREIGN":
+    case "FOREIGN_INVESTOR":
+      return "FOREIGN_INVESTOR";
     case "INSTITUTION":
     case "COMPANY_INSTITUTION":
     case "LEGAL PERSON":
-    case "FOREIGN":
       return "COMPANY_INSTITUTION";
     case "MUTUAL_FUND":
     case "MUTUAL FUND":

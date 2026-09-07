@@ -60,3 +60,15 @@ inspect-rmf.js
 mock-rts-server.js
 parse-excel.mjs
 run-upload.mjs
+
+# Shareholder PII, bank statements & reconciliation files
+RBB Reconsilation/
+AGM/
+Reconfilation Files/
+Sample excel files/
+samples/
+*.xlsx
+*.xls
+*.csv
+!supabase/seed*.sql
+

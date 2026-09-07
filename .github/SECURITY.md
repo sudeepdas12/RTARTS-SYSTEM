@@ -18,6 +18,7 @@ If you discover a security vulnerability or sensitive data exposure risk, **plea
 ### How to Report
 
 Please report all security vulnerabilities privately:
+
 - **Contact**: Contact the system administrator or repository maintainer privately.
 - **Email**: security@rtarts-system.local
 - **Information to include**:

@@ -2,7 +2,11 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
-import { AuditService, type AuditFieldDiff, type AuditUserProfile } from "@/lib/services/audit.service";
+import {
+  AuditService,
+  type AuditFieldDiff,
+  type AuditUserProfile,
+} from "@/lib/services/audit.service";
 import {
   Table,
   TableBody,
@@ -91,7 +95,8 @@ export const Route = createFileRoute("/_authenticated/audit-logs")({
 
 const PAGE_SIZE = 25;
 
-type DomainCategory = "ALL" | "PAYABLES" | "SHAREHOLDERS" | "RECONCILIATION" | "PAYMENTS" | "SYSTEM";
+type DomainCategory =
+  "ALL" | "PAYABLES" | "SHAREHOLDERS" | "RECONCILIATION" | "PAYMENTS" | "SYSTEM";
 type DatePreset = "ALL" | "TODAY" | "7D" | "30D" | "CUSTOM";
 
 const DOMAIN_TABLE_MAP: Record<DomainCategory, string[]> = {
@@ -104,7 +109,12 @@ const DOMAIN_TABLE_MAP: Record<DomainCategory, string[]> = {
 };
 
 function getTableIcon(table: string) {
-  if (table.includes("payable") || table.includes("dividend") || table.includes("interest") || table.includes("mutual")) {
+  if (
+    table.includes("payable") ||
+    table.includes("dividend") ||
+    table.includes("interest") ||
+    table.includes("mutual")
+  ) {
     return <Coins className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />;
   }
   if (table === "clients") {
@@ -123,14 +133,74 @@ function getTableIcon(table: string) {
 }
 
 function getTableCategoryBadge(table: string) {
-  if (table === "dividend_payables") return <Badge variant="outline" className="text-[10px] bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800">Dividend</Badge>;
-  if (table === "interest_payables") return <Badge variant="outline" className="text-[10px] bg-sky-50 dark:bg-sky-950/40 text-sky-800 dark:text-sky-300 border-sky-200 dark:border-sky-800">Debenture</Badge>;
-  if (table === "mutual_fund_payables") return <Badge variant="outline" className="text-[10px] bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800">Mutual Fund</Badge>;
-  if (table === "clients") return <Badge variant="outline" className="text-[10px] bg-blue-50 dark:bg-blue-950/40 text-blue-800 dark:text-blue-300 border-blue-200 dark:border-blue-800">Shareholder</Badge>;
-  if (table === "reconciliation_results") return <Badge variant="outline" className="text-[10px] bg-teal-50 dark:bg-teal-950/40 text-teal-800 dark:text-teal-300 border-teal-200 dark:border-teal-800">Reconciliation</Badge>;
-  if (table === "payment_batches" || table === "payments") return <Badge variant="outline" className="text-[10px] bg-purple-50 dark:bg-purple-950/40 text-purple-800 dark:text-purple-300 border-purple-200 dark:border-purple-800">Payment</Badge>;
-  if (table === "companies") return <Badge variant="outline" className="text-[10px] bg-indigo-50 dark:bg-indigo-950/40 text-indigo-800 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800">Company</Badge>;
-  return <Badge variant="outline" className="text-[10px] font-mono">{table}</Badge>;
+  if (table === "dividend_payables")
+    return (
+      <Badge
+        variant="outline"
+        className="text-[10px] bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800"
+      >
+        Dividend
+      </Badge>
+    );
+  if (table === "interest_payables")
+    return (
+      <Badge
+        variant="outline"
+        className="text-[10px] bg-sky-50 dark:bg-sky-950/40 text-sky-800 dark:text-sky-300 border-sky-200 dark:border-sky-800"
+      >
+        Debenture
+      </Badge>
+    );
+  if (table === "mutual_fund_payables")
+    return (
+      <Badge
+        variant="outline"
+        className="text-[10px] bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"
+      >
+        Mutual Fund
+      </Badge>
+    );
+  if (table === "clients")
+    return (
+      <Badge
+        variant="outline"
+        className="text-[10px] bg-blue-50 dark:bg-blue-950/40 text-blue-800 dark:text-blue-300 border-blue-200 dark:border-blue-800"
+      >
+        Shareholder
+      </Badge>
+    );
+  if (table === "reconciliation_results")
+    return (
+      <Badge
+        variant="outline"
+        className="text-[10px] bg-teal-50 dark:bg-teal-950/40 text-teal-800 dark:text-teal-300 border-teal-200 dark:border-teal-800"
+      >
+        Reconciliation
+      </Badge>
+    );
+  if (table === "payment_batches" || table === "payments")
+    return (
+      <Badge
+        variant="outline"
+        className="text-[10px] bg-purple-50 dark:bg-purple-950/40 text-purple-800 dark:text-purple-300 border-purple-200 dark:border-purple-800"
+      >
+        Payment
+      </Badge>
+    );
+  if (table === "companies")
+    return (
+      <Badge
+        variant="outline"
+        className="text-[10px] bg-indigo-50 dark:bg-indigo-950/40 text-indigo-800 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800"
+      >
+        Company
+      </Badge>
+    );
+  return (
+    <Badge variant="outline" className="text-[10px] font-mono">
+      {table}
+    </Badge>
+  );
 }
 
 function formatValueForDisplay(val: any): string {
@@ -168,29 +238,46 @@ function AuditLogsRoute() {
     staleTime: 5 * 60 * 1000,
   });
 
-  const { data: auditLogs = [], isLoading: loadingAudit, refetch: refetchAudit } = useQuery({
+  const {
+    data: auditLogs = [],
+    isLoading: loadingAudit,
+    refetch: refetchAudit,
+  } = useQuery({
     queryKey: ["audit-logs", activityTable, activityAction, activityUser, fromDate, toDate],
-    queryFn: () => AuditService.getAuditLogs({
-      limit: 2000,
-      tableName: activityTable !== "all" ? activityTable : undefined,
-      action: activityAction !== "all" ? activityAction : undefined,
-      userId: activityUser !== "all" ? activityUser : undefined,
-      fromDate: fromDate || undefined,
-      toDate: toDate || undefined,
-    }),
+    queryFn: () =>
+      AuditService.getAuditLogs({
+        limit: 2000,
+        tableName: activityTable !== "all" ? activityTable : undefined,
+        action: activityAction !== "all" ? activityAction : undefined,
+        userId: activityUser !== "all" ? activityUser : undefined,
+        fromDate: fromDate || undefined,
+        toDate: toDate || undefined,
+      }),
   });
 
-  const { data: loginLogs = [], isLoading: loadingLogins, refetch: refetchLogins } = useQuery({
+  const {
+    data: loginLogs = [],
+    isLoading: loadingLogins,
+    refetch: refetchLogins,
+  } = useQuery({
     queryKey: ["login-logs"],
     queryFn: () => AuditService.getLoginLogs(200),
   });
 
-  const { data: apiLogs = [], isLoading: loadingApi, refetch: refetchApi } = useQuery({
+  const {
+    data: apiLogs = [],
+    isLoading: loadingApi,
+    refetch: refetchApi,
+  } = useQuery({
     queryKey: ["api-logs"],
     queryFn: () => AuditService.getApiLogs(100),
   });
 
-  const { data: errorLogs = [], isLoading: loadingErrors, refetch: refetchErrors } = useQuery({
+  const {
+    data: errorLogs = [],
+    isLoading: loadingErrors,
+    refetch: refetchErrors,
+  } = useQuery({
     queryKey: ["error-logs"],
     queryFn: () => AuditService.getErrorLogs(100),
   });
@@ -210,7 +297,7 @@ function AuditLogsRoute() {
     auditLogs.forEach((l: AuditLogRow) => {
       if (l.user_id) set.add(l.user_id);
     });
-    return Array.from(set).map(uid => ({
+    return Array.from(set).map((uid) => ({
       id: uid,
       name: userProfiles[uid]?.full_name || `User (${uid.slice(0, 8)})`,
       email: userProfiles[uid]?.email || "",
@@ -271,7 +358,7 @@ function AuditLogsRoute() {
         const userEmail = l.user_id ? (userProfiles[l.user_id]?.email || "").toLowerCase() : "";
         const summary = AuditService.formatAuditSummary(l);
         const summaryText = `${summary.title} ${summary.subtitle || ""}`.toLowerCase();
-        
+
         return (
           l.table_name?.toLowerCase().includes(q) ||
           l.action?.toLowerCase().includes(q) ||
@@ -284,12 +371,20 @@ function AuditLogsRoute() {
     }
 
     return list;
-  }, [auditLogs, domainCategory, activityTable, activityAction, activityUser, activitySearch, userProfiles]);
+  }, [
+    auditLogs,
+    domainCategory,
+    activityTable,
+    activityAction,
+    activityUser,
+    activitySearch,
+    userProfiles,
+  ]);
 
   const activityPageCount = Math.max(1, Math.ceil(filteredAuditLogs.length / PAGE_SIZE));
   const pagedAuditLogs = filteredAuditLogs.slice(
     (activityPage - 1) * PAGE_SIZE,
-    activityPage * PAGE_SIZE
+    activityPage * PAGE_SIZE,
   );
 
   // Filtered Login Logs
@@ -305,7 +400,7 @@ function AuditLogsRoute() {
           l.email?.toLowerCase().includes(q) ||
           l.ip_address?.toLowerCase().includes(q) ||
           l.browser?.toLowerCase().includes(q) ||
-          l.device?.toLowerCase().includes(q)
+          l.device?.toLowerCase().includes(q),
       );
     }
     return list;
@@ -314,26 +409,32 @@ function AuditLogsRoute() {
   const loginPageCount = Math.max(1, Math.ceil(filteredLoginLogs.length / PAGE_SIZE));
   const pagedLoginLogs = filteredLoginLogs.slice(
     (loginPage - 1) * PAGE_SIZE,
-    loginPage * PAGE_SIZE
+    loginPage * PAGE_SIZE,
   );
 
   // KPI calculations
   const insertCount = useMemo(
     () => auditLogs.filter((l: AuditLogRow) => l.action?.toUpperCase() === "INSERT").length,
-    [auditLogs]
+    [auditLogs],
   );
   const updateCount = useMemo(
     () => auditLogs.filter((l: AuditLogRow) => l.action?.toUpperCase() === "UPDATE").length,
-    [auditLogs]
+    [auditLogs],
   );
   const deleteCount = useMemo(
     () => auditLogs.filter((l: AuditLogRow) => l.action?.toUpperCase() === "DELETE").length,
-    [auditLogs]
+    [auditLogs],
   );
 
   const payableModCount = useMemo(
-    () => auditLogs.filter((l: AuditLogRow) => l.table_name?.includes("payable") || l.table_name?.includes("dividend") || l.table_name?.includes("interest")).length,
-    [auditLogs]
+    () =>
+      auditLogs.filter(
+        (l: AuditLogRow) =>
+          l.table_name?.includes("payable") ||
+          l.table_name?.includes("dividend") ||
+          l.table_name?.includes("interest"),
+      ).length,
+    [auditLogs],
   );
 
   const overviewCards = [
@@ -407,21 +508,28 @@ function AuditLogsRoute() {
 
   const fieldDiffs: AuditFieldDiff[] = useMemo(() => {
     if (!selectedLogDetail) return [];
-    return AuditService.calculateFieldDiffs(selectedLogDetail.old_value, selectedLogDetail.new_value);
+    return AuditService.calculateFieldDiffs(
+      selectedLogDetail.old_value,
+      selectedLogDetail.new_value,
+    );
   }, [selectedLogDetail]);
 
   const copyDetailPayload = () => {
     if (!selectedLogDetail) return;
-    const payload = JSON.stringify({
-      id: selectedLogDetail.id,
-      timestamp: selectedLogDetail.action_time,
-      action: selectedLogDetail.action,
-      table: selectedLogDetail.table_name,
-      record_id: selectedLogDetail.record_id,
-      user: selectedLogDetail.user_id ? userProfiles[selectedLogDetail.user_id] : "system",
-      old_value: selectedLogDetail.old_value,
-      new_value: selectedLogDetail.new_value,
-    }, null, 2);
+    const payload = JSON.stringify(
+      {
+        id: selectedLogDetail.id,
+        timestamp: selectedLogDetail.action_time,
+        action: selectedLogDetail.action,
+        table: selectedLogDetail.table_name,
+        record_id: selectedLogDetail.record_id,
+        user: selectedLogDetail.user_id ? userProfiles[selectedLogDetail.user_id] : "system",
+        old_value: selectedLogDetail.old_value,
+        new_value: selectedLogDetail.new_value,
+      },
+      null,
+      2,
+    );
     navigator.clipboard.writeText(payload);
     toast.success("Audit entry payload copied to clipboard.");
   };
@@ -493,7 +601,8 @@ function AuditLogsRoute() {
                     </Badge>
                   </div>
                   <CardDescription className="mt-1">
-                    Every create, update, and delete is recorded with the executing user, timestamp, and field-level diffs.
+                    Every create, update, and delete is recorded with the executing user, timestamp,
+                    and field-level diffs.
                   </CardDescription>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -514,7 +623,9 @@ function AuditLogsRoute() {
                     disabled={loadingAudit}
                     className="h-8 text-xs cursor-pointer"
                   >
-                    <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${loadingAudit ? "animate-spin" : ""}`} />
+                    <RefreshCw
+                      className={`h-3.5 w-3.5 mr-1.5 ${loadingAudit ? "animate-spin" : ""}`}
+                    />
                     Refresh
                   </Button>
                 </div>
@@ -726,15 +837,23 @@ function AuditLogsRoute() {
                       <TableRow>
                         <TableCell colSpan={6} className="text-center py-16 text-muted-foreground">
                           <CheckCircle2 className="h-8 w-8 mx-auto mb-2 opacity-30 text-emerald-500" />
-                          <p className="text-sm font-medium">No audit events match your selected filters.</p>
-                          <p className="text-xs mt-1 text-muted-foreground">Try clearing filters or selecting another date range.</p>
+                          <p className="text-sm font-medium">
+                            No audit events match your selected filters.
+                          </p>
+                          <p className="text-xs mt-1 text-muted-foreground">
+                            Try clearing filters or selecting another date range.
+                          </p>
                         </TableCell>
                       </TableRow>
                     ) : (
                       pagedAuditLogs.map((log: AuditLogRow) => {
                         const summary = AuditService.formatAuditSummary(log);
                         const actor = log.user_id ? userProfiles[log.user_id] : null;
-                        const actorName = actor ? actor.full_name : log.user_id ? `User (${log.user_id.slice(0, 8)})` : "System / Automation";
+                        const actorName = actor
+                          ? actor.full_name
+                          : log.user_id
+                            ? `User (${log.user_id.slice(0, 8)})`
+                            : "System / Automation";
                         const actUpper = log.action?.toUpperCase();
 
                         return (
@@ -802,7 +921,10 @@ function AuditLogsRoute() {
                                     {actorName}
                                   </div>
                                   {actor?.email && (
-                                    <div className="text-[10px] text-muted-foreground truncate" title={actor.email}>
+                                    <div
+                                      className="text-[10px] text-muted-foreground truncate"
+                                      title={actor.email}
+                                    >
                                       {actor.email}
                                     </div>
                                   )}
@@ -836,7 +958,9 @@ function AuditLogsRoute() {
               {activityPageCount > 1 && (
                 <div className="flex items-center justify-between border-t px-6 py-3">
                   <p className="text-xs text-muted-foreground">
-                    Showing {(activityPage - 1) * PAGE_SIZE + 1}–{Math.min(activityPage * PAGE_SIZE, filteredAuditLogs.length)} of {filteredAuditLogs.length.toLocaleString()} events
+                    Showing {(activityPage - 1) * PAGE_SIZE + 1}–
+                    {Math.min(activityPage * PAGE_SIZE, filteredAuditLogs.length)} of{" "}
+                    {filteredAuditLogs.length.toLocaleString()} events
                   </p>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-muted-foreground">
@@ -876,13 +1000,16 @@ function AuditLogsRoute() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <div className="flex items-center gap-2">
-                    <CardTitle className="text-base">User Sign-In & Authentication Intelligence</CardTitle>
+                    <CardTitle className="text-base">
+                      User Sign-In & Authentication Intelligence
+                    </CardTitle>
                     <Badge variant="outline" className="font-mono text-[10px]">
                       {filteredLoginLogs.length.toLocaleString()} authentication records
                     </Badge>
                   </div>
                   <CardDescription className="mt-1">
-                    Complete traceability of authentication events, user principals, IP origins, browser devices, and failure diagnostics.
+                    Complete traceability of authentication events, user principals, IP origins,
+                    browser devices, and failure diagnostics.
                   </CardDescription>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -903,7 +1030,9 @@ function AuditLogsRoute() {
                     disabled={loadingLogins}
                     className="h-8 text-xs cursor-pointer"
                   >
-                    <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${loadingLogins ? "animate-spin" : ""}`} />
+                    <RefreshCw
+                      className={`h-3.5 w-3.5 mr-1.5 ${loadingLogins ? "animate-spin" : ""}`}
+                    />
                     Refresh
                   </Button>
                 </div>
@@ -982,14 +1111,17 @@ function AuditLogsRoute() {
                         <TableCell colSpan={5} className="text-center py-16 text-muted-foreground">
                           <Lock className="h-8 w-8 mx-auto mb-2 opacity-30 text-muted-foreground" />
                           <p className="text-sm font-medium">No sign-in records found.</p>
-                          <p className="text-xs mt-1 text-muted-foreground">Authentication attempts will be dynamically tracked here.</p>
+                          <p className="text-xs mt-1 text-muted-foreground">
+                            Authentication attempts will be dynamically tracked here.
+                          </p>
                         </TableCell>
                       </TableRow>
                     ) : (
                       pagedLoginLogs.map((log: LoginLogRow) => {
                         const isSuccess = log.login_status?.toLowerCase() === "success";
                         const profile = log.user_id ? userProfiles[log.user_id] : null;
-                        const displayName = profile?.full_name || log.email?.split("@")[0] || "User";
+                        const displayName =
+                          profile?.full_name || log.email?.split("@")[0] || "User";
 
                         return (
                           <TableRow key={log.id} className="hover:bg-muted/40 transition-colors">
@@ -1006,10 +1138,16 @@ function AuditLogsRoute() {
                                   {displayName.charAt(0)}
                                 </div>
                                 <div className="truncate">
-                                  <div className="font-medium text-foreground truncate" title={displayName}>
+                                  <div
+                                    className="font-medium text-foreground truncate"
+                                    title={displayName}
+                                  >
                                     {displayName}
                                   </div>
-                                  <div className="text-[11px] text-muted-foreground font-mono truncate" title={log.email || ""}>
+                                  <div
+                                    className="text-[11px] text-muted-foreground font-mono truncate"
+                                    title={log.email || ""}
+                                  >
                                     {log.email || "Unknown"}
                                   </div>
                                 </div>
@@ -1057,7 +1195,9 @@ function AuditLogsRoute() {
                             {/* Timestamp */}
                             <TableCell className="pr-6 text-right text-xs text-muted-foreground font-mono whitespace-nowrap">
                               <div className="font-semibold text-foreground">
-                                {log.login_time ? format(new Date(log.login_time), "dd MMM yyyy") : "—"}
+                                {log.login_time
+                                  ? format(new Date(log.login_time), "dd MMM yyyy")
+                                  : "—"}
                               </div>
                               <div className="text-[11px] opacity-70">
                                 {log.login_time ? format(new Date(log.login_time), "HH:mm:ss") : ""}
@@ -1074,7 +1214,9 @@ function AuditLogsRoute() {
               {loginPageCount > 1 && (
                 <div className="flex items-center justify-between border-t px-6 py-3">
                   <p className="text-xs text-muted-foreground">
-                    Showing {(loginPage - 1) * PAGE_SIZE + 1}–{Math.min(loginPage * PAGE_SIZE, filteredLoginLogs.length)} of {filteredLoginLogs.length.toLocaleString()} sign-ins
+                    Showing {(loginPage - 1) * PAGE_SIZE + 1}–
+                    {Math.min(loginPage * PAGE_SIZE, filteredLoginLogs.length)} of{" "}
+                    {filteredLoginLogs.length.toLocaleString()} sign-ins
                   </p>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-muted-foreground">
@@ -1131,11 +1273,15 @@ function AuditLogsRoute() {
                 </div>
                 <div className="flex justify-between py-1.5 border-b">
                   <span className="text-muted-foreground">TDS Tax Rules Engine</span>
-                  <span className="font-semibold text-emerald-600">Active (Authoritative Rules)</span>
+                  <span className="font-semibold text-emerald-600">
+                    Active (Authoritative Rules)
+                  </span>
                 </div>
                 <div className="flex justify-between py-1.5 border-b">
                   <span className="text-muted-foreground">Audit Logging</span>
-                  <span className="font-semibold text-emerald-600">Enabled (Full Traceability)</span>
+                  <span className="font-semibold text-emerald-600">
+                    Enabled (Full Traceability)
+                  </span>
                 </div>
                 <div className="flex justify-between py-1.5">
                   <span className="text-muted-foreground">Batch Import Processing</span>
@@ -1149,9 +1295,15 @@ function AuditLogsRoute() {
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                    <AlertTriangle className="h-4 w-4 text-amber-600" /> Recent Error Diagnostic Traces
+                    <AlertTriangle className="h-4 w-4 text-amber-600" /> Recent Error Diagnostic
+                    Traces
                   </CardTitle>
-                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => refetchErrors()}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={() => refetchErrors()}
+                  >
                     <RefreshCw className={`h-3.5 w-3.5 ${loadingErrors ? "animate-spin" : ""}`} />
                   </Button>
                 </div>
@@ -1167,7 +1319,9 @@ function AuditLogsRoute() {
                     {errorLogs.map((err: any) => (
                       <div key={err.id} className="p-3 text-xs space-y-1">
                         <div className="flex justify-between">
-                          <span className="font-semibold text-destructive">{err.error_type || "Error"}</span>
+                          <span className="font-semibold text-destructive">
+                            {err.error_type || "Error"}
+                          </span>
                           <span className="font-mono text-[10px] text-muted-foreground">
                             {err.created_at ? format(new Date(err.created_at), "HH:mm:ss") : ""}
                           </span>
@@ -1184,7 +1338,10 @@ function AuditLogsRoute() {
       </Tabs>
 
       {/* SMART VISUAL FIELD-LEVEL DIFF MODAL */}
-      <Dialog open={!!selectedLogDetail} onOpenChange={(open) => !open && setSelectedLogDetail(null)}>
+      <Dialog
+        open={!!selectedLogDetail}
+        onOpenChange={(open) => !open && setSelectedLogDetail(null)}
+      >
         <DialogContent className="max-w-3xl max-h-[88vh] overflow-hidden flex flex-col p-0">
           <DialogHeader className="px-6 py-4 border-b bg-muted/20">
             <div className="flex items-center justify-between pr-8">
@@ -1217,7 +1374,11 @@ function AuditLogsRoute() {
               </Button>
             </div>
             <DialogDescription className="text-xs mt-1">
-              Table: <span className="font-mono font-semibold text-foreground">{selectedLogDetail?.table_name}</span> · Record ID: <span className="font-mono">{selectedLogDetail?.record_id || "—"}</span>
+              Table:{" "}
+              <span className="font-mono font-semibold text-foreground">
+                {selectedLogDetail?.table_name}
+              </span>{" "}
+              · Record ID: <span className="font-mono">{selectedLogDetail?.record_id || "—"}</span>
             </DialogDescription>
           </DialogHeader>
 
@@ -1235,7 +1396,8 @@ function AuditLogsRoute() {
                   <span className="text-muted-foreground text-[11px] block">Actor (User):</span>
                   <p className="font-semibold text-foreground mt-0.5">
                     {selectedLogDetail.user_id
-                      ? userProfiles[selectedLogDetail.user_id]?.full_name || selectedLogDetail.user_id.slice(0, 8)
+                      ? userProfiles[selectedLogDetail.user_id]?.full_name ||
+                        selectedLogDetail.user_id.slice(0, 8)
                       : "System / Automation"}
                   </p>
                   {selectedLogDetail.user_id && userProfiles[selectedLogDetail.user_id]?.email && (
@@ -1246,7 +1408,10 @@ function AuditLogsRoute() {
                 </div>
                 <div>
                   <span className="text-muted-foreground text-[11px] block">Target Record ID:</span>
-                  <p className="font-mono text-[11px] text-foreground mt-0.5 truncate" title={selectedLogDetail.record_id || ""}>
+                  <p
+                    className="font-mono text-[11px] text-foreground mt-0.5 truncate"
+                    title={selectedLogDetail.record_id || ""}
+                  >
                     {selectedLogDetail.record_id || "—"}
                   </p>
                 </div>
@@ -1261,7 +1426,7 @@ function AuditLogsRoute() {
                     className="h-7 text-xs cursor-pointer"
                     onClick={() => setDetailModalTab("diff")}
                   >
-                    Visual Field Diff ({fieldDiffs.filter(d => d.isChanged).length} modified)
+                    Visual Field Diff ({fieldDiffs.filter((d) => d.isChanged).length} modified)
                   </Button>
                   <Button
                     variant={detailModalTab === "raw" ? "default" : "outline"}
@@ -1320,7 +1485,11 @@ function AuditLogsRoute() {
                                         : "text-amber-600 border-amber-300"
                                   }`}
                                 >
-                                  {selectedLogDetail.action === "DELETE" ? "Removed" : selectedLogDetail.action === "INSERT" ? "Added" : "Changed"}
+                                  {selectedLogDetail.action === "DELETE"
+                                    ? "Removed"
+                                    : selectedLogDetail.action === "INSERT"
+                                      ? "Added"
+                                      : "Changed"}
                                 </Badge>
                               )}
                             </TableCell>

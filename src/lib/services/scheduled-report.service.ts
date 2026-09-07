@@ -1,16 +1,16 @@
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from "@/integrations/supabase/client";
 
 export interface ScheduledReport {
   id: string;
   report_type: string;
   report_name: string;
   filters: Record<string, unknown>;
-  schedule_type: 'daily' | 'weekly' | 'monthly' | 'quarterly';
+  schedule_type: "daily" | "weekly" | "monthly" | "quarterly";
   schedule_time: string; // HH:MM format
   schedule_day?: number; // 0-6 for weekly (0=Sunday), 1-31 for monthly
   schedule_month?: number; // 1-12 for quarterly
   recipients: string[]; // email addresses
-  export_format: 'pdf' | 'excel' | 'both';
+  export_format: "pdf" | "excel" | "both";
   is_active: boolean;
   last_run_at: string | null;
   next_run_at: string | null;
@@ -24,7 +24,7 @@ export interface ReportVersion {
   report_type: string;
   report_name: string;
   filters: Record<string, unknown>;
-  export_format: 'pdf' | 'excel';
+  export_format: "pdf" | "excel";
   file_url: string | null;
   file_size: number | null;
   record_count: number;
@@ -37,17 +37,17 @@ export const ScheduledReportService = {
   async getScheduledReports(): Promise<ScheduledReport[]> {
     try {
       const { data, error } = await (supabase as any)
-        .from('scheduled_reports')
-        .select('*')
-        .order('created_at', { ascending: false });
-      
+        .from("scheduled_reports")
+        .select("*")
+        .order("created_at", { ascending: false });
+
       if (error) {
-        console.warn('Failed to fetch scheduled reports:', error.message);
+        console.warn("Failed to fetch scheduled reports:", error.message);
         return [];
       }
       return (data || []) as ScheduledReport[];
     } catch (err: any) {
-      console.warn('Failed to fetch scheduled reports:', err?.message || err);
+      console.warn("Failed to fetch scheduled reports:", err?.message || err);
       return [];
     }
   },
@@ -55,26 +55,56 @@ export const ScheduledReportService = {
   async getScheduledReportById(id: string): Promise<ScheduledReport | null> {
     try {
       const { data, error } = await (supabase as any)
-        .from('scheduled_reports')
-        .select('*')
-        .eq('id', id)
+        .from("scheduled_reports")
+        .select("*")
+        .eq("id", id)
         .single();
-      
+
       if (error) {
-        console.warn('Failed to fetch scheduled report:', error.message);
+        console.warn("Failed to fetch scheduled report:", error.message);
         return null;
       }
       return data as ScheduledReport;
     } catch (err: any) {
-      console.warn('Failed to fetch scheduled report:', err?.message || err);
+      console.warn("Failed to fetch scheduled report:", err?.message || err);
       return null;
     }
   },
 
-  async createScheduledReport(report: Omit<ScheduledReport, 'id' | 'created_at' | 'updated_at' | 'last_run_at' | 'next_run_at'>): Promise<ScheduledReport | null> {
+  async createScheduledReport(
+    report: Omit<
+      ScheduledReport,
+      "id" | "created_at" | "updated_at" | "last_run_at" | "next_run_at"
+    >,
+  ): Promise<ScheduledReport | null> {
     try {
+      if (!report.report_name?.trim()) {
+        throw new Error("Report name is required");
+      }
+      if (
+        !report.schedule_type ||
+        !["daily", "weekly", "monthly", "quarterly"].includes(report.schedule_type)
+      ) {
+        throw new Error("Invalid schedule type");
+      }
+      if (report.schedule_time && !/^\d{2}:\d{2}$/.test(report.schedule_time)) {
+        throw new Error("Schedule time must be in HH:MM format");
+      }
+      if (
+        report.schedule_type === "weekly" &&
+        (report.schedule_day === undefined || report.schedule_day < 0 || report.schedule_day > 6)
+      ) {
+        throw new Error("Weekly schedule requires a valid day of week (0-6)");
+      }
+      if (
+        report.schedule_type === "monthly" &&
+        (report.schedule_day === undefined || report.schedule_day < 1 || report.schedule_day > 31)
+      ) {
+        throw new Error("Monthly schedule requires a valid day of month (1-31)");
+      }
+
       const { data, error } = await (supabase as any)
-        .from('scheduled_reports')
+        .from("scheduled_reports")
         .insert({
           ...report,
           last_run_at: null,
@@ -82,14 +112,14 @@ export const ScheduledReportService = {
         })
         .select()
         .single();
-      
+
       if (error) {
-        console.warn('Failed to create scheduled report:', error.message);
+        console.warn("Failed to create scheduled report:", error.message);
         return null;
       }
       return data as ScheduledReport;
     } catch (err: any) {
-      console.warn('Failed to create scheduled report:', err?.message || err);
+      console.warn("Failed to create scheduled report:", err?.message || err);
       return null;
     }
   },
@@ -97,38 +127,35 @@ export const ScheduledReportService = {
   async updateScheduledReport(id: string, updates: Partial<ScheduledReport>): Promise<boolean> {
     try {
       const { error } = await (supabase as any)
-        .from('scheduled_reports')
+        .from("scheduled_reports")
         .update({
           ...updates,
           updated_at: new Date().toISOString(),
         })
-        .eq('id', id);
-      
+        .eq("id", id);
+
       if (error) {
-        console.warn('Failed to update scheduled report:', error.message);
+        console.warn("Failed to update scheduled report:", error.message);
         return false;
       }
       return true;
     } catch (err: any) {
-      console.warn('Failed to update scheduled report:', err?.message || err);
+      console.warn("Failed to update scheduled report:", err?.message || err);
       return false;
     }
   },
 
   async deleteScheduledReport(id: string): Promise<boolean> {
     try {
-      const { error } = await (supabase as any)
-        .from('scheduled_reports')
-        .delete()
-        .eq('id', id);
-      
+      const { error } = await (supabase as any).from("scheduled_reports").delete().eq("id", id);
+
       if (error) {
-        console.warn('Failed to delete scheduled report:', error.message);
+        console.warn("Failed to delete scheduled report:", error.message);
         return false;
       }
       return true;
     } catch (err: any) {
-      console.warn('Failed to delete scheduled report:', err?.message || err);
+      console.warn("Failed to delete scheduled report:", err?.message || err);
       return false;
     }
   },
@@ -142,24 +169,24 @@ export const ScheduledReportService = {
   async getReportVersions(reportType?: string, limit = 50): Promise<ReportVersion[]> {
     try {
       let query = (supabase as any)
-        .from('report_versions')
-        .select('*')
-        .order('generated_at', { ascending: false })
+        .from("report_versions")
+        .select("*")
+        .order("generated_at", { ascending: false })
         .limit(limit);
-      
+
       if (reportType) {
-        query = query.eq('report_type', reportType);
+        query = query.eq("report_type", reportType);
       }
-      
+
       const { data, error } = await query;
-      
+
       if (error) {
-        console.warn('Failed to fetch report versions:', error.message);
+        console.warn("Failed to fetch report versions:", error.message);
         return [];
       }
       return (data || []) as ReportVersion[];
     } catch (err: any) {
-      console.warn('Failed to fetch report versions:', err?.message || err);
+      console.warn("Failed to fetch report versions:", err?.message || err);
       return [];
     }
   },
@@ -167,58 +194,57 @@ export const ScheduledReportService = {
   async getReportVersionById(id: string): Promise<ReportVersion | null> {
     try {
       const { data, error } = await (supabase as any)
-        .from('report_versions')
-        .select('*')
-        .eq('id', id)
+        .from("report_versions")
+        .select("*")
+        .eq("id", id)
         .single();
-      
+
       if (error) {
-        console.warn('Failed to fetch report version:', error.message);
+        console.warn("Failed to fetch report version:", error.message);
         return null;
       }
       return data as ReportVersion;
     } catch (err: any) {
-      console.warn('Failed to fetch report version:', err?.message || err);
+      console.warn("Failed to fetch report version:", err?.message || err);
       return null;
     }
   },
 
-  async saveReportVersion(version: Omit<ReportVersion, 'id' | 'generated_at'>): Promise<ReportVersion | null> {
+  async saveReportVersion(
+    version: Omit<ReportVersion, "id" | "generated_at">,
+  ): Promise<ReportVersion | null> {
     try {
       const { data, error } = await (supabase as any)
-        .from('report_versions')
+        .from("report_versions")
         .insert({
           ...version,
           generated_at: new Date().toISOString(),
         })
         .select()
         .single();
-      
+
       if (error) {
-        console.warn('Failed to save report version:', error.message);
+        console.warn("Failed to save report version:", error.message);
         return null;
       }
       return data as ReportVersion;
     } catch (err: any) {
-      console.warn('Failed to save report version:', err?.message || err);
+      console.warn("Failed to save report version:", err?.message || err);
       return null;
     }
   },
 
   async deleteReportVersion(id: string): Promise<boolean> {
     try {
-      const { error } = await (supabase as any)
-        .from('report_versions')
-        .delete()
-        .eq('id', id);
-      
+      const { error } = await (supabase as any).from("report_versions").delete().eq("id", id);
+
       if (error) {
-        console.warn('Failed to delete report version:', error.message);
+        console.warn("Failed to delete report version:", error.message);
         return false;
       }
       return true;
     } catch (err: any) {
-      console.warn('Failed to delete report version:', err?.message || err);
+      console.warn("Failed to delete report version:", err?.message || err);
       return false;
     }
   },
@@ -230,30 +256,30 @@ export const ScheduledReportService = {
   }> {
     try {
       const { data, error } = await (supabase as any)
-        .from('report_versions')
-        .select('*')
-        .order('generated_at', { ascending: false })
+        .from("report_versions")
+        .select("*")
+        .order("generated_at", { ascending: false })
         .limit(100);
-      
+
       if (error) {
-        console.warn('Failed to fetch report version stats:', error.message);
+        console.warn("Failed to fetch report version stats:", error.message);
         return { totalReports: 0, totalByType: {}, recentReports: [] };
       }
-      
+
       const versions = (data || []) as ReportVersion[];
       const totalByType: Record<string, number> = {};
-      versions.forEach(v => {
+      versions.forEach((v) => {
         totalByType[v.report_type] = (totalByType[v.report_type] || 0) + 1;
       });
-      
+
       return {
         totalReports: versions.length,
         totalByType,
         recentReports: versions.slice(0, 10),
       };
     } catch (err: any) {
-      console.warn('Failed to fetch report version stats:', err?.message || err);
+      console.warn("Failed to fetch report version stats:", err?.message || err);
       return { totalReports: 0, totalByType: {}, recentReports: [] };
     }
-  }
+  },
 };

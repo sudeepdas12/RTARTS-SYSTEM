@@ -1,8 +1,8 @@
-import * as XLSX from 'xlsx';
-import { supabase, fetchAllRows } from './database';
-import { normalizePayeeCategory, validatePayableConsistency } from './payable-summary';
-import { PdfGenerator } from '@/lib/pdf-generator';
-import { smartClassify } from './smart-classifier';
+import * as XLSX from "xlsx";
+import { supabase, fetchAllRows } from "./database";
+import { normalizePayeeCategory, validatePayableConsistency } from "./payable-summary";
+import { PdfGenerator } from "@/lib/pdf-generator";
+import { smartClassify } from "./smart-classifier";
 
 export interface CompanySummaryRow {
   company_id: string;
@@ -20,7 +20,10 @@ export interface CompanySummaryRow {
   total_gross: number;
   total_tax: number;
   total_net: number;
-  category_totals?: Record<string, { transactionCount: number; grossPayable: number; tax: number; netPayable: number }>;
+  category_totals?: Record<
+    string,
+    { transactionCount: number; grossPayable: number; tax: number; netPayable: number }
+  >;
 }
 
 export interface CompanySummaryFilters {
@@ -41,19 +44,30 @@ type SummarySourceRow = {
   holder_type?: string | null;
   payee_classification?: string | null;
   payee_segment?: string | null;
-  client?: { full_name?: string | null; holder_type?: string | null; payee_classification?: string | null; father_name?: string | null; grandfather_name?: string | null; citizenship?: string | null } | null;
+  client?: {
+    full_name?: string | null;
+    holder_type?: string | null;
+    payee_classification?: string | null;
+    father_name?: string | null;
+    grandfather_name?: string | null;
+    citizenship?: string | null;
+  } | null;
   companies?: { company_name?: string | null; company_code?: string | null } | null;
 };
 
 function downloadExcel(rows: Record<string, any>[], fileName: string, sheetName: string): void {
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.json_to_sheet(rows);
-  ws['!cols'] = Object.keys(rows[0] || {}).map((key) => ({ wch: Math.max(key.length, 12) }));
+  ws["!cols"] = Object.keys(rows[0] || {}).map((key) => ({ wch: Math.max(key.length, 12) }));
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
-  XLSX.writeFile(wb, `${fileName.replace(/[^a-zA-Z0-9_-]/g, '_')}.xlsx`);
+  XLSX.writeFile(wb, `${fileName.replace(/[^a-zA-Z0-9_-]/g, "_")}.xlsx`);
 }
 
-function isWithinRange(dateValue: string | null | undefined, startDate?: string, endDate?: string): boolean {
+function isWithinRange(
+  dateValue: string | null | undefined,
+  startDate?: string,
+  endDate?: string,
+): boolean {
   if (!startDate && !endDate) return true;
   if (!dateValue) return false;
   const current = new Date(dateValue);
@@ -71,11 +85,15 @@ function getRowDate(row: SummarySourceRow): string | null {
   return row.payment_date || row.due_date || row.created_at || null;
 }
 
-function aggregateRows(rows: SummarySourceRow[], kind: 'dividend' | 'interest', map: Map<string, CompanySummaryRow>): void {
+function aggregateRows(
+  rows: SummarySourceRow[],
+  kind: "dividend" | "interest",
+  map: Map<string, CompanySummaryRow>,
+): void {
   for (const row of rows) {
     const companyId = row.company_id;
-    const companyName = row.companies?.company_name || 'Unknown';
-    const companyCode = row.companies?.company_code || '';
+    const companyName = row.companies?.company_name || "Unknown";
+    const companyCode = row.companies?.company_code || "";
     const key = companyId;
     const existing = map.get(key) || {
       company_id: companyId,
@@ -96,16 +114,29 @@ function aggregateRows(rows: SummarySourceRow[], kind: 'dividend' | 'interest', 
       category_totals: {},
     };
 
-    const grossAmount = Number(kind === 'dividend' ? row.gross_dividend || 0 : row.gross_interest || 0);
+    const grossAmount = Number(
+      kind === "dividend" ? row.gross_dividend || 0 : row.gross_interest || 0,
+    );
     const taxAmount = Number(row.tax_amount || 0);
     const netPayable = Number(row.net_payable || 0);
-    const categoryKey = row.payee_classification || row.client?.payee_classification || normalizePayeeCategory(row.holder_type || row.client?.holder_type || 'UNKNOWN');
-    const consistency = validatePayableConsistency({ gross_amount: grossAmount, tax_amount: taxAmount, net_payable: netPayable });
+    const categoryKey =
+      row.payee_classification ||
+      row.client?.payee_classification ||
+      normalizePayeeCategory(row.holder_type || row.client?.holder_type || "UNKNOWN");
+    const consistency = validatePayableConsistency({
+      gross_amount: grossAmount,
+      tax_amount: taxAmount,
+      net_payable: netPayable,
+    });
     if (!consistency.valid) {
-      console.warn('Payable consistency mismatch detected in company summary:', { companyId, categoryKey, consistency });
+      console.warn("Payable consistency mismatch detected in company summary:", {
+        companyId,
+        categoryKey,
+        consistency,
+      });
     }
 
-    if (kind === 'dividend') {
+    if (kind === "dividend") {
       existing.dividend_count += 1;
       existing.dividend_gross += grossAmount;
       existing.dividend_tax += taxAmount;
@@ -124,7 +155,12 @@ function aggregateRows(rows: SummarySourceRow[], kind: 'dividend' | 'interest', 
 
     const currentCategoryMap = existing.category_totals || {};
     const addCategory = (key: string) => {
-      const entry = currentCategoryMap[key] || { transactionCount: 0, grossPayable: 0, tax: 0, netPayable: 0 };
+      const entry = currentCategoryMap[key] || {
+        transactionCount: 0,
+        grossPayable: 0,
+        tax: 0,
+        netPayable: 0,
+      };
       entry.transactionCount += 1;
       entry.grossPayable += grossAmount;
       entry.tax += taxAmount;
@@ -154,18 +190,39 @@ export function mfSummaryType(row: any): string {
   return determinePayeeCategory(row);
 }
 
-function determinePayeeCategory(row: SummarySourceRow): 'PUBLIC' | 'INSTITUTION' | 'MUTUAL FUND' | 'PROMOTER' | 'LOCAL' | 'EMPLOYEE' | 'OTHERS' {
+function determinePayeeCategory(
+  row: SummarySourceRow,
+): "PUBLIC" | "INSTITUTION" | "MUTUAL FUND" | "PROMOTER" | "LOCAL" | "EMPLOYEE" | "OTHERS" {
   const explicitClass = row.payee_classification || row.client?.payee_classification;
-  if (explicitClass === 'TAX_EXEMPT') return 'MUTUAL FUND';
-  if (explicitClass === 'COMPANY_INSTITUTION') return 'INSTITUTION';
+  if (explicitClass === "TAX_EXEMPT") return "MUTUAL FUND";
+  if (explicitClass === "COMPANY_INSTITUTION") return "INSTITUTION";
 
-  const lot = String((row as any).lot_name || '').toUpperCase();
-  const holder = String(row.client?.holder_type || row.holder_type || '').toUpperCase();
-  const segment = String(row.payee_segment || '').toUpperCase();
+  const lot = String((row as any).lot_name || "").toUpperCase();
+  const holder = String(row.client?.holder_type || row.holder_type || "").toUpperCase();
+  const segment = String(row.payee_segment || "").toUpperCase();
 
-  if (lot.includes('PROMOTER') || lot.includes('PROMOT') || holder.includes('PROMOT') || segment === 'PROMOTER') return 'PROMOTER';
-  if (lot.includes('LOCAL') || lot.includes('UNVERIFIED') || holder.includes('LOCAL') || segment === 'LOCAL') return 'LOCAL';
-  if (lot.includes('STAFF') || lot.includes('EMPLOYEE') || holder.includes('EMPLOYEE') || holder.includes('STAFF') || segment === 'EMPLOYEE') return 'EMPLOYEE';
+  if (
+    lot.includes("PROMOTER") ||
+    lot.includes("PROMOT") ||
+    holder.includes("PROMOT") ||
+    segment === "PROMOTER"
+  )
+    return "PROMOTER";
+  if (
+    lot.includes("LOCAL") ||
+    lot.includes("UNVERIFIED") ||
+    holder.includes("LOCAL") ||
+    segment === "LOCAL"
+  )
+    return "LOCAL";
+  if (
+    lot.includes("STAFF") ||
+    lot.includes("EMPLOYEE") ||
+    holder.includes("EMPLOYEE") ||
+    holder.includes("STAFF") ||
+    segment === "EMPLOYEE"
+  )
+    return "EMPLOYEE";
 
   const result = smartClassify({
     full_name: row.client?.full_name,
@@ -176,63 +233,140 @@ function determinePayeeCategory(row: SummarySourceRow): 'PUBLIC' | 'INSTITUTION'
     payee_classification: explicitClass,
   });
 
-  if (result.payee_classification === 'TAX_EXEMPT' || result.payee_category === 'MUTUAL_FUND' || result.payee_category === 'TAX_EXEMPT') return 'MUTUAL FUND';
-  if (result.payee_classification === 'COMPANY_INSTITUTION' || result.payee_category === 'INSTITUTION') return 'INSTITUTION';
-  if (result.payee_category === 'PROMOTER') return 'PROMOTER';
-  if (result.payee_category === 'LOCAL') return 'LOCAL';
-  if (result.payee_category === 'EMPLOYEE') return 'EMPLOYEE';
-  if (result.payee_classification === 'NATURAL_PERSON' || result.payee_category === 'PUBLIC') return 'PUBLIC';
-  return 'OTHERS';
+  if (
+    result.payee_classification === "TAX_EXEMPT" ||
+    result.payee_category === "MUTUAL_FUND" ||
+    result.payee_category === "TAX_EXEMPT"
+  )
+    return "MUTUAL FUND";
+  if (
+    result.payee_classification === "COMPANY_INSTITUTION" ||
+    result.payee_category === "INSTITUTION"
+  )
+    return "INSTITUTION";
+  if (result.payee_category === "PROMOTER") return "PROMOTER";
+  if (result.payee_category === "LOCAL") return "LOCAL";
+  if (result.payee_category === "EMPLOYEE") return "EMPLOYEE";
+  if (result.payee_classification === "NATURAL_PERSON" || result.payee_category === "PUBLIC")
+    return "PUBLIC";
+  return "OTHERS";
 }
 
 export const SummaryReportService = {
   async getCompanySummary(filters: CompanySummaryFilters = {}): Promise<CompanySummaryRow[]> {
+    // 1. Fast path: Use PostgreSQL server-side aggregation RPC (< 10ms execution)
+    if (!filters.startDate && !filters.endDate) {
+      try {
+        const { data, error } = await (supabase as any).rpc("get_company_payable_summary", {
+          p_company_id: filters.companyId && filters.companyId !== "all" ? filters.companyId : null,
+        });
+        if (!error && Array.isArray(data)) {
+          return data.map((r: any) => ({
+            company_id: r.company_id,
+            company_name: r.company_name,
+            company_code: r.company_code,
+            dividend_count: Number(r.dividend_count || 0),
+            dividend_gross: Number(r.dividend_gross || 0),
+            dividend_tax: Number(r.dividend_tax || 0),
+            dividend_net: Number(r.dividend_net || 0),
+            interest_count: Number(r.interest_count || 0),
+            interest_gross: Number(r.interest_gross || 0),
+            interest_tax: Number(r.interest_tax || 0),
+            interest_net: Number(r.interest_net || 0),
+            total_count: Number(r.total_count || 0),
+            total_gross: Number(r.total_gross || 0),
+            total_tax: Number(r.total_tax || 0),
+            total_net: Number(r.total_net || 0),
+          }));
+        }
+      } catch (rpcErr) {
+        console.warn("get_company_payable_summary RPC fallback to client aggregation:", rpcErr);
+      }
+    }
+
+    // 2. Fallback path for date range filters
     const [dividendRows, interestRows, mutualFundRows] = await Promise.all([
-      fetchAllRows<SummarySourceRow>((from, to) =>
-        (supabase as any)
-          .from('dividend_payables')
-          .select('company_id, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, payment_date, created_at, client:clients(holder_type, payee_classification), companies!inner(company_name, company_code)')
-          .range(from, to)
-      ),
-      fetchAllRows<SummarySourceRow>((from, to) =>
-        (supabase as any)
-          .from('interest_payables')
-          .select('company_id, gross_interest, tax_amount, net_payable, payee_classification, payee_segment, payment_date, due_date, created_at, client:clients(holder_type, payee_classification), companies!inner(company_name, company_code)')
-          .range(from, to)
-      ),
-      fetchAllRows<SummarySourceRow>((from, to) =>
-        (supabase as any)
-          .from('mutual_fund_payables')
-          .select('company_id, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, payment_date, created_at, client:clients(holder_type, payee_classification), companies!inner(company_name, company_code)')
-          .range(from, to)
-      ),
+      fetchAllRows<SummarySourceRow>((from, to) => {
+        let q = (supabase as any)
+          .from("dividend_payables")
+          .select(
+            "company_id, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, payment_date, created_at, companies!inner(company_name, company_code)",
+          )
+          .range(from, to);
+        if (filters.companyId && filters.companyId !== "all")
+          q = q.eq("company_id", filters.companyId);
+        if (filters.startDate) q = q.gte("created_at", filters.startDate);
+        if (filters.endDate) q = q.lte("created_at", `${filters.endDate}T23:59:59Z`);
+        return q;
+      }),
+      fetchAllRows<SummarySourceRow>((from, to) => {
+        let q = (supabase as any)
+          .from("interest_payables")
+          .select(
+            "company_id, gross_interest, tax_amount, net_payable, payee_classification, payee_segment, payment_date, due_date, created_at, companies!inner(company_name, company_code)",
+          )
+          .range(from, to);
+        if (filters.companyId && filters.companyId !== "all")
+          q = q.eq("company_id", filters.companyId);
+        if (filters.startDate) q = q.gte("created_at", filters.startDate);
+        if (filters.endDate) q = q.lte("created_at", `${filters.endDate}T23:59:59Z`);
+        return q;
+      }),
+      fetchAllRows<SummarySourceRow>((from, to) => {
+        let q = (supabase as any)
+          .from("mutual_fund_payables")
+          .select(
+            "company_id, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, payment_date, created_at, companies!inner(company_name, company_code)",
+          )
+          .range(from, to);
+        if (filters.companyId && filters.companyId !== "all")
+          q = q.eq("company_id", filters.companyId);
+        if (filters.startDate) q = q.gte("created_at", filters.startDate);
+        if (filters.endDate) q = q.lte("created_at", `${filters.endDate}T23:59:59Z`);
+        return q;
+      }),
     ]);
 
     const rowsByCompany = new Map<string, CompanySummaryRow>();
 
     aggregateRows(
       dividendRows.filter((row) => {
-        if (filters.companyId && filters.companyId !== 'all' && row.company_id !== filters.companyId) return false;
+        if (
+          filters.companyId &&
+          filters.companyId !== "all" &&
+          row.company_id !== filters.companyId
+        )
+          return false;
         return isWithinRange(getRowDate(row), filters.startDate, filters.endDate);
       }),
-      'dividend',
+      "dividend",
       rowsByCompany,
     );
 
     aggregateRows(
       interestRows.filter((row) => {
-        if (filters.companyId && filters.companyId !== 'all' && row.company_id !== filters.companyId) return false;
+        if (
+          filters.companyId &&
+          filters.companyId !== "all" &&
+          row.company_id !== filters.companyId
+        )
+          return false;
         return isWithinRange(getRowDate(row), filters.startDate, filters.endDate);
       }),
-      'interest',
+      "interest",
       rowsByCompany,
     );
     aggregateRows(
       mutualFundRows.filter((row) => {
-        if (filters.companyId && filters.companyId !== 'all' && row.company_id !== filters.companyId) return false;
+        if (
+          filters.companyId &&
+          filters.companyId !== "all" &&
+          row.company_id !== filters.companyId
+        )
+          return false;
         return isWithinRange(getRowDate(row), filters.startDate, filters.endDate);
       }),
-      'dividend',
+      "dividend",
       rowsByCompany,
     );
 
@@ -244,24 +378,24 @@ export const SummaryReportService = {
 
   exportCompanySummaryToExcel(data: CompanySummaryRow[], fileName: string): void {
     const rows = data.map((row) => ({
-      'Company Name': row.company_name,
-      'Company Code': row.company_code,
-      'Dividend Count': row.dividend_count,
-      'Dividend Gross': row.dividend_gross,
-      'Dividend Tax': row.dividend_tax,
-      'Dividend Net': row.dividend_net,
-      'Interest Count': row.interest_count,
-      'Interest Gross': row.interest_gross,
-      'Interest Tax': row.interest_tax,
-      'Interest Net': row.interest_net,
-      'Total Count': row.total_count,
-      'Total Gross': row.total_gross,
-      'Total Tax': row.total_tax,
-      'Total Net': row.total_net,
-      'Category Totals': JSON.stringify(row.category_totals || {}),
+      "Company Name": row.company_name,
+      "Company Code": row.company_code,
+      "Dividend Count": row.dividend_count,
+      "Dividend Gross": row.dividend_gross,
+      "Dividend Tax": row.dividend_tax,
+      "Dividend Net": row.dividend_net,
+      "Interest Count": row.interest_count,
+      "Interest Gross": row.interest_gross,
+      "Interest Tax": row.interest_tax,
+      "Interest Net": row.interest_net,
+      "Total Count": row.total_count,
+      "Total Gross": row.total_gross,
+      "Total Tax": row.total_tax,
+      "Total Net": row.total_net,
+      "Category Totals": JSON.stringify(row.category_totals || {}),
     }));
 
-    downloadExcel(rows, fileName, 'Company Summary');
+    downloadExcel(rows, fileName, "Company Summary");
   },
 
   /**
@@ -274,22 +408,22 @@ export const SummaryReportService = {
   ): Promise<MutualFundSummaryRow[]> {
     const data = await fetchAllRows<any>((from, to) => {
       let query = (supabase as any)
-        .from('mutual_fund_payables')
+        .from("mutual_fund_payables")
         .select(
-          'shares_held, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, lot_name, created_at, client:clients(id, full_name, holder_type, payee_classification)',
+          "shares_held, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, lot_name, created_at",
         )
         .range(from, to);
-      if (filters.companyId && filters.companyId !== 'all') {
-        query = query.eq('company_id', filters.companyId);
+      if (filters.companyId && filters.companyId !== "all") {
+        query = query.eq("company_id", filters.companyId);
       }
-      if (filters.fiscalYear && filters.fiscalYear !== 'all') {
-        query = query.eq('fiscal_year', filters.fiscalYear);
+      if (filters.fiscalYear && filters.fiscalYear !== "all") {
+        query = query.eq("fiscal_year", filters.fiscalYear);
       }
       if (filters.startDate) {
-        query = query.gte('created_at', filters.startDate);
+        query = query.gte("created_at", filters.startDate);
       }
       if (filters.endDate) {
-        query = query.lte('created_at', `${filters.endDate}T23:59:59Z`);
+        query = query.lte("created_at", `${filters.endDate}T23:59:59Z`);
       }
       return query;
     });
@@ -303,7 +437,15 @@ export const SummaryReportService = {
 
       const entry =
         map.get(type) ||
-        ({ type, transaction_count: 0, kitta: 0, gross: 0, tax: 0, net: 0, composition: 0 } as MutualFundSummaryRow);
+        ({
+          type,
+          transaction_count: 0,
+          kitta: 0,
+          gross: 0,
+          tax: 0,
+          net: 0,
+          composition: 0,
+        } as MutualFundSummaryRow);
       entry.transaction_count += 1;
       entry.kitta += kitta;
       entry.gross += Number(row.gross_dividend ?? 0);
@@ -312,7 +454,7 @@ export const SummaryReportService = {
       map.set(type, entry);
     }
 
-    const order = ['PUBLIC', 'INSTITUTION', 'MUTUAL FUND', 'PROMOTER', 'LOCAL', 'EMPLOYEE'];
+    const order = ["PUBLIC", "INSTITUTION", "MUTUAL FUND", "PROMOTER", "LOCAL", "EMPLOYEE"];
     const filtered = Array.from(map.values()).filter(
       (item) => item.transaction_count > 0 || item.kitta > 0 || item.gross > 0,
     );
@@ -348,30 +490,70 @@ export const SummaryReportService = {
     );
 
     const aoa: (string | number)[][] = [
-      ['S.N.', 'TYPE', 'NO. OF UNITHOLDERS', 'KITTA / UNITS', 'AMOUNT/DIVIDEND', 'TAX', 'NET DIVIDEND', 'COMPOSITION %'],
-      ...data.map((r) => [r.sn ?? '', r.type, r.transaction_count, r.kitta, r.gross, r.tax, r.net, `${(r.composition ?? 0).toFixed(2)}%`]),
-      ['', 'TOTAL', total.transaction_count, total.kitta, total.gross, total.tax, total.net, '100.00%'],
+      [
+        "S.N.",
+        "TYPE",
+        "NO. OF UNITHOLDERS",
+        "KITTA / UNITS",
+        "AMOUNT/DIVIDEND",
+        "TAX",
+        "NET DIVIDEND",
+        "COMPOSITION %",
+      ],
+      ...data.map((r) => [
+        r.sn ?? "",
+        r.type,
+        r.transaction_count,
+        r.kitta,
+        r.gross,
+        r.tax,
+        r.net,
+        `${(r.composition ?? 0).toFixed(2)}%`,
+      ]),
+      [
+        "",
+        "TOTAL",
+        total.transaction_count,
+        total.kitta,
+        total.gross,
+        total.tax,
+        total.net,
+        "100.00%",
+      ],
     ];
 
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [{ wch: 8 }, { wch: 18 }, { wch: 20 }, { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 18 }, { wch: 16 }];
-    const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+    ws["!cols"] = [
+      { wch: 8 },
+      { wch: 18 },
+      { wch: 20 },
+      { wch: 18 },
+      { wch: 18 },
+      { wch: 14 },
+      { wch: 18 },
+      { wch: 16 },
+    ];
+    const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
     for (let c = 2; c <= 6; c++) {
       for (let r = 1; r <= range.e.r; r++) {
         const addr = XLSX.utils.encode_cell({ r, c });
-        if (ws[addr] && typeof ws[addr].v === 'number') ws[addr].z = '#,##0.00';
+        if (ws[addr] && typeof ws[addr].v === "number") ws[addr].z = "#,##0.00";
       }
     }
 
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'SUMMARY');
-    XLSX.writeFile(wb, `${fileName.replace(/[^a-zA-Z0-9_-]/g, '_')}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, ws, "SUMMARY");
+    XLSX.writeFile(wb, `${fileName.replace(/[^a-zA-Z0-9_-]/g, "_")}.xlsx`);
   },
 
   /**
    * Export the mutual-fund summary to PDF
    */
-  exportMutualFundSummaryToPdf(data: MutualFundSummaryRow[], companyName = 'RTARTS System', subtitle = 'Mutual Fund Distribution Summary'): void {
+  exportMutualFundSummaryToPdf(
+    data: MutualFundSummaryRow[],
+    companyName = "RTARTS System",
+    subtitle = "Mutual Fund Distribution Summary",
+  ): void {
     const total = data.reduce(
       (acc, r) => ({
         transaction_count: acc.transaction_count + r.transaction_count,
@@ -383,23 +565,24 @@ export const SummaryReportService = {
       { transaction_count: 0, kitta: 0, gross: 0, tax: 0, net: 0 },
     );
 
-    const fmtNr = (n: number) => n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const fmtNr = (n: number) =>
+      n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
     const columns = [
-      { header: 'S.N.', dataKey: 'sn' },
-      { header: 'TYPE', dataKey: 'type' },
-      { header: 'NO. OF UNITHOLDERS', dataKey: 'transaction_count' },
-      { header: 'KITTA / UNITS', dataKey: 'kitta' },
-      { header: 'AMOUNT/DIVIDEND', dataKey: 'gross' },
-      { header: 'TAX', dataKey: 'tax' },
-      { header: 'NET DIVIDEND', dataKey: 'net' },
-      { header: 'COMPOSITION', dataKey: 'composition' },
+      { header: "S.N.", dataKey: "sn" },
+      { header: "TYPE", dataKey: "type" },
+      { header: "NO. OF UNITHOLDERS", dataKey: "transaction_count" },
+      { header: "KITTA / UNITS", dataKey: "kitta" },
+      { header: "AMOUNT/DIVIDEND", dataKey: "gross" },
+      { header: "TAX", dataKey: "tax" },
+      { header: "NET DIVIDEND", dataKey: "net" },
+      { header: "COMPOSITION", dataKey: "composition" },
     ];
 
     const tableData = data.map((r) => ({
-      sn: r.sn ?? '',
+      sn: r.sn ?? "",
       type: r.type,
-      transaction_count: r.transaction_count.toLocaleString('en-IN'),
+      transaction_count: r.transaction_count.toLocaleString("en-IN"),
       kitta: fmtNr(r.kitta),
       gross: fmtNr(r.gross),
       tax: fmtNr(r.tax),
@@ -408,25 +591,25 @@ export const SummaryReportService = {
     }));
 
     tableData.push({
-      sn: '' as any,
-      type: 'TOTAL',
-      transaction_count: total.transaction_count.toLocaleString('en-IN'),
+      sn: "" as any,
+      type: "TOTAL",
+      transaction_count: total.transaction_count.toLocaleString("en-IN"),
       kitta: fmtNr(total.kitta),
       gross: fmtNr(total.gross),
       tax: fmtNr(total.tax),
       net: fmtNr(total.net),
-      composition: '100.00%',
+      composition: "100.00%",
     });
 
     PdfGenerator.generate(
       {
-        title: 'Mutual Fund Distribution Summary Report',
+        title: "Mutual Fund Distribution Summary Report",
         subtitle,
         companyName,
-        generatedBy: 'RTARTS System',
+        generatedBy: "RTARTS System",
       },
       columns,
-      tableData
+      tableData,
     );
   },
 };

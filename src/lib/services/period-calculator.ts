@@ -4,7 +4,7 @@
  * 9 Months, 12 Months (Annual), and Custom Date/Day Ranges.
  */
 
-export type PeriodPreset = '3M' | '6M' | '9M' | '12M' | 'CUSTOM';
+export type PeriodPreset = "3M" | "6M" | "9M" | "12M" | "CUSTOM";
 
 export interface PeriodConfig {
   preset: PeriodPreset;
@@ -14,35 +14,35 @@ export interface PeriodConfig {
 }
 
 export const STANDARD_PERIODS: Record<PeriodPreset, PeriodConfig> = {
-  '3M': {
-    preset: '3M',
-    label: '3 Months (Quarterly)',
+  "3M": {
+    preset: "3M",
+    label: "3 Months (Quarterly)",
     days: 91,
-    description: 'Quarterly payout (approx. 91 days / 1 quarter)',
+    description: "Quarterly payout (approx. 91 days / 1 quarter)",
   },
-  '6M': {
-    preset: '6M',
-    label: '6 Months (Semi-Annual / 183d)',
+  "6M": {
+    preset: "6M",
+    label: "6 Months (Semi-Annual / 183d)",
     days: 183,
-    description: 'Half-yearly payout (183 days / Asar End or Poush End)',
+    description: "Half-yearly payout (183 days / Asar End or Poush End)",
   },
-  '9M': {
-    preset: '9M',
-    label: '9 Months (3 Quarters)',
+  "9M": {
+    preset: "9M",
+    label: "9 Months (3 Quarters)",
     days: 274,
-    description: 'Nine-month period payout (approx. 274 days / 3 quarters)',
+    description: "Nine-month period payout (approx. 274 days / 3 quarters)",
   },
-  '12M': {
-    preset: '12M',
-    label: '12 Months (Annual)',
+  "12M": {
+    preset: "12M",
+    label: "12 Months (Annual)",
     days: 365,
-    description: 'Full annual coupon period (365 days)',
+    description: "Full annual coupon period (365 days)",
   },
   CUSTOM: {
-    preset: 'CUSTOM',
-    label: 'Custom Range',
+    preset: "CUSTOM",
+    label: "Custom Range",
     days: 0,
-    description: 'Custom date or day range',
+    description: "Custom date or day range",
   },
 };
 

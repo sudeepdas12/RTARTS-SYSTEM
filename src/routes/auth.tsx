@@ -15,13 +15,7 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Eye, EyeOff, Loader2, MailCheck, ShieldCheck } from "lucide-react";
 import { AuditService } from "@/lib/services/audit.service";
@@ -57,13 +51,7 @@ const passwordSchema = z
   });
 type PasswordValues = z.infer<typeof passwordSchema>;
 
-type AuthView =
-  | "loading"
-  | "signin"
-  | "forgot"
-  | "reset"
-  | "invite"
-  | "confirmed";
+type AuthView = "loading" | "signin" | "forgot" | "reset" | "invite" | "confirmed";
 
 function AuthPage() {
   const navigate = useNavigate();
@@ -74,14 +62,10 @@ function AuthPage() {
   const handleAuthCallback = useCallback(async () => {
     const url = new URL(window.location.href);
     const params = url.searchParams;
-    const hashParams = new URLSearchParams(
-      url.hash.startsWith("#") ? url.hash.slice(1) : url.hash,
-    );
+    const hashParams = new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
 
     const type =
-      params.get("type") ??
-      hashParams.get("type") ??
-      hashParams.get("error_description");
+      params.get("type") ?? hashParams.get("type") ?? hashParams.get("error_description");
     const tokenHash = params.get("token_hash") ?? hashParams.get("token_hash");
     const code = params.get("code");
     const accessToken = hashParams.get("access_token");
@@ -135,19 +119,9 @@ function AuthPage() {
     }
 
     if (type && tokenHash) {
-      const validTypes = [
-        "recovery",
-        "invite",
-        "magiclink",
-        "email_change",
-        "signup",
-      ];
+      const validTypes = ["recovery", "invite", "magiclink", "email_change", "signup"];
       const otpType = (validTypes.includes(type) ? type : "signup") as
-        | "recovery"
-        | "invite"
-        | "magiclink"
-        | "email_change"
-        | "signup";
+        "recovery" | "invite" | "magiclink" | "email_change" | "signup";
 
       const { data, error } = await supabase.auth.verifyOtp({
         token_hash: tokenHash,
@@ -183,10 +157,10 @@ function AuthPage() {
   }, [mode, navigate]);
 
   useEffect(() => {
-    void handleAuthCallback();
+    handleAuthCallback().catch((err) => console.error("Auth callback error:", err));
   }, [handleAuthCallback]);
 
-    const handleSignInSuccess = useCallback((email: string) => {
+  const handleSignInSuccess = useCallback((email: string) => {
     setCallbackEmail(email);
     setView("confirmed");
   }, []);
@@ -215,8 +189,7 @@ function AuthPage() {
               {view === "reset" && "Choose a new password"}
               {view === "invite" && "Finish creating your account"}
               {view === "confirmed" && "Check your inbox"}
-              {(view === "signin" || view === "loading") &&
-                "Access your console"}
+              {(view === "signin" || view === "loading") && "Access your console"}
             </CardTitle>
             <CardDescription>
               {view === "forgot" &&
@@ -225,8 +198,7 @@ function AuthPage() {
                 "Your identity has been verified. Set a new password to continue."}
               {view === "invite" &&
                 "You've been invited to the RBBMBL platform. Set a password to finish."}
-              {view === "confirmed" &&
-                "We sent you an email with a link. Open it to continue."}
+              {view === "confirmed" && "We sent you an email with a link. Open it to continue."}
               {(view === "signin" || view === "loading") &&
                 "Manage debenture interest, dividends, and reconciliation."}
             </CardDescription>
@@ -248,9 +220,7 @@ function AuthPage() {
 
             {view === "forgot" && <ForgotForm onBack={() => setView("signin")} />}
 
-            {view === "reset" && (
-              <SetPasswordForm mode="reset" onDone={() => setView("signin")} />
-            )}
+            {view === "reset" && <SetPasswordForm mode="reset" onDone={() => setView("signin")} />}
 
             {view === "invite" && (
               <SetPasswordForm mode="invite" onDone={() => setView("signin")} />
@@ -264,10 +234,7 @@ function AuthPage() {
                     {callbackEmail ? (
                       <>
                         A confirmation link has been sent to{" "}
-                        <span className="font-medium text-foreground">
-                          {callbackEmail}
-                        </span>
-                        .
+                        <span className="font-medium text-foreground">{callbackEmail}</span>.
                       </>
                     ) : (
                       "Your email has been confirmed. You can sign in now."
@@ -286,7 +253,7 @@ function AuthPage() {
         <p className="mt-4 flex items-center justify-center gap-1.5 text-center text-xs text-muted-foreground">
           <ShieldCheck className="h-3.5 w-3.5" />
           Accounts are provisioned by your system administrator.
-                </p>
+        </p>
       </div>
     </div>
   );
@@ -310,8 +277,71 @@ function SignInForm({
   });
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [lockoutRemaining, setLockoutRemaining] = useState<number>(0);
+
+  useEffect(() => {
+    if (lockoutRemaining <= 0) return;
+    const interval = setInterval(() => {
+      setLockoutRemaining((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [lockoutRemaining]);
+
+  const getFailedAttemptsKey = (email: string) => `login_attempts_${email.toLowerCase().trim()}`;
+
+  const checkLockout = (email: string): boolean => {
+    try {
+      const raw = localStorage.getItem(getFailedAttemptsKey(email));
+      if (!raw) return false;
+      const { count, lastAttempt } = JSON.parse(raw) as { count: number; lastAttempt: number };
+      const elapsedSec = (Date.now() - lastAttempt) / 1000;
+      if (count >= 5 && elapsedSec < 300) {
+        setLockoutRemaining(Math.ceil(300 - elapsedSec));
+        return true;
+      }
+      if (elapsedSec >= 300) {
+        localStorage.removeItem(getFailedAttemptsKey(email));
+      }
+    } catch {
+      // Ignore storage errors
+    }
+    return false;
+  };
+
+  const recordFailedAttempt = (email: string) => {
+    try {
+      const key = getFailedAttemptsKey(email);
+      const raw = localStorage.getItem(key);
+      let count = 1;
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        count = (parsed.count || 0) + 1;
+      }
+      localStorage.setItem(key, JSON.stringify({ count, lastAttempt: Date.now() }));
+      if (count >= 5) {
+        setLockoutRemaining(300);
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  };
+
+  const clearFailedAttempts = (email: string) => {
+    try {
+      localStorage.removeItem(getFailedAttemptsKey(email));
+    } catch {
+      // Ignore storage errors
+    }
+  };
 
   const onSubmit = form.handleSubmit(async (values) => {
+    if (checkLockout(values.email)) {
+      toast.error("Too many failed attempts", {
+        description: `Account temporarily locked. Please try again in ${lockoutRemaining} seconds.`,
+      });
+      return;
+    }
+
     setSubmitting(true);
     const { data, error } = await supabase.auth.signInWithPassword({
       email: values.email,
@@ -320,6 +350,7 @@ function SignInForm({
     setSubmitting(false);
 
     if (error) {
+      recordFailedAttempt(values.email);
       void AuditService.recordLoginAttempt({
         email: values.email,
         status: "failed",
@@ -331,11 +362,12 @@ function SignInForm({
         return;
       }
       toast.error(error.message, {
-        description:
-          "If you're sure the details are right, request a password reset.",
+        description: "If you're sure the details are right, request a password reset.",
       });
       return;
     }
+
+    clearFailedAttempts(values.email);
 
     void AuditService.recordLoginAttempt({
       email: values.email,
@@ -350,6 +382,11 @@ function SignInForm({
   return (
     <Form {...form}>
       <form onSubmit={onSubmit} className="space-y-4">
+        {lockoutRemaining > 0 && (
+          <div className="p-3 text-xs rounded border border-destructive/30 bg-destructive/10 text-destructive text-center font-medium">
+            Account temporarily locked due to multiple failed sign-in attempts. Please wait {lockoutRemaining}s before retrying.
+          </div>
+        )}
         <FormField
           control={form.control}
           name="email"
@@ -398,11 +435,7 @@ function SignInForm({
                     className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground transition-colors hover:text-foreground"
                     aria-label={showPassword ? "Hide password" : "Show password"}
                   >
-                    {showPassword ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
               </FormControl>
@@ -418,7 +451,6 @@ function SignInForm({
     </Form>
   );
 }
-
 
 // ---------------------------------------------------------------------------
 // Forgot password
@@ -453,8 +485,7 @@ function ForgotForm({ onBack }: { onBack: () => void }) {
         <div className="flex flex-col items-center gap-3 rounded-lg border bg-muted/30 px-4 py-8 text-center">
           <MailCheck className="h-10 w-10 text-accent" />
           <p className="text-sm text-muted-foreground">
-            If an account exists for that email, you’ll receive a password reset
-            link shortly.
+            If an account exists for that email, you’ll receive a password reset link shortly.
           </p>
         </div>
         <Button variant="outline" className="w-full" onClick={onBack}>
@@ -502,13 +533,7 @@ function ForgotForm({ onBack }: { onBack: () => void }) {
 // Set new password (recovery / invite)
 // ---------------------------------------------------------------------------
 
-function SetPasswordForm({
-  mode,
-  onDone,
-}: {
-  mode: "reset" | "invite";
-  onDone: () => void;
-}) {
+function SetPasswordForm({ mode, onDone }: { mode: "reset" | "invite"; onDone: () => void }) {
   const form = useForm<PasswordValues>({
     resolver: zodResolver(passwordSchema),
     defaultValues: { password: "", confirm: "" },
@@ -521,9 +546,7 @@ function SetPasswordForm({
     setSubmitting(true);
 
     const profileUpdate =
-      mode === "invite" && name.trim()
-        ? { data: { full_name: name.trim() } }
-        : undefined;
+      mode === "invite" && name.trim() ? { data: { full_name: name.trim() } } : undefined;
 
     const { error } = await supabase.auth.updateUser({
       password: values.password,
@@ -596,11 +619,7 @@ function SetPasswordForm({
                     className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground transition-colors hover:text-foreground"
                     aria-label={showPassword ? "Hide password" : "Show password"}
                   >
-                    {showPassword ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
               </FormControl>
@@ -640,9 +659,3 @@ function SetPasswordForm({
     </Form>
   );
 }
-
-
-
-
-
-

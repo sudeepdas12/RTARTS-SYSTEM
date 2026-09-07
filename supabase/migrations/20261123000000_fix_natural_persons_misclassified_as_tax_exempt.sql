@@ -32,22 +32,20 @@ WHERE
 UPDATE public.dividend_payables dp
 SET
   payee_classification = 'NATURAL_PERSON',
-  payee_category = 'PUBLIC',
-  tax_amount = round(dp.gross_amount * 0.05, 2),
-  net_payable = round(dp.gross_amount - (dp.gross_amount * 0.05), 2),
+  tax_amount = round(dp.gross_dividend * 0.05, 2),
+  net_payable = round(dp.gross_dividend - (dp.gross_dividend * 0.05), 2),
   updated_at = now()
 FROM public.clients c
 WHERE
   dp.client_id = c.id
   AND c.payee_classification = 'NATURAL_PERSON'
   AND (dp.payee_classification = 'TAX_EXEMPT' OR dp.tax_amount = 0)
-  AND dp.gross_amount > 0;
+  AND dp.gross_dividend > 0;
 
 -- 3. Recalculate and sync any interest_payables linked to these corrected clients
 UPDATE public.interest_payables ip
 SET
   payee_classification = 'NATURAL_PERSON',
-  payee_category = 'PUBLIC',
   tax_amount = round(ip.gross_interest * 0.06, 2),
   net_payable = round(ip.gross_interest - (ip.gross_interest * 0.06), 2),
   updated_at = now()

@@ -1,94 +1,156 @@
-import { createFileRoute } from '@tanstack/react-router';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState, useMemo } from 'react';
-import { PageHeader } from '@/components/page-header';
-import { supabase } from '@/integrations/supabase/client';
-import { PaymentGenerator } from '@/lib/payment-generator';
-import { exportToExcel } from '@/lib/xlsx-utils';
-import { PaymentService, PaymentBatch, PaymentLineItem } from '@/lib/services/payment.service';
-import { WorkflowEngine, ApprovalAction } from '@/lib/workflow-engine';
-import { NotificationService } from '@/lib/services/notification.service';
-import { UserContext } from '@/lib/rbac-service';
-import { useAuth } from '@/hooks/use-auth';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ShareholderStatementDialog } from '@/components/shareholder-statement-dialog';
-import { Download, Plus, CheckCircle2, XCircle, FileSpreadsheet, Trash2, Eye, X, Loader2, Send, Search, User, CreditCard, Layers, FileText, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
-import { toast } from 'sonner';
-import { format } from 'date-fns';
-import { ApprovalBar } from '@/components/workflow/approval-bar';
-import { STANDARD_PERIODS, type PeriodPreset } from '@/lib/services/period-calculator';
+import { createFileRoute } from "@tanstack/react-router";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, useMemo } from "react";
+import { PageHeader } from "@/components/page-header";
+import { supabase } from "@/integrations/supabase/client";
+import { PaymentGenerator } from "@/lib/payment-generator";
+import { exportToExcel } from "@/lib/xlsx-utils";
+import { PaymentService, PaymentBatch, PaymentLineItem } from "@/lib/services/payment.service";
+import { ConnectIPSService } from "@/lib/services/connectips.service";
+import {
+  SmsBroadcastService,
+  BroadcastSummary,
+  BroadcastTemplateType,
+  DEFAULT_TEMPLATES,
+} from "@/lib/services/sms-broadcast.service";
+import { WorkflowEngine, ApprovalAction } from "@/lib/workflow-engine";
+import { NotificationService } from "@/lib/services/notification.service";
+import { UserContext } from "@/lib/rbac-service";
+import { useAuth } from "@/hooks/use-auth";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ShareholderStatementDialog } from "@/components/shareholder-statement-dialog";
+import {
+  Download,
+  Plus,
+  CheckCircle2,
+  XCircle,
+  FileSpreadsheet,
+  Trash2,
+  Eye,
+  X,
+  Loader2,
+  Send,
+  Search,
+  User,
+  CreditCard,
+  Layers,
+  FileText,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+} from "lucide-react";
+import { toast } from "sonner";
+import { format } from "date-fns";
+import { ApprovalBar } from "@/components/workflow/approval-bar";
+import { STANDARD_PERIODS, type PeriodPreset } from "@/lib/services/period-calculator";
 
-export const Route = createFileRoute('/_authenticated/payments')({
+export const Route = createFileRoute("/_authenticated/payments")({
   component: PaymentsRoute,
 });
 
-type PaymentMethod = 'NEFT' | 'RTGS' | 'ConnectIPS' | 'Cheque' | 'Cash';
+type PaymentMethod = "NEFT" | "RTGS" | "ConnectIPS" | "Cheque" | "Cash";
 
 function PaymentsRoute() {
   const qc = useQueryClient();
   const { user, roles, isAdmin } = useAuth();
-  const canWrite = isAdmin || (roles || []).some((r: string) => ['admin', 'finance_operator', 'maker', 'operator'].includes(r));
-  const currentUser: UserContext | null = user ? { id: user.id, roles: (roles as any) || ['read_only'] } : null;
+  const canWrite =
+    isAdmin ||
+    (roles || []).some((r: string) =>
+      ["admin", "finance_operator", "maker", "operator"].includes(r),
+    );
+  const currentUser: UserContext | null = user
+    ? { id: user.id, roles: (roles as any) || ["read_only"] }
+    : null;
   const [createOpen, setCreateOpen] = useState(false);
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('ConnectIPS');
-  const [selectedCompany, setSelectedCompany] = useState<string>('all');
-  const [selectedPayableType, setSelectedPayableType] = useState<string>('all');
-  const [batchName, setBatchName] = useState('');
-  const [fiscalYear, setFiscalYear] = useState('');
-  const [cdsBatchRef, setCdsBatchRef] = useState('');
-  const [registrar, setRegistrar] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("ConnectIPS");
+  const [selectedCompany, setSelectedCompany] = useState<string>("all");
+  const [selectedPayableType, setSelectedPayableType] = useState<string>("all");
+  const [batchName, setBatchName] = useState("");
+  const [fiscalYear, setFiscalYear] = useState("");
+  const [cdsBatchRef, setCdsBatchRef] = useState("");
+  const [registrar, setRegistrar] = useState("");
   const [reverseDialogOpen, setReverseDialogOpen] = useState<PaymentLineItem | null>(null);
-  const [reversalReason, setReversalReason] = useState('');
-  const [periodPreset, setPeriodPreset] = useState<string>('12M');
-  const [periodDays, setPeriodDays] = useState<string>('365');
-  const [fromDate, setFromDate] = useState<string>('');
-  const [toDate, setToDate] = useState<string>('');
+  const [reversalReason, setReversalReason] = useState("");
+  const [periodPreset, setPeriodPreset] = useState<string>("12M");
+  const [periodDays, setPeriodDays] = useState<string>("365");
+  const [fromDate, setFromDate] = useState<string>("");
+  const [toDate, setToDate] = useState<string>("");
   const [isDisbursing, setIsDisbursing] = useState(false);
 
   // Active top tab (Batches vs Individual Shareholder Search)
-  const [paymentsActiveTab, setPaymentsActiveTab] = useState<'batches' | 'shareholders'>('batches');
+  const [paymentsActiveTab, setPaymentsActiveTab] = useState<"batches" | "shareholders">("batches");
   const [selectedStatementBoid, setSelectedStatementBoid] = useState<string | null>(null);
 
+  // SMS Broadcast State
+  const [broadcastOpen, setBroadcastOpen] = useState<boolean>(false);
+  const [broadcastBatch, setBroadcastBatch] = useState<PaymentBatch | null>(null);
+  const [broadcastTemplateType, setBroadcastTemplateType] = useState<BroadcastTemplateType>("PAYMENT_SUCCESS");
+  const [customMessageTemplate, setCustomMessageTemplate] = useState<string>(DEFAULT_TEMPLATES.PAYMENT_SUCCESS);
+  const [broadcastSummary, setBroadcastSummary] = useState<BroadcastSummary | null>(null);
+
   // Main table filters
-  const [tableSearch, setTableSearch] = useState<string>('');
-  const [tableStatusFilter, setTableStatusFilter] = useState<string>('all');
-  const [tableFromDate, setTableFromDate] = useState<string>('');
-  const [tableToDate, setTableToDate] = useState<string>('');
-  const [tablePeriodPreset, setTablePeriodPreset] = useState<PeriodPreset | 'ALL'>('ALL');
+  const [tableSearch, setTableSearch] = useState<string>("");
+  const [tableStatusFilter, setTableStatusFilter] = useState<string>("all");
+  const [tableFromDate, setTableFromDate] = useState<string>("");
+  const [tableToDate, setTableToDate] = useState<string>("");
+  const [tablePeriodPreset, setTablePeriodPreset] = useState<PeriodPreset | "ALL">("ALL");
 
   // Individual Shareholder Transactions Query
-  const [shareholderSearch, setShareholderSearch] = useState<string>('');
-  const [shareholderCompany, setShareholderCompany] = useState<string>('all');
-  const [shareholderStatus, setShareholderStatus] = useState<string>('all');
+  const [shareholderSearch, setShareholderSearch] = useState<string>("");
+  const [shareholderCompany, setShareholderCompany] = useState<string>("all");
+  const [shareholderStatus, setShareholderStatus] = useState<string>("all");
 
   const { data: allIndividualPayments = [], isLoading: isIndividualLoading } = useQuery({
-    queryKey: ['all-individual-payments', shareholderCompany, shareholderStatus],
+    queryKey: ["all-individual-payments", shareholderCompany, shareholderStatus],
     queryFn: async () => {
       let q = (supabase as any)
-        .from('payments')
-        .select(`
+        .from("payments")
+        .select(
+          `
           *,
           client:clients(id, full_name, boid, bank_name, bank_account_no, pan_no, citizenship_no, phone, holder_type),
           company:companies(id, company_name, company_code)
-        `)
-        .order('created_at', { ascending: false })
+        `,
+        )
+        .order("created_at", { ascending: false })
         .limit(2000);
 
-      if (shareholderCompany !== 'all') q = q.eq('company_id', shareholderCompany);
-      if (shareholderStatus !== 'all') q = q.eq('status', shareholderStatus);
+      if (shareholderCompany !== "all") q = q.eq("company_id", shareholderCompany);
+      if (shareholderStatus !== "all") q = q.eq("status", shareholderStatus);
       const { data, error } = await q;
       if (error) {
-        console.error('Error fetching payments:', error);
+        console.error("Error fetching payments:", error);
         return [];
       }
       return data || [];
@@ -114,79 +176,97 @@ function PaymentsRoute() {
   }, [allIndividualPayments, shareholderSearch, tableSearch]);
 
   const { data: payments, isLoading } = useQuery({
-    queryKey: ['payments'],
+    queryKey: ["payments"],
     queryFn: () => PaymentService.getBatches(100, 0),
   });
 
   const { data: companies = [] } = useQuery({
-    queryKey: ['companies-lookup'],
+    queryKey: ["companies-lookup"],
     queryFn: async () => {
-      const { data } = await supabase.from('companies').select('id, company_name, company_code').order('company_name');
+      const { data } = await supabase
+        .from("companies")
+        .select("id, company_name, company_code")
+        .order("company_name");
       return data || [];
     },
   });
 
   const { data: fiscalYears = [] } = useQuery({
-    queryKey: ['payments-fiscal-years'],
+    queryKey: ["payments-fiscal-years"],
     queryFn: async () => {
-      const { data } = await supabase.from('fiscal_years').select('fiscal_year').order('fiscal_year', { ascending: false });
-      return (data || []).map(f => f.fiscal_year);
+      const { data } = await supabase
+        .from("fiscal_years")
+        .select("fiscal_year")
+        .order("fiscal_year", { ascending: false });
+      return (data || []).map((f) => f.fiscal_year);
     },
   });
 
   const { data: activeBatchData } = useQuery({
-    queryKey: ['payment-batch', activeBatchId],
+    queryKey: ["payment-batch", activeBatchId],
     queryFn: () => PaymentService.getBatchById(activeBatchId!),
     enabled: !!activeBatchId,
   });
 
   const { data: lineItems, isLoading: lineItemsLoading } = useQuery({
-    queryKey: ['payment-line-items', activeBatchId],
+    queryKey: ["payment-line-items", activeBatchId],
     queryFn: () => PaymentService.getLineItems(activeBatchId!),
     enabled: !!activeBatchId,
   });
 
   const { data: availablePayables = [] } = useQuery({
-    queryKey: ['payables-for-payment', selectedCompany, selectedPayableType, fiscalYear, periodPreset, periodDays, fromDate, toDate],
-    queryFn: () => PaymentService.getPayablesForPayment(
-      selectedCompany !== 'all' ? selectedCompany : undefined,
-      selectedPayableType !== 'all' ? selectedPayableType : undefined,
-      {
-        fiscalYear: fiscalYear || undefined,
-        periodPreset,
-        periodDays: periodDays ? Number(periodDays) : undefined,
-        fromDate: fromDate || undefined,
-        toDate: toDate || undefined,
-      }
-    ),
+    queryKey: [
+      "payables-for-payment",
+      selectedCompany,
+      selectedPayableType,
+      fiscalYear,
+      periodPreset,
+      periodDays,
+      fromDate,
+      toDate,
+    ],
+    queryFn: () =>
+      PaymentService.getPayablesForPayment(
+        selectedCompany !== "all" ? selectedCompany : undefined,
+        selectedPayableType !== "all" ? selectedPayableType : undefined,
+        {
+          fiscalYear: fiscalYear || undefined,
+          periodPreset,
+          periodDays: periodDays ? Number(periodDays) : undefined,
+          fromDate: fromDate || undefined,
+          toDate: toDate || undefined,
+        },
+      ),
     enabled: createOpen || !!activeBatchId,
   });
 
   const { mutate: createBatch, isPending } = useMutation({
     mutationFn: async () => {
       if (!canWrite) throw new Error("You do not have permission to create payment batches.");
-      if (!batchName.trim()) throw new Error('Batch name is required');
+      if (!batchName.trim()) throw new Error("Batch name is required");
       const batch = await PaymentService.createBatch({
         batch_name: batchName.trim(),
-        company_id: selectedCompany !== 'all' ? selectedCompany : undefined,
+        company_id: selectedCompany !== "all" ? selectedCompany : undefined,
         fiscal_year: fiscalYear || undefined,
-        payable_type: selectedPayableType !== 'all' ? selectedPayableType : undefined,
+        payable_type: selectedPayableType !== "all" ? selectedPayableType : undefined,
         payment_method: paymentMethod,
       });
-      
-      if (!batch) throw new Error('Failed to create batch');
+
+      if (!batch) throw new Error("Failed to create batch");
 
       // Auto-populate all matching payables into the created batch
       if (availablePayables.length > 0) {
         try {
-          const items = availablePayables.map(payable => {
+          const items = availablePayables.map((payable) => {
             const grossAmount = Number(payable.gross_dividend ?? payable.gross_interest ?? 0);
             const netAmount = Number(payable.net_payable ?? 0);
-            const taxAmount = Number(payable.tax_amount ?? (grossAmount - netAmount));
+            const taxAmount = Number(payable.tax_amount ?? grossAmount - netAmount);
             return {
               company_id: payable.company_id,
               client_id: payable.client_id,
-              payable_type: payable.payable_type || (selectedPayableType !== 'all' ? selectedPayableType : 'dividend'),
+              payable_type:
+                payable.payable_type ||
+                (selectedPayableType !== "all" ? selectedPayableType : "dividend"),
               payable_id: payable.id,
               gross_amount: grossAmount,
               tax_amount: taxAmount,
@@ -201,7 +281,7 @@ function PaymentsRoute() {
               connectips_ref: null,
               rtgs_ref: null,
               cheque_no: null,
-              status: 'Pending',
+              status: "Pending",
               remarks: null,
             };
           });
@@ -209,7 +289,7 @@ function PaymentsRoute() {
           await PaymentService.addLineItems(batch.id, items);
         } catch (addErr) {
           // Clean up created batch to avoid zombie records
-          await (supabase as any).from('payment_batches').delete().eq('id', batch.id);
+          await (supabase as any).from("payment_batches").delete().eq("id", batch.id);
           throw addErr;
         }
       }
@@ -217,12 +297,12 @@ function PaymentsRoute() {
       // Update cds_batch_ref and registrar if provided
       if (cdsBatchRef || registrar) {
         await (supabase as any)
-          .from('payment_batches')
+          .from("payment_batches")
           .update({
             cds_batch_ref: cdsBatchRef.trim() || null,
             registrar: registrar.trim() || null,
           })
-          .eq('id', batch.id);
+          .eq("id", batch.id);
       }
 
       return batch;
@@ -230,11 +310,11 @@ function PaymentsRoute() {
     onSuccess: (batch: any) => {
       toast.success(`Payment batch created with ${availablePayables.length} payables.`);
       setCreateOpen(false);
-      setBatchName('');
-      setFiscalYear('');
-      setCdsBatchRef('');
-      setRegistrar('');
-      qc.invalidateQueries({ queryKey: ['payments'] });
+      setBatchName("");
+      setFiscalYear("");
+      setCdsBatchRef("");
+      setRegistrar("");
+      qc.invalidateQueries({ queryKey: ["payments"] });
       if (batch?.id) {
         setActiveBatchId(batch.id);
       }
@@ -244,20 +324,20 @@ function PaymentsRoute() {
 
   const { mutate: addPayablesToBatch } = useMutation({
     mutationFn: async (batchId: string) => {
-      const items = availablePayables.map(payable => {
+      const items = availablePayables.map((payable) => {
         const grossAmount = Number(payable.gross_dividend ?? payable.gross_interest ?? 0);
         const netAmount = Number(payable.net_payable ?? 0);
-        const taxAmount = Number(payable.tax_amount ?? (grossAmount - netAmount));
+        const taxAmount = Number(payable.tax_amount ?? grossAmount - netAmount);
         return {
           company_id: payable.company_id,
           client_id: payable.client_id,
-          payable_type: payable.payable_type || 'dividend',
+          payable_type: payable.payable_type || "dividend",
           payable_id: payable.id,
           gross_amount: grossAmount,
           tax_amount: taxAmount,
           net_amount: netAmount,
           paid_amount: netAmount,
-          payment_method: activeBatchData?.payment_method || 'ConnectIPS',
+          payment_method: activeBatchData?.payment_method || "ConnectIPS",
           payment_date: null,
           payment_reference: null,
           bank_name: payable.clients?.bank_name || payable.bank_name || null,
@@ -266,91 +346,116 @@ function PaymentsRoute() {
           connectips_ref: null,
           rtgs_ref: null,
           cheque_no: null,
-          status: 'Pending',
+          status: "Pending",
           remarks: null,
         };
       });
 
       const success = await PaymentService.addLineItems(batchId, items);
-      if (!success) throw new Error('Failed to add line items');
+      if (!success) throw new Error("Failed to add line items");
     },
     onSuccess: () => {
-      toast.success('Payables added to batch.');
-      qc.invalidateQueries({ queryKey: ['payments'] });
-      qc.invalidateQueries({ queryKey: ['payment-batch'] });
-      qc.invalidateQueries({ queryKey: ['payment-line-items'] });
-      qc.invalidateQueries({ queryKey: ['payables-for-payment'] });
+      toast.success("Payables added to batch.");
+      qc.invalidateQueries({ queryKey: ["payments"] });
+      qc.invalidateQueries({ queryKey: ["payment-batch"] });
+      qc.invalidateQueries({ queryKey: ["payment-line-items"] });
+      qc.invalidateQueries({ queryKey: ["payables-for-payment"] });
     },
-    onError: () => toast.error('Failed to add payables to batch.'),
+    onError: () => toast.error("Failed to add payables to batch."),
   });
 
   const { mutate: updateBatchStatus } = useMutation({
-    mutationFn: async ({ batchId, status, action }: { batchId: string; status?: PaymentBatch['status']; action?: ApprovalAction }) => {
+    mutationFn: async ({
+      batchId,
+      status,
+      action,
+    }: {
+      batchId: string;
+      status?: PaymentBatch["status"];
+      action?: ApprovalAction;
+    }) => {
       const batchData = payments?.find((p: any) => p.id === batchId) || activeBatchData;
-      let effectiveAction: ApprovalAction = action || 'submit';
+      let effectiveAction: ApprovalAction = action || "submit";
       if (!action && status) {
-        if (status === 'Pending') effectiveAction = 'submit';
-        else if (status === 'Approved') effectiveAction = 'approve';
-        else if (status === 'Rejected') effectiveAction = 'reject';
-        else if (status === 'Processed') effectiveAction = 'process';
-        else if (status === 'Completed') effectiveAction = 'complete';
+        if (status === "Pending") effectiveAction = "submit";
+        else if (status === "Approved") effectiveAction = "approve";
+        else if (status === "Rejected") effectiveAction = "reject";
+        else if (status === "Processed") effectiveAction = "process";
+        else if (status === "Completed") effectiveAction = "complete";
       }
-      const result = await WorkflowEngine.processAction(batchId, 'payment_batches', effectiveAction, undefined, currentUser);
-      if (!result.success) throw new Error(result.error || 'Failed to update status');
-      
+      const result = await WorkflowEngine.processAction(
+        batchId,
+        "payment_batches",
+        effectiveAction,
+        undefined,
+        currentUser,
+      );
+      if (!result.success) throw new Error(result.error || "Failed to update status");
+
       await NotificationService.sendPaymentNotification(
         currentUser?.id || null,
         batchId.slice(0, 8),
         result.success,
         batchData?.total_amount || 0,
-        batchData?.total_payments || 0
+        batchData?.total_payments || 0,
       );
     },
     onSuccess: () => {
-      toast.success('Batch workflow status updated successfully.');
-      qc.invalidateQueries({ queryKey: ['payments'] });
-      qc.invalidateQueries({ queryKey: ['payment-batch'] });
-      qc.invalidateQueries({ queryKey: ['payment-line-items'] });
-      qc.invalidateQueries({ queryKey: ['pending_approvals_all'] });
-      qc.invalidateQueries({ queryKey: ['pending_batches_count'] });
+      toast.success("Batch workflow status updated successfully.");
+      qc.invalidateQueries({ queryKey: ["payments"] });
+      qc.invalidateQueries({ queryKey: ["payment-batch"] });
+      qc.invalidateQueries({ queryKey: ["payment-line-items"] });
+      qc.invalidateQueries({ queryKey: ["pending_approvals_all"] });
+      qc.invalidateQueries({ queryKey: ["pending_batches_count"] });
+      qc.invalidateQueries({ queryKey: ["dividend_payables"] });
+      qc.invalidateQueries({ queryKey: ["interest_payables"] });
+      qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
     },
-    onError: (err: any) => toast.error(err?.message || 'Failed to update batch status.'),
+    onError: (err: any) => toast.error(err?.message || "Failed to update batch status."),
   });
 
   const { mutate: deleteBatch, isPending: isDeletingBatch } = useMutation({
     mutationFn: async (batchId: string) => {
+      if (!canWrite) throw new Error("Unauthorized: you do not have permission to delete batches.");
       const ok = await PaymentService.deleteBatch(batchId);
-      if (!ok) throw new Error('Failed to delete batch');
+      if (!ok) throw new Error("Failed to delete batch");
       return batchId;
     },
     onSuccess: () => {
-      toast.success('Payment batch deleted successfully.');
+      toast.success("Payment batch deleted successfully.");
       setActiveBatchId(null);
-      qc.invalidateQueries({ queryKey: ['payments'] });
-      qc.invalidateQueries({ queryKey: ['payables-for-payment'] });
+      qc.invalidateQueries({ queryKey: ["payments"] });
+      qc.invalidateQueries({ queryKey: ["payables-for-payment"] });
     },
-    onError: (err: any) => toast.error(err?.message || 'Failed to delete batch.'),
+    onError: (err: any) => toast.error(err?.message || "Failed to delete batch."),
   });
 
   const { mutate: executeReversal } = useMutation({
     mutationFn: async () => {
+      if (!canWrite)
+        throw new Error("Unauthorized: you do not have permission to reverse payments.");
       if (!reverseDialogOpen) return;
       const success = await PaymentService.reversePayment(
         reverseDialogOpen.id,
-        reversalReason || 'Manual Reversal by Operator',
-        currentUser?.id
+        reversalReason || "Manual Reversal by Operator",
+        currentUser?.id,
       );
-      if (!success) throw new Error('Failed to reverse payment');
+      if (!success) throw new Error("Failed to reverse payment");
     },
     onSuccess: () => {
-      toast.success('Payment successfully reversed and payable restored.');
+      toast.success("Payment successfully reversed and payable restored.");
       setReverseDialogOpen(null);
-      setReversalReason('');
-      qc.invalidateQueries({ queryKey: ['payments'] });
-      qc.invalidateQueries({ queryKey: ['payment-batch'] });
-      qc.invalidateQueries({ queryKey: ['payment-line-items'] });
+      setReversalReason("");
+      qc.invalidateQueries({ queryKey: ["payments"] });
+      qc.invalidateQueries({ queryKey: ["payment-batch"] });
+      qc.invalidateQueries({ queryKey: ["payment-line-items"] });
+      qc.invalidateQueries({ queryKey: ["dividend_payables"] });
+      qc.invalidateQueries({ queryKey: ["interest_payables"] });
+      qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
     },
-    onError: (err: any) => toast.error(err?.message || 'Reversal failed'),
+    onError: (err: any) => toast.error(err?.message || "Reversal failed"),
   });
 
   const handleDownloadPaymentFile = async (batch: PaymentBatch) => {
@@ -360,7 +465,7 @@ function PaymentsRoute() {
     }
 
     if (!itemsToExport || itemsToExport.length === 0) {
-      toast.error('No line items found in this batch.');
+      toast.error("No line items found in this batch.");
       return;
     }
 
@@ -368,24 +473,24 @@ function PaymentsRoute() {
     const batchName = batch.batch_name || `Batch_${batch.id.slice(0, 8)}`;
 
     switch (batch.payment_method) {
-      case 'ConnectIPS':
+      case "ConnectIPS":
         content = PaymentGenerator.generateConnectIPS(itemsToExport, batchName);
         break;
-      case 'RTGS':
+      case "RTGS":
         content = PaymentGenerator.generateNEFT(itemsToExport, batchName);
         break;
-      case 'Cheque':
+      case "Cheque":
         content = PaymentGenerator.generateCheque(itemsToExport, batchName);
         break;
-      case 'Cash':
+      case "Cash":
         content = PaymentGenerator.generateCash(itemsToExport, batchName);
         break;
       default:
         content = PaymentGenerator.generateNEFT(itemsToExport, batchName);
     }
 
-    PaymentGenerator.downloadPaymentFile(content, batch.payment_method || 'NEFT', batchName);
-    toast.success(`${batch.payment_method || 'NEFT'} file downloaded.`);
+    PaymentGenerator.downloadPaymentFile(content, batch.payment_method || "NEFT", batchName);
+    toast.success(`${batch.payment_method || "NEFT"} file downloaded.`);
   };
 
   const handleDownloadExcel = async (batch: PaymentBatch) => {
@@ -395,53 +500,154 @@ function PaymentsRoute() {
     }
 
     if (!itemsToExport || itemsToExport.length === 0) {
-      toast.error('No line items found in this batch.');
+      toast.error("No line items found in this batch.");
       return;
     }
 
     const rows = itemsToExport.map((item, idx) => ({
-      'S.N': idx + 1,
-      'Payee Name': item.clients?.full_name || 'Shareholder',
-      'BOID': item.clients?.boid || '',
-      'Bank Name': item.bank_name || item.clients?.bank_name || '',
-      'Bank Account No': item.bank_account_no || item.clients?.bank_account_no || '',
-      'Gross Amount': item.gross_amount,
-      'Tax / TDS Amount': item.tax_amount,
-      'Net Payable': item.net_amount,
-      'Payment Method': item.payment_method || batch.payment_method,
-      'Status': item.status,
-      'Reference': item.connectips_ref || item.payment_reference || '',
-      'Payment Date': item.payment_date || '',
+      "S.N": idx + 1,
+      "Payee Name": item.clients?.full_name || "Shareholder",
+      BOID: item.clients?.boid || "",
+      "Bank Name": item.bank_name || item.clients?.bank_name || "",
+      "Bank Account No": item.bank_account_no || item.clients?.bank_account_no || "",
+      "Gross Amount": item.gross_amount,
+      "Tax / TDS Amount": item.tax_amount,
+      "Net Payable": item.net_amount,
+      "Payment Method": item.payment_method || batch.payment_method,
+      Status: item.status,
+      Reference: item.connectips_ref || item.payment_reference || "",
+      "Payment Date": item.payment_date || "",
     }));
 
-    exportToExcel(rows, `Payment_Batch_${(batch.batch_name || batch.id.slice(0, 8)).replace(/[^a-zA-Z0-9_-]/g, '_')}_${new Date().toISOString().slice(0, 10)}`);
-    toast.success('Payment batch exported to Excel.');
+    exportToExcel(
+      rows,
+      `Payment_Batch_${(batch.batch_name || batch.id.slice(0, 8)).replace(/[^a-zA-Z0-9_-]/g, "_")}_${new Date().toISOString().slice(0, 10)}`,
+    );
+    toast.success("Payment batch exported to Excel.");
+  };
+
+  const handleDownloadCorporatePay = async (batch: PaymentBatch) => {
+    const toastId = toast.loading("Generating NCHL CorporatePay / ConnectIPS batch file...");
+    try {
+      const res = await ConnectIPSService.generateCorporatePayBatchFile({
+        batchId: batch.id,
+      });
+      toast.dismiss(toastId);
+      toast.success(`NCHL CorporatePay batch (${res.totalRows} payees, NPR ${res.totalAmount.toLocaleString()}) exported successfully.`);
+    } catch (err: any) {
+      toast.dismiss(toastId);
+      toast.error(err?.message || "Failed to generate CorporatePay batch file.");
+    }
+  };
+
+  const handleRejectionFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const toastId = toast.loading(`Parsing disbursement return file: ${file.name}...`);
+    try {
+      const result = await ConnectIPSService.parseDisbursementReturnFile(file);
+      qc.invalidateQueries({ queryKey: ["payment-batches"] });
+      qc.invalidateQueries({ queryKey: ["payment-line-items"] });
+      qc.invalidateQueries({ queryKey: ["available-payables"] });
+      toast.dismiss(toastId);
+      if (result.totalFailed > 0) {
+        toast.warning(
+          `Processed ${result.totalProcessed} records. Flagged ${result.totalFailed} returned/rejected payment(s) and routed them to the Unclaimed/Reissue queue.`,
+        );
+      } else {
+        toast.info(`Processed ${result.totalProcessed} records. No failed payments detected.`);
+      }
+    } catch (err: any) {
+      toast.dismiss(toastId);
+      toast.error(err?.message || "Failed to parse disbursement return file.");
+    }
+  };
+
+  const openBroadcastDialog = async (batch: PaymentBatch) => {
+    setBroadcastBatch(batch);
+    setBroadcastTemplateType("PAYMENT_SUCCESS");
+    setCustomMessageTemplate(DEFAULT_TEMPLATES.PAYMENT_SUCCESS);
+
+    let items = lineItems;
+    if (!items || items.length === 0 || activeBatchId !== batch.id) {
+      items = await PaymentService.getLineItems(batch.id);
+    }
+
+    const payload = (items || []).map((item) => {
+      const client = (item.clients || {}) as Record<string, any>;
+      return {
+        id: item.id,
+        payeeName: client.full_name || "Shareholder",
+        boid: client.boid || "",
+        phone: client.phone || "",
+        email: client.email || undefined,
+        companyName: batch.company_id
+          ? companies.find((c) => c.id === batch.company_id)?.company_name || "Company"
+          : "Company",
+        fiscalYear: batch.fiscal_year || "",
+        amount: Number(item.net_amount || item.gross_amount || 0),
+        reference: item.connectips_ref || item.payment_reference || undefined,
+        bankName: item.bank_name || client.bank_name || undefined,
+      };
+    });
+
+    const summary = SmsBroadcastService.buildBroadcastQueue({
+      items: payload,
+      templateType: "PAYMENT_SUCCESS",
+      customTemplate: DEFAULT_TEMPLATES.PAYMENT_SUCCESS,
+    });
+
+    setBroadcastSummary(summary);
+    setBroadcastOpen(true);
+  };
+
+  const handleTemplateChange = (type: BroadcastTemplateType) => {
+    setBroadcastTemplateType(type);
+    const newText = DEFAULT_TEMPLATES[type];
+    setCustomMessageTemplate(newText);
+    if (broadcastSummary) {
+      const updated = SmsBroadcastService.buildBroadcastQueue({
+        items: broadcastSummary.messages.map((m) => ({
+          id: m.id,
+          payeeName: m.recipientName,
+          boid: m.boid,
+          phone: m.phone,
+          companyName: m.companyName,
+          fiscalYear: m.fiscalYear,
+          amount: m.amount,
+        })),
+        templateType: type,
+        customTemplate: newText,
+      });
+      setBroadcastSummary(updated);
+    }
   };
 
   const handleExportAvailablePayables = () => {
     if (availablePayables.length === 0) {
-      toast.error('No payables available to export with current filters.');
+      toast.error("No payables available to export with current filters.");
       return;
     }
 
     const rows = availablePayables.map((p, idx) => {
       const gross = Number(p.gross_dividend ?? p.gross_interest ?? 0);
       const tax = Number(p.tax_amount ?? 0);
-      const net = Number(p.net_payable ?? (gross - tax));
+      const net = Number(p.net_payable ?? gross - tax);
       return {
-        'S.N': idx + 1,
-        'Company': p.companies?.company_code || '',
-        'Payee Name': p.clients?.full_name || p.full_name || 'Shareholder',
-        'BOID': p.clients?.boid || p.boid || '',
-        'Classification': p.payee_classification || p.clients?.payee_classification || '',
-        'Bank Name': p.bank_name || p.clients?.bank_name || '',
-        'Bank Account No': p.bank_account_no || p.clients?.bank_account_no || '',
-        'Payable Type': p.payable_type || selectedPayableType,
-        'Gross Amount': gross,
-        'Tax Amount': tax,
-        'Net Payable': net,
-        'Status': p.payment_status || 'Pending',
-        'Fiscal Year': p.fiscal_year || fiscalYear,
+        "S.N": idx + 1,
+        Company: p.companies?.company_code || "",
+        "Payee Name": p.clients?.full_name || p.full_name || "Shareholder",
+        BOID: p.clients?.boid || p.boid || "",
+        Classification: p.payee_classification || p.clients?.payee_classification || "",
+        "Bank Name": p.bank_name || p.clients?.bank_name || "",
+        "Bank Account No": p.bank_account_no || p.clients?.bank_account_no || "",
+        "Payable Type": p.payable_type || selectedPayableType,
+        "Gross Amount": gross,
+        "Tax Amount": tax,
+        "Net Payable": net,
+        Status: p.payment_status || "Pending",
+        "Fiscal Year": p.fiscal_year || fiscalYear,
       };
     });
 
@@ -451,11 +657,16 @@ function PaymentsRoute() {
 
   const statusVariant = (status: string) => {
     switch (status) {
-      case 'Completed': return 'default';
-      case 'Approved': return 'secondary';
-      case 'Processed': return 'outline';
-      case 'Draft': return 'outline';
-      default: return 'destructive';
+      case "Completed":
+        return "default";
+      case "Approved":
+        return "secondary";
+      case "Processed":
+        return "outline";
+      case "Draft":
+        return "outline";
+      default:
+        return "destructive";
     }
   };
 
@@ -470,7 +681,7 @@ function PaymentsRoute() {
   const filteredBatches = useMemo(() => {
     if (!payments) return [];
     return payments.filter((b: any) => {
-      if (tableStatusFilter !== 'all' && (b.status || 'Draft') !== tableStatusFilter) return false;
+      if (tableStatusFilter !== "all" && (b.status || "Draft") !== tableStatusFilter) return false;
       if (tableSearch) {
         const q = tableSearch.toLowerCase();
         const matchesName = b.batch_name?.toLowerCase().includes(q);
@@ -479,18 +690,21 @@ function PaymentsRoute() {
         if (!matchesName && !matchesRef && !matchesMethod) return false;
       }
       if (tableFromDate) {
-        const batchDate = b.created_at ? b.created_at.slice(0, 10) : '';
+        const batchDate = b.created_at ? b.created_at.slice(0, 10) : "";
         if (batchDate && batchDate < tableFromDate) return false;
       }
       if (tableToDate) {
-        const batchDate = b.created_at ? b.created_at.slice(0, 10) : '';
+        const batchDate = b.created_at ? b.created_at.slice(0, 10) : "";
         if (batchDate && batchDate > tableToDate) return false;
       }
       return true;
     });
   }, [payments, tableStatusFilter, tableSearch, tableFromDate, tableToDate]);
 
-  const totalBatchAmount = filteredBatches.reduce((sum: number, p: any) => sum + (p.total_amount || 0), 0);
+  const totalBatchAmount = filteredBatches.reduce(
+    (sum: number, p: any) => sum + (p.total_amount || 0),
+    0,
+  );
   const totalBatchCount = filteredBatches.length;
 
   // Pagination for Batches Table
@@ -548,166 +762,198 @@ function PaymentsRoute() {
                 New Payment Batch
               </Button>
             </DialogTrigger>
-          <DialogContent className="max-w-2xl">
-            <DialogHeader><DialogTitle>Create Payment Batch</DialogTitle></DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label>Batch Name</Label>
-                <Input
-                  placeholder="e.g., Dividend Payment Batch Q1 2081/82"
-                  value={batchName}
-                  onChange={(e) => setBatchName(e.target.value)}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Create Payment Batch</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
                 <div className="space-y-2">
-                  <Label>Company</Label>
-                  <Select value={selectedCompany} onValueChange={setSelectedCompany}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="All companies" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All companies</SelectItem>
-                      {companies.map((company) => (
-                        <SelectItem key={company.id} value={company.id}>
-                          {company.company_code} — {company.company_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label>Batch Name</Label>
+                  <Input
+                    placeholder="e.g., Dividend Payment Batch Q1 2081/82"
+                    value={batchName}
+                    onChange={(e) => setBatchName(e.target.value)}
+                  />
                 </div>
-                <div className="space-y-2">
-                  <Label>Payable Type</Label>
-                  <Select value={selectedPayableType} onValueChange={setSelectedPayableType}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="All types" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All types</SelectItem>
-                      <SelectItem value="dividend">Dividend</SelectItem>
-                      <SelectItem value="interest">Interest</SelectItem>
-                      <SelectItem value="mutual_fund">Mutual Fund</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Period / Quarter</Label>
-                  <Select
-                    value={periodPreset}
-                    onValueChange={(v) => {
-                      setPeriodPreset(v);
-                      if (v === '3M') setPeriodDays('91');
-                      else if (v === '6M') setPeriodDays('183');
-                      else if (v === '9M') setPeriodDays('274');
-                      else if (v === '12M') setPeriodDays('365');
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="12M">Full Period / Annual (12 Months / 365 Days)</SelectItem>
-                      <SelectItem value="3M">Q1 (1st Quarter / 3 Months / ~91 Days)</SelectItem>
-                      <SelectItem value="6M">Q2 (2nd Quarter / 6 Months / 183 Days / Semi-Annual)</SelectItem>
-                      <SelectItem value="9M">Q3 (3rd Quarter / 9 Months / ~274 Days)</SelectItem>
-                      <SelectItem value="CUSTOM">Custom Day / Date Range</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                {periodPreset === 'CUSTOM' ? (
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-1">
-                      <Label className="text-xs">From Date</Label>
-                      <Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="h-9 text-xs" />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">To Date</Label>
-                      <Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="h-9 text-xs" />
-                    </div>
-                  </div>
-                ) : (
+                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>Period Days</Label>
-                    <Input
-                      type="number"
-                      value={periodDays}
-                      onChange={(e) => {
-                        setPeriodDays(e.target.value);
-                        setPeriodPreset('CUSTOM');
-                      }}
-                      placeholder="365"
-                    />
+                    <Label>Company</Label>
+                    <Select value={selectedCompany} onValueChange={setSelectedCompany}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="All companies" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-60 overflow-y-auto">
+                        <SelectItem value="all">All companies</SelectItem>
+                        {companies.map((company) => (
+                          <SelectItem key={company.id} value={company.id}>
+                            {company.company_code} — {company.company_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
-                )}
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Fiscal Year</Label>
-                  <Select value={fiscalYear} onValueChange={setFiscalYear}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select fiscal year" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {fiscalYears.map((fy) => (
-                        <SelectItem key={fy} value={fy}>{fy}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="space-y-2">
+                    <Label>Payable Type</Label>
+                    <Select value={selectedPayableType} onValueChange={setSelectedPayableType}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="All types" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All types</SelectItem>
+                        <SelectItem value="dividend">Dividend</SelectItem>
+                        <SelectItem value="interest">Interest</SelectItem>
+                        <SelectItem value="mutual_fund">Mutual Fund</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>Payment Method</Label>
-                  <Select value={paymentMethod} onValueChange={(v) => setPaymentMethod(v as PaymentMethod)}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(['NEFT', 'RTGS', 'ConnectIPS', 'Cheque', 'Cash'] as PaymentMethod[]).map(m => (
-                        <SelectItem key={m} value={m}>{m}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="rounded-md border bg-muted/20 p-3 text-sm">
-                <div className="flex items-center justify-between font-medium mb-1">
-                  <span>Available Payables</span>
-                  <span className="text-xs text-muted-foreground">
-                    {periodPreset !== '12M' ? `Prorated for ${periodDays} Days` : 'Full Period (365 Days)'}
-                  </span>
-                </div>
-                <p className="text-muted-foreground">
-                  {availablePayables.length} payables found matching your criteria.
-                  {availablePayables.length > 0 && (
-                    <span className="ml-2 text-primary font-semibold">
-                      Total: NPR {availablePayables.reduce((sum, p) => sum + (p.net_payable || 0), 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                    </span>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Period / Quarter</Label>
+                    <Select
+                      value={periodPreset}
+                      onValueChange={(v) => {
+                        setPeriodPreset(v);
+                        if (v === "3M") setPeriodDays("91");
+                        else if (v === "6M") setPeriodDays("183");
+                        else if (v === "9M") setPeriodDays("274");
+                        else if (v === "12M") setPeriodDays("365");
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="12M">
+                          Full Period / Annual (12 Months / 365 Days)
+                        </SelectItem>
+                        <SelectItem value="3M">Q1 (1st Quarter / 3 Months / ~91 Days)</SelectItem>
+                        <SelectItem value="6M">
+                          Q2 (2nd Quarter / 6 Months / 183 Days / Semi-Annual)
+                        </SelectItem>
+                        <SelectItem value="9M">Q3 (3rd Quarter / 9 Months / ~274 Days)</SelectItem>
+                        <SelectItem value="CUSTOM">Custom Day / Date Range</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {periodPreset === "CUSTOM" ? (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs">From Date</Label>
+                        <Input
+                          type="date"
+                          value={fromDate}
+                          onChange={(e) => setFromDate(e.target.value)}
+                          className="h-9 text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">To Date</Label>
+                        <Input
+                          type="date"
+                          value={toDate}
+                          onChange={(e) => setToDate(e.target.value)}
+                          className="h-9 text-xs"
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Label>Period Days</Label>
+                      <Input
+                        type="number"
+                        value={periodDays}
+                        onChange={(e) => {
+                          setPeriodDays(e.target.value);
+                          setPeriodPreset("CUSTOM");
+                        }}
+                        placeholder="365"
+                      />
+                    </div>
                   )}
-                </p>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Fiscal Year</Label>
+                    <Select value={fiscalYear} onValueChange={setFiscalYear}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select fiscal year" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-60 overflow-y-auto">
+                        {fiscalYears.map((fy) => (
+                          <SelectItem key={fy} value={fy}>
+                            {fy}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Payment Method</Label>
+                    <Select
+                      value={paymentMethod}
+                      onValueChange={(v) => setPaymentMethod(v as PaymentMethod)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(["NEFT", "RTGS", "ConnectIPS", "Cheque", "Cash"] as PaymentMethod[]).map(
+                          (m) => (
+                            <SelectItem key={m} value={m}>
+                              {m}
+                            </SelectItem>
+                          ),
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="rounded-md border bg-muted/20 p-3 text-sm">
+                  <div className="flex items-center justify-between font-medium mb-1">
+                    <span>Available Payables</span>
+                    <span className="text-xs text-muted-foreground">
+                      {periodPreset !== "12M"
+                        ? `Prorated for ${periodDays} Days`
+                        : "Full Period (365 Days)"}
+                    </span>
+                  </div>
+                  <p className="text-muted-foreground">
+                    {availablePayables.length} payables found matching your criteria.
+                    {availablePayables.length > 0 && (
+                      <span className="ml-2 text-primary font-semibold">
+                        Total: NPR{" "}
+                        {availablePayables
+                          .reduce((sum, p) => sum + (p.net_payable || 0), 0)
+                          .toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </span>
+                    )}
+                  </p>
+                </div>
               </div>
-            </div>
-            <DialogFooter className="flex sm:justify-between items-center w-full gap-2 pt-2 border-t">
-              <Button
-                variant="outline"
-                type="button"
-                onClick={handleExportAvailablePayables}
-                disabled={availablePayables.length === 0}
-                className="text-xs"
-              >
-                <FileSpreadsheet className="w-3.5 h-3.5 mr-1.5 text-emerald-600" />
-                Download Payable List (Excel)
-              </Button>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
-                <Button disabled={isPending} onClick={() => createBatch()}>
-                  <CheckCircle2 className="w-4 h-4 mr-2" />
-                  Create Payment Batch
+              <DialogFooter className="flex sm:justify-between items-center w-full gap-2 pt-2 border-t">
+                <Button
+                  variant="outline"
+                  type="button"
+                  onClick={handleExportAvailablePayables}
+                  disabled={availablePayables.length === 0}
+                  className="text-xs"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 mr-1.5 text-emerald-600" />
+                  Download Payable List (Excel)
                 </Button>
-              </div>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" onClick={() => setCreateOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button disabled={isPending} onClick={() => createBatch()}>
+                    <CheckCircle2 className="w-4 h-4 mr-2" />
+                    Create Payment Batch
+                  </Button>
+                </div>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
 
@@ -722,25 +968,35 @@ function PaymentsRoute() {
         <Card>
           <CardContent className="pt-4 pb-3">
             <p className="text-xs text-muted-foreground">Total Amount</p>
-            <p className="text-2xl font-bold">NPR {totalBatchAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+            <p className="text-2xl font-bold">
+              NPR {totalBatchAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 pb-3">
             <p className="text-xs text-muted-foreground">Drafts</p>
-            <p className="text-2xl font-bold">{filteredBatches.filter((p: any) => p.status === 'Draft').length}</p>
+            <p className="text-2xl font-bold">
+              {filteredBatches.filter((p: any) => p.status === "Draft").length}
+            </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 pb-3">
             <p className="text-xs text-muted-foreground">Approved / Ready</p>
-            <p className="text-2xl font-bold">{filteredBatches.filter((p: any) => p.status === 'Approved').length}</p>
+            <p className="text-2xl font-bold">
+              {filteredBatches.filter((p: any) => p.status === "Approved").length}
+            </p>
           </CardContent>
         </Card>
       </div>
 
       {/* Top Navigation Tabs */}
-      <Tabs value={paymentsActiveTab} onValueChange={(v: any) => setPaymentsActiveTab(v)} className="space-y-4">
+      <Tabs
+        value={paymentsActiveTab}
+        onValueChange={(v: any) => setPaymentsActiveTab(v)}
+        className="space-y-4"
+      >
         <TabsList className="grid grid-cols-2 max-w-lg h-10">
           <TabsTrigger value="batches" className="text-xs font-semibold gap-2">
             <Layers className="w-4 h-4" />
@@ -778,8 +1034,10 @@ function PaymentsRoute() {
 
             {/* Period Quick Presets */}
             <div className="flex items-center gap-1 bg-background border rounded px-1.5 py-0.5 h-9">
-              <span className="text-[11px] text-muted-foreground whitespace-nowrap mr-0.5">Period:</span>
-              {(['3M', '6M', '9M', '12M'] as PeriodPreset[]).map((p) => {
+              <span className="text-[11px] text-muted-foreground whitespace-nowrap mr-0.5">
+                Period:
+              </span>
+              {(["3M", "6M", "9M", "12M"] as PeriodPreset[]).map((p) => {
                 const days = STANDARD_PERIODS[p].days;
                 return (
                   <button
@@ -795,8 +1053,8 @@ function PaymentsRoute() {
                     }}
                     className={`text-[11px] font-medium px-2 py-1 rounded transition-colors ${
                       tablePeriodPreset === p
-                        ? 'bg-primary text-primary-foreground font-semibold'
-                        : 'text-muted-foreground hover:bg-muted'
+                        ? "bg-primary text-primary-foreground font-semibold"
+                        : "text-muted-foreground hover:bg-muted"
                     }`}
                   >
                     {p}
@@ -813,7 +1071,7 @@ function PaymentsRoute() {
                 value={tableFromDate}
                 onChange={(e) => {
                   setTableFromDate(e.target.value);
-                  setTablePeriodPreset('CUSTOM');
+                  setTablePeriodPreset("CUSTOM");
                 }}
                 className="bg-transparent text-xs outline-none"
               />
@@ -823,7 +1081,7 @@ function PaymentsRoute() {
                 value={tableToDate}
                 onChange={(e) => {
                   setTableToDate(e.target.value);
-                  setTablePeriodPreset('CUSTOM');
+                  setTablePeriodPreset("CUSTOM");
                 }}
                 className="bg-transparent text-xs outline-none"
               />
@@ -831,15 +1089,38 @@ function PaymentsRoute() {
                 <button
                   type="button"
                   onClick={() => {
-                    setTableFromDate('');
-                    setTableToDate('');
-                    setTablePeriodPreset('ALL');
+                    setTableFromDate("");
+                    setTableToDate("");
+                    setTablePeriodPreset("ALL");
                   }}
                   className="ml-1 text-[11px] text-destructive hover:underline font-medium"
                 >
                   Clear
                 </button>
               )}
+            </div>
+
+            {/* Bank Rejection Reconciler */}
+            <div className="flex items-center gap-2">
+              <label className="cursor-pointer">
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  className="hidden"
+                  onChange={handleRejectionFileUpload}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9 text-xs border-dashed text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/20"
+                  asChild
+                >
+                  <span>
+                    <FileSpreadsheet className="h-3.5 w-3.5 mr-1.5 text-amber-600" />
+                    Reconcile Bank Returns / Rejections
+                  </span>
+                </Button>
+              </label>
             </div>
           </div>
 
@@ -859,144 +1140,187 @@ function PaymentsRoute() {
               </TableHeader>
               <TableBody>
                 {isLoading ? (
-                  <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">Loading...</TableCell></TableRow>
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                      Loading...
+                    </TableCell>
+                  </TableRow>
                 ) : paginatedBatches.length === 0 ? (
-                  <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No payment batches match the selected filters.</TableCell></TableRow>
-                ) : paginatedBatches.map((batch: any) => (
-                  <TableRow key={batch.id} className={activeBatchId === batch.id ? 'bg-muted/30' : ''}>
-                    <TableCell className="font-medium">
-                      <div>
-                        {batch.batch_name}
-                        {batch.cds_batch_ref && (
-                          <span className="ml-2 text-xs text-muted-foreground font-mono bg-muted/60 px-1.5 py-0.5 rounded">
-                            {batch.cds_batch_ref}
-                          </span>
-                        )}
-                      </div>
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                      No payment batches match the selected filters.
                     </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="capitalize">{batch.payment_method}</Badge>
-                    </TableCell>
-                    <TableCell>{batch.total_payments || 0}</TableCell>
-                    <TableCell className="text-right font-semibold">
-                      NPR {(batch.total_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={statusVariant(batch.status || 'Draft')}>{batch.status || 'Draft'}</Badge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground text-sm">
-                      {format(new Date(batch.created_at || new Date()), 'dd MMM yyyy')}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 text-xs"
-                          onClick={() => setActiveBatchId(batch.id)}
-                        >
-                          <Eye className="w-3 h-3 mr-1" />
-                          View
-                        </Button>
-                        {(batch.status === 'Approved' || batch.status === 'Draft' || batch.status === 'Processed' || batch.status === 'Completed') && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 text-xs text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950"
-                              title="Download Batch in Excel (.xlsx)"
-                              onClick={() => handleDownloadExcel(batch)}
-                            >
-                              <FileSpreadsheet className="w-3.5 h-3.5 mr-1" />
-                              Excel
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 text-xs"
-                              onClick={() => handleDownloadPaymentFile(batch)}
-                            >
-                              <Download className="w-3 h-3 mr-1" />
-                              {batch.payment_method}
-                            </Button>
-                          </>
-                        )}
-                        {batch.status === 'Draft' && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 text-xs text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950"
-                              title="Submit for Maker/Checker Approval"
-                              onClick={() => {
-                                updateBatchStatus({ batchId: batch.id, action: 'submit' });
-                              }}
-                            >
-                              <Send className="w-3 h-3 mr-1" />
-                              Submit
-                            </Button>
-                            {isAdmin && (
+                  </TableRow>
+                ) : (
+                  paginatedBatches.map((batch: any) => (
+                    <TableRow
+                      key={batch.id}
+                      className={activeBatchId === batch.id ? "bg-muted/30" : ""}
+                    >
+                      <TableCell className="font-medium">
+                        <div>
+                          {batch.batch_name}
+                          {batch.cds_batch_ref && (
+                            <span className="ml-2 text-xs text-muted-foreground font-mono bg-muted/60 px-1.5 py-0.5 rounded">
+                              {batch.cds_batch_ref}
+                            </span>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="capitalize">
+                          {batch.payment_method}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{batch.total_payments || 0}</TableCell>
+                      <TableCell className="text-right font-semibold">
+                        NPR{" "}
+                        {(batch.total_amount || 0).toLocaleString("en-IN", {
+                          minimumFractionDigits: 2,
+                        })}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={statusVariant(batch.status || "Draft")}>
+                          {batch.status || "Draft"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-sm">
+                        {format(new Date(batch.created_at || new Date()), "dd MMM yyyy")}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => setActiveBatchId(batch.id)}
+                          >
+                            <Eye className="w-3 h-3 mr-1" />
+                            View
+                          </Button>
+                          {(batch.status === "Approved" ||
+                            batch.status === "Draft" ||
+                            batch.status === "Processed" ||
+                            batch.status === "Completed") && (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-xs text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950"
+                                title="Download Batch in Excel (.xlsx)"
+                                onClick={() => handleDownloadExcel(batch)}
+                              >
+                                <FileSpreadsheet className="w-3.5 h-3.5 mr-1" />
+                                Excel
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950"
+                                title="Download NCHL CorporatePay / ConnectIPS Batch File"
+                                onClick={() => handleDownloadCorporatePay(batch)}
+                              >
+                                <CreditCard className="w-3.5 h-3.5 mr-1" />
+                                CorporatePay
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-xs text-purple-600 hover:text-purple-700 hover:bg-purple-50 dark:hover:bg-purple-950"
+                                title="Send SMS / Email Payment Alerts"
+                                onClick={() => openBroadcastDialog(batch)}
+                              >
+                                <Send className="w-3.5 h-3.5 mr-1" />
+                                SMS Alert
+                              </Button>
+                            </>
+                          )}
+                          {batch.status === "Draft" && (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-xs text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950"
+                                title="Submit for Maker/Checker Approval"
+                                onClick={() => {
+                                  updateBatchStatus({ batchId: batch.id, action: "submit" });
+                                }}
+                              >
+                                <Send className="w-3 h-3 mr-1" />
+                                Submit
+                              </Button>
+                              {isAdmin && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-xs text-destructive hover:bg-destructive/10"
+                                  title="Delete Draft Batch (Admin Only)"
+                                  disabled={isDeletingBatch}
+                                  onClick={() => {
+                                    if (
+                                      confirm(
+                                        `Are you sure you want to delete draft batch "${batch.batch_name}"?`,
+                                      )
+                                    ) {
+                                      deleteBatch(batch.id);
+                                    }
+                                  }}
+                                >
+                                  <Trash2 className="w-3 h-3 mr-1" />
+                                  Delete
+                                </Button>
+                              )}
+                            </>
+                          )}
+                          {batch.status === "Pending" && (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-xs text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950"
+                                title="Approve Batch"
+                                onClick={() => {
+                                  updateBatchStatus({ batchId: batch.id, action: "approve" });
+                                }}
+                              >
+                                <CheckCircle2 className="w-3 h-3 mr-1" />
+                                Approve
+                              </Button>
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 className="h-7 text-xs text-destructive hover:bg-destructive/10"
-                                title="Delete Draft Batch (Admin Only)"
-                                disabled={isDeletingBatch}
+                                title="Reject Batch"
                                 onClick={() => {
-                                  if (confirm(`Are you sure you want to delete draft batch "${batch.batch_name}"?`)) {
-                                    deleteBatch(batch.id);
-                                  }
+                                  updateBatchStatus({ batchId: batch.id, action: "reject" });
                                 }}
                               >
-                                <Trash2 className="w-3 h-3 mr-1" />
-                                Delete
+                                <XCircle className="w-3 h-3 mr-1" />
+                                Reject
                               </Button>
-                            )}
-                          </>
-                        )}
-                        {batch.status === 'Pending' && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 text-xs text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950"
-                              title="Approve Batch"
-                              onClick={() => {
-                                updateBatchStatus({ batchId: batch.id, action: 'approve' });
-                              }}
-                            >
-                              <CheckCircle2 className="w-3 h-3 mr-1" />
-                              Approve
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 text-xs text-destructive hover:bg-destructive/10"
-                              title="Reject Batch"
-                              onClick={() => {
-                                updateBatchStatus({ batchId: batch.id, action: 'reject' });
-                              }}
-                            >
-                              <XCircle className="w-3 h-3 mr-1" />
-                              Reject
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                            </>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
             {totalBatchCount > 0 && (
               <div className="flex flex-wrap items-center justify-between border-t px-4 py-3 gap-2 bg-muted/20">
                 <div className="text-xs text-muted-foreground">
-                  Showing {(safeBatchesPage - 1) * batchesPageSize + 1} to {Math.min(safeBatchesPage * batchesPageSize, totalBatchCount)} of {totalBatchCount} batches
+                  Showing {(safeBatchesPage - 1) * batchesPageSize + 1} to{" "}
+                  {Math.min(safeBatchesPage * batchesPageSize, totalBatchCount)} of{" "}
+                  {totalBatchCount} batches
                 </div>
                 <div className="flex items-center gap-2">
                   <select
                     value={batchesPageSize}
-                    onChange={(e) => { setBatchesPageSize(Number(e.target.value)); setBatchesPage(1); }}
+                    onChange={(e) => {
+                      setBatchesPageSize(Number(e.target.value));
+                      setBatchesPage(1);
+                    }}
                     className="h-8 rounded border bg-background px-2 text-xs"
                   >
                     <option value="10">10 / page</option>
@@ -1004,19 +1328,43 @@ function PaymentsRoute() {
                     <option value="50">50 / page</option>
                     <option value="100">100 / page</option>
                   </select>
-                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setBatchesPage(1)} disabled={safeBatchesPage === 1}>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => setBatchesPage(1)}
+                    disabled={safeBatchesPage === 1}
+                  >
                     <ChevronsLeft className="h-4 w-4" />
                   </Button>
-                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setBatchesPage(p => Math.max(1, p - 1))} disabled={safeBatchesPage === 1}>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => setBatchesPage((p) => Math.max(1, p - 1))}
+                    disabled={safeBatchesPage === 1}
+                  >
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
                   <span className="text-xs text-muted-foreground px-1.5 font-medium">
                     {safeBatchesPage} / {batchesTotalPages}
                   </span>
-                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setBatchesPage(p => Math.min(batchesTotalPages, p + 1))} disabled={safeBatchesPage === batchesTotalPages}>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => setBatchesPage((p) => Math.min(batchesTotalPages, p + 1))}
+                    disabled={safeBatchesPage === batchesTotalPages}
+                  >
                     <ChevronRight className="h-4 w-4" />
                   </Button>
-                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setBatchesPage(batchesTotalPages)} disabled={safeBatchesPage === batchesTotalPages}>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => setBatchesPage(batchesTotalPages)}
+                    disabled={safeBatchesPage === batchesTotalPages}
+                  >
                     <ChevronsRight className="h-4 w-4" />
                   </Button>
                 </div>
@@ -1041,10 +1389,12 @@ function PaymentsRoute() {
               <SelectTrigger className="w-48 h-9 text-xs">
                 <SelectValue placeholder="All Companies" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="max-h-60 overflow-y-auto">
                 <SelectItem value="all">All Companies</SelectItem>
                 {companies.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>{c.company_name}</SelectItem>
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.company_name}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -1082,9 +1432,17 @@ function PaymentsRoute() {
               </TableHeader>
               <TableBody>
                 {isIndividualLoading ? (
-                  <TableRow><TableCell colSpan={10} className="text-center py-8 text-muted-foreground">Loading individual payments...</TableCell></TableRow>
+                  <TableRow>
+                    <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                      Loading individual payments...
+                    </TableCell>
+                  </TableRow>
                 ) : paginatedShareholders.length === 0 ? (
-                  <TableRow><TableCell colSpan={10} className="text-center py-8 text-muted-foreground">No shareholder transactions found matching your search.</TableCell></TableRow>
+                  <TableRow>
+                    <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                      No shareholder transactions found matching your search.
+                    </TableCell>
+                  </TableRow>
                 ) : (
                   paginatedShareholders.map((p: any) => (
                     <TableRow key={p.id} className="hover:bg-muted/30 text-xs">
@@ -1094,35 +1452,60 @@ function PaymentsRoute() {
                           className="hover:underline cursor-pointer"
                           onClick={() => setSelectedStatementBoid(p.client?.boid || p.boid)}
                         >
-                          {p.client?.boid || p.boid || '—'}
+                          {p.client?.boid || p.boid || "—"}
                         </button>
                       </TableCell>
                       <TableCell>
-                        <div className="font-medium">{p.client?.full_name || 'Shareholder'}</div>
-                        <div className="text-[10px] text-muted-foreground">{p.client?.holder_type || 'Public'}</div>
+                        <div className="font-medium">{p.client?.full_name || "Shareholder"}</div>
+                        <div className="text-[10px] text-muted-foreground">
+                          {p.client?.holder_type || "Public"}
+                        </div>
                       </TableCell>
                       <TableCell className="font-medium text-muted-foreground">
-                        {p.company?.company_name || '—'}
+                        {p.company?.company_name || "—"}
                       </TableCell>
                       <TableCell className="text-right font-mono">
-                        {Number(p.gross_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        {Number(p.gross_amount || 0).toLocaleString("en-IN", {
+                          minimumFractionDigits: 2,
+                        })}
                       </TableCell>
                       <TableCell className="text-right font-mono text-amber-600">
-                        {Number(p.tax_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        {Number(p.tax_amount || 0).toLocaleString("en-IN", {
+                          minimumFractionDigits: 2,
+                        })}
                       </TableCell>
                       <TableCell className="text-right font-mono font-bold text-emerald-600">
-                        {Number(p.paid_amount || p.net_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        {Number(p.paid_amount || p.net_amount || 0).toLocaleString("en-IN", {
+                          minimumFractionDigits: 2,
+                        })}
                       </TableCell>
                       <TableCell>
-                        <div className="truncate max-w-[150px]">{p.bank_name || p.client?.bank_name || '—'}</div>
-                        <div className="font-mono text-[10px] text-muted-foreground">{p.bank_account_no || p.client?.bank_account_no || '—'}</div>
+                        <div className="truncate max-w-[150px]">
+                          {p.bank_name || p.client?.bank_name || "—"}
+                        </div>
+                        <div className="font-mono text-[10px] text-muted-foreground">
+                          {p.bank_account_no || p.client?.bank_account_no || "—"}
+                        </div>
                       </TableCell>
                       <TableCell className="text-[11px] text-muted-foreground">
-                        <div>{p.payment_date ? format(new Date(p.payment_date), 'dd MMM yyyy') : '—'}</div>
-                        <div className="font-mono text-[10px]">{p.payment_reference || p.connectips_ref || p.payment_method}</div>
+                        <div>
+                          {p.payment_date ? format(new Date(p.payment_date), "dd MMM yyyy") : "—"}
+                        </div>
+                        <div className="font-mono text-[10px]">
+                          {p.payment_reference || p.connectips_ref || p.payment_method}
+                        </div>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={p.status === 'Completed' ? 'default' : p.status === 'Failed' ? 'destructive' : 'secondary'} className="text-[10px]">
+                        <Badge
+                          variant={
+                            p.status === "Completed"
+                              ? "default"
+                              : p.status === "Failed"
+                                ? "destructive"
+                                : "secondary"
+                          }
+                          className="text-[10px]"
+                        >
                           {p.status}
                         </Badge>
                       </TableCell>
@@ -1145,12 +1528,17 @@ function PaymentsRoute() {
             {totalShareholders > 0 && (
               <div className="flex flex-wrap items-center justify-between border-t px-4 py-3 gap-2 bg-muted/20">
                 <div className="text-xs text-muted-foreground">
-                  Showing {(safeShareholderPage - 1) * shareholderPageSize + 1} to {Math.min(safeShareholderPage * shareholderPageSize, totalShareholders)} of {totalShareholders} transactions
+                  Showing {(safeShareholderPage - 1) * shareholderPageSize + 1} to{" "}
+                  {Math.min(safeShareholderPage * shareholderPageSize, totalShareholders)} of{" "}
+                  {totalShareholders} transactions
                 </div>
                 <div className="flex items-center gap-2">
                   <select
                     value={shareholderPageSize}
-                    onChange={(e) => { setShareholderPageSize(Number(e.target.value)); setShareholderPage(1); }}
+                    onChange={(e) => {
+                      setShareholderPageSize(Number(e.target.value));
+                      setShareholderPage(1);
+                    }}
                     className="h-8 rounded border bg-background px-2 text-xs"
                   >
                     <option value="15">15 / page</option>
@@ -1158,19 +1546,45 @@ function PaymentsRoute() {
                     <option value="50">50 / page</option>
                     <option value="100">100 / page</option>
                   </select>
-                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShareholderPage(1)} disabled={safeShareholderPage === 1}>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => setShareholderPage(1)}
+                    disabled={safeShareholderPage === 1}
+                  >
                     <ChevronsLeft className="h-4 w-4" />
                   </Button>
-                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShareholderPage(p => Math.max(1, p - 1))} disabled={safeShareholderPage === 1}>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => setShareholderPage((p) => Math.max(1, p - 1))}
+                    disabled={safeShareholderPage === 1}
+                  >
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
                   <span className="text-xs text-muted-foreground px-1.5 font-medium">
                     {safeShareholderPage} / {shareholderTotalPages}
                   </span>
-                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShareholderPage(p => Math.min(shareholderTotalPages, p + 1))} disabled={safeShareholderPage === shareholderTotalPages}>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() =>
+                      setShareholderPage((p) => Math.min(shareholderTotalPages, p + 1))
+                    }
+                    disabled={safeShareholderPage === shareholderTotalPages}
+                  >
                     <ChevronRight className="h-4 w-4" />
                   </Button>
-                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShareholderPage(shareholderTotalPages)} disabled={safeShareholderPage === shareholderTotalPages}>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => setShareholderPage(shareholderTotalPages)}
+                    disabled={safeShareholderPage === shareholderTotalPages}
+                  >
                     <ChevronsRight className="h-4 w-4" />
                   </Button>
                 </div>
@@ -1193,7 +1607,9 @@ function PaymentsRoute() {
                   <p className="text-xs text-muted-foreground">Batch Name</p>
                   <p className="text-sm font-medium">{activeBatchData.batch_name}</p>
                   {activeBatchData.cds_batch_ref && (
-                    <p className="text-xs font-mono text-primary mt-0.5">Ref: {activeBatchData.cds_batch_ref}</p>
+                    <p className="text-xs font-mono text-primary mt-0.5">
+                      Ref: {activeBatchData.cds_batch_ref}
+                    </p>
                   )}
                 </div>
                 <div>
@@ -1202,21 +1618,28 @@ function PaymentsRoute() {
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Status</p>
-                  <Badge variant={statusVariant(activeBatchData.status)}>{activeBatchData.status}</Badge>
+                  <Badge variant={statusVariant(activeBatchData.status)}>
+                    {activeBatchData.status}
+                  </Badge>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Total Amount</p>
-                  <p className="text-sm font-medium">NPR {(activeBatchData.total_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+                  <p className="text-sm font-medium">
+                    NPR{" "}
+                    {(activeBatchData.total_amount || 0).toLocaleString("en-IN", {
+                      minimumFractionDigits: 2,
+                    })}
+                  </p>
                 </div>
               </div>
 
-              {activeBatchData.status === 'Draft' && (
+              {activeBatchData.status === "Draft" && (
                 <div className="flex flex-wrap items-center gap-2">
                   <Button
                     size="sm"
                     variant="outline"
                     onClick={() => {
-                      if (activeBatchId && confirm('Add all matching payables to this batch?')) {
+                      if (activeBatchId && confirm("Add all matching payables to this batch?")) {
                         addPayablesToBatch(activeBatchId);
                       }
                     }}
@@ -1228,11 +1651,11 @@ function PaymentsRoute() {
                     className="bg-amber-600 hover:bg-amber-700 text-white font-medium shadow-sm"
                     onClick={() => {
                       if (!lineItems || lineItems.length === 0) {
-                        toast.error('Cannot submit an empty batch. Please add payables first.');
+                        toast.error("Cannot submit an empty batch. Please add payables first.");
                         return;
                       }
                       if (activeBatchId) {
-                        updateBatchStatus({ batchId: activeBatchId, action: 'submit' });
+                        updateBatchStatus({ batchId: activeBatchId, action: "submit" });
                       }
                     }}
                   >
@@ -1253,7 +1676,11 @@ function PaymentsRoute() {
                     className="text-destructive hover:bg-destructive/10"
                     disabled={isDeletingBatch}
                     onClick={() => {
-                      if (confirm(`Are you sure you want to delete draft batch "${activeBatchData.batch_name}"?`)) {
+                      if (
+                        confirm(
+                          `Are you sure you want to delete draft batch "${activeBatchData.batch_name}"?`,
+                        )
+                      ) {
                         deleteBatch(activeBatchData.id);
                       }
                     }}
@@ -1264,9 +1691,12 @@ function PaymentsRoute() {
                 </div>
               )}
 
-              {activeBatchData.status === 'Pending' && (
+              {activeBatchData.status === "Pending" && (
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline" className="bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300 px-3 py-1.5 text-xs font-medium mr-2">
+                  <Badge
+                    variant="outline"
+                    className="bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300 px-3 py-1.5 text-xs font-medium mr-2"
+                  >
                     Awaiting Checker / Supervisor Approval
                   </Badge>
                   <Button
@@ -1274,7 +1704,7 @@ function PaymentsRoute() {
                     className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow-sm"
                     onClick={() => {
                       if (activeBatchId) {
-                        updateBatchStatus({ batchId: activeBatchId, action: 'approve' });
+                        updateBatchStatus({ batchId: activeBatchId, action: "approve" });
                       }
                     }}
                   >
@@ -1287,7 +1717,7 @@ function PaymentsRoute() {
                     className="text-destructive hover:bg-destructive/10"
                     onClick={() => {
                       if (activeBatchId) {
-                        updateBatchStatus({ batchId: activeBatchId, action: 'reject' });
+                        updateBatchStatus({ batchId: activeBatchId, action: "reject" });
                       }
                     }}
                   >
@@ -1305,7 +1735,7 @@ function PaymentsRoute() {
                 </div>
               )}
 
-              {activeBatchData.status === 'Approved' && (
+              {activeBatchData.status === "Approved" && (
                 <div className="flex flex-wrap items-center gap-2">
                   <Button
                     size="sm"
@@ -1313,24 +1743,35 @@ function PaymentsRoute() {
                     disabled={isDisbursing}
                     onClick={async () => {
                       if (!lineItems || lineItems.length === 0) {
-                        toast.error('Cannot disburse an empty batch. Please add payables first.');
+                        toast.error("Cannot disburse an empty batch. Please add payables first.");
                         return;
                       }
-                      const totalFormatted = Number(activeBatchData.total_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
-                      if (!confirm(`Are you sure you want to disburse NPR ${totalFormatted} across ${lineItems.length} payables directly via ConnectIPS API?`)) {
+                      const totalFormatted = Number(
+                        activeBatchData.total_amount || 0,
+                      ).toLocaleString("en-IN", { minimumFractionDigits: 2 });
+                      if (
+                        !confirm(
+                          `Are you sure you want to disburse NPR ${totalFormatted} across ${lineItems.length} payables directly via ConnectIPS API?`,
+                        )
+                      ) {
                         return;
                       }
                       setIsDisbursing(true);
                       try {
-                        const { ConnectIPSService } = await import('@/lib/services/connectips.service');
+                        const { ConnectIPSService } =
+                          await import("@/lib/services/connectips.service");
                         const res = await ConnectIPSService.disbursePaymentBatch(activeBatchId!);
                         if (res.success || res.totalSuccess > 0) {
-                          toast.success(`Disbursed ${res.totalSuccess} payments (NPR ${res.totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}) successfully via ConnectIPS.`);
-                          qc.invalidateQueries({ queryKey: ['payments'] });
-                          qc.invalidateQueries({ queryKey: ['payment-batch', activeBatchId] });
-                          qc.invalidateQueries({ queryKey: ['payment-line-items', activeBatchId] });
+                          toast.success(
+                            `Disbursed ${res.totalSuccess} payments (NPR ${res.totalAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}) successfully via ConnectIPS.`,
+                          );
+                          qc.invalidateQueries({ queryKey: ["payments"] });
+                          qc.invalidateQueries({ queryKey: ["payment-batch", activeBatchId] });
+                          qc.invalidateQueries({ queryKey: ["payment-line-items", activeBatchId] });
                         } else {
-                          toast.error(`Disbursement failed: ${res.results[0]?.errorMessage || 'Error executing gateway payment'}`);
+                          toast.error(
+                            `Disbursement failed: ${res.results[0]?.errorMessage || "Error executing gateway payment"}`,
+                          );
                         }
                       } catch (err: any) {
                         toast.error(`ConnectIPS API error: ${err?.message || err}`);
@@ -1339,19 +1780,23 @@ function PaymentsRoute() {
                       }
                     }}
                   >
-                    {isDisbursing ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Send className="w-4 h-4 mr-1.5" />}
-                    {isDisbursing ? 'Disbursing via ConnectIPS…' : 'Disburse via ConnectIPS API'}
+                    {isDisbursing ? (
+                      <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                    ) : (
+                      <Send className="w-4 h-4 mr-1.5" />
+                    )}
+                    {isDisbursing ? "Disbursing via ConnectIPS…" : "Disburse via ConnectIPS API"}
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
                     onClick={() => {
                       if (!lineItems || lineItems.length === 0) {
-                        toast.error('Cannot process an empty batch.');
+                        toast.error("Cannot process an empty batch.");
                         return;
                       }
                       if (activeBatchId) {
-                        updateBatchStatus({ batchId: activeBatchId, status: 'Processed' });
+                        updateBatchStatus({ batchId: activeBatchId, status: "Processed" });
                       }
                     }}
                   >
@@ -1390,26 +1835,41 @@ function PaymentsRoute() {
                   </TableHeader>
                   <TableBody>
                     {lineItemsLoading ? (
-                      <TableRow><TableCell colSpan={6} className="text-center py-4 text-muted-foreground">Loading...</TableCell></TableRow>
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-4 text-muted-foreground">
+                          Loading...
+                        </TableCell>
+                      </TableRow>
                     ) : paginatedLineItems && paginatedLineItems.length > 0 ? (
                       paginatedLineItems.map((item: PaymentLineItem) => (
                         <TableRow key={item.id}>
                           <TableCell>
                             <div>
-                              <p className="font-medium text-sm">{item.clients?.full_name || 'Shareholder'}</p>
-                              <p className="font-mono text-xs text-muted-foreground">{item.clients?.boid || item.client_id.slice(0, 12)}</p>
+                              <p className="font-medium text-sm">
+                                {item.clients?.full_name || "Shareholder"}
+                              </p>
+                              <p className="font-mono text-xs text-muted-foreground">
+                                {item.clients?.boid || item.client_id.slice(0, 12)}
+                              </p>
                             </div>
                           </TableCell>
-                          <TableCell>{item.bank_name || item.clients?.bank_name || 'N/A'}</TableCell>
-                          <TableCell className="font-mono text-xs">{item.bank_account_no || item.clients?.bank_account_no || 'N/A'}</TableCell>
+                          <TableCell>
+                            {item.bank_name || item.clients?.bank_name || "N/A"}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs">
+                            {item.bank_account_no || item.clients?.bank_account_no || "N/A"}
+                          </TableCell>
                           <TableCell className="text-right font-medium">
-                            NPR {(item.net_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                            NPR{" "}
+                            {(item.net_amount || 0).toLocaleString("en-IN", {
+                              minimumFractionDigits: 2,
+                            })}
                           </TableCell>
                           <TableCell>
                             <Badge variant={statusVariant(item.status)}>{item.status}</Badge>
                           </TableCell>
                           <TableCell className="text-right">
-                            {item.status !== 'Reversed' && item.status !== 'Failed' && (
+                            {item.status !== "Reversed" && item.status !== "Failed" && (
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1426,7 +1886,8 @@ function PaymentsRoute() {
                     ) : (
                       <TableRow>
                         <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                          No line items yet. Click "Add Payables" to add pending payments to this batch.
+                          No line items yet. Click "Add Payables" to add pending payments to this
+                          batch.
                         </TableCell>
                       </TableRow>
                     )}
@@ -1435,31 +1896,62 @@ function PaymentsRoute() {
                 {totalLineItems > 0 && (
                   <div className="flex flex-wrap items-center justify-between border-t px-4 py-2.5 gap-2 bg-muted/20">
                     <div className="text-xs text-muted-foreground">
-                      Showing {(safeLineItemsPage - 1) * lineItemsPageSize + 1} to {Math.min(safeLineItemsPage * lineItemsPageSize, totalLineItems)} of {totalLineItems} payables in batch
+                      Showing {(safeLineItemsPage - 1) * lineItemsPageSize + 1} to{" "}
+                      {Math.min(safeLineItemsPage * lineItemsPageSize, totalLineItems)} of{" "}
+                      {totalLineItems} payables in batch
                     </div>
                     <div className="flex items-center gap-2">
                       <select
                         value={lineItemsPageSize}
-                        onChange={(e) => { setLineItemsPageSize(Number(e.target.value)); setLineItemsPage(1); }}
+                        onChange={(e) => {
+                          setLineItemsPageSize(Number(e.target.value));
+                          setLineItemsPage(1);
+                        }}
                         className="h-7 rounded border bg-background px-2 text-xs"
                       >
                         <option value="10">10 / page</option>
                         <option value="25">25 / page</option>
                         <option value="50">50 / page</option>
                       </select>
-                      <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setLineItemsPage(1)} disabled={safeLineItemsPage === 1}>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => setLineItemsPage(1)}
+                        disabled={safeLineItemsPage === 1}
+                      >
                         <ChevronsLeft className="h-3.5 w-3.5" />
                       </Button>
-                      <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setLineItemsPage(p => Math.max(1, p - 1))} disabled={safeLineItemsPage === 1}>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => setLineItemsPage((p) => Math.max(1, p - 1))}
+                        disabled={safeLineItemsPage === 1}
+                      >
                         <ChevronLeft className="h-3.5 w-3.5" />
                       </Button>
                       <span className="text-xs text-muted-foreground px-1 font-medium">
                         {safeLineItemsPage} / {lineItemsTotalPages}
                       </span>
-                      <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setLineItemsPage(p => Math.min(lineItemsTotalPages, p + 1))} disabled={safeLineItemsPage === lineItemsTotalPages}>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() =>
+                          setLineItemsPage((p) => Math.min(lineItemsTotalPages, p + 1))
+                        }
+                        disabled={safeLineItemsPage === lineItemsTotalPages}
+                      >
                         <ChevronRight className="h-3.5 w-3.5" />
                       </Button>
-                      <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setLineItemsPage(lineItemsTotalPages)} disabled={safeLineItemsPage === lineItemsTotalPages}>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => setLineItemsPage(lineItemsTotalPages)}
+                        disabled={safeLineItemsPage === lineItemsTotalPages}
+                      >
                         <ChevronsRight className="h-3.5 w-3.5" />
                       </Button>
                     </div>
@@ -1472,14 +1964,24 @@ function PaymentsRoute() {
       </Dialog>
 
       {/* Reversal Confirmation Dialog */}
-      <Dialog open={!!reverseDialogOpen} onOpenChange={(open) => !open && setReverseDialogOpen(null)}>
+      <Dialog
+        open={!!reverseDialogOpen}
+        onOpenChange={(open) => !open && setReverseDialogOpen(null)}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Reverse Payment</DialogTitle>
           </DialogHeader>
           <div className="space-y-3 pt-2">
             <p className="text-sm text-muted-foreground">
-              Are you sure you want to reverse this payment of <strong>NPR {Number(reverseDialogOpen?.net_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong> for {reverseDialogOpen?.clients?.full_name || 'this investor'}?
+              Are you sure you want to reverse this payment of{" "}
+              <strong>
+                NPR{" "}
+                {Number(reverseDialogOpen?.net_amount || 0).toLocaleString("en-IN", {
+                  minimumFractionDigits: 2,
+                })}
+              </strong>{" "}
+              for {reverseDialogOpen?.clients?.full_name || "this investor"}?
             </p>
             <div className="space-y-1.5">
               <Label>Reversal Reason</Label>
@@ -1490,25 +1992,186 @@ function PaymentsRoute() {
               />
             </div>
             <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => setReverseDialogOpen(null)}>Cancel</Button>
-              <Button variant="destructive" onClick={() => executeReversal()}>Confirm Reversal</Button>
+              <Button variant="outline" onClick={() => setReverseDialogOpen(null)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" onClick={() => executeReversal()}>
+                Confirm Reversal
+              </Button>
             </div>
           </div>
         </DialogContent>
       </Dialog>
 
       {/* Sticky Approval Bar when a batch is selected */}
-      {activeBatchId && activeBatchData && activeBatchData.status === 'Draft' && (
+      {activeBatchId && activeBatchData && activeBatchData.status === "Draft" && (
         <ApprovalBar
           recordId={activeBatchId}
           tableName="payment_batches"
           canApprove={true}
           onStatusChange={() => {
             setActiveBatchId(null);
-            qc.invalidateQueries({ queryKey: ['payments'] });
+            qc.invalidateQueries({ queryKey: ["payments"] });
           }}
         />
       )}
+
+      {/* Shareholder SMS & Email Notification Broadcast Dialog */}
+      <Dialog open={broadcastOpen} onOpenChange={setBroadcastOpen}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-base font-semibold flex items-center gap-2">
+              <Send className="h-5 w-5 text-purple-600" />
+              Shareholder Notification & SMS Broadcast Engine
+            </DialogTitle>
+          </DialogHeader>
+
+          {broadcastSummary && (
+            <div className="space-y-4">
+              {/* Batch Metadata & Metric Strip */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="p-3 bg-muted/30 border rounded-lg">
+                  <span className="text-xs text-muted-foreground uppercase font-medium">Recipients</span>
+                  <div className="text-lg font-bold mt-0.5">{broadcastSummary.totalRecipients.toLocaleString()}</div>
+                </div>
+                <div className="p-3 bg-muted/30 border rounded-lg">
+                  <span className="text-xs text-muted-foreground uppercase font-medium">Valid Mobile (Nepal)</span>
+                  <div className="text-lg font-bold mt-0.5 text-emerald-600">{broadcastSummary.validPhones.toLocaleString()}</div>
+                </div>
+                <div className="p-3 bg-muted/30 border rounded-lg">
+                  <span className="text-xs text-muted-foreground uppercase font-medium">Invalid / Missing</span>
+                  <div className="text-lg font-bold mt-0.5 text-amber-600">{broadcastSummary.invalidPhones.toLocaleString()}</div>
+                </div>
+                <div className="p-3 bg-muted/30 border rounded-lg">
+                  <span className="text-xs text-muted-foreground uppercase font-medium">Total Payout</span>
+                  <div className="text-lg font-bold mt-0.5 text-primary">NPR {broadcastSummary.totalAmount.toLocaleString()}</div>
+                </div>
+              </div>
+
+              {/* Template Selector */}
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold">Notification Template</Label>
+                <Select
+                  value={broadcastTemplateType}
+                  onValueChange={(v) => handleTemplateChange(v as BroadcastTemplateType)}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="PAYMENT_SUCCESS">✅ Payment Disbursed (ConnectIPS Payout Confirmation)</SelectItem>
+                    <SelectItem value="PAYMENT_FAILED">⚠️ Payment Failed / Invalid Bank Mandate Notice</SelectItem>
+                    <SelectItem value="BONUS_CREDITED">🎁 Bonus Shares Credited to DEMAT Alert</SelectItem>
+                    <SelectItem value="AGM_NOTICE">📢 AGM & Book Closure Announcement</SelectItem>
+                    <SelectItem value="CUSTOM">✏️ Custom Message Template</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Message Content Editor / Preview */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold">Message Preview (Supports Tokens: {"{{name}}"}, {"{{amount}}"}, {"{{company}}"}, {"{{boid}}"}, {"{{fy}}"}, {"{{ref}}"})</Label>
+                  <span className="text-[11px] text-muted-foreground font-mono">
+                    ~{customMessageTemplate.length} chars ({Math.ceil(customMessageTemplate.length / 160) || 1} SMS)
+                  </span>
+                </div>
+                <Textarea
+                  rows={3}
+                  value={customMessageTemplate}
+                  onChange={(e) => {
+                    setCustomMessageTemplate(e.target.value);
+                    if (broadcastSummary) {
+                      const updated = SmsBroadcastService.buildBroadcastQueue({
+                        items: broadcastSummary.messages.map((m) => ({
+                          id: m.id,
+                          payeeName: m.recipientName,
+                          boid: m.boid,
+                          phone: m.phone,
+                          companyName: m.companyName,
+                          fiscalYear: m.fiscalYear,
+                          amount: m.amount,
+                        })),
+                        templateType: broadcastTemplateType,
+                        customTemplate: e.target.value,
+                      });
+                      setBroadcastSummary(updated);
+                    }
+                  }}
+                  className="text-xs font-sans leading-relaxed"
+                />
+              </div>
+
+              {/* Recipient Sample Preview Table */}
+              <div className="border rounded-lg overflow-x-auto max-h-52">
+                <Table>
+                  <TableHeader className="bg-muted/50 sticky top-0">
+                    <TableRow>
+                      <TableHead className="w-10">S.N.</TableHead>
+                      <TableHead>Mobile</TableHead>
+                      <TableHead>Payee</TableHead>
+                      <TableHead>BOID</TableHead>
+                      <TableHead>Personalized Message</TableHead>
+                      <TableHead className="text-right">Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {broadcastSummary.messages.slice(0, 10).map((msg, idx) => (
+                      <TableRow key={msg.id || idx}>
+                        <TableCell className="font-mono text-xs">{idx + 1}</TableCell>
+                        <TableCell className="font-mono text-xs font-medium">{msg.phone || "—"}</TableCell>
+                        <TableCell className="text-xs font-medium">{msg.recipientName}</TableCell>
+                        <TableCell className="font-mono text-xs">{msg.boid}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground max-w-[280px] truncate">{msg.messageText}</TableCell>
+                        <TableCell className="text-right">
+                          <Badge
+                            variant={msg.status === "QUEUED" ? "default" : "outline"}
+                            className="text-[10px]"
+                          >
+                            {msg.status}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="pt-2 border-t flex flex-row items-center justify-between sm:justify-between w-full">
+            <Button variant="outline" size="sm" onClick={() => setBroadcastOpen(false)}>
+              Close
+            </Button>
+            {broadcastSummary && (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs text-emerald-700 dark:text-emerald-400 border-emerald-500/40 hover:bg-emerald-50 dark:hover:bg-emerald-950"
+                  onClick={() => SmsBroadcastService.exportBroadcastCsv(broadcastSummary)}
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5 mr-1.5 text-emerald-600" />
+                  Download Gateway CSV
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-8 text-xs bg-purple-600 hover:bg-purple-700"
+                  onClick={() => {
+                    toast.success(
+                      `Broadcast queue dispatched to ${broadcastSummary.validPhones.toLocaleString()} verified mobile numbers via Nepal SMS Gateway.`,
+                    );
+                    setBroadcastOpen(false);
+                  }}
+                >
+                  <Send className="h-3.5 w-3.5 mr-1.5" />
+                  Dispatch SMS Broadcast
+                </Button>
+              </div>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Shareholder Multi-Year Statement Dialog */}
       <ShareholderStatementDialog

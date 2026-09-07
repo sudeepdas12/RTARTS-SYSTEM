@@ -1,25 +1,25 @@
-import { ImportService } from './services/import.service';
-import { UploadService } from './services/upload.service';
-import { supabase } from '@/integrations/supabase/client';
+import { ImportService } from "./services/import.service";
+import { UploadService } from "./services/upload.service";
+import { supabase } from "@/integrations/supabase/client";
 
 export interface ChunkProgress {
   totalRows: number;
   processedRows: number;
   successRows: number;
   errorRows: number;
-  status: 'Processing' | 'Completed' | 'Failed';
+  status: "Processing" | "Completed" | "Failed";
 }
 
 export interface ChunkOptions {
   fiscalYear?: string;
   dividendRate?: number;
-  tdsRate?: number;  // Explicit TDS rate override (e.g. 0.15 for Institutions)
-  dividendType?: 'Cash' | 'Stock' | 'Bonus' | 'Right';
-  companyId?: string;  // Direct company UUID — bypasses name-based lookup entirely
-  companyName?: string;  // Detected company name from file
-  companyIsin?: string;  // Detected ISIN from file
+  tdsRate?: number; // Explicit TDS rate override (e.g. 0.15 for Institutions)
+  dividendType?: "Cash" | "Stock" | "Bonus" | "Right";
+  companyId?: string; // Direct company UUID — bypasses name-based lookup entirely
+  companyName?: string; // Detected company name from file
+  companyIsin?: string; // Detected ISIN from file
   fileHash?: string;
-  sheetType?: string;  // Sheet name/type for fallback investor categorization
+  sheetType?: string; // Sheet name/type for fallback investor categorization
   fileName?: string;
   fileSize?: number;
   fileType?: string;
@@ -72,12 +72,30 @@ async function persistErrorRows(
     raw_data: toSafeJson(e?.raw_data),
   }));
 
-  try {
-    const { error: logErr } = await (supabase as any).from("upload_errors").insert(errorRows);
-    if (logErr) console.warn("Failed to log upload errors:", logErr.message);
-  } catch (logEx) {
-    console.warn("Failed to log upload errors:", logEx);
+  let lastError: Error | null = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const { error: logErr } = await (supabase as any).from("upload_errors").insert(errorRows);
+      if (logErr) {
+        lastError = new Error(logErr.message);
+        console.warn(`Attempt ${attempt} to log upload errors failed:`, logErr.message);
+      } else {
+        return; // Success
+      }
+    } catch (logEx: any) {
+      lastError = logEx instanceof Error ? logEx : new Error(String(logEx));
+      console.warn(`Attempt ${attempt} exception logging upload errors:`, logEx);
+    }
   }
+  if (lastError) {
+    console.error("Failed to persist upload errors after 2 attempts:", lastError.message);
+  }
+}
+
+export interface ChunkSharedContext {
+  companyId?: string;
+  clientIdCache?: Map<string, string>;
+  clientInfoCache?: Map<string, any>;
 }
 
 export const ChunkProcessor = {
@@ -87,16 +105,21 @@ export const ChunkProcessor = {
     targetTable: string,
     chunkSize = 1000,
     onProgress?: (progress: ChunkProgress) => void,
-    options?: ChunkOptions
+    options?: ChunkOptions,
+    externalSharedContext?: ChunkSharedContext,
   ): Promise<ChunkProgress> {
     let processed = 0;
     let success = 0;
     let errors = 0;
     const effectiveChunkSize = Math.max(250, chunkSize || 1000);
-    const sharedContext = {
-      companyId: options?.companyId || '',  // Use direct ID if provided (bypasses name lookup)
+    const sharedContext: ChunkSharedContext = externalSharedContext || {
+      companyId: options?.companyId || "", // Use direct ID if provided (bypasses name lookup)
       clientIdCache: new Map<string, string>(),
+      clientInfoCache: new Map<string, any>(),
     };
+    if (!sharedContext.clientIdCache) sharedContext.clientIdCache = new Map<string, string>();
+    if (!sharedContext.clientInfoCache) sharedContext.clientInfoCache = new Map<string, any>();
+    if (options?.companyId && !sharedContext.companyId) sharedContext.companyId = options.companyId;
 
     const totalChunks = Math.ceil(rows.length / effectiveChunkSize);
 
@@ -106,7 +129,13 @@ export const ChunkProcessor = {
       let rowErrorCount = 0;
 
       try {
-        const result = await ImportService.processChunk(uploadId, chunk, targetTable, options, sharedContext);
+        const result = await ImportService.processChunk(
+          uploadId,
+          chunk,
+          targetTable,
+          options,
+          sharedContext as any,
+        );
         // Use explicit inserted/processed counts from the processor (edge/RPC/fallback).
         // Default to 0 rather than assuming the entire chunk succeeded.
         const chunkSuccess = Number(result?.rowsProcessed ?? result?.inserted ?? 0);
@@ -133,11 +162,15 @@ export const ChunkProcessor = {
         // A chunk that was entirely footer/summary rows (rowsProcessed: 0, no errors)
         // is a successful skip, not a failure.
         if (chunk.length > 0 && chunkSuccess === 0 && !result?.duplicate && rowErrorCount > 0) {
-          throw new Error('No rows were inserted for this chunk.');
+          throw new Error("No rows were inserted for this chunk.");
         }
       } catch (err: any) {
         console.error(`Chunk ${i} failed`, err);
-        try { errorMessages.push(err?.message ?? String(err)); } catch {}
+        try {
+          errorMessages.push(err?.message ?? String(err));
+        } catch {
+          // Ignore error formatting issues
+        }
         // If the underlying processor already reported row-level validation errors,
         // do not add the entire chunk length again. That would double-count errors.
         if (rowErrorCount === 0) {
@@ -148,8 +181,8 @@ export const ChunkProcessor = {
           // stays empty -> "No error records found for this upload."
           const chunkErrorRows = chunk.map((row, idx) => ({
             row_number: i * effectiveChunkSize + idx + 1,
-            field_name: 'chunk',
-            error_type: 'chunk_error',
+            field_name: "chunk",
+            error_type: "chunk_error",
             error_message: `Chunk failed: ${err?.message ?? String(err)}`,
             raw_data: row,
           }));
@@ -159,14 +192,19 @@ export const ChunkProcessor = {
       }
 
       processed += chunk.length;
-      
+
       if (onProgress) {
         onProgress({
           totalRows: rows.length,
           processedRows: processed,
           successRows: success,
           errorRows: errors,
-          status: processed === rows.length ? (success === 0 && errors > 0 ? 'Failed' : 'Completed') : 'Processing'
+          status:
+            processed === rows.length
+              ? success === 0 && errors > 0
+                ? "Failed"
+                : "Completed"
+              : "Processing",
         });
       }
     }
@@ -177,13 +215,13 @@ export const ChunkProcessor = {
         success_rows: success,
         error_rows: errors,
       };
-      if (errorMessages.length > 0) updates.error_message = errorMessages.slice(0, 5).join(' ; ');
+      if (errorMessages.length > 0) updates.error_message = errorMessages.slice(0, 5).join(" ; ");
       // Mark as Completed even if some rows had errors — partial imports are still successful.
       // Only mark as Failed if ALL rows failed (success === 0 && errors > 0).
-      const finalStatus = success === 0 && errors > 0 ? 'Failed' : 'Completed';
+      const finalStatus = success === 0 && errors > 0 ? "Failed" : "Completed";
       await UploadService.updateUploadStatus(uploadId, finalStatus, updates);
     } catch (err) {
-      console.warn('Could not update upload_history status (table may not exist yet):', err);
+      console.warn("Could not update upload_history status (table may not exist yet):", err);
     }
 
     return {
@@ -191,7 +229,7 @@ export const ChunkProcessor = {
       processedRows: processed,
       successRows: success,
       errorRows: errors,
-      status: success === 0 && errors > 0 ? 'Failed' : 'Completed',
+      status: success === 0 && errors > 0 ? "Failed" : "Completed",
     };
-  }
+  },
 };

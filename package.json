@@ -1,5 +1,7 @@
 {
-  "name": "tanstack_start_ts",
+  "name": "rtarts-system",
+  "description": "RBB Merchant Banking Limited - RTS / RTARTS Management System",
+  "version": "1.0.0",
   "private": true,
   "sideEffects": false,
   "type": "module",

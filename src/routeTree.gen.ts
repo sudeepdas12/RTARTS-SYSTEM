@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
+import { Route as AuthenticatedAgmStudioRouteImport } from './routes/_authenticated/agm-studio'
 import { Route as AuthenticatedAllocationsRouteImport } from './routes/_authenticated/allocations'
 import { Route as AuthenticatedAnalyticsRouteImport } from './routes/_authenticated/analytics'
 import { Route as AuthenticatedApprovalsRouteImport } from './routes/_authenticated/approvals'
@@ -54,6 +55,11 @@ const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
   id: '/sitemap.xml',
   path: '/sitemap.xml',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedAgmStudioRoute = AuthenticatedAgmStudioRouteImport.update({
+  id: '/agm-studio',
+  path: '/agm-studio',
+  getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedAllocationsRoute =
   AuthenticatedAllocationsRouteImport.update({
@@ -177,6 +183,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/agm-studio': typeof AuthenticatedAgmStudioRoute
   '/allocations': typeof AuthenticatedAllocationsRoute
   '/analytics': typeof AuthenticatedAnalyticsRoute
   '/approvals': typeof AuthenticatedApprovalsRoute
@@ -204,6 +211,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/agm-studio': typeof AuthenticatedAgmStudioRoute
   '/allocations': typeof AuthenticatedAllocationsRoute
   '/analytics': typeof AuthenticatedAnalyticsRoute
   '/approvals': typeof AuthenticatedApprovalsRoute
@@ -233,6 +241,7 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/_authenticated/agm-studio': typeof AuthenticatedAgmStudioRoute
   '/_authenticated/allocations': typeof AuthenticatedAllocationsRoute
   '/_authenticated/analytics': typeof AuthenticatedAnalyticsRoute
   '/_authenticated/approvals': typeof AuthenticatedApprovalsRoute
@@ -262,6 +271,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/sitemap.xml'
+    | '/agm-studio'
     | '/allocations'
     | '/analytics'
     | '/approvals'
@@ -289,6 +299,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/sitemap.xml'
+    | '/agm-studio'
     | '/allocations'
     | '/analytics'
     | '/approvals'
@@ -317,6 +328,7 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/auth'
     | '/sitemap.xml'
+    | '/_authenticated/agm-studio'
     | '/_authenticated/allocations'
     | '/_authenticated/analytics'
     | '/_authenticated/approvals'
@@ -377,6 +389,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/sitemap.xml'
       preLoaderRoute: typeof SitemapDotxmlRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/agm-studio': {
+      id: '/_authenticated/agm-studio'
+      path: '/agm-studio'
+      fullPath: '/agm-studio'
+      preLoaderRoute: typeof AuthenticatedAgmStudioRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/allocations': {
       id: '/_authenticated/allocations'
@@ -536,6 +555,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedRouteRouteChildren {
+  AuthenticatedAgmStudioRoute: typeof AuthenticatedAgmStudioRoute
   AuthenticatedAllocationsRoute: typeof AuthenticatedAllocationsRoute
   AuthenticatedAnalyticsRoute: typeof AuthenticatedAnalyticsRoute
   AuthenticatedApprovalsRoute: typeof AuthenticatedApprovalsRoute
@@ -561,6 +581,7 @@ interface AuthenticatedRouteRouteChildren {
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
+  AuthenticatedAgmStudioRoute: AuthenticatedAgmStudioRoute,
   AuthenticatedAllocationsRoute: AuthenticatedAllocationsRoute,
   AuthenticatedAnalyticsRoute: AuthenticatedAnalyticsRoute,
   AuthenticatedApprovalsRoute: AuthenticatedApprovalsRoute,

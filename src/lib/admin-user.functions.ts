@@ -227,9 +227,7 @@ export const adminDeleteUser = createServerFn({ method: "POST" })
  * Essential for offline/LAN/intranet deployments where SMTP is not active.
  */
 export const adminCreateUserDirect = createServerFn({ method: "POST" })
-  .validator(
-    (d: { email: string; password: string; role: AppRole; fullName?: string }) => d,
-  )
+  .validator((d: { email: string; password: string; role: AppRole; fullName?: string }) => d)
   .middleware([requireSupabaseAuth])
   .handler(async ({ data, context }) => {
     await assertAdmin(context);
