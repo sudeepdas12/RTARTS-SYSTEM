@@ -431,19 +431,76 @@ export const ImportService = {
         }
       }
 
-      // 2. Lookup by exact company_name (case-insensitive)
+      // 2. Lookup by exact company_name or smart token/substring matching
       if (!companyId) {
         try {
           const { data: nameComp } = await (supabase as any)
             .from("companies")
-            .select("id")
-            .ilike("company_name", cleanName)
-            .limit(1);
+            .select("id, company_name, company_code")
+            .limit(200);
+
           if (nameComp && nameComp.length > 0) {
-            companyId = nameComp[0].id;
+            // Exact match
+            const exact = nameComp.find(
+              (c: any) => c.company_name?.toLowerCase().trim() === cleanName.toLowerCase().trim(),
+            );
+            if (exact) {
+              companyId = exact.id;
+            } else {
+              // Smart substring / token overlap match
+              const targetTokens = cleanName
+                .toLowerCase()
+                .replace(/[^\w\s.%]/g, " ")
+                .split(/\s+/)
+                .filter((t) => t.length > 1 && !/^\d{4}$/.test(t));
+
+              let bestMatch: any = null;
+              let maxOverlap = 0;
+
+              for (const c of nameComp) {
+                const cName = (c.company_name || "").toLowerCase().trim();
+                if (
+                  cName.includes(cleanName.toLowerCase()) ||
+                  cleanName.toLowerCase().includes(cName)
+                ) {
+                  bestMatch = c;
+                  break;
+                }
+
+                const cTokens = cName
+                  .replace(/[^\w\s.%]/g, " ")
+                  .split(/\s+/)
+                  .filter((t: string) => t.length > 1);
+
+                const overlap = targetTokens.filter((t) =>
+                  cTokens.some((ct: string) => ct === t || ct.includes(t) || t.includes(ct)),
+                ).length;
+
+                if (overlap > maxOverlap && overlap >= 2) {
+                  maxOverlap = overlap;
+                  bestMatch = c;
+                }
+              }
+
+              // Also check company_code (e.g. RBBLD8.5)
+              if (!bestMatch) {
+                bestMatch = nameComp.find((c: any) => {
+                  const code = (c.company_code || "").toLowerCase().trim();
+                  return (
+                    code &&
+                    (cleanName.toLowerCase().includes(code) ||
+                      code.includes(cleanName.toLowerCase()))
+                  );
+                });
+              }
+
+              if (bestMatch) {
+                companyId = bestMatch.id;
+              }
+            }
           }
         } catch (nameErr) {
-          console.warn("Exact name company lookup failed:", nameErr);
+          console.warn("Company lookup failed:", nameErr);
         }
       }
 

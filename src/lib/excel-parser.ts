@@ -1106,10 +1106,11 @@ export const ExcelParser = {
       // Remove common suffixes/prefixes that are not company names
       const cleanName = fileNameNoExt
         .replace(
-          /RECONCILATION|RECONCILIATION|RECON|BOOK CLOSE|DIVIDEND|BONUS|AGM|FY \d+|FY-\d+|\d{4}-\d{2}/gi,
+          /RECONCILATION|RECONCILIATION|RECON|BOOK CLOSE|DIVIDEND|BONUS|AGM|FY \d+|FY-\d+|\d{4}-\d{2}|\b(20[789]\d)\b/gi,
           "",
         )
-        .replace(/[-_().]/g, " ")
+        .replace(/[-_()]/g, " ")
+        .replace(/\.(?!\d)/g, " ") // preserve decimal points in numbers like 8.5%
         .replace(/\s+/g, " ")
         .trim();
 

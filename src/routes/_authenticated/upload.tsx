@@ -234,13 +234,47 @@ function UploadRoute() {
       }
     }
 
-    // 2. Match by detected company name
+    // 2. Match by detected company name (smart substring, token overlap, and code matching)
     if (parsedData.detectedCompanyName) {
       const cleanDetect = parsedData.detectedCompanyName.toLowerCase().trim();
-      const nameMatch = companies.find((c) => {
+      const targetTokens = cleanDetect
+        .replace(/[^\w\s.%]/g, " ")
+        .split(/\s+/)
+        .filter((t) => t.length > 1 && !/^\d{4}$/.test(t));
+
+      // 2a. Substring / exact match
+      let nameMatch = companies.find((c) => {
         const cName = c.company_name.toLowerCase().trim();
         return cName === cleanDetect || cName.includes(cleanDetect) || cleanDetect.includes(cName);
       });
+
+      // 2b. Token overlap match (e.g. "8.5%", "RBB", "Debentures" matching "RBB Debentures 8.5%")
+      if (!nameMatch && targetTokens.length >= 2) {
+        let maxOverlap = 0;
+        for (const c of companies) {
+          const cTokens = c.company_name
+            .toLowerCase()
+            .replace(/[^\w\s.%]/g, " ")
+            .split(/\s+/)
+            .filter((t: string) => t.length > 1);
+          const overlap = targetTokens.filter((t) =>
+            cTokens.some((ct: string) => ct === t || ct.includes(t) || t.includes(ct)),
+          ).length;
+          if (overlap > maxOverlap && overlap >= 2) {
+            maxOverlap = overlap;
+            nameMatch = c;
+          }
+        }
+      }
+
+      // 2c. Company code match (e.g. "RBBLD8.5")
+      if (!nameMatch) {
+        nameMatch = companies.find((c) => {
+          const code = (c.company_code || "").toLowerCase().trim();
+          return code && (cleanDetect.includes(code) || code.includes(cleanDetect));
+        });
+      }
+
       if (nameMatch) {
         setSelectedCompanyId(nameMatch.id);
       }
@@ -430,6 +464,23 @@ function UploadRoute() {
         "Invalid fiscal year format. Use YYYY/YY (e.g. 2081/82) or YYYY/YYYY (e.g. 2081/2082).",
       );
       return;
+    }
+
+    // Ensure a target company is selected or resolved before importing
+    if (selectedCompanyId === "auto") {
+      const cleanDetect = (parsedData.detectedCompanyName || file.name).toLowerCase().trim();
+      const candidate = companies.find((c) => {
+        const cName = c.company_name.toLowerCase().trim();
+        return cName === cleanDetect || cName.includes(cleanDetect) || cleanDetect.includes(cName);
+      });
+      if (candidate) {
+        setSelectedCompanyId(candidate.id);
+      } else {
+        toast.error(
+          `Please select the target company from the "Assign to Company" dropdown before importing.`,
+        );
+        return;
+      }
     }
 
     const fileHash = await computeFileHash(file);
@@ -642,6 +693,23 @@ function UploadRoute() {
     if (dataSheets.length === 0) {
       toast.error("No data sheets to import.");
       return;
+    }
+
+    // Ensure a target company is selected or resolved before importing all sheets
+    if (selectedCompanyId === "auto") {
+      const cleanDetect = (parsedData.detectedCompanyName || file.name).toLowerCase().trim();
+      const candidate = companies.find((c) => {
+        const cName = c.company_name.toLowerCase().trim();
+        return cName === cleanDetect || cName.includes(cleanDetect) || cleanDetect.includes(cName);
+      });
+      if (candidate) {
+        setSelectedCompanyId(candidate.id);
+      } else {
+        toast.error(
+          `Please select the target company from the "Assign to Company" dropdown before importing all sheets.`,
+        );
+        return;
+      }
     }
 
     const fileHash = await computeFileHash(file);
