@@ -46,11 +46,15 @@ describe("CompanyService.autoRegisterCompany and findMatchingCompany", () => {
   });
 
   afterEach(async () => {
+    const { supabase } = await import("./database");
     if (createdCompanyId) {
-      const { supabase } = await import("./database");
       await (supabase as any).from("companies").delete().eq("id", createdCompanyId);
       createdCompanyId = null;
     }
+    await (supabase as any)
+      .from("companies")
+      .delete()
+      .ilike("company_name", "%RBB Debentures 2083%");
   });
 
   it("automatically registers an unregistered company with accurate metadata", async () => {
