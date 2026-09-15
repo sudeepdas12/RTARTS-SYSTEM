@@ -287,10 +287,44 @@ const isValidEmail = (value: string): boolean => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 };
 
-const isValidAccountNumber = (value: string): boolean => {
-  // Bank account numbers: typically 10-20 digits
-  const cleaned = value.replace(/[\s-]/g, "");
-  return /^[0-9]{10,25}$/.test(cleaned);
+const INVALID_ACCOUNT_PLACEHOLDERS = new Set([
+  "N/A",
+  "NA",
+  "NONE",
+  "NULL",
+  "NIL",
+  "UNKNOWN",
+  "PENDING",
+  "CASH",
+  "CHEQUE",
+  "NO ACCOUNT",
+  "NOT AVAILABLE",
+  "-",
+  "--",
+  "0",
+  "000000",
+]);
+
+export const isValidAccountNumber = (value: string): boolean => {
+  if (!value) return false;
+  const trimmed = value.trim();
+  if (INVALID_ACCOUNT_PLACEHOLDERS.has(trimmed.toUpperCase())) {
+    return false;
+  }
+
+  // Remove common punctuation and separators like spaces, hyphens, slashes, periods
+  const cleaned = trimmed.replace(/[\s\-_/.]/g, "");
+
+  // Bank account numbers across Nepalese Commercial Banks, CBS (Pumori/Finacle/T24), and CDS exports:
+  // - Typically 5 to 26 alphanumeric characters
+  // - Pure numeric (e.g. "01234567890123", "20591")
+  // - Branch/product alphanumeric codes (e.g. "00103911SA", "D107010002342", "005000012100U")
+  // - Standard Chartered format (e.g. "10DB027786NPR003", "15SH039541NPR001")
+  // - Must have at least 3 digits to distinguish from non-numeric text codes
+  const isAlphanumeric = /^[a-zA-Z0-9]{5,26}$/.test(cleaned);
+  const digitCount = (cleaned.match(/[0-9]/g) || []).length;
+
+  return isAlphanumeric && digitCount >= 3;
 };
 
 const hasValidAmountPrecision = (value: number | null): boolean => {
@@ -501,6 +535,49 @@ export const ValidationEngine = {
       const tdsRate = parseNumber(get("tds_rate") ?? get("TDS_RATE"));
 
       const rawData = row;
+
+      // Filter out completely blank rows or summary/footer rows that do not contain investor records
+      const allRowValues = Object.values(row).filter(
+        (v) => v !== null && v !== undefined && String(v).trim() !== "",
+      );
+      if (allRowValues.length === 0) {
+        return; // Blank row (e.g. trailing empty lines in Excel)
+      }
+
+      const isSummaryOrFooter = allRowValues.some((v) => {
+        const s = String(v).trim().toUpperCase();
+        return (
+          s === "TOTAL" ||
+          s === "GRAND TOTAL" ||
+          s === "SUMMARY" ||
+          s.startsWith("TOTAL ") ||
+          s.startsWith("SUMMARY ") ||
+          s.includes("AUTHORISED SIGNATORY") ||
+          s.includes("AUTHORIZED SIGNATORY") ||
+          s.includes("PREPARED BY") ||
+          s.includes("CHECKED BY") ||
+          s.includes("VERIFIED BY")
+        );
+      });
+      if (isSummaryOrFooter) {
+        return; // Summary or signature footer row
+      }
+
+      // Check for genuine investor data: A row without identity and without holdings/amounts is an empty trailing row
+      const hasInvestorData = Boolean(
+        boid ||
+        fullName ||
+        clientCode ||
+        bankAccount ||
+        pan ||
+        (sharesHeld !== null && sharesHeld > 0) ||
+        (gross !== null && gross > 0) ||
+        (net !== null && net > 0),
+      );
+
+      if (!hasInvestorData) {
+        return; // Skip trailing non-data row
+      }
 
       // RULE 1: BOID is required (Core essential)
       if (!boid) {

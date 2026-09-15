@@ -877,7 +877,11 @@ export const ExcelParser = {
       const rawRows: Record<string, any>[] = [];
       for (let i = headerRowIndex + 1; i < json.length; i++) {
         const rowArr = json[i] as any[];
-        if (!rowArr || rowArr.every((c) => c === undefined || c === null || c === "")) continue;
+        if (
+          !rowArr ||
+          rowArr.every((c) => c === undefined || c === null || String(c).trim() === "")
+        )
+          continue;
 
         const row: Record<string, any> = {};
         for (let j = 0; j < headers.length; j++) {
@@ -914,17 +918,42 @@ export const ExcelParser = {
       let validRowCount = 0;
 
       const processedRows = rawRows.filter((r) => {
-        // Filter out summary/total rows at the bottom.
+        // Filter out summary/total rows at the bottom and blank trailing rows.
         // Check ALL string values in the row (not just the first), since RMF files
         // often place "TOTAL" in the NAME column rather than the first column.
         const allValues = Object.values(r).filter((v) => v !== null && v !== undefined);
+        const meaningfulValues = allValues.filter((v) => String(v).trim() !== "");
+        if (meaningfulValues.length === 0) return false;
+
         const hasTotalMarker = allValues.some((v) => {
           const s = String(v).trim().toUpperCase();
           return (
-            s === "TOTAL" || s === "SUMMARY" || s.startsWith("TOTAL ") || s.startsWith("SUMMARY ")
+            s === "TOTAL" ||
+            s === "GRAND TOTAL" ||
+            s === "SUMMARY" ||
+            s.startsWith("TOTAL ") ||
+            s.startsWith("SUMMARY ") ||
+            s.includes("AUTHORISED SIGNATORY") ||
+            s.includes("AUTHORIZED SIGNATORY") ||
+            s.includes("PREPARED BY") ||
+            s.includes("CHECKED BY") ||
+            s.includes("VERIFIED BY")
           );
         });
         if (hasTotalMarker) return false;
+
+        // Skip rows that lack investor identity (BOID / Name / Client Code / Bank Account) and financial values
+        const hasInvestorData = Boolean(
+          r.boid ||
+          r.full_name ||
+          r.client_code ||
+          r.bank_account_no ||
+          r.pan ||
+          r.shares_held ||
+          r.cash_dividend ||
+          r.net_payable,
+        );
+        if (!hasInvestorData && meaningfulValues.length <= 1) return false;
 
         validRowCount++;
 

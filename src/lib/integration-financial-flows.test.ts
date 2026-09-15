@@ -470,6 +470,95 @@ describe.skipIf(!isSupabaseConfigured)("Integration Financial & Security Invaria
       const missingBoid = errors.find((e) => e.type === "missing_boid");
       expect(missingBoid).toBeTruthy();
     });
+
+    it("accepts all real-world Nepalese alphanumeric bank account formats without false notice", async () => {
+      const sampleNepaliAccounts = [
+        "D107010002342",
+        "00103911SA",
+        "005000012100U",
+        "005000001440L",
+        "07900054AD",
+        "001-803SP",
+        "002144722W",
+        "N087004168452401",
+        "10DB027786NPR003",
+        "15SH039541NPR001",
+        "19SB026158NPR001",
+        "01610397 GB",
+        "20591",
+        "01CA000093NPR008",
+      ];
+
+      const rows = sampleNepaliAccounts.map((acct, idx) => ({
+        boid: `130101000000000${idx + 1}`.slice(0, 16),
+        full_name: `Investor ${idx + 1}`,
+        bank_account_no: acct,
+        gross_amount: 1000,
+        tax_amount: 50,
+        net_payable: 950,
+      }));
+
+      const errors = await ValidationEngine.validateBatch(rows, {}, undefined, "DIVIDEND");
+      const bankNotices = errors.filter((e) => e.type === "invalid_bank_account");
+      expect(bankNotices.length).toBe(0);
+    });
+
+    it("safely skips trailing blank and footer rows without raising false missing BOID/name errors", async () => {
+      const rowsWithTrailingBlanks = [
+        {
+          boid: "1301010000000001",
+          full_name: "Genuine Investor",
+          gross_amount: 5000,
+          tax_amount: 250,
+          net_payable: 4750,
+        },
+        // Trailing empty rows (like rows 868 to 885 in user export)
+        {},
+        { boid: "", full_name: "" },
+        { boid: null, full_name: null, gross_amount: null },
+        // Trailing footer / signatory row
+        { full_name: "TOTAL", gross_amount: 5000, net_payable: 4750 },
+        { full_name: "AUTHORISED SIGNATORY", boid: "" },
+      ];
+
+      const errors = await ValidationEngine.validateBatch(
+        rowsWithTrailingBlanks,
+        {},
+        undefined,
+        "DIVIDEND",
+      );
+      const boidErrors = errors.filter((e) => e.type === "missing_boid");
+      const nameErrors = errors.filter((e) => e.type === "missing_name");
+
+      // Only 1 real row was provided, so no missing BOID/name errors should be produced for the trailing/footer rows
+      expect(boidErrors.length).toBe(0);
+      expect(nameErrors.length).toBe(0);
+    });
+
+    it("still catches genuinely invalid bank accounts like N/A, NONE, or non-alphanumerics", async () => {
+      const invalidRows = [
+        {
+          boid: "1301010000000001",
+          full_name: "Test Investor 1",
+          bank_account_no: "N/A",
+          gross_amount: 1000,
+          tax_amount: 50,
+          net_payable: 950,
+        },
+        {
+          boid: "1301010000000002",
+          full_name: "Test Investor 2",
+          bank_account_no: "???",
+          gross_amount: 1000,
+          tax_amount: 50,
+          net_payable: 950,
+        },
+      ];
+
+      const errors = await ValidationEngine.validateBatch(invalidRows, {}, undefined, "DIVIDEND");
+      const bankNotices = errors.filter((e) => e.type === "invalid_bank_account");
+      expect(bankNotices.length).toBe(2);
+    });
   });
 
   describe("4. Report-Total & Summary Aggregation Invariants", () => {
