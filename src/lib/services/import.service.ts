@@ -1,4 +1,5 @@
 import { supabase, throwIfError } from "./database";
+import { CompanyService } from "./company.service";
 import { mapToHolderType } from "./investor-category";
 import {
   calculatePayableTotals,
@@ -504,11 +505,23 @@ export const ImportService = {
         }
       }
 
-      // 3. Reject if company resolution failed — never silently create arbitrary companies
+      // 3. Auto-provision company if none found rather than failing the import
       if (!companyId) {
-        throw new Error(
-          `Target company "${cleanName}" could not be resolved. Please select or register the company before importing payables.`,
-        );
+        try {
+          const autoComp = await CompanyService.autoRegisterCompany({
+            name: cleanName,
+            fileType: options?.fileType || targetTable,
+            isin: detectedIsin,
+            rate: options?.dividendRate,
+            fiscalYear: options?.fiscalYear,
+            userId: options?.userId,
+          });
+          companyId = autoComp.id;
+        } catch (autoErr: any) {
+          throw new Error(
+            `Target company "${cleanName}" could not be auto-registered: ${autoErr?.message || autoErr}`,
+          );
+        }
       }
 
       if (sharedContext) {

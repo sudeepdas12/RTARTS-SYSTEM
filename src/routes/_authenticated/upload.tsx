@@ -39,7 +39,11 @@ import {
   Users,
   Building2,
   ArrowRight,
+  Sparkles,
+  Loader2,
+  Plus,
 } from "lucide-react";
+import { CompanyService, generateCompanyCode } from "@/lib/services/company.service";
 
 // Validate Nepali fiscal year format: YYYY/YY or YYYY/YYYY (e.g. 2081/82 or 2081/2082)
 function isValidFiscalYear(fy: string): boolean {
@@ -281,6 +285,74 @@ function UploadRoute() {
     }
   }, [parsedData, companies, selectedCompanyId]);
 
+  const [isRegisteringCompany, setIsRegisteringCompany] = useState(false);
+
+  const detectedCompanyNameClean = (
+    parsedData?.detectedCompanyName ||
+    file?.name?.replace(/\.(xlsx|xls|csv|tsv|xlsm)$/i, "") ||
+    ""
+  ).trim();
+
+  const suggestedCompanyCode = generateCompanyCode(
+    detectedCompanyNameClean,
+    dividendType === "Debenture"
+      ? "debenture"
+      : dividendType === "MutualFund"
+        ? "mutual_fund"
+        : parsedData?.fileType,
+    dividendRate ? Number(dividendRate) : undefined,
+  );
+
+  const existingMatchedCompany = companies.find((c) => {
+    if (!detectedCompanyNameClean) return false;
+    if (
+      parsedData?.detectedIsin &&
+      c.isin &&
+      c.isin.trim().toUpperCase() === parsedData.detectedIsin.trim().toUpperCase()
+    ) {
+      return true;
+    }
+    const cName = c.company_name.toLowerCase().trim();
+    const det = detectedCompanyNameClean.toLowerCase();
+    return cName === det || cName.includes(det) || det.includes(cName);
+  });
+
+  const handleQuickRegister = async () => {
+    if (!parsedData || !canWrite || isRegisteringCompany) return;
+    try {
+      setIsRegisteringCompany(true);
+      const effectiveFileType =
+        dividendType === "Debenture"
+          ? "debenture"
+          : dividendType === "MutualFund"
+            ? "mutual_fund"
+            : parsedData.fileType;
+      const rate = dividendRate ? Number(dividendRate) : undefined;
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      const newComp = await CompanyService.autoRegisterCompany({
+        name: detectedCompanyNameClean,
+        fileType: effectiveFileType,
+        isin: parsedData.detectedIsin,
+        rate,
+        fiscalYear: fiscalYear ? normalizeFiscalYear(fiscalYear) : undefined,
+        userId: user?.id,
+      });
+
+      setSelectedCompanyId(newComp.id);
+      await queryClient.invalidateQueries({ queryKey: ["companies"] });
+      toast.success(
+        `Registered company "${newComp.company_name}" (${newComp.company_code}) successfully!`,
+      );
+    } catch (err: any) {
+      toast.error(`Registration failed: ${err.message}`);
+    } finally {
+      setIsRegisteringCompany(false);
+    }
+  };
+
   // When parsedData is set, auto-populate per-sheet rates from detected defaults
   useEffect(() => {
     if (!parsedData) return;
@@ -395,7 +467,7 @@ function UploadRoute() {
   };
 
   /** Build import options for a single sheet */
-  function buildOptions(sheetIdx: number) {
+  function buildOptions(sheetIdx: number, companyIdOverride?: string) {
     const sheetDivRate = sheetDividendRates[sheetIdx];
     const sheet = parsedData!.sheets[sheetIdx];
     // Clamp TDS rate to 0–50% to prevent invalid values
@@ -409,6 +481,9 @@ function UploadRoute() {
         : dividendType === "MutualFund"
           ? "mutual_fund"
           : parsedData!.fileType;
+
+    const activeCompanyId =
+      companyIdOverride || (selectedCompanyId !== "auto" ? selectedCompanyId : undefined);
 
     return {
       fiscalYear: fiscalYear ? normalizeFiscalYear(fiscalYear) : undefined,
@@ -425,12 +500,11 @@ function UploadRoute() {
           ? (dividendType as "Cash" | "Bonus" | "Right")
           : undefined,
       // Direct company UUID (bypasses name-based lookup and avoids accidental company creation)
-      companyId: selectedCompanyId !== "auto" ? selectedCompanyId : undefined,
-      companyName:
-        selectedCompanyId !== "auto"
-          ? (companies.find((c) => c.id === selectedCompanyId)?.company_name ??
-            parsedData!.detectedCompanyName)
-          : parsedData!.detectedCompanyName,
+      companyId: activeCompanyId,
+      companyName: activeCompanyId
+        ? (companies.find((c) => c.id === activeCompanyId)?.company_name ??
+          parsedData!.detectedCompanyName)
+        : parsedData!.detectedCompanyName,
       companyIsin: sheet?.detectedIsin || parsedData!.detectedIsin,
       fileHash: undefined as string | undefined,
       sheetType: sheet?.sheetType || sheet?.sheetName || undefined,
@@ -466,26 +540,6 @@ function UploadRoute() {
       return;
     }
 
-    // Ensure a target company is selected or resolved before importing
-    if (selectedCompanyId === "auto") {
-      const cleanDetect = (parsedData.detectedCompanyName || file.name).toLowerCase().trim();
-      const candidate = companies.find((c) => {
-        const cName = c.company_name.toLowerCase().trim();
-        return cName === cleanDetect || cName.includes(cleanDetect) || cleanDetect.includes(cName);
-      });
-      if (candidate) {
-        setSelectedCompanyId(candidate.id);
-      } else {
-        toast.error(
-          `Please select the target company from the "Assign to Company" dropdown before importing.`,
-        );
-        return;
-      }
-    }
-
-    const fileHash = await computeFileHash(file);
-    setImportSummary(null);
-
     const sheetDivRate = sheetDividendRates[selectedSheetIndex];
     const rate = sheetDivRate
       ? Number(sheetDivRate)
@@ -498,6 +552,51 @@ function UploadRoute() {
         : dividendType === "MutualFund"
           ? "mutual_fund"
           : parsedData.fileType;
+
+    // Ensure a target company is selected or auto-registered before importing
+    let resolvedCompanyId = selectedCompanyId !== "auto" ? selectedCompanyId : undefined;
+    if (!resolvedCompanyId) {
+      const rawDetect = (
+        parsedData.detectedCompanyName || file.name.replace(/\.(xlsx|xls|csv|tsv|xlsm)$/i, "")
+      ).trim();
+      const candidate = companies.find((c) => {
+        const cName = c.company_name.toLowerCase().trim();
+        const det = rawDetect.toLowerCase();
+        return cName === det || cName.includes(det) || det.includes(cName);
+      });
+      if (candidate) {
+        resolvedCompanyId = candidate.id;
+        setSelectedCompanyId(candidate.id);
+      } else {
+        try {
+          toast.loading(`Auto-registering company "${rawDetect}"...`, { id: "comp-autoreg" });
+          const {
+            data: { user: currentUser },
+          } = await supabase.auth.getUser();
+
+          const newComp = await CompanyService.autoRegisterCompany({
+            name: rawDetect,
+            fileType: effectiveFileType,
+            isin: parsedData.detectedIsin,
+            rate,
+            fiscalYear: fiscalYear ? normalizeFiscalYear(fiscalYear) : undefined,
+            userId: currentUser?.id,
+          });
+          resolvedCompanyId = newComp.id;
+          setSelectedCompanyId(newComp.id);
+          await queryClient.invalidateQueries({ queryKey: ["companies"] });
+          toast.success(`Registered company: ${newComp.company_name} (${newComp.company_code})`, {
+            id: "comp-autoreg",
+          });
+        } catch (regErr: any) {
+          toast.error(`Could not register company: ${regErr.message}`, { id: "comp-autoreg" });
+          return;
+        }
+      }
+    }
+
+    const fileHash = await computeFileHash(file);
+    setImportSummary(null);
 
     const validationErrorsForImport = await ValidationEngine.validateBatch(
       sheet.rows,
@@ -625,7 +724,7 @@ function UploadRoute() {
         targetTable = "mutual_fund_payables";
       }
 
-      const opts = buildOptions(selectedSheetIndex);
+      const opts = buildOptions(selectedSheetIndex, resolvedCompanyId);
       opts.fileHash = fileHash;
       opts.userId = userId;
 
@@ -695,20 +794,52 @@ function UploadRoute() {
       return;
     }
 
-    // Ensure a target company is selected or resolved before importing all sheets
-    if (selectedCompanyId === "auto") {
-      const cleanDetect = (parsedData.detectedCompanyName || file.name).toLowerCase().trim();
+    const effectiveFileType =
+      dividendType === "Debenture"
+        ? "debenture"
+        : dividendType === "MutualFund"
+          ? "mutual_fund"
+          : parsedData.fileType;
+
+    // Ensure a target company is selected or auto-registered before importing all sheets
+    let resolvedCompanyId = selectedCompanyId !== "auto" ? selectedCompanyId : undefined;
+    if (!resolvedCompanyId) {
+      const rawDetect = (
+        parsedData.detectedCompanyName || file.name.replace(/\.(xlsx|xls|csv|tsv|xlsm)$/i, "")
+      ).trim();
       const candidate = companies.find((c) => {
         const cName = c.company_name.toLowerCase().trim();
-        return cName === cleanDetect || cName.includes(cleanDetect) || cleanDetect.includes(cName);
+        const det = rawDetect.toLowerCase();
+        return cName === det || cName.includes(det) || det.includes(cName);
       });
       if (candidate) {
+        resolvedCompanyId = candidate.id;
         setSelectedCompanyId(candidate.id);
       } else {
-        toast.error(
-          `Please select the target company from the "Assign to Company" dropdown before importing all sheets.`,
-        );
-        return;
+        try {
+          toast.loading(`Auto-registering company "${rawDetect}"...`, { id: "comp-autoreg-all" });
+          const {
+            data: { user: currentUser },
+          } = await supabase.auth.getUser();
+
+          const newComp = await CompanyService.autoRegisterCompany({
+            name: rawDetect,
+            fileType: effectiveFileType,
+            isin: parsedData.detectedIsin,
+            rate: dividendRate ? Number(dividendRate) : undefined,
+            fiscalYear: fiscalYear ? normalizeFiscalYear(fiscalYear) : undefined,
+            userId: currentUser?.id,
+          });
+          resolvedCompanyId = newComp.id;
+          setSelectedCompanyId(newComp.id);
+          await queryClient.invalidateQueries({ queryKey: ["companies"] });
+          toast.success(`Registered company: ${newComp.company_name} (${newComp.company_code})`, {
+            id: "comp-autoreg-all",
+          });
+        } catch (regErr: any) {
+          toast.error(`Could not register company: ${regErr.message}`, { id: "comp-autoreg-all" });
+          return;
+        }
       }
     }
 
@@ -721,13 +852,6 @@ function UploadRoute() {
     let overallProcessed = 0,
       overallSuccess = 0,
       overallErrors = 0;
-
-    const effectiveFileType =
-      dividendType === "Debenture"
-        ? "debenture"
-        : dividendType === "MutualFund"
-          ? "mutual_fund"
-          : parsedData.fileType;
 
     const targetTable =
       dividendType === "Debenture" ||
@@ -747,8 +871,8 @@ function UploadRoute() {
       clientIdCache: new Map(),
       clientInfoCache: new Map(),
     };
-    if (selectedCompanyId !== "auto") {
-      sharedContext.companyId = selectedCompanyId;
+    if (resolvedCompanyId) {
+      sharedContext.companyId = resolvedCompanyId;
     }
 
     for (let si = 0; si < dataSheets.length; si++) {
@@ -861,7 +985,7 @@ function UploadRoute() {
         );
       }
 
-      const opts = buildOptions(sheetIdxInParsed);
+      const opts = buildOptions(sheetIdxInParsed, resolvedCompanyId);
       opts.fileHash = `${fileHash}-${sheet.sheetName}`;
       opts.userId = userId;
 
@@ -1117,9 +1241,12 @@ function UploadRoute() {
           {/* Company Assignment Override */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">Company Assignment</CardTitle>
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Building2 className="h-4 w-4 text-primary" />
+                Company Assignment
+              </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-3">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
                 <div className="space-y-1.5">
                   <Label className="text-xs">Assign to Company</Label>
@@ -1129,8 +1256,9 @@ function UploadRoute() {
                     </SelectTrigger>
                     <SelectContent className="max-h-60 overflow-y-auto">
                       <SelectItem value="auto">
-                        Auto-detect: {parsedData.detectedCompanyName || "from file name"}
-                        {parsedData.detectedIsin ? ` (ISIN: ${parsedData.detectedIsin})` : ""}
+                        {existingMatchedCompany
+                          ? `✨ Auto-match: ${existingMatchedCompany.company_code} — ${existingMatchedCompany.company_name}`
+                          : `✨ Auto-register: ${detectedCompanyNameClean || "from file"} (Code: ${suggestedCompanyCode})`}
                       </SelectItem>
                       {companies.map((c) => (
                         <SelectItem key={c.id} value={c.id}>
@@ -1142,7 +1270,9 @@ function UploadRoute() {
                   <p className="text-xs text-muted-foreground">
                     {parsedData.detectedIsin
                       ? `Detected ISIN "${parsedData.detectedIsin}" will be automatically linked to the company profile.`
-                      : "Select a company to assign this upload to, or use auto-detect."}
+                      : selectedCompanyId === "auto" && !existingMatchedCompany
+                        ? "New entity detected — will be auto-created and linked during import with zero setup required."
+                        : "Select a company to assign this upload to, or use auto-detect."}
                   </p>
                 </div>
                 <div className="text-sm text-muted-foreground bg-muted/30 rounded-md p-3">
@@ -1154,6 +1284,44 @@ function UploadRoute() {
                   </ul>
                 </div>
               </div>
+
+              {/* Smart Auto-Registration Banner if company does not exist in DB yet */}
+              {selectedCompanyId === "auto" &&
+                !existingMatchedCompany &&
+                detectedCompanyNameClean && (
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 rounded-md text-xs">
+                    <div className="flex items-start sm:items-center gap-2 text-emerald-900 dark:text-emerald-200">
+                      <Sparkles className="h-4 w-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0 mt-0.5 sm:mt-0" />
+                      <div>
+                        <span className="font-medium">Smart Auto-Provisioning:</span> New company{" "}
+                        <strong>&quot;{detectedCompanyNameClean}&quot;</strong> detected with symbol{" "}
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] px-1.5 py-0 border-emerald-300 dark:border-emerald-700"
+                        >
+                          {suggestedCompanyCode}
+                        </Badge>
+                        . It will be registered automatically upon import, or you can register it
+                        now.
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 self-start sm:self-auto shrink-0"
+                      onClick={handleQuickRegister}
+                      disabled={isRegisteringCompany}
+                    >
+                      {isRegisteringCompany ? (
+                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                      ) : (
+                        <Plus className="h-3 w-3 mr-1" />
+                      )}
+                      Register Now
+                    </Button>
+                  </div>
+                )}
             </CardContent>
           </Card>
 
