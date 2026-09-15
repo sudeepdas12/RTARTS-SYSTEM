@@ -72,3 +72,7 @@ samples/
 *.csv
 !supabase/seed*.sql
 
+# Playwright
+test-results/
+playwright-report/
+

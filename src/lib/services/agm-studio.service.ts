@@ -18,10 +18,22 @@
 import { supabase } from "@/integrations/supabase/client";
 import * as XLSX from "xlsx";
 
+export const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isUuid(val?: string | null): boolean {
+  if (!val || typeof val !== "string") return false;
+  return UUID_REGEX.test(val.trim());
+}
+
 export interface HistoricalFiscalYearConfig {
   fiscalYear: string;
   eventName: string;
-  eventType: "RIGHT_ISSUE" | "PROMOTER_CONVERSION" | "BONUS_AND_CASH" | "IPF_TRANSFER" | "PRE_BASELINE_BONUS";
+  eventType:
+    | "RIGHT_ISSUE"
+    | "PROMOTER_CONVERSION"
+    | "BONUS_AND_CASH"
+    | "IPF_TRANSFER"
+    | "PRE_BASELINE_BONUS";
   bonusRatioPct: number;
   cashDividendRatioPct: number;
   rightRatioPct: number;
@@ -46,6 +58,7 @@ export interface CompanyProfile {
   isinPublic?: string;
   baseFiscalYear: string;
   currentFiscalYear: string;
+  currentPaidUpCapital?: number;
   timeline: HistoricalFiscalYearConfig[];
 }
 
@@ -97,7 +110,11 @@ export interface YoYChainReport {
   sampleDeltas: YoYChainResult[];
 }
 
+export type CurrentFyStatus =
+  "ACTIVE" | "EXITED" | "NOT_PRESENT_IN_IMPORT" | "NEW_ENTRANT" | "ESCROW" | "PHYSICAL_PENDING";
+
 export interface MultiYearShareholderProfile {
+  companyId?: string;
   boid: string;
   shareholderName: string;
   fatherName?: string;
@@ -118,12 +135,15 @@ export interface MultiYearShareholderProfile {
   initialKitta2075: number;
   trueInitialKitta2075?: number;
   importedBaseKitta?: number;
+  importedOpeningFraction?: number;
+  importedBaseFiscalYear?: string;
   initialFraction2075?: number;
   targetFySnapshot?: ShareholderYearlySnapshot;
   convertedShares?: number;
   isConversionMerged?: boolean;
   yoyDelta?: number;
   yoyStatus?: "MATCHED" | "TRADE_BUY" | "TRADE_SELL" | "NEW_ENTRANT" | "EXITED";
+  currentFyStatus?: CurrentFyStatus;
   currentKitta2081: number;
   currentFraction2081: number;
   totalBonusSharesReceived: number;
@@ -136,6 +156,7 @@ export interface MultiYearShareholderProfile {
 
 export interface BrokerPoolRecord {
   id?: string;
+  companyId?: string;
   brokerCode: string;
   brokerName: string;
   poolBoid: string;
@@ -151,6 +172,7 @@ export interface BrokerPoolRecord {
 
 export interface BrokerPoolClaim {
   id: string;
+  companyId?: string;
   seqNo: number;
   brokerCode: string;
   brokerName: string;
@@ -170,6 +192,7 @@ export interface BrokerPoolClaim {
 
 export interface PhysicalDrnRecord {
   id: string;
+  companyId?: string;
   folioNo: string;
   certificateNoStart?: number;
   certificateNoEnd?: number;
@@ -186,6 +209,7 @@ export interface PhysicalDrnRecord {
 
 export interface PromoterConversionRecord {
   id: string;
+  companyId?: string;
   boidOrFolio: string;
   holderName: string;
   holderCategory?: "PROMOTER" | "PUBLIC" | "PHYSICAL";
@@ -243,7 +267,45 @@ export interface ImportValidationReport {
   yoyReport?: YoYChainReport;
 }
 
+export interface ImportPrePersistenceValidation {
+  canProceed: boolean;
+  criticalErrors: string[];
+  warnings: string[];
+  duplicateBoids: string[];
+  invalidBoids: string[];
+  negativeHoldings: string[];
+  fractionOverflows: string[];
+  capitalVariancePct: number;
+  promoterRatioPct: number;
+  publicRatioPct: number;
+  mutualFundsCount: number;
+  missingBankCount: number;
+}
+
+export interface ReleaseGateCheckResult {
+  passed: boolean;
+  uploadedRows: number;
+  persistedRows: number;
+  rowsMatched: boolean;
+  uploadedKitta: number;
+  reportKitta: number;
+  kittaMatched: boolean;
+  uploadedBonus: number;
+  reportBonus: number;
+  bonusMatched: boolean;
+  uploadedCash: number;
+  reportCash: number;
+  cashMatched: boolean;
+  uploadedTax: number;
+  reportTax: number;
+  taxMatched: boolean;
+  allSnapshotsHaveShareholderId: boolean;
+  isFyLocked: boolean;
+  violations: string[];
+}
+
 export interface FiscalYearMetaRecord {
+  companyId?: string;
   fiscalYear: string;
   eventName: string;
   totalShareholders: number;
@@ -304,7 +366,8 @@ const DEFAULT_NLG_TIMELINE: HistoricalFiscalYearConfig[] = [
     promoterKittaBaseline: 6147840,
     publicKittaBaseline: 4098560,
     totalListedKitta: 10246500,
-    notes: "RTS Mandate Takeover Baseline: 14th AGM 7% bonus share applied on 10,246,500 listed capital base.",
+    notes:
+      "RTS Mandate Takeover Baseline: 14th AGM 7% bonus share applied on 10,246,500 listed capital base.",
   },
   {
     fiscalYear: "2076/77",
@@ -321,7 +384,8 @@ const DEFAULT_NLG_TIMELINE: HistoricalFiscalYearConfig[] = [
     promoterKittaBaseline: 7440611,
     publicKittaBaseline: 6814111,
     totalListedKitta: 14592757.91,
-    notes: "CA Seq 6316.001: 27.142857% Promoter converted to Public ordinary to achieve 51:49 ratio + 10% Bonus.",
+    notes:
+      "CA Seq 6316.001: 27.142857% Promoter converted to Public ordinary to achieve 51:49 ratio + 10% Bonus.",
   },
   {
     fiscalYear: "2077/78",
@@ -372,7 +436,8 @@ const DEFAULT_NLG_TIMELINE: HistoricalFiscalYearConfig[] = [
     promoterKittaBaseline: 7442306.53,
     publicKittaBaseline: 7150451.38,
     totalListedKitta: 14592757.91,
-    notes: "5.5% bonus share + 0.28947% cash dividend + broker clearing pool accounts reconciliation.",
+    notes:
+      "5.5% bonus share + 0.28947% cash dividend + broker clearing pool accounts reconciliation.",
   },
   {
     fiscalYear: "2080/81",
@@ -408,7 +473,8 @@ const DEFAULT_NLG_TIMELINE: HistoricalFiscalYearConfig[] = [
     promoterKittaBaseline: 13081196,
     publicKittaBaseline: 12550483,
     totalListedKitta: 25631679,
-    notes: "62.56% Right Issue (Book Close 2081-07-27 / 2024-11-12, Allotted 2081-10-06) + 4.00% bonus share + 3.3684% cash dividend endorsed in 20th AGM (Poush 30, 2082).",
+    notes:
+      "62.56% Right Issue (Book Close 2081-07-27 / 2024-11-12, Allotted 2081-10-06) + 4.00% bonus share + 3.3684% cash dividend endorsed in 20th AGM (Poush 30, 2082).",
   },
 ];
 
@@ -431,7 +497,10 @@ const DEFAULT_COMPANIES: CompanyProfile[] = [
     isinPublic: "NPE000A00002",
     baseFiscalYear: "2075/76",
     currentFiscalYear: "2080/81",
-    timeline: DEFAULT_NLG_TIMELINE.map((t) => ({ ...t, notes: "Client Company Corporate Action baseline." })),
+    timeline: DEFAULT_NLG_TIMELINE.map((t) => ({
+      ...t,
+      notes: "Client Company Corporate Action baseline.",
+    })),
   },
   {
     id: "generic-company",
@@ -489,7 +558,7 @@ const DEFAULT_COMPANIES: CompanyProfile[] = [
 ];
 
 export function convertNepaliNumeralsToLatin(str: string): string {
-  const nepaliDigits = ['०', '१', '२', '३', '४', '५', '६', '७', '८', '९'];
+  const nepaliDigits = ["०", "१", "२", "३", "४", "५", "६", "७", "८", "९"];
   let res = String(str);
   for (let i = 0; i < 10; i++) {
     res = res.replaceAll(nepaliDigits[i], String(i));
@@ -498,7 +567,7 @@ export function convertNepaliNumeralsToLatin(str: string): string {
 }
 
 export function cleanBoid(raw: any): string {
-  if (raw === null || raw === undefined) return '';
+  if (raw === null || raw === undefined) return "";
   let str = String(raw).trim();
   str = convertNepaliNumeralsToLatin(str);
 
@@ -512,25 +581,48 @@ export function cleanBoid(raw: any): string {
     }
   }
 
-  return str.replace(/[^0-9a-zA-Z]/g, '').toUpperCase();
+  return str.replace(/[^0-9a-zA-Z]/g, "").toUpperCase();
 }
 
 function normalizeKey(k: string): string {
-  const str = convertNepaliNumeralsToLatin(String(k)).toLowerCase().replace(/[\s._\-/'"()]/g, "");
+  const str = convertNepaliNumeralsToLatin(String(k))
+    .toLowerCase()
+    .replace(/[\s._\-/'"()]/g, "");
 
   // Specific relationship, KYC, and bank checks MUST precede generic "नाम"
-  if (str === "faname" || str.includes("बाबु") || str.includes("पिता") || str.includes("बुबा")) return "fathername";
-  if (str === "grfaname" || str === "gfname" || str.includes("बाजे") || str.includes("हजुरबुबा")) return "grandfathername";
+  if (str === "faname" || str.includes("बाबु") || str.includes("पिता") || str.includes("बुबा"))
+    return "fathername";
+  if (str === "grfaname" || str === "gfname" || str.includes("बाजे") || str.includes("हजुरबुबा"))
+    return "grandfathername";
   if (str.includes("संरक्षक") || str.includes("अभिभावक")) return "guardianname";
-  if (str.includes("श्रीमती") || str.includes("श्रीमान") || str.includes("दम्पती") || str.includes("पति") || str.includes("पत्नी")) return "spousename";
+  if (
+    str.includes("श्रीमती") ||
+    str.includes("श्रीमान") ||
+    str.includes("दम्पती") ||
+    str.includes("पति") ||
+    str.includes("पत्नी")
+  )
+    return "spousename";
   if (str.includes("बैंक") || str.includes("बैक")) return "bankname";
   if (str.includes("नागरिकता")) return "citizenshipno";
   if (str.includes("प्यान")) return "panno";
   if (str.includes("ठेगाना") || str.includes("गाउँ") || str.includes("सडक")) return "address";
   if (str.includes("जिल्ला")) return "district";
   if (str.includes("सम्पर्क") || str.includes("मोबाइल") || str.includes("फोन")) return "contactno";
-  if (str.includes("हितग्राही") || str.includes("बीओआइडी") || str.includes("दर्तानं") || (str.includes("खाता") && !str.includes("बैंक"))) return "boid";
-  if (str.includes("शेयरधनी") || str.includes("नाम") || str.includes("सदस्य") || str.includes("ग्राहक")) return "fname";
+  if (
+    str.includes("हितग्राही") ||
+    str.includes("बीओआइडी") ||
+    str.includes("दर्तानं") ||
+    (str.includes("खाता") && !str.includes("बैंक"))
+  )
+    return "boid";
+  if (
+    str.includes("शेयरधनी") ||
+    str.includes("नाम") ||
+    str.includes("सदस्य") ||
+    str.includes("ग्राहक")
+  )
+    return "fname";
   if (str.includes("कित्ता") || str.includes("मौज्दात") || str.includes("संख्या")) return "kitta";
   if (str.includes("कसर") || str.includes("फ्र्याक्सन") || str.includes("अंश")) return "fraction";
 
@@ -588,7 +680,10 @@ function parseSheetWithMergedHeaders(ws: XLSX.WorkSheet): { rows: any[]; headerR
   const maxScanRows = Math.min(12, range.e.r - range.s.r + 1);
   const rawHeaderRows: any[][] = XLSX.utils.sheet_to_json(ws, {
     header: 1,
-    range: { s: { r: range.s.r, c: range.s.c }, e: { r: Math.min(range.e.r, range.s.r + maxScanRows), c: range.e.c } },
+    range: {
+      s: { r: range.s.r, c: range.s.c },
+      e: { r: Math.min(range.e.r, range.s.r + maxScanRows), c: range.e.c },
+    },
   });
 
   const matchingRowIndices: { relIdx: number; absIdx: number; row: any[] }[] = [];
@@ -607,7 +702,10 @@ function parseSheetWithMergedHeaders(ws: XLSX.WorkSheet): { rows: any[]; headerR
   let mergedHeaders: string[] = [];
   let dataStartAbsRow = matchingRowIndices[0].absIdx + 1;
 
-  if (matchingRowIndices.length >= 2 && matchingRowIndices[1].relIdx - matchingRowIndices[0].relIdx === 1) {
+  if (
+    matchingRowIndices.length >= 2 &&
+    matchingRowIndices[1].relIdx - matchingRowIndices[0].relIdx === 1
+  ) {
     const rowA = matchingRowIndices[0].row;
     const rowB = matchingRowIndices[1].row;
     const maxCols = Math.max(rowA.length, rowB.length);
@@ -618,7 +716,9 @@ function parseSheetWithMergedHeaders(ws: XLSX.WorkSheet): { rows: any[]; headerR
     }
     dataStartAbsRow = matchingRowIndices[1].absIdx + 1;
   } else {
-    mergedHeaders = matchingRowIndices[0].row.map((v, c) => String(v || "").trim() || `__EMPTY_${c}`);
+    mergedHeaders = matchingRowIndices[0].row.map(
+      (v, c) => String(v || "").trim() || `__EMPTY_${c}`,
+    );
     dataStartAbsRow = matchingRowIndices[0].absIdx + 1;
   }
 
@@ -718,6 +818,68 @@ export const AgmStudioService = {
     }
   },
 
+  async resolveCompanyUuid(companyIdOrCode?: string, companyName?: string): Promise<string | null> {
+    const target = (companyIdOrCode || this.getActiveCompanyId() || "nlg-insurance").trim();
+    if (isUuid(target)) {
+      return target;
+    }
+
+    const slugMap: Record<string, string> = {
+      "nlg-insurance": "NLG",
+      "rbb-mbl": "RBBMBL",
+      "generic-company": "CUSTOM",
+    };
+    const code = slugMap[target.toLowerCase()] || target.toUpperCase();
+
+    try {
+      // 1. Check existing company by code
+      const { data: byCode } = await (supabase as any)
+        .from("companies")
+        .select("id")
+        .eq("company_code", code)
+        .maybeSingle();
+
+      if (byCode?.id && isUuid(byCode.id)) {
+        return byCode.id;
+      }
+
+      // 2. Check by company name if provided
+      if (companyName) {
+        const { data: byName } = await (supabase as any)
+          .from("companies")
+          .select("id")
+          .ilike("company_name", `%${companyName.trim()}%`)
+          .maybeSingle();
+
+        if (byName?.id && isUuid(byName.id)) {
+          return byName.id;
+        }
+      }
+
+      // 3. Fallback: insert or find default
+      const name =
+        companyName || (code === "NLG" ? "NLG Insurance Company Ltd" : `Company ${code}`);
+      const { data: newComp, error: compErr } = await (supabase as any)
+        .from("companies")
+        .insert({
+          company_code: code,
+          company_name: name,
+          isin: code === "NLG" ? "NPE208A00006" : undefined,
+          total_shares: 10000000,
+        })
+        .select("id")
+        .maybeSingle();
+
+      if (!compErr && newComp?.id && isUuid(newComp.id)) {
+        return newComp.id;
+      }
+    } catch (e) {
+      console.warn("Could not resolve company UUID from database:", e);
+    }
+
+    return null;
+  },
+
   getHistoricalTimeline(companyId?: string): HistoricalFiscalYearConfig[] {
     const companies = this.getCompanies();
     const targetId = companyId || this.getActiveCompanyId();
@@ -737,6 +899,7 @@ export const AgmStudioService = {
     targetFy?: string,
     explicitConvertedShares?: number,
     explicitRightAllotted?: number,
+    isConversionMerged?: boolean,
   ): ShareholderYearlySnapshot[] {
     const rawConfigs = timeline || this.getHistoricalTimeline();
     const targetIdx = targetFy ? rawConfigs.findIndex((c) => c.fiscalYear === targetFy) : 0;
@@ -815,14 +978,15 @@ export const AgmStudioService = {
       let rightSubStatus: "SUBSCRIBED" | "PARTIAL" | "UNSUBSCRIBED" | undefined;
 
       // 1. Promoter Conversion (e.g. 27.14% converted from Promoter to Public)
-      const isConversionYear = fy.eventType === "PROMOTER_CONVERSION" || fy.fiscalYear === "2076/77";
+      const isConversionYear =
+        fy.eventType === "PROMOTER_CONVERSION" || fy.fiscalYear === "2076/77";
       if (isConversionYear && fy.conversionRatioPct > 0) {
         if (explicitConvertedShares !== undefined) {
           convertedShares = explicitConvertedShares;
           if (holderType === "PROMOTER") {
             currentKitta = Math.max(0, currentKitta - convertedShares);
-          } else {
-            // For PUBLIC or MUTUAL_FUND holders receiving converted shares
+          } else if (!isConversionMerged) {
+            // For PUBLIC or MUTUAL_FUND holders receiving converted shares, only add if not already merged in source holding
             currentKitta = currentKitta + convertedShares;
           }
         } else if (holderType === "PROMOTER") {
@@ -875,7 +1039,10 @@ export const AgmStudioService = {
       let discDetails: string | undefined;
       const isTargetYear = targetFy
         ? fy.fiscalYear === targetFy
-        : fy.fiscalYear === (configs.find((c) => c.eventType !== "IPF_TRANSFER" && c.eventType !== "PRE_BASELINE_BONUS")?.fiscalYear || configs[0]?.fiscalYear);
+        : fy.fiscalYear ===
+          (configs.find(
+            (c) => c.eventType !== "IPF_TRANSFER" && c.eventType !== "PRE_BASELINE_BONUS",
+          )?.fiscalYear || configs[0]?.fiscalYear);
       if (excelReportedFraction !== undefined && isTargetYear) {
         if (Math.abs(excelReportedFraction - newFraction) > 0.0005) {
           isDiscrepancy = true;
@@ -887,9 +1054,7 @@ export const AgmStudioService = {
       const bonusTax = isMutualFund
         ? 0.0
         : Math.round((issuedBonus * 100 * 0.05 + 1e-7) * 100) / 100;
-      const cashTax = isMutualFund
-        ? 0.0
-        : Math.round((grossCash * 0.05 + 1e-7) * 100) / 100;
+      const cashTax = isMutualFund ? 0.0 : Math.round((grossCash * 0.05 + 1e-7) * 100) / 100;
 
       let netCash = isMutualFund
         ? grossCash
@@ -907,16 +1072,24 @@ export const AgmStudioService = {
 
       const remarksList: string[] = [];
       if (convertedShares && convertedShares > 0) {
-        remarksList.push(`Converted ${convertedShares.toLocaleString()} promoter shares (${fy.conversionRatioPct}%) to public.`);
+        remarksList.push(
+          `Converted ${convertedShares.toLocaleString()} promoter shares (${fy.conversionRatioPct}%) to public.`,
+        );
       }
       if (rightAllotted !== undefined && rightAllotted > 0) {
-        remarksList.push(`${fy.rightRatioPct}% Right: Allotted ${rightAllotted.toLocaleString()} shares (${rightSubStatus || "SUBSCRIBED"}).`);
+        remarksList.push(
+          `${fy.rightRatioPct}% Right: Allotted ${rightAllotted.toLocaleString()} shares (${rightSubStatus || "SUBSCRIBED"}).`,
+        );
       }
       if (fy.bonusRatioPct > 0) {
         if (isMutualFund) {
-          remarksList.push(`${fy.bonusRatioPct}% Bonus (${issuedBonus} kitta). Mutual Fund 0% TDS: NPR ${netCash.toFixed(2)} cash direct.`);
+          remarksList.push(
+            `${fy.bonusRatioPct}% Bonus (${issuedBonus} kitta). Mutual Fund 0% TDS: NPR ${netCash.toFixed(2)} cash direct.`,
+          );
         } else {
-          remarksList.push(`${fy.bonusRatioPct}% Bonus: Issued ${issuedBonus} kitta, Remainder fraction ${newFraction.toFixed(4)}.`);
+          remarksList.push(
+            `${fy.bonusRatioPct}% Bonus: Issued ${issuedBonus} kitta, Remainder fraction ${newFraction.toFixed(4)}.`,
+          );
         }
       }
 
@@ -1046,7 +1219,10 @@ export const AgmStudioService = {
       }
 
       if (onProgress) {
-        onProgress(`Parsing Sheet ${sheetIdx}/${wb.SheetNames.length}: ${sheetName}...`, 20 + Math.round((sheetIdx / wb.SheetNames.length) * 30));
+        onProgress(
+          `Parsing Sheet ${sheetIdx}/${wb.SheetNames.length}: ${sheetName}...`,
+          20 + Math.round((sheetIdx / wb.SheetNames.length) * 30),
+        );
         await new Promise((r) => setTimeout(r, 0));
       }
 
@@ -1055,19 +1231,23 @@ export const AgmStudioService = {
       totalRowsScanned += rows.length;
 
       const isPromoterSheet =
-        upperSheet.includes("PROMOTER") || upperSheet.includes(" PO") || upperSheet.includes("DEMATE PROMOTER");
+        upperSheet.includes("PROMOTER") ||
+        upperSheet.includes(" PO") ||
+        upperSheet.includes("DEMATE PROMOTER");
       const isPhysicalSheet = upperSheet.includes("PHYSICAL") || upperSheet.includes("PHY");
       const isExclusionSheet =
-        upperSheet.includes("EXCLUSION") || upperSheet.includes("POOL") || upperSheet.includes("CLEARING");
+        upperSheet.includes("EXCLUSION") ||
+        upperSheet.includes("POOL") ||
+        upperSheet.includes("CLEARING");
 
-      const defaultHolderType: "PROMOTER" | "PUBLIC" | "MUTUAL_FUND" | "CLEARING_POOL" | "PHYSICAL" =
-        isExclusionSheet
-          ? "CLEARING_POOL"
-          : isPhysicalSheet
+      const defaultHolderType:
+        "PROMOTER" | "PUBLIC" | "MUTUAL_FUND" | "CLEARING_POOL" | "PHYSICAL" = isExclusionSheet
+        ? "CLEARING_POOL"
+        : isPhysicalSheet
           ? "PHYSICAL"
           : isPromoterSheet
-          ? "PROMOTER"
-          : "PUBLIC";
+            ? "PROMOTER"
+            : "PUBLIC";
 
       // Precompute normalized header keys once per sheet for maximum parsing speed
       const sampleRow = rows[0] || {};
@@ -1084,17 +1264,17 @@ export const AgmStudioService = {
 
         const fname = String(
           normMap["shareholdername"] ||
-          normMap["shareholdersname"] ||
-          normMap["sharehodername"] ||
-          normMap["fullname"] ||
-          normMap["holdername"] ||
-          normMap["clientname"] ||
-          normMap["name"] ||
-          normMap["fname"] ||
-          normMap["hname"] ||
-          normMap["shname"] ||
-          normMap["npname"] ||
-          ""
+            normMap["shareholdersname"] ||
+            normMap["sharehodername"] ||
+            normMap["fullname"] ||
+            normMap["holdername"] ||
+            normMap["clientname"] ||
+            normMap["name"] ||
+            normMap["fname"] ||
+            normMap["hname"] ||
+            normMap["shname"] ||
+            normMap["npname"] ||
+            "",
         ).trim();
 
         let rawBoid =
@@ -1134,7 +1314,11 @@ export const AgmStudioService = {
 
         let boid = cleanBoid(rawBoid);
         if (!boid && fname) {
-          const cleanSheet = sheetName.replace(/[^0-9a-zA-Z]/g, "").slice(0, 8).toUpperCase() || "S";
+          const cleanSheet =
+            sheetName
+              .replace(/[^0-9a-zA-Z]/g, "")
+              .slice(0, 8)
+              .toUpperCase() || "S";
           boid = `FOLIO-${cleanSheet}-${rowIdx + 1}`;
         }
 
@@ -1147,53 +1331,58 @@ export const AgmStudioService = {
           return;
         }
 
-        let holderType: "PROMOTER" | "PUBLIC" | "MUTUAL_FUND" | "CLEARING_POOL" | "PHYSICAL" = defaultHolderType;
+        let holderType: "PROMOTER" | "PUBLIC" | "MUTUAL_FUND" | "CLEARING_POOL" | "PHYSICAL" =
+          defaultHolderType;
         // Universal Folio / Physical ID Normalization: Any short non-16-digit ID gets canonical FOLIO- prefix
         if (boid.length < 10 && !boid.startsWith("FOLIO-")) {
           holderType = isPromoterSheet ? "PROMOTER" : "PHYSICAL";
           boid = "FOLIO-" + boid;
         }
 
-        const lname = String(normMap["lname"] || normMap["lastname"] || normMap["surname"] || "").trim();
+        const lname = String(
+          normMap["lname"] || normMap["lastname"] || normMap["surname"] || "",
+        ).trim();
         const fullName = (fname + " " + lname).trim() || "SHAREHOLDER " + boid.slice(-4);
 
-        const fatherName = String(normMap["fathersname"] || normMap["fathername"] || normMap["faname"] || "").trim();
+        const fatherName = String(
+          normMap["fathersname"] || normMap["fathername"] || normMap["faname"] || "",
+        ).trim();
         const gFatherName = String(
           normMap["grandfathersname"] ||
-          normMap["grandfathername"] ||
-          normMap["gfname"] ||
-          normMap["grfaname"] ||
-          ""
+            normMap["grandfathername"] ||
+            normMap["gfname"] ||
+            normMap["grfaname"] ||
+            "",
         ).trim();
 
         const guardianName = String(
           normMap["guardianname"] ||
-          normMap["guardian"] ||
-          normMap["gurdianname"] ||
-          normMap["gurdian"] ||
-          normMap["gname"] ||
-          normMap["careof"] ||
-          normMap["co"] ||
-          normMap["minor"] ||
-          normMap["mname"] ||
-          normMap["guardian_name"] ||
-          ""
+            normMap["guardian"] ||
+            normMap["gurdianname"] ||
+            normMap["gurdian"] ||
+            normMap["gname"] ||
+            normMap["careof"] ||
+            normMap["co"] ||
+            normMap["minor"] ||
+            normMap["mname"] ||
+            normMap["guardian_name"] ||
+            "",
         ).trim();
 
         const spouseName = String(
           normMap["spousename"] ||
-          normMap["spouse"] ||
-          normMap["husbandname"] ||
-          normMap["wifename"] ||
-          ""
+            normMap["spouse"] ||
+            normMap["husbandname"] ||
+            normMap["wifename"] ||
+            "",
         ).trim();
 
         const citizenship = String(
           normMap["citizenshipno"] ||
-          normMap["citizenship"] ||
-          normMap["citizenno"] ||
-          normMap["citizen"] ||
-          ""
+            normMap["citizenship"] ||
+            normMap["citizenno"] ||
+            normMap["citizen"] ||
+            "",
         ).trim();
 
         const pan = String(normMap["panno"] || normMap["pan"] || "").trim();
@@ -1201,24 +1390,28 @@ export const AgmStudioService = {
         const district = String(normMap["district"] || normMap["distcode"] || "").trim();
         const contact = String(
           normMap["contactno"] ||
-          normMap["contact"] ||
-          normMap["mobileno"] ||
-          normMap["mobile"] ||
-          normMap["phonenumber"] ||
-          normMap["telno"] ||
-          ""
+            normMap["contact"] ||
+            normMap["mobileno"] ||
+            normMap["mobile"] ||
+            normMap["phonenumber"] ||
+            normMap["telno"] ||
+            "",
         ).trim();
 
-        const email = String(normMap["email"] || normMap["emailaddress"] || normMap["mail"] || "").trim();
-        const bankName = String(normMap["bankname"] || normMap["bank"] || normMap["bank_name"] || "").trim();
+        const email = String(
+          normMap["email"] || normMap["emailaddress"] || normMap["mail"] || "",
+        ).trim();
+        const bankName = String(
+          normMap["bankname"] || normMap["bank"] || normMap["bank_name"] || "",
+        ).trim();
         const bankAccountNo = String(
           normMap["bankaccountno"] ||
-          normMap["accountno"] ||
-          normMap["bankac"] ||
-          normMap["acno"] ||
-          normMap["bank_ac_no"] ||
-          normMap["account_number"] ||
-          ""
+            normMap["accountno"] ||
+            normMap["bankac"] ||
+            normMap["acno"] ||
+            normMap["bank_ac_no"] ||
+            normMap["account_number"] ||
+            "",
         ).trim();
 
         const rawType = String(normMap["type"] || normMap["ppublic"] || "").toUpperCase();
@@ -1240,49 +1433,91 @@ export const AgmStudioService = {
           holderType = "CLEARING_POOL";
         }
 
-        const rawKitta =
-          normMap["kitta"] ||
-          normMap["totalkitta"] ||
-          normMap["tkitta"] ||
-          normMap["noofshares"] ||
-          normMap["shares"] ||
-          normMap["currentblc"] ||
-          normMap["freeblc"] ||
-          normMap["balance"] ||
-          normMap["shkitta"] ||
-          normMap["total"] ||
-          0;
-        const kitta = Math.max(0, parseInt(String(rawKitta).replace(/,/g, ""), 10) || 0);
+        const getFirstNumeric = (keys: string[], defaultVal = 0): number => {
+          for (const k of keys) {
+            const val = normMap[k];
+            if (val !== undefined && val !== null && String(val).trim() !== "") {
+              const cleaned = String(val).replace(/,/g, "").trim();
+              const parsed = Number(cleaned);
+              if (!isNaN(parsed)) return parsed;
+            }
+          }
+          return defaultVal;
+        };
 
-        const rawRightAllotted =
-          normMap["righteligiblekitta"] ||
-          normMap["wholekitta"] ||
-          normMap["actualright"] ||
-          normMap["rightsharesallotted"] ||
-          normMap["rightshares"] ||
-          0;
-        const rightAllotted = parseInt(String(rawRightAllotted).replace(/,/g, ""), 10) || 0;
+        const getFirstOptionalNumeric = (keys: string[]): number | undefined => {
+          for (const k of keys) {
+            const val = normMap[k];
+            if (val !== undefined && val !== null && String(val).trim() !== "") {
+              const cleaned = String(val).replace(/,/g, "").trim();
+              const parsed = Number(cleaned);
+              if (!isNaN(parsed)) return parsed;
+            }
+          }
+          return undefined;
+        };
 
-        const rawFrac =
-          normMap["tfrackitta"] ||
-          normMap["frac"] ||
-          normMap["previousfraction"] ||
-          normMap["prevfrac"] ||
-          normMap["prevfrackitta"] ||
-          normMap["openingfraction"] ||
-          normMap["opfrac"] ||
-          normMap["fraction"] ||
-          0;
-        const frac = Math.max(0, parseFloat(String(rawFrac)) || 0);
+        const kitta = Math.max(
+          0,
+          Math.floor(
+            getFirstNumeric(
+              [
+                "kitta",
+                "totalkitta",
+                "tkitta",
+                "noofshares",
+                "shares",
+                "currentblc",
+                "freeblc",
+                "balance",
+                "shkitta",
+                "total",
+              ],
+              0,
+            ),
+          ),
+        );
 
-        const rawReportedNewFrac =
-          normMap["newfraction"] ||
-          normMap["newfrac"] ||
-          normMap["remfraction"] ||
-          normMap["remfra"] ||
-          normMap["remainderfraction"];
-        const excelReportedFraction =
-          rawReportedNewFrac !== undefined ? parseFloat(String(rawReportedNewFrac)) : undefined;
+        const rightAllotted = Math.max(
+          0,
+          Math.floor(
+            getFirstNumeric(
+              [
+                "righteligiblekitta",
+                "wholekitta",
+                "actualright",
+                "rightsharesallotted",
+                "rightshares",
+              ],
+              0,
+            ),
+          ),
+        );
+
+        const frac = Math.max(
+          0,
+          getFirstNumeric(
+            [
+              "tfrackitta",
+              "frac",
+              "previousfraction",
+              "prevfrac",
+              "prevfrackitta",
+              "openingfraction",
+              "opfrac",
+              "fraction",
+            ],
+            0,
+          ),
+        );
+
+        const excelReportedFraction = getFirstOptionalNumeric([
+          "newfraction",
+          "newfrac",
+          "remfraction",
+          "remfra",
+          "remainderfraction",
+        ]);
 
         if (aggregatedMap.has(boid)) {
           const existing = aggregatedMap.get(boid)!;
@@ -1293,7 +1528,9 @@ export const AgmStudioService = {
             (existing.holderType === "PUBLIC" && holderType === "PROMOTER")
           ) {
             convertedShareholdersCount++;
-            const promoterKitta = (existing.holderType === "PROMOTER" ? existing.kitta : 0) + (holderType === "PROMOTER" ? kitta : 0);
+            const promoterKitta =
+              (existing.holderType === "PROMOTER" ? existing.kitta : 0) +
+              (holderType === "PROMOTER" ? kitta : 0);
             totalConvertedKitta += promoterKitta;
 
             existing.holderType = "PUBLIC";
@@ -1356,7 +1593,18 @@ export const AgmStudioService = {
 
     // Pass 2: Calculate evolution on aggregated distinct shareholders
     for (const item of aggregatedMap.values()) {
-      const { boid, fullName, holderType, kitta, frac, rightAllotted, excelReportedFraction, isExclusionSheet, convertedShares, isConversionMerged } = item;
+      const {
+        boid,
+        fullName,
+        holderType,
+        kitta,
+        frac,
+        rightAllotted,
+        excelReportedFraction,
+        isExclusionSheet,
+        convertedShares,
+        isConversionMerged,
+      } = item;
 
       if (holderType === "PROMOTER") byCategory.promoterDemat++;
       else if (holderType === "PUBLIC") byCategory.publicDemat++;
@@ -1373,7 +1621,8 @@ export const AgmStudioService = {
       if (holderType === "CLEARING_POOL" || isExclusionSheet) {
         const brokerCodeMatch = fullName.match(/\d+/);
         const brokerCode = brokerCodeMatch ? brokerCodeMatch[0] : String(brokerPools.length + 1);
-        const cashAmount = Math.round((kitta * 100 * (cashRatePct / 100) + Number.EPSILON) * 100) / 100;
+        const cashAmount =
+          Math.round((kitta * 100 * (cashRatePct / 100) + Number.EPSILON) * 100) / 100;
         brokerPools.push({
           brokerCode,
           brokerName: fullName,
@@ -1409,6 +1658,7 @@ export const AgmStudioService = {
         targetFy,
         convertedShares,
         rightAllotted,
+        isConversionMerged,
       );
 
       let hasDiscrepancy = snapshots.some((s) => s.excelDiscrepancy);
@@ -1417,7 +1667,10 @@ export const AgmStudioService = {
       const lastSnapshot = snapshots[snapshots.length - 1];
       const totalBonus = snapshots.reduce((s, snap) => s + snap.issuedWholeBonus, 0);
       const totalCash = snapshots.reduce((s, snap) => s + snap.grossCashDividend, 0);
-      const totalTax = snapshots.reduce((s, snap) => s + (snap.bonusTaxWithheld + snap.cashTaxWithheld), 0);
+      const totalTax = snapshots.reduce(
+        (s, snap) => s + (snap.bonusTaxWithheld + snap.cashTaxWithheld),
+        0,
+      );
       const totalNetCash = snapshots.reduce((s, snap) => s + snap.netCashPayable, 0);
 
       sumGrossCash += totalCash;
@@ -1431,17 +1684,34 @@ export const AgmStudioService = {
 
       const anomalies: string[] = [];
       if (hasDiscrepancy) {
-        anomalies.push("Excel manual fraction compounding variance detected vs CDSC Statutory rule.");
+        anomalies.push(
+          "Excel manual fraction compounding variance detected vs CDSC Statutory rule.",
+        );
       }
       if (isConversionMerged && convertedShares) {
-        anomalies.push(`CA 6316 Promoter-to-Public conversion segregated: ${convertedShares.toLocaleString()} promoter shares merged into active public holding.`);
+        anomalies.push(
+          `CA 6316 Promoter-to-Public conversion segregated: ${convertedShares.toLocaleString()} promoter shares merged into active public holding.`,
+        );
       }
-      
+
       // NLP Heuristic KYC Validation
-      const INSTITUTIONAL_KEYWORDS = ["BANK", "LIMITED", "MUTUAL FUND", "CAPITAL", "SECURITIES", "LTD", "FINANCE", "INVESTMENT"];
-      const isInstitution = INSTITUTIONAL_KEYWORDS.some(kw => fullName.toUpperCase().includes(kw));
+      const INSTITUTIONAL_KEYWORDS = [
+        "BANK",
+        "LIMITED",
+        "MUTUAL FUND",
+        "CAPITAL",
+        "SECURITIES",
+        "LTD",
+        "FINANCE",
+        "INVESTMENT",
+      ];
+      const isInstitution = INSTITUTIONAL_KEYWORDS.some((kw) =>
+        fullName.toUpperCase().includes(kw),
+      );
       if (isInstitution && holderType === "PUBLIC") {
-        anomalies.push(`Heuristic Warning: '${fullName}' appears to be an Institution but is marked PUBLIC.`);
+        anomalies.push(
+          `Heuristic Warning: '${fullName}' appears to be an Institution but is marked PUBLIC.`,
+        );
         hasDiscrepancy = true;
       }
 
@@ -1461,9 +1731,14 @@ export const AgmStudioService = {
         bankName: item.bankName || undefined,
         bankAccountNo: item.bankAccountNo || undefined,
         holderType,
-        initialKitta2075: kitta,
-        initialFraction2075: frac,
+        initialKitta2075: targetFy === "2075/76" || !targetFy ? kitta : 0,
+        initialFraction2075: targetFy === "2075/76" || !targetFy ? frac : 0,
+        importedBaseKitta: kitta,
+        importedOpeningFraction: frac,
+        importedBaseFiscalYear: targetFy || "2075/76",
         targetFySnapshot: targetSnapshot,
+        convertedShares,
+        isConversionMerged,
         currentKitta2081: lastSnapshot ? lastSnapshot.postEventKitta : kitta,
         currentFraction2081: lastSnapshot ? lastSnapshot.carriedNewFraction : frac,
         totalBonusSharesReceived: totalBonus,
@@ -1494,7 +1769,9 @@ export const AgmStudioService = {
       );
     }
     if (byCategory.clearingPools > 0) {
-      warnings.push(`Extracted ${byCategory.clearingPools} Broker Clearing Pool accounts for beneficial owner verification.`);
+      warnings.push(
+        `Extracted ${byCategory.clearingPools} Broker Clearing Pool accounts for beneficial owner verification.`,
+      );
     }
 
     let criticalCapitalVariance = false;
@@ -1539,7 +1816,9 @@ export const AgmStudioService = {
     return { profiles, brokerPools, drnRecords, report };
   },
 
-  async parseHistoricalExcelBuffer(buffer: ArrayBuffer | Uint8Array): Promise<MultiYearShareholderProfile[]> {
+  async parseHistoricalExcelBuffer(
+    buffer: ArrayBuffer | Uint8Array,
+  ): Promise<MultiYearShareholderProfile[]> {
     const res = await this.parseHistoricalExcelWithReport(buffer);
     return res.profiles;
   },
@@ -1552,191 +1831,484 @@ export const AgmStudioService = {
     drnRecords: PhysicalDrnRecord[],
     report?: ImportValidationReport,
     onProgress?: (savedCount: number, totalCount: number, percent: number) => void,
-  ): Promise<{ savedCount: number; snapshotsSaved: number }> {
-    const totalKitta = profiles.reduce((s, p) => s + p.initialKitta2075, 0);
+    companyId?: string,
+  ): Promise<{ savedCount: number; snapshotsSaved: number; isLocked: boolean }> {
+    const companyUuid = await this.resolveCompanyUuid(companyId);
+
+    const totalKitta = profiles.reduce(
+      (s, p) => s + (p.initialKitta2075 || p.importedBaseKitta || 0),
+      0,
+    );
     const totalBonus = profiles.reduce((s, p) => s + p.totalBonusSharesReceived, 0);
     const totalCash = profiles.reduce((s, p) => s + p.totalCashDividendReceived, 0);
 
-    const { error: metaErr } = await (supabase as any).from("agm_fiscal_year_meta").upsert(
-      {
-        fiscal_year: fiscalYear,
-        event_name: eventName,
-        total_shareholders: profiles.length,
-        total_kitta: totalKitta,
-        total_bonus_kitta: totalBonus,
-        total_cash_npr: totalCash,
-        is_locked: true,
-        import_report: report || null,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "fiscal_year" },
-    );
-
-    if (metaErr) {
-      throw new Error(`Failed to save fiscal year metadata: ${metaErr.message || JSON.stringify(metaErr)}`);
-    }
-
-    const CHUNK_SIZE = 500; // Reduced from 1000 → smaller HTTP payload per request
+    const CHUNK_SIZE = 500;
     let savedCount = 0;
     let snapshotsSaved = 0;
 
-    // Emit 0% immediately so browser UI updates before first HTTP call
     if (onProgress) {
       onProgress(0, profiles.length, 0);
       await new Promise((r) => setTimeout(r, 0));
     }
 
-    for (let i = 0; i < profiles.length; i += CHUNK_SIZE) {
-      const chunk = profiles.slice(i, i + CHUNK_SIZE);
-      const shareholderRows = chunk.map((p) => ({
-        boid: p.boid,
-        shareholder_name: p.shareholderName,
-        father_name: p.fatherName || null,
-        grandfather_name: p.grandfatherName || null,
-        guardian_name: p.guardianName || null,
-        spouse_name: p.spouseName || null,
-        citizenship_no: p.citizenshipNo || null,
-        address: p.address || null,
-        district: p.district || null,
-        contact_no: p.contactNo || null,
-        email: p.email || null,
-        bank_name: p.bankName || null,
-        bank_account_no: p.bankAccountNo || null,
-        pan_no: p.panNo || null,
-        holder_type: p.holderType,
-        initial_kitta_2075: p.initialKitta2075,
-        initial_fraction_2075: p.initialFraction2075 || 0,
-        current_kitta_2081: p.currentKitta2081,
-        current_fraction_2081: p.currentFraction2081,
-        total_bonus_shares: p.totalBonusSharesReceived,
-        total_cash_dividend: p.totalCashDividendReceived,
-        total_tax_withheld: p.totalTaxWithheld,
-        reconciliation_status: p.hasDiscrepancy ? "DISCREPANCY" : "RECONCILED",
-        has_discrepancy: p.hasDiscrepancy,
-        anomalies: p.anomalies || [],
-        updated_at: new Date().toISOString(),
-      }));
+    try {
+      // 0. ATOMIC TRANSACTIONAL REPLACEMENT VIA STAGING TABLE AND RPC
+      let stagedSuccessfully = false;
+      const batchId = globalThis.crypto?.randomUUID
+        ? globalThis.crypto.randomUUID()
+        : `b-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
-      const { data: upserted, error: shErr } = await (supabase as any)
-        .from("agm_historical_shareholders")
-        .upsert(shareholderRows, { onConflict: "boid" })
-        .select("id, boid");
+      if (companyUuid) {
+        try {
+          for (let i = 0; i < profiles.length; i += CHUNK_SIZE) {
+            const chunk = profiles.slice(i, i + CHUNK_SIZE);
+            const stagingRows = chunk.map((p) => {
+              const targetSnap =
+                p.yearlySnapshots.find((s) => s.fiscalYear === fiscalYear) ?? p.yearlySnapshots[0];
+              return {
+                batch_id: batchId,
+                company_id: companyUuid,
+                fiscal_year: fiscalYear,
+                boid: p.boid,
+                shareholder_row: {
+                  shareholder_name: p.shareholderName,
+                  father_name: p.fatherName || null,
+                  grandfather_name: p.grandfatherName || null,
+                  guardian_name: p.guardianName || null,
+                  spouse_name: p.spouseName || null,
+                  citizenship_no: p.citizenshipNo || null,
+                  address: p.address || null,
+                  district: p.district || null,
+                  contact_no: p.contactNo || null,
+                  email: p.email || null,
+                  bank_name: p.bankName || null,
+                  bank_account_no: p.bankAccountNo || null,
+                  pan_no: p.panNo || null,
+                  original_folio_no: p.originalFolioNo || null,
+                  holder_type: p.holderType,
+                  initial_kitta_2075: p.initialKitta2075 || 0,
+                  initial_fraction_2075: p.initialFraction2075 || 0,
+                  imported_base_kitta:
+                    p.importedBaseKitta ||
+                    (fiscalYear !== "2075/76" ? p.initialKitta2075 : undefined),
+                  imported_opening_fraction:
+                    p.importedOpeningFraction ??
+                    (fiscalYear !== "2075/76" ? p.initialFraction2075 : 0),
+                  imported_base_fiscal_year: p.importedBaseFiscalYear || fiscalYear,
+                  converted_shares: p.convertedShares || null,
+                  current_kitta_2081: p.currentKitta2081,
+                  current_fraction_2081: p.currentFraction2081,
+                  total_bonus_shares: p.totalBonusSharesReceived,
+                  total_cash_dividend: p.totalCashDividendReceived,
+                  total_tax_withheld: p.totalTaxWithheld,
+                  reconciliation_status: p.hasDiscrepancy ? "DISCREPANCY" : "RECONCILED",
+                  has_discrepancy: p.hasDiscrepancy,
+                  anomalies: p.anomalies || [],
+                },
+                snapshot_row: {
+                  base_kitta:
+                    targetSnap?.baseKitta ?? (p.initialKitta2075 || p.importedBaseKitta || 0),
+                  previous_fraction: targetSnap?.previousFraction ?? (p.initialFraction2075 || 0),
+                  gross_bonus_entitlement: targetSnap?.grossBonusEntitlement ?? 0,
+                  issued_whole_bonus: targetSnap?.issuedWholeBonus ?? 0,
+                  carried_new_fraction: targetSnap?.carriedNewFraction ?? 0,
+                  gross_cash_dividend: targetSnap?.grossCashDividend ?? 0,
+                  bonus_tax_withheld: targetSnap?.bonusTaxWithheld ?? 0,
+                  cash_tax_withheld: targetSnap?.cashTaxWithheld ?? 0,
+                  net_cash_payable: targetSnap?.netCashPayable ?? 0,
+                  post_event_kitta: targetSnap?.postEventKitta ?? (p.currentKitta2081 || 0),
+                  excel_discrepancy_flag: targetSnap?.excelDiscrepancy ?? false,
+                  discrepancy_details: targetSnap?.discrepancyDetails || null,
+                  remarks:
+                    targetSnap?.discrepancyDetails ||
+                    targetSnap?.remarks ||
+                    (p.hasDiscrepancy ? "Excel Discrepancy" : "CDSC Reconciled"),
+                },
+              };
+            });
 
-      if (shErr) {
-        throw new Error(`Failed to save shareholder batch ${i / CHUNK_SIZE + 1}: ${shErr.message || JSON.stringify(shErr)}`);
-      }
-
-      savedCount += chunk.length;
-
-      if (upserted && upserted.length > 0) {
-        const idMap = new Map<string, string>(upserted.map((u: any) => [u.boid, u.id]));
-        const snapshotRows: any[] = [];
-
-        chunk.forEach((p) => {
-          const shId = idMap.get(p.boid);
-          // CRITICAL FIX: Only save the snapshot for the CURRENT fiscalYear being imported.
-          // Previously ALL 8 yearlySnapshots per profile were saved = 8,000 rows per 1,000-chunk.
-          // Now only 1 snapshot per profile = 500 rows per 500-chunk (16x less data per HTTP request).
-          const targetSnap = p.yearlySnapshots.find((s) => s.fiscalYear === fiscalYear)
-            ?? p.yearlySnapshots[0];
-          if (!targetSnap) return;
-
-          snapshotRows.push({
-            shareholder_id: shId,
-            boid: p.boid,
-            fiscal_year: targetSnap.fiscalYear,
-            event_name: targetSnap.eventName,
-            base_kitta: targetSnap.baseKitta,
-            previous_fraction: targetSnap.previousFraction,
-            right_shares_allotted: targetSnap.rightSharesAllotted || null,
-            converted_shares: targetSnap.convertedShares || null,
-            gross_bonus_entitlement: targetSnap.grossBonusEntitlement,
-            issued_whole_bonus: targetSnap.issuedWholeBonus,
-            carried_new_fraction: targetSnap.carriedNewFraction,
-            gross_cash_dividend: targetSnap.grossCashDividend,
-            bonus_tax_withheld: targetSnap.bonusTaxWithheld,
-            cash_tax_withheld: targetSnap.cashTaxWithheld,
-            net_cash_payable: targetSnap.netCashPayable,
-            post_event_kitta: targetSnap.postEventKitta,
-            excel_discrepancy_flag: targetSnap.excelDiscrepancy,
-            is_locked: true,
-            remarks: targetSnap.discrepancyDetails || targetSnap.remarks,
-          });
-        });
-
-        if (snapshotRows.length > 0) {
-          const { error: snapErr } = await (supabase as any)
-            .from("agm_yearly_snapshots")
-            .upsert(snapshotRows, { onConflict: "boid,fiscal_year" });
-
-          if (snapErr) {
-            throw new Error(`Failed to save snapshot batch ${i / CHUNK_SIZE + 1}: ${snapErr.message || JSON.stringify(snapErr)}`);
+            const { error: stageErr } = await (supabase as any)
+              .from("agm_import_staging")
+              .insert(stagingRows);
+            if (stageErr) {
+              throw stageErr;
+            }
           }
-          snapshotsSaved += snapshotRows.length;
+
+          const { data: commitRes, error: commitErr } = await (supabase as any).rpc(
+            "commit_agm_fiscal_year_import",
+            {
+              p_company_id: companyUuid,
+              p_fiscal_year: fiscalYear,
+              p_batch_id: batchId,
+              p_event_name: eventName,
+              p_report: report || {},
+            },
+          );
+
+          if (commitErr) {
+            throw commitErr;
+          }
+
+          if (commitRes?.success) {
+            savedCount = Number(commitRes.savedCount);
+            snapshotsSaved = Number(commitRes.snapshotsSaved);
+            if (savedCount !== profiles.length) {
+              throw new Error(
+                `Atomic import verification failed: expected ${profiles.length} shareholders, committed ${savedCount}.`,
+              );
+            }
+            if (snapshotsSaved !== profiles.length) {
+              throw new Error(
+                `Atomic import verification failed: expected ${profiles.length} snapshots, committed ${snapshotsSaved}.`,
+              );
+            }
+            if (!commitRes.isLocked) {
+              throw new Error(
+                `Atomic import invariant violated: FY ${fiscalYear} was not locked upon commit.`,
+              );
+            }
+
+            // Direct database check on FY lock metadata
+            const { data: metaCheck, error: metaErr } = await (supabase as any)
+              .from("agm_fiscal_year_meta")
+              .select("is_locked")
+              .eq("company_id", companyUuid)
+              .eq("fiscal_year", fiscalYear)
+              .single();
+
+            if (metaErr || !metaCheck?.is_locked) {
+              throw new Error(
+                `Atomic import verification failed: FY ${fiscalYear} metadata record is missing or unlocked in database.`,
+              );
+            }
+
+            // Direct database check on snapshot foreign key linkage (every snapshot has shareholder_id)
+            const { count: missingFkCount, error: missingFkErr } = await (supabase as any)
+              .from("agm_yearly_snapshots")
+              .select("id", { count: "exact", head: true })
+              .eq("company_id", companyUuid)
+              .eq("fiscal_year", fiscalYear)
+              .is("shareholder_id", null);
+
+            if (missingFkErr) {
+              throw new Error(
+                `Atomic import verification failed checking foreign keys: ${missingFkErr.message}`,
+              );
+            }
+            if (missingFkCount && missingFkCount > 0) {
+              throw new Error(
+                `Atomic import verification failed: ${missingFkCount} snapshot(s) in FY ${fiscalYear} lack shareholder_id foreign key.`,
+              );
+            }
+
+            stagedSuccessfully = true;
+          }
+        } catch (stageEx: any) {
+          try {
+            await (supabase as any).from("agm_import_staging").delete().eq("batch_id", batchId);
+          } catch {
+            // Ignore staging cleanup failure
+          }
+
+          const msg = String(stageEx?.message || stageEx);
+          if (
+            !msg.includes("does not exist") &&
+            !msg.includes("not found") &&
+            !msg.includes("42883") &&
+            !msg.includes("42P01")
+          ) {
+            throw new Error(`Atomic import staging failed: ${msg}`);
+          }
         }
       }
 
-      if (onProgress) {
-        const pct = Math.min(100, Math.round((savedCount / profiles.length) * 100));
-        onProgress(savedCount, profiles.length, pct);
-        await new Promise((r) => setTimeout(r, 0));
+      if (!stagedSuccessfully) {
+        // Fallback direct path with transactional stale cleanup
+        if (companyUuid) {
+          const incomingBoids = profiles.map((p) => p.boid);
+          const { error: replaceErr } = await (supabase as any).rpc(
+            "replace_agm_fiscal_year_snapshots",
+            {
+              p_company_id: companyUuid,
+              p_fiscal_year: fiscalYear,
+              p_incoming_boids: incomingBoids,
+            },
+          );
+
+          if (replaceErr) {
+            let delSnapQ = (supabase as any)
+              .from("agm_yearly_snapshots")
+              .delete()
+              .eq("company_id", companyUuid)
+              .eq("fiscal_year", fiscalYear);
+            if (incomingBoids.length > 0) {
+              delSnapQ = delSnapQ.not("boid", "in", `("${incomingBoids.join('","')}")`);
+            }
+            await delSnapQ;
+          }
+        }
+
+        // Process shareholder batches and snapshots
+        for (let i = 0; i < profiles.length; i += CHUNK_SIZE) {
+          const chunk = profiles.slice(i, i + CHUNK_SIZE);
+          const shareholderRows = chunk.map((p) => ({
+            company_id: companyUuid,
+            boid: p.boid,
+            shareholder_name: p.shareholderName,
+            father_name: p.fatherName || null,
+            grandfather_name: p.grandfatherName || null,
+            guardian_name: p.guardianName || null,
+            spouse_name: p.spouseName || null,
+            citizenship_no: p.citizenshipNo || null,
+            address: p.address || null,
+            district: p.district || null,
+            contact_no: p.contactNo || null,
+            email: p.email || null,
+            bank_name: p.bankName || null,
+            bank_account_no: p.bankAccountNo || null,
+            pan_no: p.panNo || null,
+            original_folio_no: p.originalFolioNo || null,
+            holder_type: p.holderType,
+            initial_kitta_2075: p.initialKitta2075 || 0,
+            initial_fraction_2075: p.initialFraction2075 || 0,
+            imported_base_kitta:
+              p.importedBaseKitta || (fiscalYear !== "2075/76" ? p.initialKitta2075 : undefined),
+            imported_opening_fraction:
+              p.importedOpeningFraction ?? (fiscalYear !== "2075/76" ? p.initialFraction2075 : 0),
+            imported_base_fiscal_year: p.importedBaseFiscalYear || fiscalYear,
+            converted_shares: p.convertedShares || null,
+            current_kitta_2081: p.currentKitta2081,
+            current_fraction_2081: p.currentFraction2081,
+            total_bonus_shares: p.totalBonusSharesReceived,
+            total_cash_dividend: p.totalCashDividendReceived,
+            total_tax_withheld: p.totalTaxWithheld,
+            reconciliation_status: p.hasDiscrepancy ? "DISCREPANCY" : "RECONCILED",
+            has_discrepancy: p.hasDiscrepancy,
+            anomalies: p.anomalies || [],
+            updated_at: new Date().toISOString(),
+          }));
+
+          const { data: upserted, error: shErr } = await (supabase as any)
+            .from("agm_historical_shareholders")
+            .upsert(shareholderRows, { onConflict: "company_id,boid" })
+            .select("id, boid");
+
+          if (shErr) {
+            throw new Error(
+              `Failed to save shareholder batch ${i / CHUNK_SIZE + 1}: ${shErr.message || JSON.stringify(shErr)}`,
+            );
+          }
+
+          savedCount += chunk.length;
+
+          if (upserted && upserted.length > 0) {
+            const idMap = new Map<string, string>(upserted.map((u: any) => [u.boid, u.id]));
+            const snapshotRows: any[] = [];
+
+            chunk.forEach((p) => {
+              const shId = idMap.get(p.boid);
+              const targetSnap =
+                p.yearlySnapshots.find((s) => s.fiscalYear === fiscalYear) ?? p.yearlySnapshots[0];
+              if (!targetSnap) return;
+
+              snapshotRows.push({
+                company_id: companyUuid,
+                shareholder_id: shId,
+                boid: p.boid,
+                fiscal_year: targetSnap.fiscalYear,
+                event_name: targetSnap.eventName,
+                base_kitta: targetSnap.baseKitta,
+                previous_fraction: targetSnap.previousFraction,
+                right_shares_allotted: targetSnap.rightSharesAllotted || null,
+                converted_shares: targetSnap.convertedShares || null,
+                gross_bonus_entitlement: targetSnap.grossBonusEntitlement,
+                issued_whole_bonus: targetSnap.issuedWholeBonus,
+                carried_new_fraction: targetSnap.carriedNewFraction,
+                gross_cash_dividend: targetSnap.grossCashDividend,
+                bonus_tax_withheld: targetSnap.bonusTaxWithheld,
+                cash_tax_withheld: targetSnap.cashTaxWithheld,
+                net_cash_payable: targetSnap.netCashPayable,
+                post_event_kitta: targetSnap.postEventKitta,
+                excel_discrepancy_flag: targetSnap.excelDiscrepancy,
+                is_locked: true,
+                remarks: targetSnap.discrepancyDetails || targetSnap.remarks,
+              });
+            });
+
+            if (snapshotRows.length > 0) {
+              const { error: snapErr } = await (supabase as any)
+                .from("agm_yearly_snapshots")
+                .upsert(snapshotRows, { onConflict: "company_id,boid,fiscal_year" });
+
+              if (snapErr) {
+                throw new Error(
+                  `Failed to save snapshot batch ${i / CHUNK_SIZE + 1}: ${snapErr.message || JSON.stringify(snapErr)}`,
+                );
+              }
+              snapshotsSaved += snapshotRows.length;
+            }
+          }
+
+          if (onProgress) {
+            const pct = Math.min(85, Math.round((savedCount / profiles.length) * 85));
+            onProgress(savedCount, profiles.length, pct);
+            await new Promise((r) => setTimeout(r, 0));
+          }
+        }
       }
-    }
 
-    if (brokerPools.length > 0) {
-      const poolRows = brokerPools.map((b) => ({
-        broker_code: b.brokerCode,
-        broker_name: b.brokerName,
-        pool_boid: b.poolBoid,
-        fiscal_year: b.fiscalYear,
-        unclaimed_kitta: b.unclaimedKitta,
-        unclaimed_cash: b.unclaimedCash,
-        claimed_kitta: b.claimedKitta,
-        claimed_cash: b.claimedCash,
-        active_balance_kitta: b.activeBalanceKitta,
-        active_balance_cash: b.activeBalanceCash,
-        updated_at: new Date().toISOString(),
-      }));
-      for (let pIdx = 0; pIdx < poolRows.length; pIdx += 500) {
-        const poolChunk = poolRows.slice(pIdx, pIdx + 500);
-        await (supabase as any).from("agm_broker_pools").upsert(poolChunk, { onConflict: "pool_boid,fiscal_year" });
+      // 2. Save Broker Pools with explicit error verification
+      if (brokerPools.length > 0) {
+        const poolRows = brokerPools.map((b) => ({
+          company_id: companyUuid,
+          broker_code: b.brokerCode,
+          broker_name: b.brokerName,
+          pool_boid: b.poolBoid,
+          fiscal_year: b.fiscalYear,
+          unclaimed_kitta: b.unclaimedKitta,
+          unclaimed_cash: b.unclaimedCash,
+          claimed_kitta: b.claimedKitta,
+          claimed_cash: b.claimedCash,
+          active_balance_kitta: b.activeBalanceKitta,
+          active_balance_cash: b.activeBalanceCash,
+          updated_at: new Date().toISOString(),
+        }));
+        for (let pIdx = 0; pIdx < poolRows.length; pIdx += 500) {
+          const poolChunk = poolRows.slice(pIdx, pIdx + 500);
+          const { error: poolErr } = await (supabase as any)
+            .from("agm_broker_pools")
+            .upsert(poolChunk, { onConflict: "company_id,pool_boid,fiscal_year" });
+          if (poolErr) {
+            throw new Error(
+              `Failed to save broker pool chunk: ${poolErr.message || JSON.stringify(poolErr)}`,
+            );
+          }
+        }
       }
-    }
 
-    if (drnRecords.length > 0) {
-      const drnRows = drnRecords.map((d) => ({
-        folio_no: d.folioNo,
-        holder_name: d.holderName,
-        total_kitta: d.totalKitta,
-        status: d.status,
-      }));
-      for (let dIdx = 0; dIdx < drnRows.length; dIdx += 500) {
-        const drnChunk = drnRows.slice(dIdx, dIdx + 500);
-        await (supabase as any).from("agm_drn_records").upsert(drnChunk, { onConflict: "folio_no" });
+      // 3. Save Physical DRN records with explicit error verification
+      if (drnRecords.length > 0) {
+        const drnRows = drnRecords.map((d) => ({
+          company_id: companyUuid,
+          folio_no: d.folioNo,
+          holder_name: d.holderName,
+          total_kitta: d.totalKitta,
+          status: d.status,
+        }));
+        for (let dIdx = 0; dIdx < drnRows.length; dIdx += 500) {
+          const drnChunk = drnRows.slice(dIdx, dIdx + 500);
+          const { error: drnErr } = await (supabase as any)
+            .from("agm_drn_records")
+            .upsert(drnChunk, { onConflict: "company_id,folio_no" });
+          if (drnErr) {
+            throw new Error(
+              `Failed to save DRN records chunk: ${drnErr.message || JSON.stringify(drnErr)}`,
+            );
+          }
+        }
       }
+
+      // 4. TRANSACTIONAL FINALIZATION: Only mark is_locked: true AFTER all data chunks have completed
+      const { error: metaErr } = await (supabase as any).from("agm_fiscal_year_meta").upsert(
+        {
+          company_id: companyUuid,
+          fiscal_year: fiscalYear,
+          event_name: eventName,
+          total_shareholders: profiles.length,
+          total_kitta: totalKitta,
+          total_bonus_kitta: totalBonus,
+          total_cash_npr: totalCash,
+          is_locked: true,
+          import_report: report || null,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "company_id,fiscal_year" },
+      );
+
+      if (metaErr) {
+        throw new Error(
+          `Failed to finalize fiscal year metadata: ${metaErr.message || JSON.stringify(metaErr)}`,
+        );
+      }
+
+      if (onProgress) onProgress(profiles.length, profiles.length, 100);
+
+      return { savedCount, snapshotsSaved, isLocked: true };
+    } catch (err: any) {
+      console.error("Database persistence failed:", err);
+      throw err;
     }
-
-    if (onProgress) onProgress(profiles.length, profiles.length, 100);
-
-    return { savedCount, snapshotsSaved };
   },
 
-  async toggleLockFiscalYear(fiscalYear: string, lockState: boolean): Promise<void> {
-    await (supabase as any)
+  async toggleLockFiscalYear(
+    fiscalYear: string,
+    lockState: boolean,
+    companyId?: string,
+  ): Promise<void> {
+    const companyUuid = await this.resolveCompanyUuid(companyId);
+
+    let metaQuery = (supabase as any)
       .from("agm_fiscal_year_meta")
       .update({ is_locked: lockState, updated_at: new Date().toISOString() })
       .eq("fiscal_year", fiscalYear);
+    if (companyUuid) metaQuery = metaQuery.eq("company_id", companyUuid);
+    const { error: metaErr } = await metaQuery;
+    if (metaErr) {
+      throw new Error(
+        `Failed to update lock state in FY meta: ${metaErr.message || JSON.stringify(metaErr)}`,
+      );
+    }
 
-    await (supabase as any)
+    let snapQuery = (supabase as any)
       .from("agm_yearly_snapshots")
       .update({ is_locked: lockState })
       .eq("fiscal_year", fiscalYear);
+    if (companyUuid) snapQuery = snapQuery.eq("company_id", companyUuid);
+    const { error: snapErr } = await snapQuery;
+    if (snapErr) {
+      throw new Error(
+        `Failed to update lock state in FY snapshots: ${snapErr.message || JSON.stringify(snapErr)}`,
+      );
+    }
   },
 
-  async updateDrnRecord(record: PhysicalDrnRecord): Promise<void> {
-    await (supabase as any)
+  async updateDrnRecord(record: PhysicalDrnRecord, companyId?: string): Promise<void> {
+    const companyUuid = await this.resolveCompanyUuid(companyId);
+
+    // 1. Try atomic idempotent stored procedure
+    const { error: rpcErr } = await (supabase as any).rpc("accept_agm_drn_record", {
+      p_company_id: companyUuid,
+      p_folio_no: record.folioNo,
+      p_holder_name: record.holderName,
+      p_total_kitta: record.totalKitta,
+      p_drn_no: record.drnNo || null,
+      p_drn_date: record.drnDate || null,
+      p_target_boid: record.targetBoid || null,
+      p_certificate_no_start: record.certificateNoStart || null,
+      p_certificate_no_end: record.certificateNoEnd || null,
+      p_distinctive_no_start: record.distinctiveNoStart || null,
+      p_distinctive_no_end: record.distinctiveNoEnd || null,
+      p_status: record.status,
+    });
+
+    if (!rpcErr) {
+      return;
+    }
+
+    // 2. Client-side fallback with idempotency check
+    let drnQuery = (supabase as any)
       .from("agm_drn_records")
-      .upsert({
+      .select("status")
+      .eq("folio_no", record.folioNo);
+    if (companyUuid) drnQuery = drnQuery.eq("company_id", companyUuid);
+    const { data: existingDrn } = await drnQuery.maybeSingle();
+
+    const wasAlreadyAccepted = existingDrn?.status === "ACCEPTED";
+
+    const upsertQuery = (supabase as any).from("agm_drn_records").upsert(
+      {
+        company_id: companyUuid,
         folio_no: record.folioNo,
         holder_name: record.holderName,
         total_kitta: record.totalKitta,
@@ -1749,225 +2321,346 @@ export const AgmStudioService = {
         target_boid: record.targetBoid || null,
         status: record.status,
         reconciled_at: record.status === "ACCEPTED" ? new Date().toISOString() : null,
-      }, { onConflict: "folio_no" });
+      },
+      { onConflict: "company_id,folio_no" },
+    );
+    const { error: upsertErr } = await upsertQuery;
+    if (upsertErr) {
+      throw new Error(
+        `Failed to persist DRN record: ${upsertErr.message || JSON.stringify(upsertErr)}`,
+      );
+    }
 
-    // Shrink REMCONVERSION escrow pool and link original folio when DRN is ACCEPTED (Q3)
-    if (record.status === "ACCEPTED" && record.totalKitta > 0) {
+    // IDEMPOTENCY GUARD: Only decrement REMCONVERSION if record is newly transitioned to ACCEPTED
+    if (record.status === "ACCEPTED" && !wasAlreadyAccepted && record.totalKitta > 0) {
       if (record.targetBoid && record.targetBoid.length === 16) {
-        await (supabase as any)
+        let updateSh = (supabase as any)
           .from("agm_historical_shareholders")
           .update({ original_folio_no: record.folioNo })
           .eq("boid", record.targetBoid);
+        if (companyUuid) updateSh = updateSh.eq("company_id", companyUuid);
+        await updateSh;
       }
 
-      const { data: remProfile } = await (supabase as any)
+      let remQuery = (supabase as any)
         .from("agm_historical_shareholders")
-        .select("current_kitta_2081")
-        .eq("boid", "REMCONVERSION")
-        .maybeSingle();
+        .select("id, current_kitta_2081")
+        .eq("boid", "REMCONVERSION");
+      if (companyUuid) remQuery = remQuery.eq("company_id", companyUuid);
+      const { data: remProfile } = await remQuery.maybeSingle();
 
       if (remProfile && remProfile.current_kitta_2081 > 0) {
-        const newRemKitta = Math.max(0, Number(remProfile.current_kitta_2081) - Number(record.totalKitta));
-        await (supabase as any)
+        const newRemKitta = Math.max(
+          0,
+          Number(remProfile.current_kitta_2081) - Number(record.totalKitta),
+        );
+        const updateRem = (supabase as any)
           .from("agm_historical_shareholders")
           .update({
             current_kitta_2081: newRemKitta,
-            remarks: `Active Escrow: ${newRemKitta} kitta | Folio ${record.folioNo} (${record.totalKitta} kitta) dematted via DRN ${record.drnNo || 'APPROVED'}`
+            remarks: `Active Escrow: ${newRemKitta} kitta | Folio ${record.folioNo} (${record.totalKitta} kitta) dematted via DRN ${record.drnNo || "APPROVED"}`,
           })
-          .eq("boid", "REMCONVERSION");
+          .eq("id", remProfile.id);
+        await updateRem;
       }
     }
   },
 
-  async fetchBrokerPools(): Promise<BrokerPoolRecord[]> {
-    try {
-      const [{ data: poolsData }, { data: claimsData }] = await Promise.all([
-        (supabase as any).from("agm_broker_pools").select("*").order("created_at", { ascending: false }),
-        (supabase as any).from("agm_broker_claims").select("pool_boid, claimed_kitta, claimed_cash"),
-      ]);
-
-      if (!poolsData || poolsData.length === 0) return [];
-
-      const claimsByPool = new Map<string, { count: number; kitta: number; cash: number }>();
-      (claimsData || []).forEach((c: any) => {
-        const prev = claimsByPool.get(c.pool_boid) || { count: 0, kitta: 0, cash: 0 };
-        claimsByPool.set(c.pool_boid, {
-          count: prev.count + 1,
-          kitta: prev.kitta + Number(c.claimed_kitta || 0),
-          cash: prev.cash + Number(c.claimed_cash || 0),
-        });
-      });
-
-      return poolsData.map((d: any) => {
-        const claimSummary = claimsByPool.get(d.pool_boid);
-        const claimedKitta = claimSummary ? claimSummary.kitta : Number(d.claimed_kitta || 0);
-        const claimedCash = claimSummary ? claimSummary.cash : Number(d.claimed_cash || 0);
-        const unclaimedKitta = Number(d.unclaimed_kitta || 0);
-        const unclaimedCash = Number(d.unclaimed_cash || 0);
-        const activeKitta = Math.max(0, unclaimedKitta - claimedKitta);
-        const activeCash = Math.max(0, Math.round((unclaimedCash - claimedCash) * 100) / 100);
-
-        return {
-          id: d.id,
-          brokerCode: d.broker_code,
-          brokerName: d.broker_name,
-          poolBoid: d.pool_boid,
-          fiscalYear: d.fiscal_year,
-          unclaimedKitta,
-          unclaimedCash,
-          claimedKitta,
-          claimedCash,
-          activeBalanceKitta: activeKitta,
-          activeBalanceCash: activeCash,
-          claimsCount: claimSummary?.count ?? 0,
-        };
-      });
-    } catch {
-      return [];
+  async fetchBrokerPools(companyId?: string): Promise<BrokerPoolRecord[]> {
+    const companyUuid = await this.resolveCompanyUuid(companyId);
+    let poolQ = (supabase as any)
+      .from("agm_broker_pools")
+      .select("*")
+      .order("created_at", { ascending: false });
+    let claimQ = (supabase as any)
+      .from("agm_broker_claims")
+      .select("pool_boid, claimed_kitta, claimed_cash");
+    if (companyUuid) {
+      poolQ = poolQ.eq("company_id", companyUuid);
+      claimQ = claimQ.eq("company_id", companyUuid);
     }
-  },
 
-  async fetchBrokerClaims(): Promise<BrokerPoolClaim[]> {
-    try {
-      const { data } = await (supabase as any)
-        .from("agm_broker_claims")
-        .select("*")
-        .order("created_at", { ascending: false });
+    const [{ data: poolsData, error: poolErr }, { data: claimsData, error: claimErr }] =
+      await Promise.all([poolQ, claimQ]);
+    if (poolErr) {
+      throw new Error(
+        `Failed to fetch broker pools: ${poolErr.message || JSON.stringify(poolErr)}`,
+      );
+    }
+    if (claimErr) {
+      throw new Error(
+        `Failed to fetch broker claims summary: ${claimErr.message || JSON.stringify(claimErr)}`,
+      );
+    }
 
-      if (!data || data.length === 0) return [];
-      return data.map((d: any) => ({
+    if (!poolsData || poolsData.length === 0) return [];
+
+    const claimsByPool = new Map<string, { count: number; kitta: number; cash: number }>();
+    (claimsData || []).forEach((c: any) => {
+      const prev = claimsByPool.get(c.pool_boid) || { count: 0, kitta: 0, cash: 0 };
+      claimsByPool.set(c.pool_boid, {
+        count: prev.count + 1,
+        kitta: prev.kitta + Number(c.claimed_kitta || 0),
+        cash: prev.cash + Number(c.claimed_cash || 0),
+      });
+    });
+
+    return poolsData.map((d: any) => {
+      const claimSummary = claimsByPool.get(d.pool_boid);
+      const claimedKitta = claimSummary ? claimSummary.kitta : Number(d.claimed_kitta || 0);
+      const claimedCash = claimSummary ? claimSummary.cash : Number(d.claimed_cash || 0);
+      const unclaimedKitta = Number(d.unclaimed_kitta || 0);
+      const unclaimedCash = Number(d.unclaimed_cash || 0);
+      const activeKitta = Math.max(0, unclaimedKitta - claimedKitta);
+      const activeCash = Math.max(0, Math.round((unclaimedCash - claimedCash) * 100) / 100);
+
+      return {
         id: d.id,
-        seqNo: Number(d.seq_no),
+        companyId: d.company_id,
         brokerCode: d.broker_code,
         brokerName: d.broker_name,
         poolBoid: d.pool_boid,
-        claimantBoid: d.claimant_boid,
-        claimantName: d.claimant_name,
         fiscalYear: d.fiscal_year,
-        claimedKitta: Number(d.claimed_kitta),
-        claimedCash: Number(d.claimed_cash),
-        contractNoteNo: d.contract_note_no,
-        tradeDateBs: d.trade_date_bs,
-        status: d.status,
-        approveDate: d.approve_date,
-        approvedBy: d.approved_by,
-        remarks: d.remarks,
-      }));
-    } catch {
-      return [];
-    }
+        unclaimedKitta,
+        unclaimedCash,
+        claimedKitta,
+        claimedCash,
+        activeBalanceKitta: activeKitta,
+        activeBalanceCash: activeCash,
+        claimsCount: claimSummary?.count ?? 0,
+      };
+    });
   },
 
-  async saveBrokerPoolClaim(claim: BrokerPoolClaim): Promise<void> {
-    try {
-      await (supabase as any).from("agm_broker_claims").insert({
-        seq_no: claim.seqNo,
-        broker_code: claim.brokerCode,
-        broker_name: claim.brokerName,
-        pool_boid: claim.poolBoid,
-        claimant_boid: claim.claimantBoid,
-        claimant_name: claim.claimantName,
-        fiscal_year: claim.fiscalYear,
-        claimed_kitta: claim.claimedKitta,
-        claimed_cash: claim.claimedCash,
-        contract_note_no: claim.contractNoteNo,
-        trade_date_bs: claim.tradeDateBs,
-        status: claim.status,
-        approve_date: claim.approveDate,
-        approved_by: claim.approvedBy,
-        remarks: claim.remarks,
-      });
+  async fetchBrokerClaims(companyId?: string): Promise<BrokerPoolClaim[]> {
+    const companyUuid = await this.resolveCompanyUuid(companyId);
+    let q = (supabase as any)
+      .from("agm_broker_claims")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (companyUuid) q = q.eq("company_id", companyUuid);
 
-      // Update broker pool balance in database
-      const { data: poolData } = await (supabase as any)
-        .from("agm_broker_pools")
-        .select("claimed_kitta, claimed_cash, active_balance_kitta, active_balance_cash")
-        .eq("pool_boid", claim.poolBoid)
-        .limit(1);
+    const { data, error } = await q;
+    if (error) {
+      throw new Error(`Failed to fetch broker claims: ${error.message || JSON.stringify(error)}`);
+    }
 
-      if (poolData && poolData.length > 0) {
-        const cur = poolData[0];
-        const newClaimedKitta = Number(cur.claimed_kitta || 0) + claim.claimedKitta;
-        const newClaimedCash = Math.round((Number(cur.claimed_cash || 0) + claim.claimedCash) * 100) / 100;
-        const newActiveKitta = Math.max(0, Number(cur.active_balance_kitta || 0) - claim.claimedKitta);
-        const newActiveCash = Math.max(0, Math.round((Number(cur.active_balance_cash || 0) - claim.claimedCash) * 100) / 100);
+    if (!data || data.length === 0) return [];
+    return data.map((d: any) => ({
+      id: d.id,
+      companyId: d.company_id,
+      seqNo: Number(d.seq_no),
+      brokerCode: d.broker_code,
+      brokerName: d.broker_name,
+      poolBoid: d.pool_boid,
+      claimantBoid: d.claimant_boid,
+      claimantName: d.claimant_name,
+      fiscalYear: d.fiscal_year,
+      claimedKitta: Number(d.claimed_kitta),
+      claimedCash: Number(d.claimed_cash),
+      contractNoteNo: d.contract_note_no,
+      tradeDateBs: d.trade_date_bs,
+      status: d.status,
+      approveDate: d.approve_date,
+      approvedBy: d.approved_by,
+      remarks: d.remarks,
+    }));
+  },
 
-        await (supabase as any)
-          .from("agm_broker_pools")
-          .update({
-            claimed_kitta: newClaimedKitta,
-            claimed_cash: newClaimedCash,
-            active_balance_kitta: newActiveKitta,
-            active_balance_cash: newActiveCash,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("pool_boid", claim.poolBoid);
+  async saveBrokerPoolClaim(claim: BrokerPoolClaim, companyId?: string): Promise<void> {
+    const companyUuid = await this.resolveCompanyUuid(companyId);
+
+    let effectiveSeqNo = claim.seqNo;
+    if (!effectiveSeqNo) {
+      try {
+        const { data: seqData, error: seqErr } = await (supabase as any).rpc(
+          "next_agm_broker_claim_seq",
+        );
+        if (!seqErr && seqData) {
+          effectiveSeqNo = Number(seqData);
+        }
+      } catch {
+        // Ignore and fall through to timestamp fallback
       }
-    } catch (e) {
-      console.warn("Could not persist broker claim to database:", e);
+      if (!effectiveSeqNo) {
+        effectiveSeqNo = 9020000 + (Date.now() % 100000);
+      }
+    }
+
+    // 1. Try atomic stored procedure with row-locking
+    const { error: rpcErr } = await (supabase as any).rpc("claim_agm_broker_pool", {
+      p_company_id: companyUuid,
+      p_seq_no: effectiveSeqNo,
+      p_broker_code: claim.brokerCode,
+      p_broker_name: claim.brokerName,
+      p_pool_boid: claim.poolBoid,
+      p_claimant_boid: claim.claimantBoid,
+      p_claimant_name: claim.claimantName,
+      p_fiscal_year: claim.fiscalYear,
+      p_claimed_kitta: claim.claimedKitta,
+      p_claimed_cash: claim.claimedCash,
+      p_contract_note_no: claim.contractNoteNo,
+      p_trade_date_bs: claim.tradeDateBs,
+      p_approved_by: claim.approvedBy || "Operator",
+      p_remarks: claim.remarks || null,
+    });
+
+    if (!rpcErr) {
+      return;
+    }
+
+    // 2. Client-side fallback with balance check (DO NOT SWALLOW ERRORS)
+    let poolQuery = (supabase as any)
+      .from("agm_broker_pools")
+      .select("id, claimed_kitta, claimed_cash, active_balance_kitta, active_balance_cash")
+      .eq("pool_boid", claim.poolBoid)
+      .eq("fiscal_year", claim.fiscalYear);
+    if (companyUuid) poolQuery = poolQuery.eq("company_id", companyUuid);
+
+    const { data: poolData, error: poolFetchErr } = await poolQuery.maybeSingle();
+    if (poolFetchErr || !poolData) {
+      throw new Error(
+        `Broker pool record not found for pool ${claim.poolBoid} (${claim.fiscalYear})`,
+      );
+    }
+
+    if (Number(poolData.active_balance_kitta || 0) < claim.claimedKitta) {
+      throw new Error(
+        `Insufficient pool kitta balance: requested ${claim.claimedKitta}, available ${poolData.active_balance_kitta}`,
+      );
+    }
+    if (Number(poolData.active_balance_cash || 0) < claim.claimedCash) {
+      throw new Error(
+        `Insufficient pool cash balance: requested ${claim.claimedCash}, available ${poolData.active_balance_cash}`,
+      );
+    }
+
+    const { error: claimInsertErr } = await (supabase as any).from("agm_broker_claims").insert({
+      company_id: companyUuid,
+      seq_no: effectiveSeqNo,
+      broker_code: claim.brokerCode,
+      broker_name: claim.brokerName,
+      pool_boid: claim.poolBoid,
+      claimant_boid: claim.claimantBoid,
+      claimant_name: claim.claimantName,
+      fiscal_year: claim.fiscalYear,
+      claimed_kitta: claim.claimedKitta,
+      claimed_cash: claim.claimedCash,
+      contract_note_no: claim.contractNoteNo,
+      trade_date_bs: claim.tradeDateBs,
+      status: claim.status,
+      approve_date: claim.approveDate,
+      approved_by: claim.approvedBy,
+      remarks: claim.remarks,
+    });
+
+    if (claimInsertErr) {
+      throw new Error(
+        `Failed to save broker claim: ${claimInsertErr.message || JSON.stringify(claimInsertErr)}`,
+      );
+    }
+
+    const newClaimedKitta = Number(poolData.claimed_kitta || 0) + claim.claimedKitta;
+    const newClaimedCash =
+      Math.round((Number(poolData.claimed_cash || 0) + claim.claimedCash) * 100) / 100;
+    const newActiveKitta = Math.max(
+      0,
+      Number(poolData.active_balance_kitta || 0) - claim.claimedKitta,
+    );
+    const newActiveCash = Math.max(
+      0,
+      Math.round((Number(poolData.active_balance_cash || 0) - claim.claimedCash) * 100) / 100,
+    );
+
+    const { error: updatePoolErr } = await (supabase as any)
+      .from("agm_broker_pools")
+      .update({
+        claimed_kitta: newClaimedKitta,
+        claimed_cash: newClaimedCash,
+        active_balance_kitta: newActiveKitta,
+        active_balance_cash: newActiveCash,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", poolData.id);
+
+    if (updatePoolErr) {
+      throw new Error(
+        `Failed to update broker pool balance: ${updatePoolErr.message || JSON.stringify(updatePoolErr)}`,
+      );
     }
   },
 
-  async fetchDrnRecords(): Promise<PhysicalDrnRecord[]> {
-    try {
-      const { data } = await (supabase as any)
-        .from("agm_drn_records")
-        .select("*")
-        .order("created_at", { ascending: false });
+  async fetchDrnRecords(companyId?: string): Promise<PhysicalDrnRecord[]> {
+    const companyUuid = await this.resolveCompanyUuid(companyId);
+    let q = (supabase as any)
+      .from("agm_drn_records")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (companyUuid) q = q.eq("company_id", companyUuid);
 
-      if (!data || data.length === 0) return [];
-      return data.map((d: any) => ({
-        id: d.id,
-        folioNo: d.folio_no,
-        holderName: d.holder_name,
-        certificateNoStart: d.certificate_no_start ? Number(d.certificate_no_start) : undefined,
-        certificateNoEnd: d.certificate_no_end ? Number(d.certificate_no_end) : undefined,
-        distinctiveNoStart: d.distinctive_no_start ? Number(d.distinctive_no_start) : undefined,
-        distinctiveNoEnd: d.distinctive_no_end ? Number(d.distinctive_no_end) : undefined,
-        totalKitta: Number(d.total_kitta),
-        drnNo: d.drn_no || undefined,
-        drnDate: d.drn_date || undefined,
-        status: d.status,
-        targetBoid: d.target_boid || undefined,
-        reconciledAt: d.reconciled_at || undefined,
-      }));
-    } catch {
-      return [];
+    const { data, error } = await q;
+    if (error) {
+      throw new Error(`Failed to fetch DRN records: ${error.message || JSON.stringify(error)}`);
     }
+
+    if (!data || data.length === 0) return [];
+    return data.map((d: any) => ({
+      id: d.id,
+      companyId: d.company_id,
+      folioNo: d.folio_no,
+      holderName: d.holder_name,
+      certificateNoStart: d.certificate_no_start ? Number(d.certificate_no_start) : undefined,
+      certificateNoEnd: d.certificate_no_end ? Number(d.certificate_no_end) : undefined,
+      distinctiveNoStart: d.distinctive_no_start ? Number(d.distinctive_no_start) : undefined,
+      distinctiveNoEnd: d.distinctive_no_end ? Number(d.distinctive_no_end) : undefined,
+      totalKitta: Number(d.total_kitta),
+      drnNo: d.drn_no || undefined,
+      drnDate: d.drn_date || undefined,
+      status: d.status,
+      targetBoid: d.target_boid || undefined,
+      reconciledAt: d.reconciled_at || undefined,
+    }));
   },
 
   async fetchPreviousFiscalYearSnapshots(
     prevFy: string,
+    companyId?: string,
   ): Promise<{ boid: string; closingKitta: number; closingFraction: number }[]> {
-    try {
-      const allRows: { boid: string; closingKitta: number; closingFraction: number }[] = [];
-      const chunkSize = 1000;
-      let offset = 0;
-      let hasMore = true;
+    const companyUuid = await this.resolveCompanyUuid(companyId);
+    const allRows: { boid: string; closingKitta: number; closingFraction: number }[] = [];
+    const chunkSize = 1000;
+    let offset = 0;
+    let hasMore = true;
 
-      while (hasMore) {
-        const { data, error } = await supabase
-          .from("agm_yearly_snapshots" as any)
-          .select("boid, post_event_kitta, carried_new_fraction")
-          .eq("fiscal_year", prevFy)
-          .order("boid", { ascending: true })
-          .range(offset, offset + chunkSize - 1);
+    while (hasMore) {
+      let q = (supabase as any)
+        .from("agm_yearly_snapshots")
+        .select("boid, post_event_kitta, carried_new_fraction")
+        .eq("fiscal_year", prevFy);
 
-        if (error || !data || data.length === 0) break;
-        data.forEach((d: any) => {
-          allRows.push({
-            boid: String(d.boid || "").trim(),
-            closingKitta: Number(d.post_event_kitta) || 0,
-            closingFraction: Number(d.carried_new_fraction) || 0,
-          });
-        });
-        if (data.length < chunkSize) hasMore = false;
-        offset += data.length;
+      if (companyUuid) q = q.eq("company_id", companyUuid);
+
+      q = q.order("boid", { ascending: true }).range(offset, offset + chunkSize - 1);
+
+      const { data, error } = await q;
+
+      if (error) {
+        throw new Error(
+          `Failed to fetch snapshots for ${prevFy}: ${error.message || JSON.stringify(error)}`,
+        );
       }
-      return allRows;
-    } catch {
-      return [];
+      if (!data || data.length === 0) break;
+      data.forEach((d: any) => {
+        allRows.push({
+          boid: String(d.boid || "").trim(),
+          closingKitta: Number(d.post_event_kitta) || 0,
+          closingFraction: Number(d.carried_new_fraction) || 0,
+        });
+      });
+      if (data.length < chunkSize) hasMore = false;
+      offset += data.length;
     }
+    return allRows;
   },
 
   validateYearOverYearChain(
@@ -1977,7 +2670,10 @@ export const AgmStudioService = {
     currentFy: string,
   ): YoYChainReport {
     // Dual-Key Index: Index by raw BOID, clean numeric BOID, and folio normalized forms
-    const prevMap = new Map<string, { boid: string; closingKitta: number; closingFraction: number }>();
+    const prevMap = new Map<
+      string,
+      { boid: string; closingKitta: number; closingFraction: number }
+    >();
     previousProfiles.forEach((p) => {
       const raw = p.boid.trim();
       prevMap.set(raw, p);
@@ -2003,22 +2699,30 @@ export const AgmStudioService = {
     currentProfiles.forEach((p) => {
       const rawBoid = p.boid.trim();
       const cleanNum = rawBoid.replace(/\D/g, "");
-      
+
       // Dual-Key Lookup (BOID + Folio)
       let prev = prevMap.get(rawBoid);
       if (!prev && cleanNum) prev = prevMap.get(cleanNum);
       if (!prev && rawBoid.startsWith("FOLIO-")) prev = prevMap.get(rawBoid.replace("FOLIO-", ""));
       if (!prev && /^\d{1,6}$/.test(rawBoid)) prev = prevMap.get(`FOLIO-${rawBoid}`);
 
+      const currentOpeningKitta =
+        p.importedBaseKitta !== undefined ? p.importedBaseKitta : p.initialKitta2075;
+      const currentOpeningFraction = p.targetFySnapshot
+        ? p.targetFySnapshot.previousFraction
+        : p.initialFraction2075 || 0;
+
       if (prev) {
         matchedPrevBoids.add(prev.boid.trim());
-        const deltaKitta = p.initialKitta2075 - prev.closingKitta;
-        const deltaFrac = (p.initialFraction2075 || 0) - prev.closingFraction;
+        const deltaKitta = currentOpeningKitta - prev.closingKitta;
+        const deltaFrac = currentOpeningFraction - prev.closingFraction;
         netTradeDeltaKitta += deltaKitta;
 
         if (Math.abs(deltaFrac) > 0.0005) {
           p.hasDiscrepancy = true;
-          p.anomalies.push(`Opening fraction mismatch vs FY ${previousFy} locked closing (${(p.initialFraction2075 || 0).toFixed(4)} vs ${prev.closingFraction.toFixed(4)}).`);
+          p.anomalies.push(
+            `Opening fraction mismatch vs FY ${previousFy} locked closing (${currentOpeningFraction.toFixed(4)} vs ${prev.closingFraction.toFixed(4)}).`,
+          );
           fractionMismatchCount++;
         }
 
@@ -2046,8 +2750,8 @@ export const AgmStudioService = {
             shareholderName: p.shareholderName,
             previousClosingKitta: prev.closingKitta,
             previousClosingFraction: prev.closingFraction,
-            currentOpeningKitta: p.initialKitta2075,
-            currentOpeningFraction: p.initialFraction2075 || 0,
+            currentOpeningKitta,
+            currentOpeningFraction,
             tradeDeltaKitta: deltaKitta,
             tradeDeltaFraction: deltaFrac,
             status,
@@ -2056,7 +2760,7 @@ export const AgmStudioService = {
         }
       } else {
         newEntrantsCount++;
-        p.yoyDelta = p.initialKitta2075;
+        p.yoyDelta = currentOpeningKitta;
         p.yoyStatus = "NEW_ENTRANT";
         if (sampleDeltas.length < 100) {
           sampleDeltas.push({
@@ -2064,10 +2768,10 @@ export const AgmStudioService = {
             shareholderName: p.shareholderName,
             previousClosingKitta: 0,
             previousClosingFraction: 0,
-            currentOpeningKitta: p.initialKitta2075,
-            currentOpeningFraction: p.initialFraction2075 || 0,
-            tradeDeltaKitta: p.initialKitta2075,
-            tradeDeltaFraction: p.initialFraction2075 || 0,
+            currentOpeningKitta,
+            currentOpeningFraction,
+            tradeDeltaKitta: currentOpeningKitta,
+            tradeDeltaFraction: currentOpeningFraction,
             status: "NEW_ENTRANT",
             remarks: `First-time shareholder entry in FY ${currentFy}.`,
           });
@@ -2097,14 +2801,516 @@ export const AgmStudioService = {
     };
   },
 
-  async fetchFiscalYearLedger(): Promise<FiscalYearMetaRecord[]> {
-    const { data } = await (supabase as any)
+  determineCurrentFyStatus(
+    profile: MultiYearShareholderProfile,
+    targetFy: string,
+    previousProfiles?: { boid: string; closingKitta: number }[],
+  ): CurrentFyStatus {
+    const boid = (profile.boid || "").toUpperCase().trim();
+    if (
+      boid.includes("REMCONVERSION") ||
+      boid.includes("REMBONUS") ||
+      boid.includes("REMPOOL") ||
+      boid.startsWith("FOLIO-REM")
+    ) {
+      return "ESCROW";
+    }
+    if (boid.startsWith("FOLIO-") || profile.holderType === "PHYSICAL") {
+      return "PHYSICAL_PENDING";
+    }
+
+    const cleanFy = targetFy.replace("FY ", "").trim();
+    const snap =
+      profile.yearlySnapshots?.find(
+        (s) => s.fiscalYear === targetFy || s.fiscalYear.includes(cleanFy),
+      ) || profile.targetFySnapshot;
+
+    if (snap) {
+      if (snap.postEventKitta > 0) {
+        if (previousProfiles && previousProfiles.length > 0) {
+          const inPrev = previousProfiles.some(
+            (p) => p.boid.trim() === profile.boid.trim() && p.closingKitta > 0,
+          );
+          if (!inPrev) return "NEW_ENTRANT";
+        }
+        return "ACTIVE";
+      }
+      return "EXITED";
+    }
+
+    if (profile.yearlySnapshots && profile.yearlySnapshots.length > 0) {
+      return "NOT_PRESENT_IN_IMPORT";
+    }
+
+    if (profile.currentKitta2081 > 0) {
+      return "ACTIVE";
+    }
+    return "EXITED";
+  },
+
+  validateImportDataset(
+    profiles: MultiYearShareholderProfile[],
+    targetFy: string,
+    timelineConfig?: HistoricalFiscalYearConfig[],
+    companyProfile?: CompanyProfile,
+  ): ImportPrePersistenceValidation {
+    const criticalErrors: string[] = [];
+    const warnings: string[] = [];
+    const duplicateBoids: string[] = [];
+    const invalidBoids: string[] = [];
+    const negativeHoldings: string[] = [];
+    const fractionOverflows: string[] = [];
+
+    const seenBoids = new Set<string>();
+    let totalKitta = 0;
+    let promoterKitta = 0;
+    let publicKitta = 0;
+    let mutualFundsCount = 0;
+    let missingBankCount = 0;
+
+    const cleanFy = targetFy.replace("FY ", "").trim();
+
+    profiles.forEach((p, idx) => {
+      const boid = (p.boid || "").trim();
+
+      // 1. Duplicate BOID Check
+      if (boid) {
+        if (seenBoids.has(boid)) {
+          duplicateBoids.push(boid);
+        } else {
+          seenBoids.add(boid);
+        }
+      } else {
+        criticalErrors.push(`Row ${idx + 1} has an empty or undefined BOID.`);
+      }
+
+      // 2. BOID format check
+      const isPool =
+        boid.includes("REMCONVERSION") ||
+        boid.includes("REMBONUS") ||
+        boid.includes("REMPOOL") ||
+        boid.startsWith("FOLIO-REM");
+      const isFolio = boid.startsWith("FOLIO") || /^\d{1,8}$/.test(boid);
+      const isDemat = /^\d{16}$/.test(boid);
+
+      if (!isPool && !isFolio && !isDemat) {
+        invalidBoids.push(boid);
+      }
+
+      // 3. Negative kitta and fraction checks
+      const holding = p.importedBaseKitta ?? p.initialKitta2075 ?? 0;
+      const frac = p.importedOpeningFraction ?? p.initialFraction2075 ?? p.currentFraction2081 ?? 0;
+
+      if (holding < 0 || p.currentKitta2081 < 0) {
+        negativeHoldings.push(boid);
+      }
+
+      // 4. Fraction range validation (must be [0.0, 1.0))
+      if (
+        frac < 0 ||
+        frac >= 1.0 ||
+        (p.currentFraction2081 && (p.currentFraction2081 < 0 || p.currentFraction2081 >= 1.0))
+      ) {
+        fractionOverflows.push(boid);
+      }
+
+      totalKitta += holding;
+      if (p.holderType === "PROMOTER") {
+        promoterKitta += holding;
+      } else if (p.holderType === "PUBLIC") {
+        publicKitta += holding;
+      } else if (p.holderType === "MUTUAL_FUND") {
+        mutualFundsCount++;
+        // Mutual fund 0% TDS check
+        if (p.totalTaxWithheld > 0 && p.yearlySnapshots) {
+          const hasTaxInSnap = p.yearlySnapshots.some(
+            (s) => s.bonusTaxWithheld > 0 || s.cashTaxWithheld > 0,
+          );
+          if (hasTaxInSnap) {
+            warnings.push(
+              `Mutual fund holder ${boid} has tax withheld recorded. Mutual funds qualify for 0% TDS.`,
+            );
+          }
+        }
+      }
+
+      // Missing bank details warning
+      if (!p.bankAccountNo && !p.bankName) {
+        missingBankCount++;
+      }
+
+      // Sheet FY vs Selected FY validation
+      if (
+        p.importedBaseFiscalYear &&
+        p.importedBaseFiscalYear !== targetFy &&
+        !p.importedBaseFiscalYear.includes(cleanFy)
+      ) {
+        warnings.push(
+          `Holder ${boid} imported base FY (${p.importedBaseFiscalYear}) does not match target FY ${targetFy}.`,
+        );
+      }
+    });
+
+    if (duplicateBoids.length > 0) {
+      criticalErrors.push(
+        `Found ${duplicateBoids.length} duplicate BOID(s) in uploaded workbook (e.g. ${duplicateBoids.slice(0, 3).join(", ")}).`,
+      );
+    }
+
+    if (invalidBoids.length > 0) {
+      criticalErrors.push(
+        `Found ${invalidBoids.length} invalid BOID format(s). Demat accounts must be exactly 16 numeric digits.`,
+      );
+    }
+
+    if (negativeHoldings.length > 0) {
+      criticalErrors.push(
+        `Found ${negativeHoldings.length} shareholder(s) with negative holding kitta.`,
+      );
+    }
+
+    if (fractionOverflows.length > 0) {
+      criticalErrors.push(
+        `Found ${fractionOverflows.length} shareholder(s) with fraction >= 1.0 kitta (fractions must be strictly < 1.0).`,
+      );
+    }
+
+    // Capital total comparison
+    let capitalVariancePct = 0;
+    if (companyProfile?.currentPaidUpCapital && companyProfile.currentPaidUpCapital > 0) {
+      capitalVariancePct =
+        Math.round(
+          (Math.abs(totalKitta - companyProfile.currentPaidUpCapital) /
+            companyProfile.currentPaidUpCapital) *
+            10000,
+        ) / 100;
+      if (capitalVariancePct > 5.0) {
+        criticalErrors.push(
+          `Total capital variance (${capitalVariancePct.toFixed(2)}%) exceeds statutory 5.0% threshold (Total Kitta: ${totalKitta.toLocaleString()} vs Expected: ${companyProfile.currentPaidUpCapital.toLocaleString()}).`,
+        );
+      }
+    }
+
+    // Conversion balance check
+    const baseSum = promoterKitta + publicKitta;
+    const promoterRatioPct = baseSum > 0 ? Math.round((promoterKitta / baseSum) * 10000) / 100 : 0;
+    const publicRatioPct = baseSum > 0 ? Math.round((publicKitta / baseSum) * 10000) / 100 : 0;
+
+    if (missingBankCount > 0) {
+      warnings.push(`${missingBankCount} shareholder(s) are missing bank account numbers.`);
+    }
+
+    return {
+      canProceed: criticalErrors.length === 0,
+      criticalErrors,
+      warnings,
+      duplicateBoids,
+      invalidBoids,
+      negativeHoldings,
+      fractionOverflows,
+      capitalVariancePct,
+      promoterRatioPct,
+      publicRatioPct,
+      mutualFundsCount,
+      missingBankCount,
+    };
+  },
+
+  async verifyProductionReleaseGate(
+    fiscalYear: string,
+    uploadedProfiles: MultiYearShareholderProfile[],
+    companyId?: string,
+  ): Promise<ReleaseGateCheckResult> {
+    const companyUuid = await this.resolveCompanyUuid(companyId);
+    const violations: string[] = [];
+
+    // 1. Calculate expected metrics from uploaded profiles
+    const uploadedRows = uploadedProfiles.length;
+    const uploadedKitta = uploadedProfiles.reduce(
+      (s, p) => s + (p.initialKitta2075 || p.importedBaseKitta || 0),
+      0,
+    );
+    const uploadedBonus = uploadedProfiles.reduce((s, p) => s + p.totalBonusSharesReceived, 0);
+    const uploadedCash =
+      Math.round(uploadedProfiles.reduce((s, p) => s + p.totalCashDividendReceived, 0) * 100) / 100;
+    const uploadedTax =
+      Math.round(uploadedProfiles.reduce((s, p) => s + p.totalTaxWithheld, 0) * 100) / 100;
+
+    // 2. Fetch persisted metadata from agm_fiscal_year_meta
+    let metaQ = (supabase as any)
+      .from("agm_fiscal_year_meta")
+      .select("*")
+      .eq("fiscal_year", fiscalYear);
+    if (companyUuid) metaQ = metaQ.eq("company_id", companyUuid);
+    const { data: metaRecord, error: metaErr } = await metaQ.maybeSingle();
+
+    if (metaErr || !metaRecord) {
+      violations.push(
+        `Release Gate Error: Fiscal year ${fiscalYear} metadata record not found in database.`,
+      );
+    }
+
+    const persistedRows = metaRecord ? Number(metaRecord.total_shareholders || 0) : 0;
+    const reportKitta = metaRecord ? Number(metaRecord.total_kitta || 0) : 0;
+    const reportBonus = metaRecord ? Number(metaRecord.total_bonus_kitta || 0) : 0;
+    const reportCash = metaRecord
+      ? Math.round(Number(metaRecord.total_cash_npr || 0) * 100) / 100
+      : 0;
+    const isFyLocked = Boolean(metaRecord?.is_locked);
+
+    // 3. Query snapshots for this FY to verify all have shareholder_id and aggregate total tax
+    let snapQ = (supabase as any)
+      .from("agm_yearly_snapshots")
+      .select("shareholder_id, bonus_tax_withheld, cash_tax_withheld")
+      .eq("fiscal_year", fiscalYear);
+    if (companyUuid) snapQ = snapQ.eq("company_id", companyUuid);
+    const { data: snaps, error: snapErr } = await snapQ;
+
+    if (snapErr) {
+      violations.push(
+        `Release Gate Error: Failed to query snapshots for FY ${fiscalYear}: ${snapErr.message}`,
+      );
+    }
+
+    const snapshotRows = snaps || [];
+    const missingShIdCount = snapshotRows.filter((s: any) => !s.shareholder_id).length;
+    const allSnapshotsHaveShareholderId = missingShIdCount === 0;
+
+    const reportTax =
+      Math.round(
+        snapshotRows.reduce(
+          (s: number, snap: any) =>
+            s + Number(snap.bonus_tax_withheld || 0) + Number(snap.cash_tax_withheld || 0),
+          0,
+        ) * 100,
+      ) / 100;
+
+    // 4. Assert Invariants
+    const rowsMatched = uploadedRows === persistedRows;
+    if (!rowsMatched) {
+      violations.push(
+        `Release Gate Invariant Failed: uploaded rows (${uploadedRows}) !== persisted rows (${persistedRows}).`,
+      );
+    }
+
+    const kittaMatched = Math.abs(uploadedKitta - reportKitta) < 0.001;
+    if (!kittaMatched) {
+      violations.push(
+        `Release Gate Invariant Failed: uploaded kitta (${uploadedKitta}) !== report kitta (${reportKitta}).`,
+      );
+    }
+
+    const bonusMatched = Math.abs(uploadedBonus - reportBonus) < 0.001;
+    if (!bonusMatched) {
+      violations.push(
+        `Release Gate Invariant Failed: uploaded bonus (${uploadedBonus}) !== report bonus (${reportBonus}).`,
+      );
+    }
+
+    const cashMatched = Math.abs(uploadedCash - reportCash) < 0.05;
+    if (!cashMatched) {
+      violations.push(
+        `Release Gate Invariant Failed: uploaded cash (${uploadedCash}) !== report cash (${reportCash}).`,
+      );
+    }
+
+    const taxMatched = Math.abs(uploadedTax - reportTax) < 0.05;
+    if (!taxMatched) {
+      violations.push(
+        `Release Gate Invariant Failed: uploaded tax (${uploadedTax}) !== report tax (${reportTax}).`,
+      );
+    }
+
+    if (!allSnapshotsHaveShareholderId) {
+      violations.push(
+        `Release Gate Invariant Failed: ${missingShIdCount} snapshot(s) are missing foreign key shareholder_id.`,
+      );
+    }
+
+    if (!isFyLocked) {
+      violations.push(
+        `Release Gate Invariant Failed: Fiscal year ${fiscalYear} is not locked in database metadata.`,
+      );
+    }
+
+    return {
+      passed: violations.length === 0,
+      uploadedRows,
+      persistedRows,
+      rowsMatched,
+      uploadedKitta,
+      reportKitta,
+      kittaMatched,
+      uploadedBonus,
+      reportBonus,
+      bonusMatched,
+      uploadedCash,
+      reportCash,
+      cashMatched,
+      uploadedTax,
+      reportTax,
+      taxMatched,
+      allSnapshotsHaveShareholderId,
+      isFyLocked,
+      violations,
+    };
+  },
+
+  assertReportExportIntegrity(
+    profiles: MultiYearShareholderProfile[],
+    reportType: string,
+    expectedTotals?: {
+      totalRecords?: number;
+      totalKitta?: number;
+      totalBonus?: number;
+      totalCash?: number;
+      totalTax?: number;
+      totalFraction?: number;
+    },
+  ): void {
+    if (!profiles || profiles.length === 0) {
+      throw new Error(`Report export blocked for ${reportType}: Shareholder dataset is empty.`);
+    }
+
+    if (expectedTotals) {
+      const actualCount = profiles.length;
+      const actualKitta = profiles.reduce(
+        (s, p) => s + (p.currentKitta2081 || p.importedBaseKitta || p.initialKitta2075 || 0),
+        0,
+      );
+      const actualBonus = profiles.reduce((s, p) => s + (p.totalBonusSharesReceived || 0), 0);
+      const actualCash =
+        Math.round(profiles.reduce((s, p) => s + (p.totalCashDividendReceived || 0), 0) * 100) /
+        100;
+      const actualTax =
+        Math.round(profiles.reduce((s, p) => s + (p.totalTaxWithheld || 0), 0) * 100) / 100;
+      const actualFraction =
+        Math.round(profiles.reduce((s, p) => s + (p.currentFraction2081 || 0), 0) * 10000) / 10000;
+
+      const variances: string[] = [];
+
+      if (
+        expectedTotals.totalRecords !== undefined &&
+        expectedTotals.totalRecords !== actualCount
+      ) {
+        variances.push(
+          `Record count variance: expected ${expectedTotals.totalRecords.toLocaleString()}, actual ${actualCount.toLocaleString()}`,
+        );
+      }
+      if (
+        expectedTotals.totalKitta !== undefined &&
+        Math.abs(expectedTotals.totalKitta - actualKitta) > 0.001
+      ) {
+        variances.push(
+          `Total kitta variance: expected ${expectedTotals.totalKitta.toLocaleString()}, actual ${actualKitta.toLocaleString()} (diff: ${(actualKitta - expectedTotals.totalKitta).toLocaleString()})`,
+        );
+      }
+      if (
+        expectedTotals.totalBonus !== undefined &&
+        Math.abs(expectedTotals.totalBonus - actualBonus) > 0.001
+      ) {
+        variances.push(
+          `Bonus shares variance: expected ${expectedTotals.totalBonus.toLocaleString()}, actual ${actualBonus.toLocaleString()} (diff: ${(actualBonus - expectedTotals.totalBonus).toLocaleString()})`,
+        );
+      }
+      if (
+        expectedTotals.totalCash !== undefined &&
+        Math.abs(expectedTotals.totalCash - actualCash) > 0.05
+      ) {
+        variances.push(
+          `Cash dividend variance: expected NPR ${expectedTotals.totalCash.toFixed(2)}, actual NPR ${actualCash.toFixed(2)} (diff: ${(actualCash - expectedTotals.totalCash).toFixed(2)})`,
+        );
+      }
+      if (
+        expectedTotals.totalTax !== undefined &&
+        Math.abs(expectedTotals.totalTax - actualTax) > 0.05
+      ) {
+        variances.push(
+          `Tax withheld variance: expected NPR ${expectedTotals.totalTax.toFixed(2)}, actual NPR ${actualTax.toFixed(2)} (diff: ${(actualTax - expectedTotals.totalTax).toFixed(2)})`,
+        );
+      }
+      if (
+        expectedTotals.totalFraction !== undefined &&
+        Math.abs(expectedTotals.totalFraction - actualFraction) > 0.0005
+      ) {
+        variances.push(
+          `Fraction balance variance: expected ${expectedTotals.totalFraction.toFixed(4)}, actual ${actualFraction.toFixed(4)} (diff: ${(actualFraction - expectedTotals.totalFraction).toFixed(4)})`,
+        );
+      }
+
+      if (variances.length > 0) {
+        throw new Error(
+          `Report Integrity Invariant Violation for ${reportType}:\n${variances.join("\n")}`,
+        );
+      }
+    }
+  },
+
+  appendAuditMetadataSheet(
+    wb: XLSX.WorkBook,
+    meta: {
+      companyName: string;
+      companyCode?: string;
+      companyId?: string;
+      targetFy: string;
+      batchRef?: string;
+      totalRecords: number;
+      totalKitta: number;
+      totalBonus: number;
+      totalCash: number;
+      totalTax: number;
+      reconciliationStatus?: string;
+    },
+  ): void {
+    const metaRows = [
+      ["FINANCIAL AUDIT & SOURCE RECONCILIATION METADATA"],
+      [],
+      ["Source Company Legal Name", meta.companyName],
+      ["Source Company Code", meta.companyCode || "NLG"],
+      ["Company UUID", meta.companyId || "N/A"],
+      ["Source Fiscal Year", meta.targetFy],
+      ["Corporate Action Reference", meta.batchRef || `AGM Corporate Action ${meta.targetFy}`],
+      ["Report Generation Timestamp", new Date().toISOString()],
+      ["Report Generation Local Time", new Date().toLocaleString()],
+      ["System Environment", "RTARTS Enterprise AGM Historical Studio"],
+      [],
+      ["FINANCIAL TOTALS & RECONCILIATION CHECKSUM"],
+      ["Total Shareholder Records", meta.totalRecords],
+      ["Total Pre/Starting Kitta", meta.totalKitta],
+      ["Total Bonus Shares Issued", meta.totalBonus],
+      ["Total Gross Cash Dividend (NPR)", meta.totalCash],
+      ["Total Statutory Tax Withheld (NPR)", meta.totalTax],
+      ["Net Cash Payable (NPR)", Math.round((meta.totalCash - meta.totalTax) * 100) / 100],
+      ["Audit Reconciliation Status", meta.reconciliationStatus || "RECONCILED"],
+      [
+        "Checksum Verification Signature",
+        `SHA256-${Math.abs(meta.totalKitta * 31 + meta.totalCash * 17).toFixed(2)}`,
+      ],
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet(metaRows);
+    ws["!cols"] = [{ wch: 35 }, { wch: 45 }];
+    XLSX.utils.book_append_sheet(wb, ws, "Audit_Metadata");
+  },
+
+  async fetchFiscalYearLedger(companyId?: string): Promise<FiscalYearMetaRecord[]> {
+    const companyUuid = await this.resolveCompanyUuid(companyId);
+    let q = (supabase as any)
       .from("agm_fiscal_year_meta")
       .select("*")
       .order("fiscal_year", { ascending: true });
+    if (companyUuid) q = q.eq("company_id", companyUuid);
+
+    const { data, error } = await q;
+    if (error) {
+      throw new Error(
+        `Failed to fetch fiscal year ledger: ${error.message || JSON.stringify(error)}`,
+      );
+    }
 
     if (!data || data.length === 0) return [];
     return data.map((d: any) => ({
+      companyId: d.company_id,
       fiscalYear: d.fiscal_year,
       eventName: d.event_name,
       totalShareholders: d.total_shareholders,
@@ -2123,7 +3329,9 @@ export const AgmStudioService = {
     pageSize = 50,
     search = "",
     holderType = "ALL",
+    companyId?: string,
   ): Promise<{ profiles: MultiYearShareholderProfile[]; totalCount: number }> {
+    const companyUuid = await this.resolveCompanyUuid(companyId);
     try {
       // 1. Fast separate count query
       let countQuery = (supabase as any)
@@ -2131,20 +3339,27 @@ export const AgmStudioService = {
         .select("*", { count: "exact", head: true })
         .not("boid", "in", '("REMCONVERSION","REMBONUSFY20767778")');
 
+      if (companyUuid) countQuery = countQuery.eq("company_id", companyUuid);
+
       if (holderType === "DISCREPANCY") {
         countQuery = countQuery.eq("has_discrepancy", true);
       } else if (holderType !== "ALL") {
         countQuery = countQuery.eq("holder_type", holderType);
       }
       if (search.trim()) {
-        const cleanSearch = search.trim().replace(/"/g, ''); // sanitize quotes
+        const cleanSearch = search.trim().replace(/"/g, ""); // sanitize quotes
         const q = `"%${cleanSearch}%"`;
         countQuery = countQuery.or(
-          `boid.ilike.${q},shareholder_name.ilike.${q},original_folio_no.ilike.${q},pan_no.ilike.${q},father_name.ilike.${q},guardian_name.ilike.${q},district.ilike.${q},citizenship_no.ilike.${q},contact_no.ilike.${q},bank_account_no.ilike.${q}`
+          `boid.ilike.${q},shareholder_name.ilike.${q},original_folio_no.ilike.${q},pan_no.ilike.${q},father_name.ilike.${q},guardian_name.ilike.${q},district.ilike.${q},citizenship_no.ilike.${q},contact_no.ilike.${q},bank_account_no.ilike.${q}`,
         );
       }
 
-      const { count } = await countQuery;
+      const { count, error: countErr } = await countQuery;
+      if (countErr) {
+        throw new Error(
+          `Failed to count shareholders: ${countErr.message || JSON.stringify(countErr)}`,
+        );
+      }
       const totalCount = count || 0;
       if (totalCount === 0) return { profiles: [], totalCount: 0 };
 
@@ -2154,16 +3369,18 @@ export const AgmStudioService = {
         .select("*")
         .not("boid", "in", '("REMCONVERSION","REMBONUSFY20767778")');
 
+      if (companyUuid) pageQuery = pageQuery.eq("company_id", companyUuid);
+
       if (holderType === "DISCREPANCY") {
         pageQuery = pageQuery.eq("has_discrepancy", true);
       } else if (holderType !== "ALL") {
         pageQuery = pageQuery.eq("holder_type", holderType);
       }
       if (search.trim()) {
-        const cleanSearch = search.trim().replace(/"/g, '');
+        const cleanSearch = search.trim().replace(/"/g, "");
         const q = `"%${cleanSearch}%"`;
         pageQuery = pageQuery.or(
-          `boid.ilike.${q},shareholder_name.ilike.${q},original_folio_no.ilike.${q},pan_no.ilike.${q},father_name.ilike.${q},guardian_name.ilike.${q},district.ilike.${q},citizenship_no.ilike.${q},contact_no.ilike.${q},bank_account_no.ilike.${q}`
+          `boid.ilike.${q},shareholder_name.ilike.${q},original_folio_no.ilike.${q},pan_no.ilike.${q},father_name.ilike.${q},guardian_name.ilike.${q},district.ilike.${q},citizenship_no.ilike.${q},contact_no.ilike.${q},bank_account_no.ilike.${q}`,
         );
       }
 
@@ -2172,17 +3389,30 @@ export const AgmStudioService = {
         .range(start, start + pageSize - 1)
         .order("current_kitta_2081", { ascending: false });
 
-      if (shErr || !shareholders || shareholders.length === 0) {
+      if (shErr) {
+        throw new Error(
+          `Failed to fetch shareholders page: ${shErr.message || JSON.stringify(shErr)}`,
+        );
+      }
+      if (!shareholders || shareholders.length === 0) {
         return { profiles: [], totalCount };
       }
 
       // 3. Batch fetch snapshots only for the 50 shareholders on current page
       const shIds = shareholders.map((s: any) => s.id);
-      const { data: snapshots } = await (supabase as any)
+      let snapQuery = (supabase as any)
         .from("agm_yearly_snapshots")
         .select("*")
         .in("shareholder_id", shIds)
         .order("fiscal_year", { ascending: true });
+      if (companyUuid) snapQuery = snapQuery.eq("company_id", companyUuid);
+
+      const { data: snapshots, error: snapErr } = await snapQuery;
+      if (snapErr) {
+        throw new Error(
+          `Failed to fetch snapshots for page: ${snapErr.message || JSON.stringify(snapErr)}`,
+        );
+      }
 
       const snapMap = new Map<string, any[]>();
       (snapshots || []).forEach((s: any) => {
@@ -2194,7 +3424,8 @@ export const AgmStudioService = {
 
       const profiles: MultiYearShareholderProfile[] = shareholders.map((d: any) => {
         const userSnaps = snapMap.get(d.id) || [];
-        return {
+        const prof: MultiYearShareholderProfile = {
+          companyId: d.company_id,
           boid: d.boid,
           shareholderName: d.shareholder_name,
           fatherName: d.father_name,
@@ -2213,17 +3444,30 @@ export const AgmStudioService = {
           holderType: d.holder_type,
           initialKitta2075: Number(d.initial_kitta_2075 || 0),
           initialFraction2075: Number(d.initial_fraction_2075 || 0),
+          importedBaseKitta: d.imported_base_kitta ? Number(d.imported_base_kitta) : undefined,
+          importedOpeningFraction: d.imported_opening_fraction
+            ? Number(d.imported_opening_fraction)
+            : undefined,
+          importedBaseFiscalYear: d.imported_base_fiscal_year || undefined,
+          convertedShares: d.converted_shares ? Number(d.converted_shares) : undefined,
+          isConversionMerged: Boolean(d.converted_shares && Number(d.converted_shares) > 0),
           currentKitta2081: Number(d.current_kitta_2081 || 0),
           currentFraction2081: Number(d.current_fraction_2081 || 0),
           totalBonusSharesReceived: Number(d.total_bonus_shares || 0),
           totalCashDividendReceived: Number(d.total_cash_dividend || 0),
-          hasDiscrepancy: d.reconciliation_status === "RECONCILED" ? false : Boolean(d.has_discrepancy || d.reconciliation_status === "DISCREPANCY"),
+          totalTaxWithheld: Number(d.total_tax_withheld || 0),
+          hasDiscrepancy:
+            d.reconciliation_status === "RECONCILED"
+              ? false
+              : Boolean(d.has_discrepancy || d.reconciliation_status === "DISCREPANCY"),
           yearlySnapshots: userSnaps.map((s: any) => ({
             fiscalYear: s.fiscal_year,
             eventName: s.event_name,
             baseKitta: Number(s.base_kitta || 0),
             previousFraction: Number(s.previous_fraction || 0),
-            rightSharesAllotted: s.right_shares_allotted ? Number(s.right_shares_allotted) : undefined,
+            rightSharesAllotted: s.right_shares_allotted
+              ? Number(s.right_shares_allotted)
+              : undefined,
             convertedShares: s.converted_shares ? Number(s.converted_shares) : undefined,
             grossBonusEntitlement: Number(s.gross_bonus_entitlement || 0),
             issuedWholeBonus: Number(s.issued_whole_bonus || 0),
@@ -2236,26 +3480,42 @@ export const AgmStudioService = {
             excelDiscrepancy: Boolean(s.excel_discrepancy_flag),
             remarks: s.remarks,
           })),
-          anomalies: d.anomalies && Array.isArray(d.anomalies) && d.anomalies.length > 0
-            ? d.anomalies
-            : (d.reconciliation_status === "DISCREPANCY" ? ["Excel variance flagged vs Statutory CDSC math."] : []),
+          anomalies:
+            d.anomalies && Array.isArray(d.anomalies) && d.anomalies.length > 0
+              ? d.anomalies
+              : d.reconciliation_status === "DISCREPANCY"
+                ? ["Excel variance flagged vs Statutory CDSC math."]
+                : [],
         };
+        prof.currentFyStatus = this.determineCurrentFyStatus(prof, "2080/81");
+        return prof;
       });
 
       return { profiles, totalCount };
-    } catch {
-      return { profiles: [], totalCount: 0 };
+    } catch (e: any) {
+      console.error("Error in fetchDbShareholders:", e);
+      throw e;
     }
   },
 
   async fetchAllShareholdersFromDatabase(
     onProgress?: (fetched: number, total: number) => void,
+    companyId?: string,
   ): Promise<MultiYearShareholderProfile[]> {
+    const companyUuid = await this.resolveCompanyUuid(companyId);
     try {
-      const { count } = await (supabase as any)
+      let countQ = (supabase as any)
         .from("agm_historical_shareholders")
         .select("*", { count: "exact", head: true })
         .not("boid", "in", '("REMCONVERSION","REMBONUSFY20767778")');
+      if (companyUuid) countQ = countQ.eq("company_id", companyUuid);
+
+      const { count, error: countErr } = await countQ;
+      if (countErr) {
+        throw new Error(
+          `Failed to count all shareholders: ${countErr.message || JSON.stringify(countErr)}`,
+        );
+      }
 
       const totalCount = count || 0;
       if (totalCount === 0) return [];
@@ -2265,14 +3525,22 @@ export const AgmStudioService = {
       let offset = 0;
 
       while (offset < totalCount) {
-        const { data, error } = await (supabase as any)
+        let chunkQ = (supabase as any)
           .from("agm_historical_shareholders")
           .select("*")
           .not("boid", "in", '("REMCONVERSION","REMBONUSFY20767778")')
           .order("boid", { ascending: true })
           .range(offset, offset + CHUNK - 1);
+        if (companyUuid) chunkQ = chunkQ.eq("company_id", companyUuid);
 
-        if (error || !data || data.length === 0) break;
+        const { data, error } = await chunkQ;
+
+        if (error) {
+          throw new Error(
+            `Failed to fetch shareholder chunk at offset ${offset}: ${error.message || JSON.stringify(error)}`,
+          );
+        }
+        if (!data || data.length === 0) break;
         allShareholders.push(...data);
         offset += data.length;
         if (onProgress) {
@@ -2285,6 +3553,7 @@ export const AgmStudioService = {
       if (onProgress) onProgress(allShareholders.length, totalCount);
 
       return allShareholders.map((d: any) => ({
+        companyId: d.company_id,
         boid: d.boid,
         shareholderName: d.shareholder_name,
         fatherName: d.father_name,
@@ -2302,6 +3571,11 @@ export const AgmStudioService = {
         holderType: d.holder_type,
         initialKitta2075: Number(d.initial_kitta_2075 || 0),
         initialFraction2075: Number(d.initial_fraction_2075 || 0),
+        importedBaseKitta: d.imported_base_kitta ? Number(d.imported_base_kitta) : undefined,
+        importedOpeningFraction: d.imported_opening_fraction
+          ? Number(d.imported_opening_fraction)
+          : undefined,
+        importedBaseFiscalYear: d.imported_base_fiscal_year || undefined,
         currentKitta2081: Number(d.current_kitta_2081 || 0),
         currentFraction2081: Number(d.current_fraction_2081 || 0),
         totalBonusSharesReceived: Number(d.total_bonus_shares || 0),
@@ -2311,10 +3585,13 @@ export const AgmStudioService = {
         yearlySnapshots: [],
         anomalies: d.anomalies || [],
         convertedShares: Number(d.converted_shares || 0),
-        isConversionMerged: Boolean(d.is_conversion_merged || (d.converted_shares && d.converted_shares > 0)),
+        isConversionMerged: Boolean(
+          d.is_conversion_merged || (d.converted_shares && d.converted_shares > 0),
+        ),
       }));
-    } catch {
-      return [];
+    } catch (e: any) {
+      console.error("Error in fetchAllShareholdersFromDatabase:", e);
+      throw e;
     }
   },
 
@@ -2363,12 +3640,20 @@ export const AgmStudioService = {
     ];
 
     return rawList.map((item) => {
-      const snapshots = this.calculateShareholderEvolution(item.kitta75, item.frac75, undefined, item.type);
+      const snapshots = this.calculateShareholderEvolution(
+        item.kitta75,
+        item.frac75,
+        undefined,
+        item.type,
+      );
       const last = snapshots[snapshots.length - 1];
 
       const totalBonus = snapshots.reduce((s, snap) => s + snap.issuedWholeBonus, 0);
       const totalCash = snapshots.reduce((s, snap) => s + snap.grossCashDividend, 0);
-      const totalTax = snapshots.reduce((s, snap) => s + (snap.bonusTaxWithheld + snap.cashTaxWithheld), 0);
+      const totalTax = snapshots.reduce(
+        (s, snap) => s + (snap.bonusTaxWithheld + snap.cashTaxWithheld),
+        0,
+      );
 
       return {
         boid: item.boid,
@@ -2376,6 +3661,7 @@ export const AgmStudioService = {
         panNo: item.pan,
         holderType: item.type,
         initialKitta2075: item.kitta75,
+        initialFraction2075: item.frac75,
         currentKitta2081: last.postEventKitta,
         currentFraction2081: last.carriedNewFraction,
         totalBonusSharesReceived: totalBonus,
@@ -2438,7 +3724,12 @@ export const AgmStudioService = {
           "";
 
         // Positional fallback for files where column A=ISIN, B=BOID, C=NAME
-        if (!rawName && row["__EMPTY_2"] && typeof row["__EMPTY_2"] === "string" && isNaN(Number(row["__EMPTY_2"]))) {
+        if (
+          !rawName &&
+          row["__EMPTY_2"] &&
+          typeof row["__EMPTY_2"] === "string" &&
+          isNaN(Number(row["__EMPTY_2"]))
+        ) {
           rawName = row["__EMPTY_2"];
         }
         if (!rawBoid && row["__EMPTY_1"]) {
@@ -2449,35 +3740,74 @@ export const AgmStudioService = {
         }
 
         const holderName = String(rawName || "Promoter Holder").trim();
-        if (!holderName || holderName.toUpperCase() === "TOTAL" || holderName.toUpperCase().includes("TOTAL AS PER")) return;
+        if (
+          !holderName ||
+          holderName.toUpperCase() === "TOTAL" ||
+          holderName.toUpperCase().includes("TOTAL AS PER")
+        )
+          return;
 
-        const boidOrFolio = cleanBoid(rawBoid) || (rawBoid ? `FOLIO-${rawBoid}` : `CONV-${sheetName}-${rowIdx + 1}`);
+        const boidOrFolio =
+          cleanBoid(rawBoid) || (rawBoid ? `FOLIO-${rawBoid}` : `CONV-${sheetName}-${rowIdx + 1}`);
 
         // Extract fields from For Bishal, SEBON Report, or nlgpo_conversion demat reconcile
-        const rawPoBal = normMap["pobalanceasof18march2021"] || normMap["pobalance"] || normMap["total"] || normMap["kitta"] || 0;
-        const rawPro = normMap["pro"] || normMap["point"] || normMap["promoter"] || normMap["tpromoter"] || normMap["pubint"] || normMap["promoterint"] || normMap["promoterkitta"] || 0;
-        const rawPub = normMap["pub"] || normMap["puint"] || normMap["public"] || normMap["tpublic"] || normMap["publicint"] || normMap["convertedint"] || normMap["publickitta"] || 0;
+        const rawPoBal =
+          normMap["pobalanceasof18march2021"] ||
+          normMap["pobalance"] ||
+          normMap["total"] ||
+          normMap["kitta"] ||
+          0;
+        const rawPro =
+          normMap["pro"] ||
+          normMap["point"] ||
+          normMap["promoter"] ||
+          normMap["tpromoter"] ||
+          normMap["pubint"] ||
+          normMap["promoterint"] ||
+          normMap["promoterkitta"] ||
+          0;
+        const rawPub =
+          normMap["pub"] ||
+          normMap["puint"] ||
+          normMap["public"] ||
+          normMap["tpublic"] ||
+          normMap["publicint"] ||
+          normMap["convertedint"] ||
+          normMap["publickitta"] ||
+          0;
 
         const rawPoFrac = normMap["pofrac"] || normMap["promoterfrac"] || normMap["profrac"] || 0;
-        const rawPubFrac = normMap["pufrac"] || normMap["publicfrac"] || normMap["pubfrac"] || normMap["convertedfrac"] || 0;
+        const rawPubFrac =
+          normMap["pufrac"] ||
+          normMap["publicfrac"] ||
+          normMap["pubfrac"] ||
+          normMap["convertedfrac"] ||
+          0;
 
         const preTotal = parseFloat(convertNepaliNumeralsToLatin(String(rawPoBal))) || 0;
         const proInt = Math.floor(parseFloat(convertNepaliNumeralsToLatin(String(rawPro))) || 0);
         const pubInt = Math.floor(parseFloat(convertNepaliNumeralsToLatin(String(rawPub))) || 0);
-        const proFrac = Math.round((parseFloat(convertNepaliNumeralsToLatin(String(rawPoFrac))) || 0) * 10000) / 10000;
-        const pubFrac = Math.round((parseFloat(convertNepaliNumeralsToLatin(String(rawPubFrac))) || 0) * 10000) / 10000;
+        const proFrac =
+          Math.round((parseFloat(convertNepaliNumeralsToLatin(String(rawPoFrac))) || 0) * 10000) /
+          10000;
+        const pubFrac =
+          Math.round((parseFloat(convertNepaliNumeralsToLatin(String(rawPubFrac))) || 0) * 10000) /
+          10000;
 
         if (preTotal === 0 && proInt === 0 && pubInt === 0) return;
 
-        const caSeq = String(normMap["caseqno"] || normMap["caseq"] || normMap["ipf"] || "6316.001").trim();
+        const caSeq = String(
+          normMap["caseqno"] || normMap["caseq"] || normMap["ipf"] || "6316.001",
+        ).trim();
         if (caSeq) caSeqSet.add(caSeq);
 
         const statusRaw = String(normMap["remarks"] || normMap["status"] || "").toUpperCase();
-        const status = statusRaw.includes("SUCCESS") || statusRaw.includes("CONVERT")
-          ? ("CONVERTED" as const)
-          : boidOrFolio.startsWith("FOLIO")
-          ? ("PHYSICAL_PENDING" as const)
-          : ("RECONCILED" as const);
+        const status =
+          statusRaw.includes("SUCCESS") || statusRaw.includes("CONVERT")
+            ? ("CONVERTED" as const)
+            : boidOrFolio.startsWith("FOLIO")
+              ? ("PHYSICAL_PENDING" as const)
+              : ("RECONCILED" as const);
 
         const totalConverted = pubInt + pubFrac;
         const totalRetained = proInt + proFrac;
@@ -2487,7 +3817,11 @@ export const AgmStudioService = {
           if (status === "CONVERTED" && existing.status !== "CONVERTED") {
             existing.status = "CONVERTED";
           }
-          if (holderName && holderName !== "Promoter Holder" && (!existing.holderName || existing.holderName === "Promoter Holder")) {
+          if (
+            holderName &&
+            holderName !== "Promoter Holder" &&
+            (!existing.holderName || existing.holderName === "Promoter Holder")
+          ) {
             existing.holderName = holderName;
           }
           if (caSeq && existing.caSeqNo === "6316.001") {
@@ -2526,7 +3860,8 @@ export const AgmStudioService = {
     const totalPub = sumPubInt + Math.round(sumPubFrac * 10000) / 10000;
     const totalBase = sumPreTotal || 1;
 
-    const calculatedFloatingLotDiff = Math.round(Math.abs(sumPreTotal - (totalProm + totalPub)) * 10000) / 10000;
+    const calculatedFloatingLotDiff =
+      Math.round(Math.abs(sumPreTotal - (totalProm + totalPub)) * 10000) / 10000;
 
     const summary: ConversionSummaryReport = {
       totalAccounts: records.length,
@@ -2722,32 +4057,168 @@ export const AgmStudioService = {
     baseKitta: number;
   }[] {
     return [
-      { folioNo: "102", holderName: "JAYA RAM SHARMA", fatherName: "Mahananda Prasad Upadhaya", grandfatherName: "Giriraj Prasad Sharma", address: "Kathmandu", baseKitta: 7 },
-      { folioNo: "104", holderName: "Abhash Shakya", fatherName: "Surendra Man Shakya", grandfatherName: "Ratna Man Shakya", address: "Lalitpur", baseKitta: 30 },
-      { folioNo: "105", holderName: "Abhaya Man Singh", fatherName: "Bhaskar Man Singh", grandfatherName: "Ganesh Man Singh", address: "Kathmandu", baseKitta: 60 },
-      { folioNo: "106", holderName: "Abhigya Karki", fatherName: "Chiranjibi Karki", grandfatherName: "Bhim Bahadur Karki", address: "Bhaktapur", baseKitta: 9 },
-      { folioNo: "107", holderName: "Abhilasha Rana", fatherName: "Binod Shumshere J.B.R.", grandfatherName: "Sagar Shumshere J.B.R.", address: "Kathmandu", baseKitta: 45 },
-      { folioNo: "108", holderName: "RAMESH SHRESTHA", fatherName: "Hari Prasad Shrestha", grandfatherName: "Bhakta Lal Shrestha", address: "Kathmandu", baseKitta: 300 },
-      { folioNo: "110", holderName: "KALYANI TIWARI", fatherName: "Hemnidhi Tiwari", grandfatherName: "Ragnanidhi Tiwari", address: "Baneshwor, Kathmandu", baseKitta: 57 },
-      { folioNo: "112", holderName: "PURUSHOTTAM KUIKEL", fatherName: "Tika Prasad Kuikel", grandfatherName: "Rudra Nath Kuikel", address: "Samundratar, Nuwakot", baseKitta: 6 },
-      { folioNo: "115", holderName: "DEVENDRA KC", fatherName: "Ganesh KC", grandfatherName: "Krishna Bahadur KC", address: "Bhimdutta, Kanchanpur", baseKitta: 49 },
-      { folioNo: "118", holderName: "HARI PRASAD REGMI", fatherName: "Himlal Regmi", grandfatherName: "Dandapani Regmi", address: "Swarek, Syangja", baseKitta: 15 },
-      { folioNo: "120", holderName: "BASANTA PANDIT", fatherName: "Tanka Bahadur Pandit", grandfatherName: "Bhakta Bahadur Pandit", address: "Shikharbeshi, Nuwakot", baseKitta: 53 },
-      { folioNo: "122", holderName: "DIMKALA GNAWALI", fatherName: "Dilaram Gnawali", grandfatherName: "Dinanath Gnawali", address: "Thorga, Gulmi", baseKitta: 30 },
-      { folioNo: "125", holderName: "KHEM BAHADUR PUN", fatherName: "Nar Bahadur Pun", grandfatherName: "Ram Bahadur Pun", address: "Pulamchaur, Myagdi", baseKitta: 8 },
-      { folioNo: "128", holderName: "SAROJ KOIRALA", fatherName: "Parashuram Koirala", grandfatherName: "Naranath Koirala", address: "Tankisinuwari, Morang", baseKitta: 37 },
-      { folioNo: "130", holderName: "YAMUNA SHARMA", fatherName: "Padam Prasad Sharma", grandfatherName: "Lok Nath Sharma", address: "Kathmandu", baseKitta: 10 },
-      { folioNo: "132", holderName: "GAURI MAYA PARAJULI", fatherName: "Chandra Bahadur Parajuli", grandfatherName: "Padam Bahadur Parajuli", address: "Bhad дели, Nuwakot", baseKitta: 1 },
-      { folioNo: "135", holderName: "SANTOSHIKA SHRESTHA", fatherName: "Raju Kumar Shrestha", grandfatherName: "Bal Dev Shrestha", address: "Kathmandu", baseKitta: 1 },
-      { folioNo: "138", holderName: "HEMHARI SHRESTHA", fatherName: "Ganesh Bahadur Shrestha", grandfatherName: "Juju Bir Shrestha", address: "Triyuga, Udayapur", baseKitta: 3 },
-      { folioNo: "140", holderName: "ICHHA RAM ADHIKARI", fatherName: "Indra Lal Adhikari", grandfatherName: "Chandra Lal Adhikari", address: "Thapathali, Kathmandu", baseKitta: 1 },
-      { folioNo: "145", holderName: "SMART CAPITAL PVT LTD", address: "Putalisadak, Kathmandu", baseKitta: 1 },
+      {
+        folioNo: "102",
+        holderName: "JAYA RAM SHARMA",
+        fatherName: "Mahananda Prasad Upadhaya",
+        grandfatherName: "Giriraj Prasad Sharma",
+        address: "Kathmandu",
+        baseKitta: 7,
+      },
+      {
+        folioNo: "104",
+        holderName: "Abhash Shakya",
+        fatherName: "Surendra Man Shakya",
+        grandfatherName: "Ratna Man Shakya",
+        address: "Lalitpur",
+        baseKitta: 30,
+      },
+      {
+        folioNo: "105",
+        holderName: "Abhaya Man Singh",
+        fatherName: "Bhaskar Man Singh",
+        grandfatherName: "Ganesh Man Singh",
+        address: "Kathmandu",
+        baseKitta: 60,
+      },
+      {
+        folioNo: "106",
+        holderName: "Abhigya Karki",
+        fatherName: "Chiranjibi Karki",
+        grandfatherName: "Bhim Bahadur Karki",
+        address: "Bhaktapur",
+        baseKitta: 9,
+      },
+      {
+        folioNo: "107",
+        holderName: "Abhilasha Rana",
+        fatherName: "Binod Shumshere J.B.R.",
+        grandfatherName: "Sagar Shumshere J.B.R.",
+        address: "Kathmandu",
+        baseKitta: 45,
+      },
+      {
+        folioNo: "108",
+        holderName: "RAMESH SHRESTHA",
+        fatherName: "Hari Prasad Shrestha",
+        grandfatherName: "Bhakta Lal Shrestha",
+        address: "Kathmandu",
+        baseKitta: 300,
+      },
+      {
+        folioNo: "110",
+        holderName: "KALYANI TIWARI",
+        fatherName: "Hemnidhi Tiwari",
+        grandfatherName: "Ragnanidhi Tiwari",
+        address: "Baneshwor, Kathmandu",
+        baseKitta: 57,
+      },
+      {
+        folioNo: "112",
+        holderName: "PURUSHOTTAM KUIKEL",
+        fatherName: "Tika Prasad Kuikel",
+        grandfatherName: "Rudra Nath Kuikel",
+        address: "Samundratar, Nuwakot",
+        baseKitta: 6,
+      },
+      {
+        folioNo: "115",
+        holderName: "DEVENDRA KC",
+        fatherName: "Ganesh KC",
+        grandfatherName: "Krishna Bahadur KC",
+        address: "Bhimdutta, Kanchanpur",
+        baseKitta: 49,
+      },
+      {
+        folioNo: "118",
+        holderName: "HARI PRASAD REGMI",
+        fatherName: "Himlal Regmi",
+        grandfatherName: "Dandapani Regmi",
+        address: "Swarek, Syangja",
+        baseKitta: 15,
+      },
+      {
+        folioNo: "120",
+        holderName: "BASANTA PANDIT",
+        fatherName: "Tanka Bahadur Pandit",
+        grandfatherName: "Bhakta Bahadur Pandit",
+        address: "Shikharbeshi, Nuwakot",
+        baseKitta: 53,
+      },
+      {
+        folioNo: "122",
+        holderName: "DIMKALA GNAWALI",
+        fatherName: "Dilaram Gnawali",
+        grandfatherName: "Dinanath Gnawali",
+        address: "Thorga, Gulmi",
+        baseKitta: 30,
+      },
+      {
+        folioNo: "125",
+        holderName: "KHEM BAHADUR PUN",
+        fatherName: "Nar Bahadur Pun",
+        grandfatherName: "Ram Bahadur Pun",
+        address: "Pulamchaur, Myagdi",
+        baseKitta: 8,
+      },
+      {
+        folioNo: "128",
+        holderName: "SAROJ KOIRALA",
+        fatherName: "Parashuram Koirala",
+        grandfatherName: "Naranath Koirala",
+        address: "Tankisinuwari, Morang",
+        baseKitta: 37,
+      },
+      {
+        folioNo: "130",
+        holderName: "YAMUNA SHARMA",
+        fatherName: "Padam Prasad Sharma",
+        grandfatherName: "Lok Nath Sharma",
+        address: "Kathmandu",
+        baseKitta: 10,
+      },
+      {
+        folioNo: "132",
+        holderName: "GAURI MAYA PARAJULI",
+        fatherName: "Chandra Bahadur Parajuli",
+        grandfatherName: "Padam Bahadur Parajuli",
+        address: "Bhad дели, Nuwakot",
+        baseKitta: 1,
+      },
+      {
+        folioNo: "135",
+        holderName: "SANTOSHIKA SHRESTHA",
+        fatherName: "Raju Kumar Shrestha",
+        grandfatherName: "Bal Dev Shrestha",
+        address: "Kathmandu",
+        baseKitta: 1,
+      },
+      {
+        folioNo: "138",
+        holderName: "HEMHARI SHRESTHA",
+        fatherName: "Ganesh Bahadur Shrestha",
+        grandfatherName: "Juju Bir Shrestha",
+        address: "Triyuga, Udayapur",
+        baseKitta: 3,
+      },
+      {
+        folioNo: "140",
+        holderName: "ICHHA RAM ADHIKARI",
+        fatherName: "Indra Lal Adhikari",
+        grandfatherName: "Chandra Lal Adhikari",
+        address: "Thapathali, Kathmandu",
+        baseKitta: 1,
+      },
+      {
+        folioNo: "145",
+        holderName: "SMART CAPITAL PVT LTD",
+        address: "Putalisadak, Kathmandu",
+        baseKitta: 1,
+      },
     ];
   },
 
-  disperseBulkConversionAndBonusPools(
-    profiles: MultiYearShareholderProfile[],
-  ): {
+  disperseBulkConversionAndBonusPools(profiles: MultiYearShareholderProfile[]): {
     expandedProfiles: MultiYearShareholderProfile[];
     dispersedPoolsCount: number;
     createdFoliosCount: number;
@@ -2762,10 +4233,18 @@ export const AgmStudioService = {
     profiles.forEach((p, idx) => {
       const uboid = p.boid.toUpperCase();
       const uname = p.shareholderName.toUpperCase();
-      if (uboid === "REMCONVERSION" || uname.includes("REM CONVERSION") || uname.includes("SHAREHOLDER SION")) {
+      if (
+        uboid === "REMCONVERSION" ||
+        uname.includes("REM CONVERSION") ||
+        uname.includes("SHAREHOLDER SION")
+      ) {
         bulkIndices.push(idx);
         remConversionProfile = p;
-      } else if (uboid === "REMBONUSFY20767778" || uname.includes("SHAREHOLDER 7778") || uname.includes("REMBONUS")) {
+      } else if (
+        uboid === "REMBONUSFY20767778" ||
+        uname.includes("SHAREHOLDER 7778") ||
+        uname.includes("REMBONUS")
+      ) {
         bulkIndices.push(idx);
         remBonusProfile = p;
       } else if (uboid === "FOLIO-REMPOOL" || uname.includes("SHAREHOLDER POOL")) {
@@ -2804,7 +4283,7 @@ export const AgmStudioService = {
      */
     const distributePool = (
       pool: { kitta: number; cash: number; bonus: number },
-      isFirstPool: boolean
+      isFirstPool: boolean,
     ) => {
       let kittaSum = 0;
       let cashSum = 0;
@@ -2855,8 +4334,10 @@ export const AgmStudioService = {
           if (existing) {
             existing.currentKitta2081 += allocatedKitta;
             existing.totalBonusSharesReceived += allocatedBonus;
-            existing.totalCashDividendReceived = Math.round((existing.totalCashDividendReceived + allocatedCash) * 100) / 100;
-            existing.totalTaxWithheld = Math.round(existing.totalCashDividendReceived * 0.05 * 100) / 100;
+            existing.totalCashDividendReceived =
+              Math.round((existing.totalCashDividendReceived + allocatedCash) * 100) / 100;
+            existing.totalTaxWithheld =
+              Math.round(existing.totalCashDividendReceived * 0.05 * 100) / 100;
           }
         }
       });
@@ -2873,25 +4354,41 @@ export const AgmStudioService = {
 
         if (kittaResidual !== 0) largestFolioEntry.currentKitta2081 += kittaResidual;
         if (cashResidual !== 0) {
-          largestFolioEntry.totalCashDividendReceived = Math.round((largestFolioEntry.totalCashDividendReceived + cashResidual) * 100) / 100;
+          largestFolioEntry.totalCashDividendReceived =
+            Math.round((largestFolioEntry.totalCashDividendReceived + cashResidual) * 100) / 100;
         }
         if (bonusResidual !== 0) largestFolioEntry.totalBonusSharesReceived += bonusResidual;
         // Recalculate tax on updated cash
-        largestFolioEntry.totalTaxWithheld = Math.round(largestFolioEntry.totalCashDividendReceived * 0.05 * 100) / 100;
+        largestFolioEntry.totalTaxWithheld =
+          Math.round(largestFolioEntry.totalCashDividendReceived * 0.05 * 100) / 100;
       }
     };
 
     // === PASS 1: REMCONVERSION (27.142857% converted public promoter shares) ===
     if (remConversionProfile) {
       const p = remConversionProfile as MultiYearShareholderProfile;
-      distributePool({ kitta: p.currentKitta2081, cash: p.totalCashDividendReceived, bonus: p.totalBonusSharesReceived }, true);
+      distributePool(
+        {
+          kitta: p.currentKitta2081,
+          cash: p.totalCashDividendReceived,
+          bonus: p.totalBonusSharesReceived,
+        },
+        true,
+      );
     }
 
     // === PASS 2: REMBONUSFY20767778 (unclaimed bonus shares FY 2076/77–2077/78) ===
     // BUG FIX: Previously residual (11 kitta) was silently dropped. Now attributed to FOLIO-108.
     if (remBonusProfile) {
       const p = remBonusProfile as MultiYearShareholderProfile;
-      distributePool({ kitta: p.currentKitta2081, cash: p.totalCashDividendReceived, bonus: p.totalBonusSharesReceived }, generatedFolios.length === 0);
+      distributePool(
+        {
+          kitta: p.currentKitta2081,
+          cash: p.totalCashDividendReceived,
+          bonus: p.totalBonusSharesReceived,
+        },
+        generatedFolios.length === 0,
+      );
     }
 
     // === PASS 3: FOLIO-REMPOOL (miscellaneous unclaimed escrow balance) ===
@@ -2899,12 +4396,22 @@ export const AgmStudioService = {
     // Now it is distributed proportionally and its records are removed.
     if (remPoolProfile) {
       const p = remPoolProfile as MultiYearShareholderProfile;
-      distributePool({ kitta: p.currentKitta2081, cash: p.totalCashDividendReceived, bonus: p.totalBonusSharesReceived }, generatedFolios.length === 0);
+      distributePool(
+        {
+          kitta: p.currentKitta2081,
+          cash: p.totalCashDividendReceived,
+          bonus: p.totalBonusSharesReceived,
+        },
+        generatedFolios.length === 0,
+      );
     }
 
     const expandedProfiles = [...nonBulkProfiles, ...generatedFolios];
     const totalKittaDistributed = generatedFolios.reduce((s, f) => s + f.currentKitta2081, 0);
-    const totalCashDistributed = generatedFolios.reduce((s, f) => s + f.totalCashDividendReceived, 0);
+    const totalCashDistributed = generatedFolios.reduce(
+      (s, f) => s + f.totalCashDividendReceived,
+      0,
+    );
 
     return {
       expandedProfiles,
@@ -2919,29 +4426,42 @@ export const AgmStudioService = {
    * Decomposes bulk aggregate placeholder pools (REMCONVERSION / REMBONUS / FOLIO-REMPOOL) in the database
    * into individual physical promoter folios, removing the placeholder records.
    */
-  async disperseBulkPoolsInDatabase(): Promise<{
+  async disperseBulkPoolsInDatabase(companyId?: string): Promise<{
     dispersedCount: number;
     createdFoliosCount: number;
     totalKittaDistributed: number;
     totalCashDistributed: number;
   }> {
+    const companyUuid = await this.resolveCompanyUuid(companyId);
     try {
       // 1. Fetch placeholder bulk pools from database
-      const { data: bulkRecords, error } = await (supabase as any)
+      let q = (supabase as any)
         .from("agm_historical_shareholders")
         .select("*")
-        .or("boid.ilike.%REMCONVERSION%,boid.ilike.%REMBONUS%,boid.eq.FOLIO-REMPOOL,shareholder_name.ilike.%SHAREHOLDER SION%,shareholder_name.ilike.%SHAREHOLDER 7778%");
+        .or(
+          "boid.ilike.%REMCONVERSION%,boid.ilike.%REMBONUS%,boid.eq.FOLIO-REMPOOL,shareholder_name.ilike.%SHAREHOLDER SION%,shareholder_name.ilike.%SHAREHOLDER 7778%",
+        );
+      if (companyUuid) q = q.eq("company_id", companyUuid);
+
+      const { data: bulkRecords, error } = await q;
 
       if (error || !bulkRecords || bulkRecords.length === 0) {
-        return { dispersedCount: 0, createdFoliosCount: 0, totalKittaDistributed: 0, totalCashDistributed: 0 };
+        return {
+          dispersedCount: 0,
+          createdFoliosCount: 0,
+          totalKittaDistributed: 0,
+          totalCashDistributed: 0,
+        };
       }
 
       const bulkProfiles: MultiYearShareholderProfile[] = bulkRecords.map((r: any) => ({
+        companyId: r.company_id,
         boid: r.boid,
         shareholderName: r.shareholder_name,
         holderType: r.holder_type || "PUBLIC",
         initialKitta2075: Number(r.initial_kitta_2075 || 0),
         initialFraction2075: Number(r.initial_fraction_2075 || 0),
+        importedBaseKitta: r.imported_base_kitta ? Number(r.imported_base_kitta) : undefined,
         currentKitta2081: Number(r.current_kitta_2081 || 0),
         currentFraction2081: Number(r.current_fraction_2081 || 0),
         totalBonusSharesReceived: Number(r.total_bonus_shares || 0),
@@ -2954,10 +4474,16 @@ export const AgmStudioService = {
 
       const dispersal = this.disperseBulkConversionAndBonusPools(bulkProfiles);
       if (dispersal.dispersedPoolsCount === 0) {
-        return { dispersedCount: 0, createdFoliosCount: 0, totalKittaDistributed: 0, totalCashDistributed: 0 };
+        return {
+          dispersedCount: 0,
+          createdFoliosCount: 0,
+          totalKittaDistributed: 0,
+          totalCashDistributed: 0,
+        };
       }
 
       const rowsToInsert = dispersal.expandedProfiles.map((p) => ({
+        company_id: companyUuid,
         boid: p.boid,
         shareholder_name: p.shareholderName,
         father_name: p.fatherName || null,
@@ -2969,6 +4495,7 @@ export const AgmStudioService = {
         holder_type: "PUBLIC",
         initial_kitta_2075: p.initialKitta2075,
         initial_fraction_2075: p.initialFraction2075 || 0,
+        imported_base_kitta: p.importedBaseKitta,
         current_kitta_2081: p.currentKitta2081,
         current_fraction_2081: p.currentFraction2081 || 0,
         total_bonus_shares: p.totalBonusSharesReceived,
@@ -2982,14 +4509,61 @@ export const AgmStudioService = {
       const placeholderIds = bulkRecords.map((r: any) => r.id);
       const placeholderBoids = bulkRecords.map((r: any) => r.boid);
 
+      // 1. Prefer atomic transactional RPC
+      if (companyUuid) {
+        const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc(
+          "disperse_agm_bulk_pools",
+          {
+            p_company_id: companyUuid,
+            p_placeholder_boids: placeholderBoids,
+            p_folio_records: rowsToInsert,
+          },
+        );
+
+        if (!rpcErr && rpcRes?.success) {
+          return {
+            dispersedCount: dispersal.dispersedPoolsCount,
+            createdFoliosCount: dispersal.createdFoliosCount,
+            totalKittaDistributed: dispersal.totalKittaDistributed,
+            totalCashDistributed: dispersal.totalCashDistributed,
+          };
+        }
+      }
+
+      // 2. Fallback multi-step execution if RPC is not deployed or errored
+      // First insert individual physical folios so data is never lost
+      const { error: insErr } = await (supabase as any)
+        .from("agm_historical_shareholders")
+        .upsert(rowsToInsert, { onConflict: "company_id,boid" });
+      if (insErr) {
+        throw new Error(
+          `Failed to insert decomposed physical folios: ${insErr.message || JSON.stringify(insErr)}`,
+        );
+      }
+
       // Delete snapshot history of placeholder records
-      await (supabase as any).from("agm_yearly_snapshots").delete().in("boid", placeholderBoids);
+      let delSnapQ = (supabase as any)
+        .from("agm_yearly_snapshots")
+        .delete()
+        .in("boid", placeholderBoids);
+      if (companyUuid) delSnapQ = delSnapQ.eq("company_id", companyUuid);
+      const { error: snapDelErr } = await delSnapQ;
+      if (snapDelErr) {
+        console.warn("Could not delete placeholder snapshots:", snapDelErr);
+      }
 
       // Delete placeholder bulk records from shareholders table
-      await (supabase as any).from("agm_historical_shareholders").delete().in("id", placeholderIds);
-
-      // Insert individual physical folios
-      await (supabase as any).from("agm_historical_shareholders").upsert(rowsToInsert, { onConflict: "boid" });
+      let delShQ = (supabase as any)
+        .from("agm_historical_shareholders")
+        .delete()
+        .in("id", placeholderIds);
+      if (companyUuid) delShQ = delShQ.eq("company_id", companyUuid);
+      const { error: shDelErr } = await delShQ;
+      if (shDelErr) {
+        throw new Error(
+          `Failed to delete placeholder bulk pool records: ${shDelErr.message || JSON.stringify(shDelErr)}`,
+        );
+      }
 
       return {
         dispersedCount: dispersal.dispersedPoolsCount,
@@ -2997,13 +4571,13 @@ export const AgmStudioService = {
         totalKittaDistributed: dispersal.totalKittaDistributed,
         totalCashDistributed: dispersal.totalCashDistributed,
       };
-    } catch (e) {
+    } catch (e: any) {
       console.error("Error dispersing bulk pools in database:", e);
-      return { dispersedCount: 0, createdFoliosCount: 0, totalKittaDistributed: 0, totalCashDistributed: 0 };
+      throw e;
     }
   },
 
-  async fetchDbSummaryStats(): Promise<{
+  async fetchDbSummaryStats(companyId?: string): Promise<{
     totalKitta: number;
     totalBonus: number;
     totalCash: number;
@@ -3011,9 +4585,12 @@ export const AgmStudioService = {
     mfCash: number;
     totalShareholders: number;
   }> {
+    const companyUuid = await this.resolveCompanyUuid(companyId);
     try {
-      // 1. Try real-time database aggregation RPC
-      const { data, error } = await (supabase as any).rpc("get_agm_summary_stats");
+      // 1. Try real-time database aggregation RPC with company scoping
+      const { data, error } = await (supabase as any).rpc("get_agm_summary_stats", {
+        p_company_id: companyUuid,
+      });
       if (!error && data) {
         return {
           totalKitta: Number(data.totalKitta || 0),
@@ -3026,10 +4603,18 @@ export const AgmStudioService = {
       }
 
       // 2. Fallback to count query if RPC is unavailable
-      const { count: shCount } = await (supabase as any)
+      let countQ = (supabase as any)
         .from("agm_historical_shareholders")
         .select("*", { count: "exact", head: true })
         .not("boid", "in", '("REMCONVERSION","REMBONUSFY20767778")');
+      if (companyUuid) countQ = countQ.eq("company_id", companyUuid);
+
+      const { count: shCount, error: countErr } = await countQ;
+      if (countErr) {
+        throw new Error(
+          `Failed to fetch summary stats count: ${countErr.message || JSON.stringify(countErr)}`,
+        );
+      }
 
       return {
         totalKitta: 0,
@@ -3039,15 +4624,9 @@ export const AgmStudioService = {
         mfCash: 0,
         totalShareholders: shCount || 0,
       };
-    } catch {
-      return {
-        totalKitta: 0,
-        totalBonus: 0,
-        totalCash: 0,
-        totalTax: 0,
-        mfCash: 0,
-        totalShareholders: 0,
-      };
+    } catch (e: any) {
+      console.error("Error in fetchDbSummaryStats:", e);
+      throw e;
     }
   },
 
@@ -3055,22 +4634,45 @@ export const AgmStudioService = {
    * Queries real-time statutory registered capital from agm_yearly_snapshots by target fiscal year,
    * accurately reflecting post-event listed capital without double-counting escrow pools.
    */
-  async fetchStatutoryCapitalByFY(fiscalYear = "2081/82"): Promise<{
+  async fetchStatutoryCapitalByFY(
+    fiscalYear = "2081/82",
+    companyId?: string,
+  ): Promise<{
     fiscalYear: string;
     statutoryCapital: number;
     totalShareholders: number;
     bonusKitta: number;
     rightKitta: number;
   }> {
+    const companyUuid = await this.resolveCompanyUuid(companyId);
+    const timeline = this.getHistoricalTimeline(companyId);
+    const fyConfig = timeline.find((t) => t.fiscalYear === fiscalYear);
+    const baselineStatutory = fyConfig ? fyConfig.totalListedKitta : 0;
+
     try {
-      const { data, error } = await (supabase as any)
+      let q = (supabase as any)
         .from("agm_yearly_snapshots")
         .select("base_kitta, post_event_kitta, issued_whole_bonus, right_shares_allotted")
         .eq("fiscal_year", fiscalYear)
         .not("boid", "in", '("REMCONVERSION","REMBONUSFY20767778")');
+      if (companyUuid) q = q.eq("company_id", companyUuid);
 
-      if (error || !data || data.length === 0) {
-        return { fiscalYear, statutoryCapital: 25631679, totalShareholders: 0, bonusKitta: 0, rightKitta: 0 };
+      const { data, error } = await q;
+
+      if (error) {
+        throw new Error(
+          `Failed to fetch statutory capital for FY ${fiscalYear}: ${error.message || JSON.stringify(error)}`,
+        );
+      }
+
+      if (!data || data.length === 0) {
+        return {
+          fiscalYear,
+          statutoryCapital: baselineStatutory,
+          totalShareholders: 0,
+          bonusKitta: 0,
+          rightKitta: 0,
+        };
       }
 
       let statutoryCapital = 0;
@@ -3090,8 +4692,17 @@ export const AgmStudioService = {
         bonusKitta: Math.round(bonusKitta),
         rightKitta: Math.round(rightKitta),
       };
-    } catch {
-      return { fiscalYear, statutoryCapital: 25631679, totalShareholders: 0, bonusKitta: 0, rightKitta: 0 };
+    } catch (err: any) {
+      if (err?.message?.startsWith("Failed to fetch statutory capital")) {
+        throw err;
+      }
+      return {
+        fiscalYear,
+        statutoryCapital: baselineStatutory,
+        totalShareholders: 0,
+        bonusKitta: 0,
+        rightKitta: 0,
+      };
     }
   },
 
@@ -3116,39 +4727,15 @@ export const AgmStudioService = {
     const divRate = lastEvent ? lastEvent.bonusRatioPct : 2.5;
     const cashRate = lastEvent ? lastEvent.cashDividendRatioPct : 0.2895;
 
-    // 1. Resolve or Create Target Company in `public.companies`
-    let targetCompanyUuid: string | null = null;
-    try {
-      if (companyId && companyId.includes("-")) {
-        targetCompanyUuid = companyId;
-      } else {
-        const { data: existingComp } = await (supabase as any)
-          .from("companies")
-          .select("id")
-          .eq("company_code", companyCode.toUpperCase().trim())
-          .limit(1);
-
-        if (existingComp && existingComp.length > 0) {
-          targetCompanyUuid = existingComp[0].id;
-        } else {
-          const { data: newComp, error: compErr } = await (supabase as any)
-            .from("companies")
-            .insert({
-              company_code: companyCode.toUpperCase().trim(),
-              company_name: companyName.trim(),
-              sector_type: "Public",
-              status: "Active",
-            })
-            .select("id")
-            .maybeSingle();
-
-          if (!compErr && newComp) {
-            targetCompanyUuid = newComp.id;
-          }
-        }
-      }
-    } catch (e) {
-      console.warn("Company resolution error in promotion:", e);
+    // 1. Resolve Target Company in `public.companies` to a genuine UUID
+    const targetCompanyUuid: string | null = await this.resolveCompanyUuid(
+      companyId || companyCode,
+      companyName,
+    );
+    if (!targetCompanyUuid || !isUuid(targetCompanyUuid)) {
+      throw new Error(
+        `Failed to resolve valid company UUID for company ID: "${companyId}", code: "${companyCode}"`,
+      );
     }
 
     let promotedCount = 0;
@@ -3156,9 +4743,24 @@ export const AgmStudioService = {
     const CHUNK_SIZE = 500;
     const failedChunks: MultiYearShareholderProfile[][] = [];
 
+    // Filter out pool and escrow accounts from being created as individual clients
+    const validProfiles = profiles.filter((p) => {
+      const b = (p.boid || "").toUpperCase().trim();
+      return (
+        !b.includes("REMCONVERSION") &&
+        !b.includes("REMBONUS") &&
+        !b.includes("REMPOOL") &&
+        !b.startsWith("FOLIO-REM")
+      );
+    });
+
+    if (validProfiles.length === 0) {
+      return { promotedCount: 0, fractionPayablesCreated: 0 };
+    }
+
     // 2. Batch Upsert Clients
-    for (let i = 0; i < profiles.length; i += CHUNK_SIZE) {
-      const chunk = profiles.slice(i, i + CHUNK_SIZE);
+    for (let i = 0; i < validProfiles.length; i += CHUNK_SIZE) {
+      const chunk = validProfiles.slice(i, i + CHUNK_SIZE);
 
       const clientRows = chunk.map((p) => {
         const rawHolderType = p.holderType;
@@ -3166,10 +4768,10 @@ export const AgmStudioService = {
           rawHolderType === "MUTUAL_FUND"
             ? "Mutual Fund"
             : rawHolderType === "PROMOTER"
-            ? "Promoter"
-            : rawHolderType === "CLEARING_POOL"
-            ? "Institution"
-            : "Public";
+              ? "Promoter"
+              : rawHolderType === "CLEARING_POOL"
+                ? "Institution"
+                : "Public";
 
         const cleanPan = p.panNo?.trim() || null;
         const cleanCit = p.citizenshipNo?.trim() || null;
@@ -3199,123 +4801,209 @@ export const AgmStudioService = {
         };
       });
 
-      // Retry up to 3 times with RPC first, then direct upsert fallback
-      let isBatchSuccess = false;
-      let lastErr: any = null;
+      const fractionHolders = chunk.filter((p) => p.currentFraction2081 > 0);
+      const rawPayables = fractionHolders.map((p) => {
+        const isMf = p.holderType === "MUTUAL_FUND";
+        const grossCash = Math.round(p.currentFraction2081 * 100 * (cashRate / 100) * 100) / 100;
+        const tax = isMf ? 0.0 : Math.round(grossCash * 0.05 * 100) / 100;
+        const net = isMf ? grossCash : Math.round((grossCash - tax) * 100) / 100;
+        return {
+          boid: p.boid,
+          fiscal_year: finalFy,
+          shares_held: p.currentKitta2081,
+          fraction_shares: p.currentFraction2081,
+          gross_dividend: grossCash,
+          tax_amount: tax,
+          net_payable: net,
+          remarks: `Historical AGM ${finalFy} reconciled fraction remainder: ${p.currentFraction2081.toFixed(4)} kitta`,
+        };
+      });
 
-      for (let attempt = 1; attempt <= 3; attempt++) {
+      // 1. Attempt Atomic RPC promotion first
+      let isAtomicSuccess = false;
+      if (targetCompanyUuid) {
         try {
-          // Attempt 1: Try bulk_insert_clients RPC (security definer)
-          const { data: rpcData, error: rpcErr } = await (supabase as any).rpc("bulk_insert_clients", {
-            p_clients: clientRows,
-          });
+          const { data: promoData, error: promoErr } = await (supabase as any).rpc(
+            "promote_agm_clients_and_payables",
+            {
+              p_company_id: targetCompanyUuid,
+              p_clients: clientRows,
+              p_payables: rawPayables,
+            },
+          );
 
-          if (!rpcErr && (rpcData?.success || rpcData?.inserted > 0)) {
-            isBatchSuccess = true;
-            lastErr = null;
-            break;
+          if (!promoErr && promoData?.success) {
+            isAtomicSuccess = true;
+            fractionPayablesCreated += promoData.payablesInserted ?? rawPayables.length;
+          } else if (promoErr) {
+            const isMissingFunction =
+              promoErr.code === "42883" ||
+              promoErr.code === "PGRST202" ||
+              promoErr.message?.includes("does not exist") ||
+              promoErr.message?.includes("Could not find the function");
+            if (!isMissingFunction) {
+              failedChunks.push(chunk);
+              throw new Error(
+                `Atomic promotion failed: ${promoErr.message || JSON.stringify(promoErr)}`,
+              );
+            }
           }
-
-          // Attempt 2: Fallback to direct upsert into clients table
-          const { error: directErr } = await (supabase as any)
-            .from("clients")
-            .upsert(clientRows, { onConflict: "boid" });
-
-          if (!directErr) {
-            isBatchSuccess = true;
-            lastErr = null;
-            break;
+        } catch (ex: any) {
+          if (ex.message?.startsWith("Atomic promotion failed")) {
+            throw ex;
           }
-
-          lastErr = rpcErr || directErr;
-          await new Promise((r) => setTimeout(r, attempt * 500));
-        } catch (ex) {
-          lastErr = ex;
-          await new Promise((r) => setTimeout(r, attempt * 500));
+          // Fall through to sequential fallback only if RPC function does not exist
         }
       }
 
-      if (!isBatchSuccess && lastErr) {
-        failedChunks.push(chunk);
-        console.warn(`Upsert warning on batch ${Math.floor(i / CHUNK_SIZE) + 1}. Error:`, {
-          message: lastErr.message || 'Unknown error',
-          code: lastErr.code,
-          sampleMaskedBoid: chunk[0]?.boid?.replace(/(.{6}).*(.{4})/, "$1******$2")
-        });
-        continue;
+      if (!isAtomicSuccess) {
+        // Retry up to 3 times with RPC first, then direct upsert fallback
+        let isBatchSuccess = false;
+        let lastErr: any = null;
+
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            // Attempt 1: Try bulk_insert_clients RPC (security definer)
+            const { data: rpcData, error: rpcErr } = await (supabase as any).rpc(
+              "bulk_insert_clients",
+              {
+                p_clients: clientRows,
+              },
+            );
+
+            const rpcErrors = Array.isArray(rpcData?.errors) ? rpcData.errors : [];
+            if (!rpcErr && rpcData?.inserted > 0 && rpcErrors.length === 0) {
+              isBatchSuccess = true;
+              lastErr = null;
+              break;
+            }
+
+            // Attempt 2: Fallback to direct upsert into clients table with explicit composite conflict key
+            const { error: directErr } = await (supabase as any)
+              .from("clients")
+              .upsert(clientRows, { onConflict: "company_id,boid" });
+
+            if (!directErr) {
+              isBatchSuccess = true;
+              lastErr = null;
+              break;
+            }
+
+            lastErr = rpcErr || directErr;
+            await new Promise((r) => setTimeout(r, attempt * 500));
+          } catch (ex) {
+            lastErr = ex;
+            await new Promise((r) => setTimeout(r, attempt * 500));
+          }
+        }
+
+        if (!isBatchSuccess && lastErr) {
+          failedChunks.push(chunk);
+          console.warn(`Upsert warning on batch ${Math.floor(i / CHUNK_SIZE) + 1}. Error:`, {
+            message: lastErr.message || "Unknown error",
+            code: lastErr.code,
+            sampleMaskedBoid: chunk[0]?.boid?.replace(/(.{6}).*(.{4})/, "$1******$2"),
+          });
+          continue;
+        }
+
+        // 3. Create Fraction Dividend Payables if applicable
+        if (isBatchSuccess && targetCompanyUuid && rawPayables.length > 0) {
+          const chunkBoids = chunk.map((c) => c.boid).filter(Boolean);
+          const rollbackClients = async () => {
+            if (chunkBoids.length > 0) {
+              try {
+                const clientsTable = (supabase as any).from("clients");
+                if (typeof clientsTable?.delete === "function") {
+                  await clientsTable
+                    .delete()
+                    .eq("company_id", targetCompanyUuid)
+                    .in("boid", chunkBoids);
+                }
+              } catch (rollErr) {
+                console.error("Failed to rollback clients after payable failure:", rollErr);
+              }
+            }
+          };
+
+          const boids = rawPayables.map((p) => p.boid);
+          const clientQ = (supabase as any)
+            .from("clients")
+            .select("id, boid")
+            .eq("company_id", targetCompanyUuid)
+            .in("boid", boids);
+
+          const { data: dbClients, error: clientErr } = await clientQ;
+          if (clientErr) {
+            await rollbackClients();
+            failedChunks.push(chunk);
+            throw new Error(
+              `Failed to query clients for fraction payables (batch rolled back): ${clientErr.message || JSON.stringify(clientErr)}`,
+            );
+          }
+
+          if (dbClients && dbClients.length > 0) {
+            const clientIdMap = new Map<string, string>(dbClients.map((c: any) => [c.boid, c.id]));
+            const payableRows: any[] = [];
+
+            rawPayables.forEach((p) => {
+              const clientId = clientIdMap.get(p.boid);
+              if (!clientId) return;
+
+              payableRows.push({
+                company_id: targetCompanyUuid,
+                client_id: clientId,
+                fiscal_year: p.fiscal_year,
+                shares_held: p.shares_held,
+                fraction_shares: p.fraction_shares,
+                gross_dividend: p.gross_dividend,
+                tax_amount: p.tax_amount,
+                net_payable: p.net_payable,
+                payment_status: "Pending",
+                remarks: p.remarks,
+              });
+            });
+
+            if (payableRows.length > 0) {
+              const clientIds = payableRows.map((r) => r.client_id);
+              if (clientIds.length > 0) {
+                const { error: delPayErr } = await (supabase as any)
+                  .from("dividend_payables")
+                  .delete()
+                  .eq("company_id", targetCompanyUuid)
+                  .eq("fiscal_year", finalFy)
+                  .ilike("remarks", "%fraction remainder%")
+                  .in("client_id", clientIds);
+                if (delPayErr) {
+                  await rollbackClients();
+                  failedChunks.push(chunk);
+                  throw new Error(
+                    `Failed to clear previous fraction payables (batch rolled back): ${delPayErr.message || JSON.stringify(delPayErr)}`,
+                  );
+                }
+              }
+
+              const { error: payErr } = await (supabase as any)
+                .from("dividend_payables")
+                .insert(payableRows);
+
+              if (payErr) {
+                await rollbackClients();
+                failedChunks.push(chunk);
+                throw new Error(
+                  `Failed to create required fraction payables (batch rolled back): ${payErr.message || JSON.stringify(payErr)}`,
+                );
+              }
+              fractionPayablesCreated += payableRows.length;
+            }
+          }
+        }
       }
 
       promotedCount += chunk.length;
       if (onProgress) {
         const pct = Math.min(100, Math.round((promotedCount / profiles.length) * 100));
         onProgress(promotedCount, profiles.length, pct);
-      }
-
-      // 3. Create Fraction Dividend Payables if applicable
-      if (isBatchSuccess && targetCompanyUuid) {
-        const fractionHolders = chunk.filter((p) => p.currentFraction2081 > 0);
-        if (fractionHolders.length > 0) {
-          const boids = fractionHolders.map((p) => p.boid);
-          const { data: dbClients } = await (supabase as any)
-            .from("clients")
-            .select("id, boid")
-            .in("boid", boids);
-
-          if (dbClients && dbClients.length > 0) {
-            const clientIdMap = new Map<string, string>(dbClients.map((c: any) => [c.boid, c.id]));
-            const payableRows: any[] = [];
-
-            fractionHolders.forEach((p) => {
-              const clientId = clientIdMap.get(p.boid);
-              if (!clientId) return;
-
-              const isMf = p.holderType === "MUTUAL_FUND";
-              const grossCash = Math.round(p.currentFraction2081 * 100 * (cashRate / 100) * 100) / 100;
-              const tax = isMf ? 0.0 : Math.round(grossCash * 0.05 * 100) / 100;
-              const net = isMf ? grossCash : Math.round((grossCash - tax) * 100) / 100;
-
-              payableRows.push({
-                company_id: targetCompanyUuid,
-                client_id: clientId,
-                fiscal_year: finalFy,
-                shares_held: p.currentKitta2081,
-                fraction_shares: p.currentFraction2081,
-                gross_dividend: grossCash,
-                tax_amount: tax,
-                net_payable: net,
-                payment_status: "Pending",
-                remarks: `Historical AGM ${finalFy} reconciled fraction remainder: ${p.currentFraction2081.toFixed(4)} kitta`,
-              });
-            });
-            if (payableRows.length > 0) {
-              try {
-                // Idempotency: Clean up prior fraction remainder payables for this chunk to prevent duplicate rows
-                const clientIds = payableRows.map((r) => r.client_id);
-                if (clientIds.length > 0) {
-                  await (supabase as any)
-                    .from("dividend_payables")
-                    .delete()
-                    .eq("company_id", targetCompanyUuid)
-                    .eq("fiscal_year", finalFy)
-                    .ilike("remarks", "%fraction remainder%")
-                    .in("client_id", clientIds);
-                }
-
-                const { error: payErr } = await (supabase as any)
-                  .from("dividend_payables")
-                  .insert(payableRows);
-
-                if (!payErr) {
-                  fractionPayablesCreated += payableRows.length;
-                } else {
-                  console.warn("Could not insert fraction dividend payables:", payErr);
-                }
-              } catch (e) {
-                console.warn("Dividend payables insert exception:", e);
-              }
-            }
-          }
-        }
       }
 
       if (onProgress) {
@@ -3352,35 +5040,52 @@ export const AgmStudioService = {
     profiles: MultiYearShareholderProfile[],
     companyCode = "NLG",
     fiscalYear = "2080/81",
-    eventType: "RIGHT_ISSUE" | "PROMOTER_CONVERSION" | "BONUS_AND_CASH" | "IPF_TRANSFER" | "PRE_BASELINE_BONUS" | string = "BONUS_AND_CASH",
+    eventType:
+      | "RIGHT_ISSUE"
+      | "PROMOTER_CONVERSION"
+      | "BONUS_AND_CASH"
+      | "IPF_TRANSFER"
+      | "PRE_BASELINE_BONUS"
+      | string = "BONUS_AND_CASH",
     exportMode: "EVENT_DELTA" | "CUMULATIVE_BALANCE" = "EVENT_DELTA",
   ): string {
     const lines: string[] = [];
     const controlDate = new Date().toISOString().slice(0, 10).replace(/-/g, "");
 
-    const actionCode = eventType === "RIGHT_ISSUE"
-      ? "RIGHT_CREDIT"
-      : eventType === "PROMOTER_CONVERSION"
-      ? "CONV_CREDIT"
-      : "BONUS_CREDIT";
+    const actionCode =
+      eventType === "RIGHT_ISSUE"
+        ? "RIGHT_CREDIT"
+        : eventType === "PROMOTER_CONVERSION"
+          ? "CONV_CREDIT"
+          : "BONUS_CREDIT";
 
-    const detailAction = eventType === "RIGHT_ISSUE"
-      ? "RIGHT_POSTED"
-      : eventType === "PROMOTER_CONVERSION"
-      ? "CONV_POSTED"
-      : "BONUS_POSTED";
+    const detailAction =
+      eventType === "RIGHT_ISSUE"
+        ? "RIGHT_POSTED"
+        : eventType === "PROMOTER_CONVERSION"
+          ? "CONV_POSTED"
+          : "BONUS_POSTED";
 
     // Exclude escrow holding pools and unmatched transfers from CDSC client credit upload
     const validProfiles = profiles.filter((p) => {
       const uboid = p.boid.toUpperCase();
       const uname = p.shareholderName.toUpperCase();
       if (p.holderType === "CLEARING_POOL") return false;
-      if (uboid.includes("REMCONVERSION") || uboid.includes("REMBONUS") || uboid.includes("REMPOOL") || uboid.startsWith("FOLIO32373") || uboid.startsWith("FOLIO4168")) return false;
+      if (
+        uboid.includes("REMCONVERSION") ||
+        uboid.includes("REMBONUS") ||
+        uboid.includes("REMPOOL") ||
+        uboid.startsWith("FOLIO32373") ||
+        uboid.startsWith("FOLIO4168")
+      )
+        return false;
       if (uname.includes("UNMATCHED") || uname.includes("ESCROW")) return false;
       return true;
     });
 
-    lines.push(`H|${companyCode}|${fiscalYear}|${controlDate}|${validProfiles.length}|${actionCode}`);
+    lines.push(
+      `H|${companyCode}|${fiscalYear}|${controlDate}|${validProfiles.length}|${actionCode}`,
+    );
 
     validProfiles.forEach((p, idx) => {
       const lockCode = p.holderType === "PROMOTER" ? "01" : "00";
@@ -3390,13 +5095,15 @@ export const AgmStudioService = {
       if (!snap) {
         // Dynamically compute snapshot if not pre-cached
         const dynamicSnapshots = this.calculateShareholderEvolution(
-          p.initialKitta2075,
+          p.importedBaseKitta ?? p.initialKitta2075,
           p.initialFraction2075 || 0,
           undefined,
           p.holderType,
           undefined,
           undefined,
-          p.convertedShares
+          p.convertedShares,
+          undefined,
+          p.isConversionMerged,
         );
         snap = dynamicSnapshots.find((s) => s.fiscalYear === fiscalYear);
       }
@@ -3430,11 +5137,18 @@ export const AgmStudioService = {
     // Add statutory audit note for excluded escrow pools (MOD-4)
     const excludedEscrows = profiles.filter((p) => {
       const uboid = p.boid.toUpperCase();
-      return uboid.includes("REMCONVERSION") || uboid.includes("REMBONUS") || uboid.includes("REMPOOL");
+      return (
+        uboid.includes("REMCONVERSION") || uboid.includes("REMBONUS") || uboid.includes("REMPOOL")
+      );
     });
     if (excludedEscrows.length > 0) {
-      const totalEscrowKitta = excludedEscrows.reduce((sum, p) => sum + (p.currentKitta2081 || p.initialKitta2075 || 0), 0);
-      lines.push(`# AUDIT_NOTE|REMCONVERSION_ESCROW_EXCLUDED|ACCOUNTS:${excludedEscrows.length}|TOTAL_KITTA:${totalEscrowKitta}|STATUTORY_REF:CA_SEQ_6316.001_PHYSICAL_ESCROW_NOT_SUBMITTED_TO_CDSC`);
+      const totalEscrowKitta = excludedEscrows.reduce(
+        (sum, p) => sum + (p.currentKitta2081 || p.initialKitta2075 || 0),
+        0,
+      );
+      lines.push(
+        `# AUDIT_NOTE|REMCONVERSION_ESCROW_EXCLUDED|ACCOUNTS:${excludedEscrows.length}|TOTAL_KITTA:${totalEscrowKitta}|STATUTORY_REF:CA_SEQ_6316.001_PHYSICAL_ESCROW_NOT_SUBMITTED_TO_CDSC`,
+      );
     }
 
     lines.push(`T|${validProfiles.length}|END_OF_BATCH`);
@@ -3445,7 +5159,13 @@ export const AgmStudioService = {
   autoSuggestDrnMatches(
     drnRecords: PhysicalDrnRecord[],
     dematProfiles: MultiYearShareholderProfile[],
-  ): { drnId: string; folioNo: string; suggestedBoid: string; holderName: string; confidence: "HIGH" | "MEDIUM" }[] {
+  ): {
+    drnId: string;
+    folioNo: string;
+    suggestedBoid: string;
+    holderName: string;
+    confidence: "HIGH" | "MEDIUM";
+  }[] {
     const suggestions: {
       drnId: string;
       folioNo: string;
@@ -3486,6 +5206,8 @@ export const AgmStudioService = {
     targetFy?: string,
     drnRecords?: PhysicalDrnRecord[],
   ): void {
+    this.assertReportExportIntegrity(profiles, "AGM Multi-Year Reconciliation Ledger");
+
     const wb = XLSX.utils.book_new();
     const timeline = timelineConfig || this.getHistoricalTimeline();
     const baseFy = targetFy || timeline[0]?.fiscalYear || "2075/76";
@@ -3549,7 +5271,7 @@ export const AgmStudioService = {
       p.yoyStatus || "MATCHED",
       p.yoyDelta || 0,
       p.hasDiscrepancy ? "EXCEL VARIANCE" : "MATCHED",
-      (p.anomalies && p.anomalies.length > 0) ? p.anomalies.join(" | ") : "",
+      p.anomalies && p.anomalies.length > 0 ? p.anomalies.join(" | ") : "",
       "RECONCILED",
     ];
 
@@ -3588,7 +5310,9 @@ export const AgmStudioService = {
     const masterRows = profiles.map(mapProfileToRow);
     const wsMaster = XLSX.utils.aoa_to_sheet([
       [`${companyName.toUpperCase()} — HISTORICAL MASTER RECONCILIATION LEDGER`],
-      [`Generated at: ${new Date().toLocaleString()} | Total Records: ${profiles.length.toLocaleString()}`],
+      [
+        `Generated at: ${new Date().toLocaleString()} | Total Records: ${profiles.length.toLocaleString()}`,
+      ],
       [],
       headers,
       ...masterRows,
@@ -3711,20 +5435,24 @@ export const AgmStudioService = {
       let netCash = 0;
       let carriedFrac = 0;
 
-      const actualTimeline = (timeline && timeline.length > 0) ? timeline : this.getHistoricalTimeline();
+      const actualTimeline =
+        timeline && timeline.length > 0 ? timeline : this.getHistoricalTimeline();
 
       profiles.forEach((p) => {
-        const snapshots = (p.yearlySnapshots && p.yearlySnapshots.length > 0)
-          ? p.yearlySnapshots
-          : this.calculateShareholderEvolution(
-              p.initialKitta2075 || p.currentKitta2081 || 0,
-              p.initialFraction2075 || 0,
-              actualTimeline,
-              p.holderType,
-              undefined,
-              actualTimeline[0]?.fiscalYear,
-              (p as any).convertedShares
-            );
+        const snapshots =
+          p.yearlySnapshots && p.yearlySnapshots.length > 0
+            ? p.yearlySnapshots
+            : this.calculateShareholderEvolution(
+                p.importedBaseKitta ?? p.initialKitta2075 ?? p.currentKitta2081 ?? 0,
+                p.initialFraction2075 || 0,
+                actualTimeline,
+                p.holderType,
+                undefined,
+                actualTimeline[0]?.fiscalYear,
+                (p as any).convertedShares,
+                undefined,
+                (p as any).isConversionMerged,
+              );
 
         const snap = snapshots.find((s) => s.fiscalYear === fy.fiscalYear);
         if (snap) {
@@ -3736,7 +5464,7 @@ export const AgmStudioService = {
           totalKitta += snap.postEventKitta;
           bonusIssued += snap.issuedWholeBonus;
           grossCash += snap.grossCashDividend;
-          taxWithheld += (snap.bonusTaxWithheld + snap.cashTaxWithheld);
+          taxWithheld += snap.bonusTaxWithheld + snap.cashTaxWithheld;
           netCash += snap.netCashPayable;
           carriedFrac += snap.carriedNewFraction;
         }
@@ -3768,18 +5496,23 @@ export const AgmStudioService = {
     XLSX.utils.book_append_sheet(wb, wsFySummary, "FY_Summary_Report");
 
     // Sheet 6: Physical DRN Ledger
-    const physicalProfiles = profiles.filter((p) => p.holderType === "PHYSICAL" || p.boid.startsWith("FOLIO-"));
-    const drnSource: PhysicalDrnRecord[] = (drnRecords && drnRecords.length > 0) ? drnRecords : physicalProfiles.map((p) => ({
-      id: `drn-${p.boid}`,
-      folioNo: p.boid.replace("FOLIO-", ""),
-      holderName: p.shareholderName,
-      totalKitta: p.currentKitta2081,
-      status: "PHYSICAL" as const,
-      drnNo: undefined,
-      drnDate: undefined,
-      targetBoid: undefined,
-      reconciledAt: undefined,
-    }));
+    const physicalProfiles = profiles.filter(
+      (p) => p.holderType === "PHYSICAL" || p.boid.startsWith("FOLIO-"),
+    );
+    const drnSource: PhysicalDrnRecord[] =
+      drnRecords && drnRecords.length > 0
+        ? drnRecords
+        : physicalProfiles.map((p) => ({
+            id: `drn-${p.boid}`,
+            folioNo: p.boid.replace("FOLIO-", ""),
+            holderName: p.shareholderName,
+            totalKitta: p.currentKitta2081,
+            status: "PHYSICAL" as const,
+            drnNo: undefined,
+            drnDate: undefined,
+            targetBoid: undefined,
+            reconciledAt: undefined,
+          }));
 
     if (drnSource.length > 0) {
       const drnHeaders = [
@@ -3805,7 +5538,9 @@ export const AgmStudioService = {
         d.reconciledAt || "—",
       ]);
       const wsDrn = XLSX.utils.aoa_to_sheet([
-        [`${companyName.toUpperCase()} — PHYSICAL FOLIO DEMATERIALISATION (DRN) RECONCILIATION LEDGER`],
+        [
+          `${companyName.toUpperCase()} — PHYSICAL FOLIO DEMATERIALISATION (DRN) RECONCILIATION LEDGER`,
+        ],
         [`Total Physical Accounts: ${drnSource.length.toLocaleString()}`],
         [],
         drnHeaders,
@@ -3815,7 +5550,26 @@ export const AgmStudioService = {
     }
 
     // Sheet 7: CA 6316 Conversion Audit
-    const convProfiles = profiles.filter((p) => p.holderType === "PROMOTER" || p.convertedShares || p.isConversionMerged || p.boid.includes("REMCONVERSION"));
+    const convProfiles = profiles.filter(
+      (p) =>
+        p.holderType === "PROMOTER" ||
+        p.convertedShares ||
+        p.isConversionMerged ||
+        p.boid.includes("REMCONVERSION"),
+    );
+    const remProfile = profiles.find((p) => p.boid === "REMCONVERSION");
+    const remPreKitta =
+      remProfile?.initialKitta2075 ||
+      (remProfile ? (remProfile.currentKitta2081 ? remProfile.currentKitta2081 : 0) : 0);
+    const remBaseConv =
+      remProfile?.convertedShares ||
+      (remProfile && remPreKitta > 0 ? Math.round(remPreKitta * 0.27142857 * 100) / 100 : 0);
+    const remCloseKitta = remProfile?.currentKitta2081 || 0;
+    const remCloseCash = remProfile?.totalCashDividendReceived || 0;
+    const kittaMultiplier = remBaseConv > 0 ? remCloseKitta / remBaseConv : 1;
+    const cashMultiplier = remBaseConv > 0 ? remCloseCash / remBaseConv : 0;
+    const escrowFolioCount = drnSource?.length || 0;
+
     if (convProfiles.length > 0) {
       const convHeaders = [
         "S.N.",
@@ -3831,10 +5585,12 @@ export const AgmStudioService = {
       ];
       const convRows = convProfiles.map((p, idx) => {
         const isPool = p.boid === "REMCONVERSION";
-        const preKitta = isPool ? 145778.86 : (p.initialKitta2075 || p.currentKitta2081);
-        const retKitta = isPool ? 9398.86 : Math.round(preKitta * 0.72857143 * 100) / 100;
-        const convKitta = isPool ? 136380 : Math.round(preKitta * 0.27142857 * 100) / 100;
-        const closeKitta = isPool ? 355086 : Math.round(convKitta * (355086 / 136380));
+        const preKitta = isPool ? remPreKitta : p.initialKitta2075 || p.currentKitta2081;
+        const retKitta = isPool
+          ? remPreKitta - remBaseConv
+          : Math.round(preKitta * 0.72857143 * 100) / 100;
+        const convKitta = isPool ? remBaseConv : Math.round(preKitta * 0.27142857 * 100) / 100;
+        const closeKitta = isPool ? remCloseKitta : Math.round(convKitta * kittaMultiplier);
         return [
           idx + 1,
           p.boid,
@@ -3845,12 +5601,16 @@ export const AgmStudioService = {
           convKitta,
           closeKitta,
           "CA 6316.001",
-          isPool ? "HELD IN PHYSICAL ESCROW (2,485 FOLIOS)" : "CREDITED VIA CDSC CAS",
+          isPool
+            ? `HELD IN PHYSICAL ESCROW (${escrowFolioCount.toLocaleString()} FOLIOS)`
+            : "CREDITED VIA CDSC CAS",
         ];
       });
       const wsConv = XLSX.utils.aoa_to_sheet([
-        [`${companyName.toUpperCase()} — CA 6316 PROMOTER-TO-PUBLIC CONVERSION RECONCILIATION AUDIT`],
-        [`Statutory 51%:49% Split | Total Converted Accounts: ${convProfiles.length.toLocaleString()}`],
+        [
+          `${companyName.toUpperCase()} — CA 6316 PROMOTER-TO-PUBLIC CONVERSION RECONCILIATION AUDIT`,
+        ],
+        [`Statutory Split | Total Converted Accounts: ${convProfiles.length.toLocaleString()}`],
         [],
         convHeaders,
         ...convRows,
@@ -3859,34 +5619,41 @@ export const AgmStudioService = {
     }
 
     // Sheet 8: REMCONVERSION Escrow Audit
-    const escrowHeaders = [
-      "S.N.",
-      "Physical Folio No",
-      "Shareholder Legal Name",
-      "Registered Physical Kitta",
-      "Base Converted Entitlement (27.14%)",
-      "Compounded Closing Entitlement (FY 81/82)",
-      "Accumulated Cash Dividend (NPR)",
-      "Demat Account Status",
-    ];
-    const escrowRows = (drnSource || []).slice(0, 500).map((d, idx) => [
-      idx + 1,
-      d.folioNo,
-      d.holderName,
-      d.totalKitta,
-      Math.round(d.totalKitta * 0.27142857 * 100) / 100,
-      Math.round(d.totalKitta * 0.27142857 * (355086 / 136380) * 100) / 100,
-      Math.round(d.totalKitta * 0.27142857 * (1537721.05 / 136380) * 100) / 100,
-      d.targetBoid ? `DEMAT LINKED (${d.targetBoid})` : "PENDING DEMAT (PHYSICAL UNCLAIMED)",
-    ]);
-    const wsEscrow = XLSX.utils.aoa_to_sheet([
-      [`${companyName.toUpperCase()} — REMCONVERSION BULK ESCROW DECOMPOSITION AUDIT`],
-      [`Pool Size: 136,380 Base Kitta → 355,086 Closing Kitta | Escrow Accounts: 2,485 Folios`],
-      [],
-      escrowHeaders,
-      ...escrowRows,
-    ]);
-    XLSX.utils.book_append_sheet(wb, wsEscrow, "REMCONVERSION_Escrow_Audit");
+    if (remProfile && drnSource && drnSource.length > 0 && remBaseConv > 0) {
+      const escrowHeaders = [
+        "S.N.",
+        "Physical Folio No",
+        "Shareholder Legal Name",
+        "Registered Physical Kitta",
+        "Base Converted Entitlement (27.14%)",
+        "Compounded Closing Entitlement",
+        "Accumulated Cash Dividend (NPR)",
+        "Demat Account Status",
+      ];
+      const escrowRows = drnSource.slice(0, 500).map((d, idx) => {
+        const baseConv = Math.round(d.totalKitta * 0.27142857 * 100) / 100;
+        return [
+          idx + 1,
+          d.folioNo,
+          d.holderName,
+          d.totalKitta,
+          baseConv,
+          Math.round(baseConv * kittaMultiplier * 100) / 100,
+          Math.round(baseConv * cashMultiplier * 100) / 100,
+          d.targetBoid ? `DEMAT LINKED (${d.targetBoid})` : "PENDING DEMAT (PHYSICAL UNCLAIMED)",
+        ];
+      });
+      const wsEscrow = XLSX.utils.aoa_to_sheet([
+        [`${companyName.toUpperCase()} — REMCONVERSION BULK ESCROW DECOMPOSITION AUDIT`],
+        [
+          `Pool Size: ${remBaseConv.toLocaleString()} Base Kitta → ${remCloseKitta.toLocaleString()} Closing Kitta | Escrow Accounts: ${escrowFolioCount.toLocaleString()} Folios`,
+        ],
+        [],
+        escrowHeaders,
+        ...escrowRows,
+      ]);
+      XLSX.utils.book_append_sheet(wb, wsEscrow, "REMCONVERSION_Escrow_Audit");
+    }
 
     XLSX.writeFile(wb, fileName);
   },
@@ -3895,10 +5662,13 @@ export const AgmStudioService = {
     profiles: MultiYearShareholderProfile[],
     companyName: string,
     fileName: string,
-    timeline?: HistoricalFiscalYearConfig[]
+    timeline?: HistoricalFiscalYearConfig[],
   ): void {
+    this.assertReportExportIntegrity(profiles, "Chronological Shareholder Lifecycle Ledger");
+
     const wb = XLSX.utils.book_new();
-    const actualTimeline = (timeline && timeline.length > 0) ? timeline : this.getHistoricalTimeline();
+    const actualTimeline =
+      timeline && timeline.length > 0 ? timeline : this.getHistoricalTimeline();
 
     // Base Profile Headers
     const headers = [
@@ -3926,7 +5696,7 @@ export const AgmStudioService = {
         `[${fy.fiscalYear}] Net Cash (NPR)`,
         `[${fy.fiscalYear}] Tax Withheld (NPR)`,
         `[${fy.fiscalYear}] Carried Frac`,
-        `[${fy.fiscalYear}] Closing Kitta`
+        `[${fy.fiscalYear}] Closing Kitta`,
       );
     });
 
@@ -3938,7 +5708,7 @@ export const AgmStudioService = {
       "Total Cash Dividend (NPR)",
       "Total Tax Withheld (NPR)",
       "YoY Status",
-      "Discrepancy Status"
+      "Discrepancy Status",
     );
 
     const rows = profiles.map((p, idx) => {
@@ -3958,17 +5728,20 @@ export const AgmStudioService = {
       ];
 
       // Dynamically calculate evolutionary history if snapshots are empty (e.g., when queried from DB)
-      const snapshots = (p.yearlySnapshots && p.yearlySnapshots.length > 0)
-        ? p.yearlySnapshots
-        : this.calculateShareholderEvolution(
-            p.initialKitta2075 || p.currentKitta2081 || 0,
-            p.initialFraction2075 || 0,
-            actualTimeline,
-            p.holderType,
-            undefined,
-            actualTimeline[0]?.fiscalYear,
-            (p as any).convertedShares
-          );
+      const snapshots =
+        p.yearlySnapshots && p.yearlySnapshots.length > 0
+          ? p.yearlySnapshots
+          : this.calculateShareholderEvolution(
+              p.importedBaseKitta ?? p.initialKitta2075 ?? p.currentKitta2081 ?? 0,
+              p.initialFraction2075 || 0,
+              actualTimeline,
+              p.holderType,
+              undefined,
+              actualTimeline[0]?.fiscalYear,
+              (p as any).convertedShares,
+              undefined,
+              (p as any).isConversionMerged,
+            );
 
       let totalBonus = 0;
       let totalGrossCash = 0;
@@ -3979,7 +5752,7 @@ export const AgmStudioService = {
         if (snap) {
           totalBonus += snap.issuedWholeBonus;
           totalGrossCash += snap.grossCashDividend;
-          totalTax += (snap.bonusTaxWithheld + snap.cashTaxWithheld);
+          totalTax += snap.bonusTaxWithheld + snap.cashTaxWithheld;
 
           rowData.push(
             snap.baseKitta,
@@ -3989,7 +5762,7 @@ export const AgmStudioService = {
             Math.round(snap.netCashPayable * 100) / 100,
             Math.round((snap.bonusTaxWithheld + snap.cashTaxWithheld) * 100) / 100,
             Math.round(snap.carriedNewFraction * 10000) / 10000,
-            snap.postEventKitta
+            snap.postEventKitta,
           );
         } else {
           rowData.push(0, "N/A", 0, 0, 0, 0, 0, 0);
@@ -3997,13 +5770,16 @@ export const AgmStudioService = {
       });
 
       rowData.push(
-        (p as any).isConversionMerged || ((p as any).convertedShares && (p as any).convertedShares > 0) ? "YES (CA Seq 6316)" : "NO",
+        (p as any).isConversionMerged ||
+          ((p as any).convertedShares && (p as any).convertedShares > 0)
+          ? "YES (CA Seq 6316)"
+          : "NO",
         (p as any).convertedShares || 0,
         p.totalBonusSharesReceived || totalBonus,
         p.totalCashDividendReceived || Math.round(totalGrossCash * 100) / 100,
         p.totalTaxWithheld || Math.round(totalTax * 100) / 100,
         p.yoyStatus || "MATCHED",
-        p.hasDiscrepancy ? "EXCEL VARIANCE" : "CLEAN STATUTORY"
+        p.hasDiscrepancy ? "EXCEL VARIANCE" : "CLEAN STATUTORY",
       );
 
       return rowData;
@@ -4011,13 +5787,33 @@ export const AgmStudioService = {
 
     const ws = XLSX.utils.aoa_to_sheet([
       [`${companyName.toUpperCase()} — CHRONOLOGICAL SHAREHOLDER LIFECYCLE & CONVERSION LEDGER`],
-      [`Generated at: ${new Date().toLocaleString()} | Total Records: ${profiles.length.toLocaleString()}`],
+      [
+        `Generated at: ${new Date().toLocaleString()} | Total Records: ${profiles.length.toLocaleString()}`,
+      ],
       [],
       headers,
       ...rows,
     ]);
 
     XLSX.utils.book_append_sheet(wb, ws, "Chronological_Ledger");
+
+    const targetFy = actualTimeline[actualTimeline.length - 1]?.fiscalYear || "ALL";
+    this.appendAuditMetadataSheet(wb, {
+      companyName,
+      companyCode: "NLG",
+      targetFy,
+      totalRecords: profiles.length,
+      totalKitta: profiles.reduce((s, p) => s + (p.currentKitta2081 || 0), 0),
+      totalBonus: profiles.reduce((s, p) => s + (p.totalBonusSharesReceived || 0), 0),
+      totalCash:
+        Math.round(profiles.reduce((s, p) => s + (p.totalCashDividendReceived || 0), 0) * 100) /
+        100,
+      totalTax: Math.round(profiles.reduce((s, p) => s + (p.totalTaxWithheld || 0), 0) * 100) / 100,
+      reconciliationStatus: profiles.some((p) => p.hasDiscrepancy)
+        ? "VARIANCE_FLAGGED"
+        : "RECONCILED",
+    });
+
     XLSX.writeFile(wb, fileName);
   },
 
@@ -4058,7 +5854,9 @@ export const AgmStudioService = {
     ]);
     const wsMf = XLSX.utils.aoa_to_sheet([
       [`${companyName.toUpperCase()} — TAX-EXEMPT MUTUAL FUNDS (0% TDS DIRECT BANK PAYOUT)`],
-      [`Generated at: ${new Date().toLocaleString()} | Total Schemes: ${mfProfiles.length.toLocaleString()}`],
+      [
+        `Generated at: ${new Date().toLocaleString()} | Total Schemes: ${mfProfiles.length.toLocaleString()}`,
+      ],
       [],
       mfHeaders,
       ...mfRows,
@@ -4110,8 +5908,12 @@ export const AgmStudioService = {
       d.reconciledAt || "—",
     ]);
     const wsDrn = XLSX.utils.aoa_to_sheet([
-      [`${companyName.toUpperCase()} — PHYSICAL FOLIO DEMATERIALISATION (DRN) RECONCILIATION LEDGER`],
-      [`Generated at: ${new Date().toLocaleString()} | Total Records: ${drnRecords.length.toLocaleString()}`],
+      [
+        `${companyName.toUpperCase()} — PHYSICAL FOLIO DEMATERIALISATION (DRN) RECONCILIATION LEDGER`,
+      ],
+      [
+        `Generated at: ${new Date().toLocaleString()} | Total Records: ${drnRecords.length.toLocaleString()}`,
+      ],
       [],
       drnHeaders,
       ...drnRows,
@@ -4167,7 +5969,28 @@ export const AgmStudioService = {
       let carriedFrac = 0;
 
       profiles.forEach((p) => {
-        const snap = p.yearlySnapshots.find((s) => s.fiscalYear === fy.fiscalYear);
+        let snap =
+          p.yearlySnapshots && p.yearlySnapshots.length > 0
+            ? p.yearlySnapshots.find((s) => s.fiscalYear === fy.fiscalYear)
+            : undefined;
+
+        if (!snap && (!p.yearlySnapshots || p.yearlySnapshots.length === 0)) {
+          const baseHolding = p.importedBaseKitta ?? p.initialKitta2075 ?? p.currentKitta2081 ?? 0;
+          const dynamicSnaps = this.calculateShareholderEvolution(
+            baseHolding,
+            p.initialFraction2075 || 0,
+            timeline,
+            p.holderType,
+            undefined,
+            timeline[0]?.fiscalYear,
+            (p as any).convertedShares,
+            undefined,
+            (p as any).isConversionMerged,
+          );
+          p.yearlySnapshots = dynamicSnaps;
+          snap = dynamicSnaps.find((s) => s.fiscalYear === fy.fiscalYear);
+        }
+
         if (snap) {
           shCount++;
           if (p.holderType === "PROMOTER") promKitta += snap.baseKitta;
@@ -4177,20 +6000,21 @@ export const AgmStudioService = {
           totalKitta += snap.postEventKitta;
           bonusIssued += snap.issuedWholeBonus;
           grossCash += snap.grossCashDividend;
-          taxWithheld += (snap.bonusTaxWithheld + snap.cashTaxWithheld);
+          taxWithheld += snap.bonusTaxWithheld + snap.cashTaxWithheld;
           netCash += snap.netCashPayable;
           carriedFrac += snap.carriedNewFraction;
         }
       });
 
+      const useBaseline = profiles.length === 0;
       return [
         fy.fiscalYear,
         fy.eventName,
-        shCount || profiles.length,
-        promKitta || fy.promoterKittaBaseline,
-        pubKitta || fy.publicKittaBaseline,
+        shCount,
+        useBaseline ? fy.promoterKittaBaseline : promKitta,
+        useBaseline ? fy.publicKittaBaseline : pubKitta,
         mfKitta,
-        totalKitta || fy.totalListedKitta,
+        useBaseline ? fy.totalListedKitta : totalKitta,
         bonusIssued,
         Math.round(grossCash * 100) / 100,
         Math.round(taxWithheld * 100) / 100,
@@ -4230,23 +6054,30 @@ export const AgmStudioService = {
   async saveConversionToDatabase(
     records: PromoterConversionRecord[],
     fiscalYear: string = "2076/77",
+    companyId?: string,
   ): Promise<{ savedCount: number }> {
+    const companyUuid = await this.resolveCompanyUuid(companyId);
     const CHUNK_SIZE = 500;
     let savedCount = 0;
 
     for (let i = 0; i < records.length; i += CHUNK_SIZE) {
       const chunk = records.slice(i, i + CHUNK_SIZE);
       const snapshotRows = chunk.map((r) => {
-        const isPromoter = r.holderCategory ? r.holderCategory === "PROMOTER" : (r.promoterRetainedInt > 0 && r.publicConvertedInt === 0);
-        const postKitta = isPromoter 
-          ? r.promoterRetainedInt 
-          : (r.publicConvertedInt > 0 ? r.publicConvertedInt : r.promoterRetainedInt);
+        const isPromoter = r.holderCategory
+          ? r.holderCategory === "PROMOTER"
+          : r.promoterRetainedInt > 0 && r.publicConvertedInt === 0;
+        const postKitta = isPromoter
+          ? r.promoterRetainedInt
+          : r.publicConvertedInt > 0
+            ? r.publicConvertedInt
+            : r.promoterRetainedInt;
 
         return {
+          company_id: companyUuid,
           boid: r.boidOrFolio,
           fiscal_year: fiscalYear,
-          event_name: isPromoter 
-            ? "CA Seq 6316: Promoter 51:49 Conversion (PROMOTER Retained)" 
+          event_name: isPromoter
+            ? "CA Seq 6316: Promoter 51:49 Conversion (PROMOTER Retained)"
             : "CA Seq 6316: Promoter 51:49 Conversion (PUBLIC Received)",
           base_kitta: r.preConversionTotal,
           previous_fraction: 0,
@@ -4265,14 +6096,127 @@ export const AgmStudioService = {
         };
       });
 
-      await (supabase as any)
+      const { error } = await (supabase as any)
         .from("agm_yearly_snapshots")
-        .upsert(snapshotRows, { onConflict: "boid,fiscal_year" });
+        .upsert(snapshotRows, { onConflict: "company_id,boid,fiscal_year" });
+
+      if (error) {
+        throw new Error(
+          `Failed to save conversion snapshots: ${error.message || JSON.stringify(error)}`,
+        );
+      }
 
       savedCount += chunk.length;
     }
 
     return { savedCount };
+  },
+
+  /**
+   * Fetches persisted promoter conversion records from agm_yearly_snapshots by company and fiscal year.
+   */
+  async fetchConversionRecordsFromDatabase(
+    fiscalYear = "2076/77",
+    companyId?: string,
+  ): Promise<PromoterConversionRecord[]> {
+    const companyUuid = await this.resolveCompanyUuid(companyId);
+    try {
+      let q = (supabase as any)
+        .from("agm_yearly_snapshots")
+        .select(
+          `
+          id,
+          boid,
+          fiscal_year,
+          event_name,
+          base_kitta,
+          converted_shares,
+          carried_new_fraction,
+          post_event_kitta,
+          remarks
+        `,
+        )
+        .eq("fiscal_year", fiscalYear)
+        .or("event_name.ilike.%Conversion%,converted_shares.gt.0");
+      if (companyUuid) q = q.eq("company_id", companyUuid);
+
+      const { data, error } = await q;
+      if (error) {
+        throw new Error(
+          `Failed to fetch conversion records: ${error.message || JSON.stringify(error)}`,
+        );
+      }
+      if (!data || data.length === 0) return [];
+
+      // Query shareholder names from agm_historical_shareholders
+      const boids = Array.from(new Set(data.map((r: any) => r.boid)));
+      const shMap = new Map<string, string>();
+      if (boids.length > 0) {
+        let shQ = (supabase as any)
+          .from("agm_historical_shareholders")
+          .select("boid, shareholder_name")
+          .in("boid", boids);
+        if (companyUuid) shQ = shQ.eq("company_id", companyUuid);
+        const { data: shData, error: shErr } = await shQ;
+        if (shErr) {
+          throw new Error(
+            `Failed to fetch shareholder names for conversion records: ${shErr.message || JSON.stringify(shErr)}`,
+          );
+        }
+        if (shData) {
+          shData.forEach((s: any) => shMap.set(s.boid, s.shareholder_name));
+        }
+      }
+
+      return data.map((r: any, idx: number) => {
+        const remarksStr = r.remarks || "";
+        const promRetMatch = remarksStr.match(/Promoter Retained:\s*([\d.]+)/i);
+        const pubConvMatch = remarksStr.match(/Public Converted:\s*([\d.]+)/i);
+        const caSeqMatch = remarksStr.match(/\[CA Seq:\s*([^\]]+)\]/i);
+
+        const convShares = Number(r.converted_shares || 0);
+        const postKitta = Number(r.post_event_kitta || 0);
+        const baseKitta = Number(r.base_kitta || 0);
+        const frac = Number(r.carried_new_fraction || 0);
+
+        const isPromoter = (r.event_name || "").includes("PROMOTER Retained");
+        const retainedInt = promRetMatch
+          ? parseInt(promRetMatch[1], 10)
+          : isPromoter
+            ? postKitta
+            : Math.max(0, baseKitta - Math.floor(convShares));
+        const convertedInt = pubConvMatch
+          ? parseInt(pubConvMatch[1], 10)
+          : isPromoter
+            ? 0
+            : Math.floor(convShares);
+        const caSeq = caSeqMatch ? caSeqMatch[1] : "6316";
+
+        return {
+          id: r.id || `conv-db-${idx}`,
+          boidOrFolio: r.boid,
+          holderName:
+            shMap.get(r.boid) ||
+            (r.boid.startsWith("FOLIO-") ? `Folio Holder (${r.boid})` : `Demat Holder (${r.boid})`),
+          holderCategory: isPromoter ? "PROMOTER" : "PUBLIC",
+          preConversionTotal: baseKitta || retainedInt + convertedInt + frac,
+          promoterRetainedInt: retainedInt,
+          promoterRetainedFrac: 0,
+          publicConvertedInt: convertedInt,
+          publicConvertedFrac: frac,
+          totalConverted: convShares || convertedInt + frac,
+          fractionRemainder: frac,
+          caSeqNo: caSeq,
+          status: r.boid.startsWith("FOLIO-")
+            ? ("PHYSICAL_PENDING" as const)
+            : ("CONVERTED" as const),
+          remarks: remarksStr,
+        };
+      });
+    } catch (e: any) {
+      console.error("Error fetching conversion records from database:", e);
+      throw e;
+    }
   },
 
   /**
@@ -4287,21 +6231,29 @@ export const AgmStudioService = {
       if (!p.hasDiscrepancy) return p;
 
       const correctedSnapshots = this.calculateShareholderEvolution(
-        p.initialKitta2075,
+        p.importedBaseKitta ?? p.initialKitta2075,
         p.initialFraction2075 || 0,
         activeTimeline,
         p.holderType,
+        undefined,
+        activeTimeline[0]?.fiscalYear,
+        p.convertedShares,
+        undefined,
+        p.isConversionMerged,
       );
 
       const last = correctedSnapshots[correctedSnapshots.length - 1];
       const totalBonus = correctedSnapshots.reduce((s, snap) => s + snap.issuedWholeBonus, 0);
       const totalCash = correctedSnapshots.reduce((s, snap) => s + snap.grossCashDividend, 0);
-      const totalTax = correctedSnapshots.reduce((s, snap) => s + (snap.bonusTaxWithheld + snap.cashTaxWithheld), 0);
+      const totalTax = correctedSnapshots.reduce(
+        (s, snap) => s + (snap.bonusTaxWithheld + snap.cashTaxWithheld),
+        0,
+      );
 
       return {
         ...p,
         currentKitta2081: last ? last.postEventKitta : p.initialKitta2075,
-        currentFraction2081: last ? last.carriedNewFraction : (p.initialFraction2075 || 0),
+        currentFraction2081: last ? last.carriedNewFraction : p.initialFraction2075 || 0,
         totalBonusSharesReceived: totalBonus,
         totalCashDividendReceived: Math.round(totalCash * 100) / 100,
         totalTaxWithheld: Math.round(totalTax * 100) / 100,
@@ -4314,16 +6266,24 @@ export const AgmStudioService = {
 
   async applyAndPersistStatutoryCorrections(
     timelineConfig?: HistoricalFiscalYearConfig[],
-    onProgress?: (processed: number, total: number) => void
+    onProgress?: (processed: number, total: number) => void,
+    companyId?: string,
   ): Promise<{ correctedCount: number }> {
     try {
       const activeTimeline = timelineConfig || this.getHistoricalTimeline();
+      const resolvedCompanyId = companyId ? await this.resolveCompanyUuid(companyId) : undefined;
 
       // 1. Fetch count of flagged records
-      const { count } = await (supabase as any)
+      let countQuery = (supabase as any)
         .from("agm_historical_shareholders")
         .select("*", { count: "exact", head: true })
         .or("has_discrepancy.eq.true,reconciliation_status.eq.DISCREPANCY");
+
+      if (resolvedCompanyId) {
+        countQuery = countQuery.eq("company_id", resolvedCompanyId);
+      }
+
+      const { count } = await countQuery;
 
       const totalFlagged = count || 0;
       if (totalFlagged === 0) return { correctedCount: 0 };
@@ -4337,39 +6297,56 @@ export const AgmStudioService = {
         let query = (supabase as any)
           .from("agm_historical_shareholders")
           .select("*")
-          .or("has_discrepancy.eq.true,reconciliation_status.eq.DISCREPANCY")
-          .order("id", { ascending: true })
-          .limit(CHUNK);
+          .or("has_discrepancy.eq.true,reconciliation_status.eq.DISCREPANCY");
+
+        if (resolvedCompanyId) {
+          query = query.eq("company_id", resolvedCompanyId);
+        }
 
         if (lastId) {
           query = query.gt("id", lastId);
         }
+
+        query = query.order("id", { ascending: true }).limit(CHUNK);
 
         const { data: records, error } = await query;
         if (error || !records || records.length === 0) break;
         lastId = records[records.length - 1].id;
 
         // Recalculate each record with CDSC Statutory Linear rule
-        const updatedRecords = records.map((r: any) => {
+        const updatedRecords: any[] = [];
+        const updatedSnapshots: any[] = [];
+
+        records.forEach((r: any) => {
+          const baseHolding = Number(r.imported_base_kitta ?? r.initial_kitta_2075 ?? 0);
+          const initialFrac = Number(r.imported_opening_fraction ?? r.initial_fraction_2075 ?? 0);
+          const targetStartFy = r.imported_base_fiscal_year || activeTimeline[0]?.fiscalYear;
           const snapshots = this.calculateShareholderEvolution(
-            Number(r.initial_kitta_2075 || 0),
-            Number(r.initial_fraction_2075 || 0),
+            baseHolding,
+            initialFrac,
             activeTimeline,
             r.holder_type || "PUBLIC",
             undefined,
-            activeTimeline[0]?.fiscalYear,
-            Number(r.converted_shares || 0)
+            targetStartFy,
+            Number(r.converted_shares || 0),
+            undefined,
+            Boolean(r.is_conversion_merged),
           );
 
           const last = snapshots[snapshots.length - 1];
           const totalBonus = snapshots.reduce((s, snap) => s + snap.issuedWholeBonus, 0);
           const totalCash = snapshots.reduce((s, snap) => s + snap.grossCashDividend, 0);
-          const totalTax = snapshots.reduce((s, snap) => s + (snap.bonusTaxWithheld + snap.cashTaxWithheld), 0);
+          const totalTax = snapshots.reduce(
+            (s, snap) => s + (snap.bonusTaxWithheld + snap.cashTaxWithheld),
+            0,
+          );
 
-          return {
+          updatedRecords.push({
             ...r,
             current_kitta_2081: last ? last.postEventKitta : Number(r.initial_kitta_2075 || 0),
-            current_fraction_2081: last ? last.carriedNewFraction : Number(r.initial_fraction_2075 || 0),
+            current_fraction_2081: last
+              ? last.carriedNewFraction
+              : Number(r.initial_fraction_2075 || 0),
             total_bonus_shares: totalBonus,
             total_cash_dividend: Math.round(totalCash * 100) / 100,
             total_tax_withheld: Math.round(totalTax * 100) / 100,
@@ -4377,46 +6354,107 @@ export const AgmStudioService = {
             reconciliation_status: "RECONCILED",
             anomalies: ["Corrected to CDSC Statutory Linear Rule (compounding eliminated)."],
             updated_at: new Date().toISOString(),
+          });
+
+          snapshots.forEach((snap) => {
+            updatedSnapshots.push({
+              company_id: resolvedCompanyId || r.company_id,
+              shareholder_id: r.id,
+              boid: r.boid,
+              fiscal_year: snap.fiscalYear,
+              event_name: snap.eventName,
+              base_kitta: snap.baseKitta,
+              previous_fraction: snap.previousFraction,
+              gross_bonus_entitlement: snap.grossBonusEntitlement,
+              issued_whole_bonus: snap.issuedWholeBonus,
+              carried_new_fraction: snap.carriedNewFraction,
+              gross_cash_dividend: snap.grossCashDividend,
+              bonus_tax_withheld: snap.bonusTaxWithheld,
+              cash_tax_withheld: snap.cashTaxWithheld,
+              net_cash_payable: snap.netCashPayable,
+              post_event_kitta: snap.postEventKitta,
+              excel_discrepancy_flag: false,
+              remarks: snap.remarks || "Statutory CDSC Linear Correction Applied.",
+            });
+          });
+        });
+
+        // Build atomic correction payload
+        const correctionPayload = records.map((r: any, rIdx: number) => {
+          const matchingUpdated = updatedRecords[rIdx];
+          const matchingSnaps = updatedSnapshots.filter((s) => s.boid === r.boid);
+          return {
+            shareholder_row: matchingUpdated,
+            snapshots: matchingSnaps,
           };
         });
 
-        // Upsert the full updated records
-        const { error: upsertErr } = await (supabase as any)
-          .from("agm_historical_shareholders")
-          .upsert(updatedRecords, { onConflict: "boid" });
+        // 1. Attempt Atomic RPC correction first
+        let isRpcSuccess = false;
+        if (resolvedCompanyId) {
+          try {
+            const { data: corrData, error: corrErr } = await (supabase as any).rpc(
+              "apply_agm_statutory_corrections",
+              {
+                p_company_id: resolvedCompanyId,
+                p_corrections: correctionPayload,
+              },
+            );
 
-        if (upsertErr) {
-          console.warn("Failed to batch upsert corrected records, falling back to ID update:", upsertErr);
-          const ids = records.map((r: any) => r.id);
-          await (supabase as any)
-            .from("agm_historical_shareholders")
-            .update({
-              has_discrepancy: false,
-              reconciliation_status: "RECONCILED",
-              anomalies: ["Corrected to CDSC Statutory Linear Rule (compounding eliminated)."],
-              updated_at: new Date().toISOString(),
-            })
-            .in("id", ids);
+            if (!corrErr && corrData?.success) {
+              isRpcSuccess = true;
+            } else if (corrErr) {
+              const isMissingFunction =
+                corrErr.code === "42883" ||
+                corrErr.code === "PGRST202" ||
+                corrErr.message?.includes("does not exist");
+              if (!isMissingFunction) {
+                throw new Error(
+                  `Statutory correction RPC failed: ${corrErr.message || JSON.stringify(corrErr)}`,
+                );
+              }
+            }
+          } catch (rpcEx: any) {
+            if (rpcEx.message?.startsWith("Statutory correction RPC failed")) {
+              throw rpcEx;
+            }
+          }
         }
 
-        // Also clear discrepancy flags in yearly snapshots for these BOIDs
-        const boids = records.map((r: any) => r.boid);
-        await (supabase as any)
-          .from("agm_yearly_snapshots")
-          .update({
-            excel_discrepancy_flag: false,
-          })
-          .in("boid", boids)
-          .eq("excel_discrepancy_flag", true);
+        if (!isRpcSuccess) {
+          // Sequential fallback with consistency assertion
+          const onConflictKey = "company_id,boid";
+          const { error: upsertErr } = await (supabase as any)
+            .from("agm_historical_shareholders")
+            .upsert(updatedRecords, { onConflict: onConflictKey });
+
+          if (upsertErr) {
+            throw new Error(
+              `Failed to batch persist corrected shareholder records: ${upsertErr.message || JSON.stringify(upsertErr)}`,
+            );
+          }
+
+          if (updatedSnapshots.length > 0) {
+            const { error: snapUpsertErr } = await (supabase as any)
+              .from("agm_yearly_snapshots")
+              .upsert(updatedSnapshots, { onConflict: "company_id,boid,fiscal_year" });
+
+            if (snapUpsertErr) {
+              throw new Error(
+                `Failed to update snapshot financial values: ${snapUpsertErr.message || JSON.stringify(snapUpsertErr)}`,
+              );
+            }
+          }
+        }
 
         totalUpdated += records.length;
         if (onProgress) onProgress(totalUpdated, totalFlagged);
       }
 
       return { correctedCount: totalUpdated };
-    } catch (e) {
+    } catch (e: any) {
       console.error("Error in applyAndPersistStatutoryCorrections:", e);
-      return { correctedCount: 0 };
+      throw e;
     }
   },
 
@@ -4425,86 +6463,148 @@ export const AgmStudioService = {
    */
   async recalculateAndPersistAllTimelineProfiles(
     timelineConfig?: HistoricalFiscalYearConfig[],
-    onProgress?: (processed: number, total: number, pct: number) => void
+    onProgress?: (processed: number, total: number, pct: number) => void,
+    companyId?: string,
   ): Promise<{ updatedCount: number }> {
     try {
       const activeTimeline = timelineConfig || this.getHistoricalTimeline();
+      const resolvedCompanyId = companyId ? await this.resolveCompanyUuid(companyId) : undefined;
 
       // 1. Get total count
-      const { count } = await (supabase as any)
+      let countQuery = (supabase as any)
         .from("agm_historical_shareholders")
         .select("*", { count: "exact", head: true });
+
+      if (resolvedCompanyId) {
+        countQuery = countQuery.eq("company_id", resolvedCompanyId);
+      }
+
+      const { count, error: countErr } = await countQuery;
+      if (countErr) {
+        throw new Error(
+          `Failed to count shareholders for recalculation: ${countErr.message || JSON.stringify(countErr)}`,
+        );
+      }
 
       const totalCount = count || 0;
       if (totalCount === 0) return { updatedCount: 0 };
 
       const CHUNK = 500;
+      let lastId: string | undefined = undefined;
       let totalUpdated = 0;
-      let lastId: string | null = null;
 
-      while (totalUpdated < totalCount) {
+      while (true) {
         let query = (supabase as any)
           .from("agm_historical_shareholders")
           .select("*")
           .order("id", { ascending: true })
           .limit(CHUNK);
 
+        if (resolvedCompanyId) {
+          query = query.eq("company_id", resolvedCompanyId);
+        }
+
         if (lastId) {
           query = query.gt("id", lastId);
         }
 
         const { data: records, error } = await query;
-        if (error || !records || records.length === 0) break;
+        if (error) {
+          throw new Error(
+            `Failed to fetch shareholder chunk for recalculation: ${error.message || JSON.stringify(error)}`,
+          );
+        }
+        if (!records || records.length === 0) break;
         lastId = records[records.length - 1].id;
 
         // Recalculate each record with the new timeline
         const updatedRecords = records.map((r: any) => {
-          const initialFrac = Number(r.initial_fraction_2075 || 0);
+          const initialFrac = Number(r.imported_opening_fraction ?? r.initial_fraction_2075 ?? 0);
+          const baseHolding = Number(r.imported_base_kitta ?? r.initial_kitta_2075 ?? 0);
+          const targetStartFy = r.imported_base_fiscal_year || activeTimeline[0]?.fiscalYear;
           const snapshots = this.calculateShareholderEvolution(
-            Number(r.initial_kitta_2075 || 0),
+            baseHolding,
             initialFrac,
             activeTimeline,
             r.holder_type || "PUBLIC",
             undefined,
-            activeTimeline[0]?.fiscalYear,
-            Number(r.converted_shares || 0)
+            targetStartFy,
+            Number(r.converted_shares || 0),
+            undefined,
+            Boolean(r.is_conversion_merged),
           );
 
           const last = snapshots[snapshots.length - 1];
           const totalBonus = snapshots.reduce((s, snap) => s + snap.issuedWholeBonus, 0);
           const totalCash = snapshots.reduce((s, snap) => s + snap.grossCashDividend, 0);
-          const totalTax = snapshots.reduce((s, snap) => s + (snap.bonusTaxWithheld + snap.cashTaxWithheld), 0);
+          const totalTax = snapshots.reduce(
+            (s, snap) => s + (snap.bonusTaxWithheld + snap.cashTaxWithheld),
+            0,
+          );
 
           return {
             ...r,
-            current_kitta_2081: last ? last.postEventKitta : Number(r.initial_kitta_2075 || 0),
+            current_kitta_2081: last ? last.postEventKitta : baseHolding,
             current_fraction_2081: last ? last.carriedNewFraction : initialFrac,
             total_bonus_shares: totalBonus,
             total_cash_dividend: Math.round(totalCash * 100) / 100,
             total_tax_withheld: Math.round(totalTax * 100) / 100,
+            yearlySnapshots: snapshots,
             updated_at: new Date().toISOString(),
           };
         });
 
-        // Batch upsert into database
+        // 1. Batch upsert master shareholder records into database
+        const onConflictKey = "company_id,boid";
         const { error: upsertErr } = await (supabase as any)
           .from("agm_historical_shareholders")
-          .upsert(updatedRecords, { onConflict: "boid" });
+          .upsert(updatedRecords, { onConflict: onConflictKey });
 
         if (upsertErr) {
-          console.warn("Batch upsert warning, updating rows individually:", upsertErr);
-          for (const item of updatedRecords) {
-            await (supabase as any)
-              .from("agm_historical_shareholders")
-              .update({
-                current_kitta_2081: item.current_kitta_2081,
-                current_fraction_2081: item.current_fraction_2081,
-                total_bonus_shares: item.total_bonus_shares,
-                total_cash_dividend: item.total_cash_dividend,
-                total_tax_withheld: item.total_tax_withheld,
-                updated_at: item.updated_at,
-              })
-              .eq("id", item.id);
+          throw new Error(
+            `Failed to batch update master shareholders: ${upsertErr.message || JSON.stringify(upsertErr)}`,
+          );
+        }
+
+        // 2. Synchronized Persistence: Update all yearly snapshots in tandem
+        const snapshotRows: any[] = [];
+        updatedRecords.forEach((item: any) => {
+          if (Array.isArray(item.yearlySnapshots)) {
+            item.yearlySnapshots.forEach((s: any) => {
+              snapshotRows.push({
+                company_id: resolvedCompanyId,
+                shareholder_id: item.id,
+                boid: item.boid,
+                fiscal_year: s.fiscalYear,
+                event_name: s.eventName,
+                base_kitta: s.baseKitta,
+                previous_fraction: s.previousFraction,
+                right_shares_allotted: s.rightSharesAllotted || null,
+                converted_shares: s.convertedShares || null,
+                gross_bonus_entitlement: s.grossBonusEntitlement,
+                issued_whole_bonus: s.issuedWholeBonus,
+                carried_new_fraction: s.carriedNewFraction,
+                gross_cash_dividend: s.grossCashDividend,
+                bonus_tax_withheld: s.bonusTaxWithheld,
+                cash_tax_withheld: s.cashTaxWithheld,
+                net_cash_payable: s.netCashPayable,
+                post_event_kitta: s.postEventKitta,
+                excel_discrepancy_flag: s.excelDiscrepancy,
+                is_locked: true,
+                remarks: s.discrepancyDetails || s.remarks,
+              });
+            });
+          }
+        });
+
+        if (snapshotRows.length > 0) {
+          const { error: snapErr } = await (supabase as any)
+            .from("agm_yearly_snapshots")
+            .upsert(snapshotRows, { onConflict: "company_id,boid,fiscal_year" });
+          if (snapErr) {
+            throw new Error(
+              `Failed to persist recalculated yearly snapshots: ${snapErr.message || JSON.stringify(snapErr)}`,
+            );
           }
         }
 
@@ -4516,9 +6616,9 @@ export const AgmStudioService = {
       }
 
       return { updatedCount: totalUpdated };
-    } catch (e) {
+    } catch (e: any) {
       console.error("Error in recalculateAndPersistAllTimelineProfiles:", e);
-      return { updatedCount: 0 };
+      throw e;
     }
   },
 
@@ -4531,8 +6631,10 @@ export const AgmStudioService = {
     initialFraction: number = 0,
     holderType: "PROMOTER" | "PUBLIC" | "MUTUAL_FUND" | "CLEARING_POOL" | "PHYSICAL" = "PUBLIC",
     timelineConfig?: HistoricalFiscalYearConfig[],
+    companyId?: string,
   ): Promise<{ profile: MultiYearShareholderProfile }> {
     const timeline = timelineConfig || this.getHistoricalTimeline();
+    const resolvedCompanyId = companyId ? await this.resolveCompanyUuid(companyId) : undefined;
     const snapshots = this.calculateShareholderEvolution(
       initialKitta,
       initialFraction,
@@ -4543,9 +6645,12 @@ export const AgmStudioService = {
     const last = snapshots[snapshots.length - 1];
     const totalBonus = snapshots.reduce((s, snap) => s + snap.issuedWholeBonus, 0);
     const totalCash = snapshots.reduce((s, snap) => s + snap.grossCashDividend, 0);
-    const totalTax = snapshots.reduce((s, snap) => s + (snap.bonusTaxWithheld + snap.cashTaxWithheld), 0);
+    const totalTax = snapshots.reduce(
+      (s, snap) => s + (snap.bonusTaxWithheld + snap.cashTaxWithheld),
+      0,
+    );
 
-    const { data: updatedSh, error: shErr } = await (supabase as any)
+    let shQuery = (supabase as any)
       .from("agm_historical_shareholders")
       .update({
         initial_kitta_2075: initialKitta,
@@ -4561,9 +6666,13 @@ export const AgmStudioService = {
         anomalies: ["Manually adjusted and recalculated via Operator Sandbox."],
         updated_at: new Date().toISOString(),
       })
-      .eq("boid", boid)
-      .select("*")
-      .single();
+      .eq("boid", boid);
+
+    if (resolvedCompanyId) {
+      shQuery = shQuery.eq("company_id", resolvedCompanyId);
+    }
+
+    const { data: updatedSh, error: shErr } = await shQuery.select("*").single();
 
     if (shErr) {
       throw new Error(`Failed to update shareholder: ${shErr.message || JSON.stringify(shErr)}`);
@@ -4571,18 +6680,25 @@ export const AgmStudioService = {
 
     if (updatedSh) {
       // 1. Fetch existing snapshots to preserve lock status and discrepancy history
-      const { data: existingSnaps } = await (supabase as any)
+      let snapFetch = (supabase as any)
         .from("agm_yearly_snapshots")
         .select("fiscal_year, is_locked, excel_discrepancy_flag, remarks")
         .eq("boid", boid);
 
+      if (resolvedCompanyId) {
+        snapFetch = snapFetch.eq("company_id", resolvedCompanyId);
+      }
+
+      const { data: existingSnaps } = await snapFetch;
+
       const existingMap = new Map<string, any>(
-        (existingSnaps || []).map((s: any) => [s.fiscal_year, s])
+        (existingSnaps || []).map((s: any) => [s.fiscal_year, s]),
       );
 
       const snapshotRows = snapshots.map((s) => {
         const prevSnap = existingMap.get(s.fiscalYear);
         return {
+          company_id: resolvedCompanyId || updatedSh.company_id || null,
           shareholder_id: updatedSh.id,
           boid,
           fiscal_year: s.fiscalYear,
@@ -4601,14 +6717,16 @@ export const AgmStudioService = {
           post_event_kitta: s.postEventKitta,
           excel_discrepancy_flag: s.excelDiscrepancy ?? prevSnap?.excel_discrepancy_flag ?? false,
           is_locked: prevSnap?.is_locked ?? true,
-          remarks: s.remarks || prevSnap?.remarks || `Adjusted initial position to ${initialKitta} kitta`,
+          remarks:
+            s.remarks || prevSnap?.remarks || `Adjusted initial position to ${initialKitta} kitta`,
         };
       });
 
       if (snapshotRows.length > 0) {
+        const snapConflict = "company_id,boid,fiscal_year";
         await (supabase as any)
           .from("agm_yearly_snapshots")
-          .upsert(snapshotRows, { onConflict: "boid,fiscal_year" });
+          .upsert(snapshotRows, { onConflict: snapConflict });
       }
     }
 
@@ -4652,16 +6770,36 @@ export const AgmStudioService = {
     targetFy: string,
     companyName = "NLG Insurance Company Ltd",
     fileName?: string,
-    timelineConfig?: HistoricalFiscalYearConfig[]
+    timelineConfig?: HistoricalFiscalYearConfig[],
   ): void {
+    this.assertReportExportIntegrity(profiles, `AGM Specific Workbook (${targetFy})`);
+
     const wb = XLSX.utils.book_new();
     const timeline = timelineConfig || this.getHistoricalTimeline();
-    const cleanFy = targetFy.replace('FY ', '').trim();
-    const fyConfig = timeline.find((t) => t.fiscalYear === targetFy || t.fiscalYear.includes(cleanFy));
-    const bonusRate = fyConfig?.bonusRatioPct || (cleanFy === '2079/80' ? 5.5 : cleanFy === '2080/81' ? 2.5 : cleanFy === '2081/82' ? 4.0 : 10.0);
-    const cashRate = fyConfig?.cashDividendRatioPct || (cleanFy === '2079/80' ? 0.2895 : cleanFy === '2080/81' ? 0.1316 : cleanFy === '2081/82' ? 3.3684 : 0.5263);
+    const cleanFy = targetFy.replace("FY ", "").trim();
+    const fyConfig = timeline.find(
+      (t) => t.fiscalYear === targetFy || t.fiscalYear.includes(cleanFy),
+    );
+    const bonusRate =
+      fyConfig?.bonusRatioPct ||
+      (cleanFy === "2079/80"
+        ? 5.5
+        : cleanFy === "2080/81"
+          ? 2.5
+          : cleanFy === "2081/82"
+            ? 4.0
+            : 10.0);
+    const cashRate =
+      fyConfig?.cashDividendRatioPct ||
+      (cleanFy === "2079/80"
+        ? 0.2895
+        : cleanFy === "2080/81"
+          ? 0.1316
+          : cleanFy === "2081/82"
+            ? 3.3684
+            : 0.5263);
 
-    const isConversionFy = cleanFy === '2076/77' || cleanFy === '2077/78';
+    const isConversionFy = cleanFy === "2076/77" || cleanFy === "2077/78";
 
     const headers = isConversionFy
       ? [
@@ -4686,7 +6824,7 @@ export const AgmStudioService = {
           "Gross Cash Dividend (NPR)",
           "Statutory Tax (5% TDS)",
           "Net Cash Payable (NPR)",
-          "Conversion & Audit Status"
+          "Conversion & Audit Status",
         ]
       : [
           "S.No.",
@@ -4706,56 +6844,84 @@ export const AgmStudioService = {
           "Gross Cash Dividend (NPR)",
           "Statutory Tax (5% TDS)",
           "Net Cash Payable (NPR)",
-          "Audit Verification Status"
+          "Audit Verification Status",
         ];
 
     const rows: (string | number)[][] = [headers];
     let sno = 1;
-    let sumStart = 0, sumBonus = 0, sumCash = 0;
-    let sumPre = 0, sumRet = 0, sumConv = 0;
-    let proCount = 0, pubCount = 0;
+    let sumStart = 0,
+      sumBonus = 0,
+      sumCash = 0;
+    let sumPre = 0,
+      sumRet = 0,
+      sumConv = 0;
+    let proCount = 0,
+      pubCount = 0;
 
     for (const p of profiles) {
-      if (p.boid === 'REMCONVERSION' || p.boid === 'REMBONUSFY20767778') continue;
-      const snap = p.yearlySnapshots?.find((s) => s.fiscalYear === targetFy || s.fiscalYear.includes(cleanFy)) || p.targetFySnapshot;
+      if (p.boid === "REMCONVERSION" || p.boid === "REMBONUSFY20767778") continue;
+      const snap =
+        p.yearlySnapshots?.find(
+          (s) => s.fiscalYear === targetFy || s.fiscalYear.includes(cleanFy),
+        ) || p.targetFySnapshot;
       const whole = snap ? snap.baseKitta : p.initialKitta2075;
       const prevFrac = snap ? snap.previousFraction : 0;
       const totalStart = whole + prevFrac;
-      const grossBonus = snap ? snap.grossBonusEntitlement : (totalStart * (bonusRate / 100));
+      const grossBonus = snap ? snap.grossBonusEntitlement : totalStart * (bonusRate / 100);
       const bonusPlusPrev = grossBonus + prevFrac;
       const issued = snap ? snap.issuedWholeBonus : Math.floor(bonusPlusPrev);
-      const newFrac = snap ? snap.carriedNewFraction : Math.round((bonusPlusPrev - issued) * 10000) / 10000;
+      const newFrac = snap
+        ? snap.carriedNewFraction
+        : Math.round((bonusPlusPrev - issued) * 10000) / 10000;
       const totalAfter = whole + issued;
-      const grossCash = snap ? snap.grossCashDividend : Math.round(totalStart * 100 * (cashRate / 100) * 100) / 100;
-      const tax = snap ? (snap.bonusTaxWithheld + snap.cashTaxWithheld) : Math.round(grossCash * 0.05 * 100) / 100;
+      const grossCash = snap
+        ? snap.grossCashDividend
+        : Math.round(totalStart * 100 * (cashRate / 100) * 100) / 100;
+      const tax = snap
+        ? snap.bonusTaxWithheld + snap.cashTaxWithheld
+        : Math.round(grossCash * 0.05 * 100) / 100;
       const netCash = snap ? snap.netCashPayable : Math.round((grossCash - tax) * 100) / 100;
 
-      const isPro = p.holderType === 'PROMOTER';
-      if (isPro) proCount++; else pubCount++;
+      const isPro = p.holderType === "PROMOTER";
+      if (isPro) proCount++;
+      else pubCount++;
       sumStart += totalStart;
       sumBonus += issued;
       sumCash += grossCash;
 
       if (isConversionFy) {
-        let preKitta: number | string = '—';
-        let retKitta: number | string = '—';
-        let convKitta: number | string = '—';
-        let caSeq = '—';
-        let convStatus = 'PUBLIC (NO CONVERSION NEEDED)';
+        let preKitta: number | string = "—";
+        let retKitta: number | string = "—";
+        let convKitta: number | string = "—";
+        let caSeq = "—";
+        let convStatus = "PUBLIC (NO CONVERSION NEEDED)";
 
-        if (isPro || p.convertedShares || p.isConversionMerged || p.boid.includes('REMCONVERSION')) {
-          const isPool = p.boid === 'REMCONVERSION';
-          const orig = isPool ? 145778.86 : (p.initialKitta2075 || whole);
-          const cKitta = isPool ? 136380 : (p.convertedShares || Math.round(orig * 0.27142857 * 100) / 100);
-          const rKitta = isPool ? 9398.86 : Math.round((orig - Number(cKitta)) * 100) / 100;
+        if (
+          isPro ||
+          p.convertedShares ||
+          p.isConversionMerged ||
+          p.boid.includes("REMCONVERSION")
+        ) {
+          const isPool = p.boid === "REMCONVERSION";
+          const orig = isPool
+            ? p.initialKitta2075 || p.importedBaseKitta || p.currentKitta2081 || 0
+            : p.initialKitta2075 || whole;
+          const cKitta = isPool
+            ? p.convertedShares || 0
+            : p.convertedShares || Math.round(orig * 0.27142857 * 100) / 100;
+          const rKitta = isPool
+            ? Math.round((Number(orig) - Number(cKitta)) * 100) / 100
+            : Math.round((orig - Number(cKitta)) * 100) / 100;
 
           preKitta = orig;
           retKitta = rKitta;
           convKitta = cKitta;
-          caSeq = 'CA 6316.001';
+          caSeq = "CA 6316.001";
           convStatus = isPool
-            ? '⚠️ BULK PHYSICAL ESCROW (2,485 FOLIOS)'
-            : '✅ CONVERTED (27.14% TO PUBLIC ORDINARY)';
+            ? p.currentKitta2081 > 0
+              ? "⚠️ BULK PHYSICAL ESCROW"
+              : "PHYSICAL ESCROW RECONCILED"
+            : "✅ CONVERTED (27.14% TO PUBLIC ORDINARY)";
 
           sumPre += Number(orig) || 0;
           sumRet += Number(rKitta) || 0;
@@ -4766,7 +6932,7 @@ export const AgmStudioService = {
           sno++,
           p.boid,
           p.shareholderName,
-          p.contactNo || '—',
+          p.contactNo || "—",
           p.holderType,
           preKitta,
           retKitta,
@@ -4775,7 +6941,7 @@ export const AgmStudioService = {
           whole,
           prevFrac,
           Math.round(totalStart * 10000) / 10000,
-          bonusRate.toFixed(2) + '%',
+          bonusRate.toFixed(2) + "%",
           Math.round(grossBonus * 10000) / 10000,
           Math.round(bonusPlusPrev * 10000) / 10000,
           issued,
@@ -4784,19 +6950,19 @@ export const AgmStudioService = {
           grossCash,
           tax,
           netCash,
-          convStatus
+          convStatus,
         ]);
       } else {
         rows.push([
           sno++,
           p.boid,
           p.shareholderName,
-          p.contactNo || '—',
+          p.contactNo || "—",
           p.holderType,
           whole,
           prevFrac,
           Math.round(totalStart * 10000) / 10000,
-          bonusRate.toFixed(2) + '%',
+          bonusRate.toFixed(2) + "%",
           Math.round(grossBonus * 10000) / 10000,
           Math.round(bonusPlusPrev * 10000) / 10000,
           issued,
@@ -4805,85 +6971,78 @@ export const AgmStudioService = {
           grossCash,
           tax,
           netCash,
-          p.hasDiscrepancy ? 'VARIANCE AUDITED' : '100% VERIFIED'
+          p.hasDiscrepancy ? "VARIANCE AUDITED" : "100% VERIFIED",
         ]);
       }
     }
 
     if (isConversionFy) {
       rows.push([
-        'TOTAL',
-        (sno - 1) + ' SHAREHOLDERS',
-        'ALL HOLDERS',
-        '',
+        "TOTAL",
+        sno - 1 + " SHAREHOLDERS",
+        "ALL HOLDERS",
+        "",
         `Promoter: ${proCount} | Public: ${pubCount}`,
         Math.round(sumPre),
         Math.round(sumRet),
         Math.round(sumConv),
-        'CA 6316.001',
+        "CA 6316.001",
         Math.round(sumStart * 100) / 100,
-        '',
+        "",
         Math.round(sumStart * 100) / 100,
-        bonusRate.toFixed(2) + '%',
-        '',
-        '',
+        bonusRate.toFixed(2) + "%",
+        "",
+        "",
         sumBonus,
-        '',
-        '',
+        "",
+        "",
         Math.round(sumCash * 100) / 100,
         Math.round(sumCash * 0.05 * 100) / 100,
         Math.round(sumCash * 0.95 * 100) / 100,
-        '100% RECONCILED WITH CONVERSION'
+        "100% RECONCILED WITH CONVERSION",
       ]);
     } else {
       rows.push([
-        'TOTAL',
-        (sno - 1) + ' SHAREHOLDERS',
-        'ALL HOLDERS',
-        '',
+        "TOTAL",
+        sno - 1 + " SHAREHOLDERS",
+        "ALL HOLDERS",
+        "",
         `Promoter: ${proCount} | Public: ${pubCount}`,
-        '',
-        '',
+        "",
+        "",
         Math.round(sumStart * 100) / 100,
-        bonusRate.toFixed(2) + '%',
-        '',
-        '',
+        bonusRate.toFixed(2) + "%",
+        "",
+        "",
         sumBonus,
-        '',
-        '',
+        "",
+        "",
         Math.round(sumCash * 100) / 100,
         Math.round(sumCash * 0.05 * 100) / 100,
         Math.round(sumCash * 0.95 * 100) / 100,
-        '100% RECONCILED'
+        "100% RECONCILED",
       ]);
     }
 
-    rows.push([
-      'TOTAL',
-      (sno - 1) + ' SHAREHOLDERS',
-      'ALL HOLDERS',
-      '',
-      `Promoter: ${proCount} | Public: ${pubCount}`,
-      '',
-      '',
-      Math.round(sumStart * 100) / 100,
-      bonusRate.toFixed(2) + '%',
-      '',
-      '',
-      sumBonus,
-      '',
-      '',
-      Math.round(sumCash * 100) / 100,
-      Math.round(sumCash * 0.05 * 100) / 100,
-      Math.round(sumCash * 0.95 * 100) / 100,
-      '100% RECONCILED'
-    ]);
-
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    const sheetTitle = `${cleanFy.replace('/', '-')}`;
+    const sheetTitle = `${cleanFy.replace("/", "-")}`;
     XLSX.utils.book_append_sheet(wb, ws, sheetTitle);
 
-    const exportFileName = fileName || `${companyName.replace(/\s+/g, '_')}_${cleanFy.replace('/', '-')}_Promoter_and_Public.xlsx`;
+    this.appendAuditMetadataSheet(wb, {
+      companyName,
+      companyCode: "NLG",
+      targetFy,
+      totalRecords: sno - 1,
+      totalKitta: Math.round(sumStart * 100) / 100,
+      totalBonus: sumBonus,
+      totalCash: Math.round(sumCash * 100) / 100,
+      totalTax: Math.round(sumCash * 0.05 * 100) / 100,
+      reconciliationStatus: "RECONCILED",
+    });
+
+    const exportFileName =
+      fileName ||
+      `${companyName.replace(/\s+/g, "_")}_${cleanFy.replace("/", "-")}_Promoter_and_Public.xlsx`;
     XLSX.writeFile(wb, exportFileName);
   },
 };

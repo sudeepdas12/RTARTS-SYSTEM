@@ -187,6 +187,16 @@ export const BankParser = {
       const columns = parseCsvRow(line);
       if (!columns.length) continue;
 
+      const rowText = columns.join(" ").toUpperCase();
+      if (
+        rowText.includes("TOTAL") ||
+        rowText.includes("SUMMARY") ||
+        rowText.includes("OPENING BALANCE") ||
+        rowText.includes("CLOSING BALANCE")
+      ) {
+        continue;
+      }
+
       const debit = indices.debit >= 0 ? normalizeAmount(columns[indices.debit]) : 0;
       const credit = indices.credit >= 0 ? normalizeAmount(columns[indices.credit]) : 0;
       const balance = indices.balance >= 0 ? normalizeAmount(columns[indices.balance]) : 0;
@@ -204,10 +214,34 @@ export const BankParser = {
           ? columns[indices.description]
           : beneficiaryName || columns.slice(1, 4).join(" ");
 
-      const isCircular = desc.toUpperCase().includes("NRB CIRCULAR");
+      const upperDesc = String(desc || "").toUpperCase();
+      const isCircular = upperDesc.includes("NRB CIRCULAR");
       if (isCircular && !options.includeCircularSweeps) {
         continue;
       }
+
+      const isReject =
+        upperDesc.includes("REJECT") ||
+        upperDesc.includes("RETURN") ||
+        upperDesc.includes("INCORRECT A/C") ||
+        upperDesc.includes("BOID MISMATCH") ||
+        (status && (status.toUpperCase() === "REJECTED" || status.toUpperCase() === "RJCT"));
+
+      const isFunding =
+        credit > 0 &&
+        (upperDesc.includes("FUND") ||
+          upperDesc.includes("DEPOSIT") ||
+          upperDesc.includes("INWARD"));
+
+      const category: BankTransaction["category"] = isCircular
+        ? "NRB_CIRCULAR"
+        : isReject
+          ? "REJECT_RETURN"
+          : isFunding
+            ? "FUNDING_DEPOSIT"
+            : "PAYOUT_DEBIT";
+
+      const resolvedStatus = status || (isReject ? "Rejected" : undefined);
 
       transactions.push({
         id: `txn-${rowIndex}`,
@@ -219,14 +253,10 @@ export const BankParser = {
         bankName: indices.bankName >= 0 ? columns[indices.bankName] : undefined,
         accountNo: indices.accountNo >= 0 ? columns[indices.accountNo] : undefined,
         beneficiaryName,
-        status,
+        status: resolvedStatus,
         instructionId,
         isLiquiditySweep: isCircular,
-        category: isCircular
-          ? "NRB_CIRCULAR"
-          : desc.toUpperCase().includes("REJECT")
-            ? "REJECT_RETURN"
-            : "PAYOUT_DEBIT",
+        category,
       });
     }
 

@@ -74,7 +74,7 @@ function getSupabaseClientConfig() {
 
   if (isProduction && (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY)) {
     throw new Error(
-      "Missing required Supabase environment variables in production: VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY must be configured."
+      "Missing required Supabase environment variables in production: VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY must be configured.",
     );
   }
 
@@ -112,8 +112,19 @@ let _supabase: ReturnType<typeof createSupabaseClient> | undefined;
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 export const supabase = new Proxy({} as ReturnType<typeof createSupabaseClient>, {
-  get(_, prop, receiver) {
+  get(target, prop, receiver) {
+    if (prop in target) {
+      return Reflect.get(target, prop, receiver);
+    }
     if (!_supabase) _supabase = createSupabaseClient();
     return Reflect.get(_supabase, prop, receiver);
+  },
+  set(target, prop, value, receiver) {
+    return Reflect.set(target, prop, value, receiver);
+  },
+  has(target, prop) {
+    if (prop in target) return true;
+    if (!_supabase) _supabase = createSupabaseClient();
+    return prop in _supabase;
   },
 });

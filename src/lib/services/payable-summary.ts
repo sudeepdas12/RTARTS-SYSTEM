@@ -1,3 +1,4 @@
+import { NET_PAYABLE_TOLERANCE_NPR } from "../constants";
 import { smartClassify } from "./smart-classifier";
 
 export type PayeeCategory =
@@ -217,7 +218,7 @@ export function validatePayableConsistency(input: {
   const net = Number(input.net_payable ?? 0);
   const expectedNet = Math.round((gross - tax) * 100) / 100;
   return {
-    valid: Math.abs(net - expectedNet) <= 0.015,
+    valid: Math.abs(net - expectedNet) <= NET_PAYABLE_TOLERANCE_NPR,
     difference: Math.round((net - expectedNet) * 100) / 100,
     expectedNet,
   };

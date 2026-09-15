@@ -105,6 +105,22 @@ describe("IafGeneratorService — CDSC Allotment Engine", () => {
       expect(line.slice(100, 108)).toBe("00000000");
       expect(line.slice(108, 124)).toBe("     RBBF4008283");
     });
+
+    it("ensures exact 124-character line length even for short or folio BOIDs by zero-padding to 16 chars", () => {
+      const rec: IafRecord = {
+        boid: "12345678", // Short 8-char BOID
+        currentKitta: 50,
+        lockInKitta: 0,
+        lockInReasonCode: "00",
+        lockInReason: "",
+        lockInExpiryDate: "00000000",
+        rtaIntRefNo: "FOLIO-REF-1",
+      };
+
+      const line = formatIafDetailLine(rec);
+      expect(line.length).toBe(124);
+      expect(line.slice(0, 16)).toBe("0000000012345678");
+    });
   });
 
   describe("generateIvfContent", () => {

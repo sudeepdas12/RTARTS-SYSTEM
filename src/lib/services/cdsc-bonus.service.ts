@@ -1,4 +1,4 @@
-﻿/**
+/**
  * CDSC Corporate Action System (CAS) DEMAT Bonus Share Credit & Fractional Cash Calculation Engine
  *
  * Institutional capabilities for Nepal Capital Markets (Pursuant to Income Tax Act 2058 & CDSC Regulations):
@@ -34,28 +34,28 @@ export interface BonusShareRow {
   existingKitta: number;
   bonusRatio: number;
   cashDividendRatio: number;
-  
+
   // Bonus Shares Breakdown
   grossBonusShares: number; // floating point (4 decimals)
   creditedBonusKitta: number; // whole shares
   fractionalKitta: number; // 0..0.9999
-  
+
   // Tax & Valuation
   faceValue: number;
   bonusTaxRate: number; // 0.05 or 0.00
   bonusShareTaxPayable: number; // 5% of whole bonus face value
-  
+
   // Fractional Cash
   fractionalGrossCash: number; // fraction * faceValue
   fractionalTaxAmount: number; // 5% TDS
   fractionalNetPayable: number; // Gross - TDS
-  
+
   // Cash Dividend (if adjusted)
   grossCashDividend: number;
   cashDividendTds: number;
   netCashPayableCombined: number;
   taxPayableByInvestor: number; // Tax voucher amount due from investor
-  
+
   bankName?: string;
   bankAccountNo?: string;
   validationStatus: "VALID" | "INVALID_BOID" | "MISSING_BANK";
@@ -143,7 +143,9 @@ export const CdscBonusService = {
     // 2. Fetch Shareholders with their holdings (Check clients table and fallback to dividend_payables)
     const { data: clientRows } = await (supabase as any)
       .from("clients")
-      .select("id, full_name, boid, pan_no, kitta, holder_type, bank_name, bank_account_no")
+      .select(
+        "id, full_name, boid, pan_no, kitta, holder_type, payee_classification, bank_name, bank_account_no",
+      )
       .eq("company_id", companyId);
 
     // Fallback: if clients table does not have kitta, query latest dividend_payables
@@ -151,7 +153,9 @@ export const CdscBonusService = {
     if (!effectiveClients.some((c) => Number(c.kitta || 0) > 0)) {
       const { data: payables } = await (supabase as any)
         .from("dividend_payables")
-        .select("client_id, shares_held, bank_name, bank_account_no, client:clients(id, full_name, boid, pan_no, holder_type)")
+        .select(
+          "client_id, shares_held, bank_name, bank_account_no, client:clients(id, full_name, boid, pan_no, holder_type, payee_classification)",
+        )
         .eq("company_id", companyId)
         .order("created_at", { ascending: false });
 
@@ -168,6 +172,7 @@ export const CdscBonusService = {
             pan_no: p.client.pan_no,
             kitta: p.shares_held,
             holder_type: p.client.holder_type,
+            payee_classification: p.client.payee_classification,
             bank_name: p.bank_name,
             bank_account_no: p.bank_account_no,
           });
@@ -192,25 +197,37 @@ export const CdscBonusService = {
       if (isBoidValid) validBoidCount++;
       else invalidBoidCount++;
 
-      const isTaxExempt = (c.holder_type || "").toUpperCase().includes("MUTUAL");
+      const isTaxExempt =
+        c.payee_classification === "TAX_EXEMPT" ||
+        (c.holder_type || "").toUpperCase().includes("MUTUAL") ||
+        (c.holder_type || "").toUpperCase().includes("TAX EXEMPT") ||
+        (c.holder_type || "").toUpperCase().includes("TAX_EXEMPT") ||
+        (c.holder_type || "").toUpperCase().includes("EXEMPT");
       const bonusTaxRate = isTaxExempt ? 0.0 : 0.05;
 
       const lockIn = this.resolveLockIn(c.holder_type);
       const rawGrossBonus = existingKitta * bonusRatioDecimal;
       const creditedBonusKitta = Math.floor(rawGrossBonus);
-      const fractionalKitta = Math.round((rawGrossBonus - creditedBonusKitta + Number.EPSILON) * 10000) / 10000;
+      const fractionalKitta =
+        Math.round((rawGrossBonus - creditedBonusKitta + Number.EPSILON) * 10000) / 10000;
 
       // 5% Tax on whole credited bonus shares (Face Value * Kitta * 5%)
-      const bonusShareTaxPayable = Math.round((creditedBonusKitta * faceValue * bonusTaxRate + Number.EPSILON) * 100) / 100;
+      const bonusShareTaxPayable =
+        Math.round((creditedBonusKitta * faceValue * bonusTaxRate + Number.EPSILON) * 100) / 100;
 
       // Fractional Cash Handling
-      const fractionalGrossCash = Math.round((fractionalKitta * faceValue + Number.EPSILON) * 100) / 100;
-      const fractionalTaxAmount = Math.round((fractionalGrossCash * bonusTaxRate + Number.EPSILON) * 100) / 100;
-      const fractionalNetPayable = Math.round((fractionalGrossCash - fractionalTaxAmount + Number.EPSILON) * 100) / 100;
+      const fractionalGrossCash =
+        Math.round((fractionalKitta * faceValue + Number.EPSILON) * 100) / 100;
+      const fractionalTaxAmount =
+        Math.round((fractionalGrossCash * bonusTaxRate + Number.EPSILON) * 100) / 100;
+      const fractionalNetPayable =
+        Math.round((fractionalGrossCash - fractionalTaxAmount + Number.EPSILON) * 100) / 100;
 
       // Cash Dividend (if combined/adjusted)
-      const grossCashDividend = Math.round((existingKitta * faceValue * cashRatioDecimal + Number.EPSILON) * 100) / 100;
-      const cashDividendTds = Math.round((grossCashDividend * bonusTaxRate + Number.EPSILON) * 100) / 100;
+      const grossCashDividend =
+        Math.round((existingKitta * faceValue * cashRatioDecimal + Number.EPSILON) * 100) / 100;
+      const cashDividendTds =
+        Math.round((grossCashDividend * bonusTaxRate + Number.EPSILON) * 100) / 100;
 
       let taxPayableByInvestor = 0;
       let netCashPayableCombined = fractionalNetPayable;
@@ -220,10 +237,14 @@ export const CdscBonusService = {
       } else if (taxMode === "CASH_ADJUSTED") {
         const netCashFromDiv = grossCashDividend - cashDividendTds;
         if (netCashFromDiv >= bonusShareTaxPayable) {
-          netCashPayableCombined = Math.round((netCashFromDiv - bonusShareTaxPayable + fractionalNetPayable + Number.EPSILON) * 100) / 100;
+          netCashPayableCombined =
+            Math.round(
+              (netCashFromDiv - bonusShareTaxPayable + fractionalNetPayable + Number.EPSILON) * 100,
+            ) / 100;
           taxPayableByInvestor = 0;
         } else {
-          taxPayableByInvestor = Math.round((bonusShareTaxPayable - netCashFromDiv + Number.EPSILON) * 100) / 100;
+          taxPayableByInvestor =
+            Math.round((bonusShareTaxPayable - netCashFromDiv + Number.EPSILON) * 100) / 100;
           netCashPayableCombined = fractionalNetPayable;
         }
       }
@@ -235,7 +256,7 @@ export const CdscBonusService = {
       rows.push({
         sn: sn++,
         clientId: c.id,
-        boid: rawBoid || (c.boid || ""),
+        boid: rawBoid || c.boid || "",
         shareholderName: c.full_name || "Shareholder",
         panNo: c.pan_no || undefined,
         holderType: c.holder_type || "PUBLIC",
@@ -267,7 +288,9 @@ export const CdscBonusService = {
     const totalExistingKitta = rows.reduce((s, r) => s + r.existingKitta, 0);
     const totalGrossBonusShares = rows.reduce((s, r) => s + r.grossBonusShares, 0);
     const totalCreditedBonusKitta = rows.reduce((s, r) => s + r.creditedBonusKitta, 0);
-    const totalFreeBonusKitta = rows.filter((r) => r.lockInCode === "00").reduce((s, r) => s + r.creditedBonusKitta, 0);
+    const totalFreeBonusKitta = rows
+      .filter((r) => r.lockInCode === "00")
+      .reduce((s, r) => s + r.creditedBonusKitta, 0);
     const totalLockedBonusKitta = totalCreditedBonusKitta - totalFreeBonusKitta;
     const totalFractionalKitta = rows.reduce((s, r) => s + r.fractionalKitta, 0);
     const totalBonusShareTax = rows.reduce((s, r) => s + r.bonusShareTaxPayable, 0);
@@ -381,8 +404,10 @@ export const CdscBonusService = {
     XLSX.utils.book_append_sheet(wb, ws, "CDSC_CAS_Bonus_Credit");
 
     const safeName =
-      (fileName || `CDSC_Bonus_Credit_${summary.companyCode}_${summary.fiscalYear.replace("/", "_")}`)
-        .replace(/[^a-zA-Z0-9-_]/g, "_") + ".xlsx";
+      (
+        fileName ||
+        `CDSC_Bonus_Credit_${summary.companyCode}_${summary.fiscalYear.replace("/", "_")}`
+      ).replace(/[^a-zA-Z0-9-_]/g, "_") + ".xlsx";
 
     XLSX.writeFile(wb, safeName);
   },
@@ -402,8 +427,14 @@ export const CdscBonusService = {
     // 2. Detail Lines (124 chars each)
     const detailLines = validRows.map((r) => {
       const boid = r.boid.padEnd(16, " ");
-      const freeQty = r.lockInCode === "00" ? `${r.creditedBonusKitta}.000`.padStart(16, "0") : "000000000000.000";
-      const lockQty = r.lockInCode !== "00" ? `${r.creditedBonusKitta}.000`.padStart(16, "0") : "000000000000.000";
+      const freeQty =
+        r.lockInCode === "00"
+          ? `${r.creditedBonusKitta}.000`.padStart(16, "0")
+          : "000000000000.000";
+      const lockQty =
+        r.lockInCode !== "00"
+          ? `${r.creditedBonusKitta}.000`.padStart(16, "0")
+          : "000000000000.000";
       const lockCode = r.lockInCode.padStart(2, "0");
       const lockReason = (r.lockInReason || "").padEnd(50, " ").slice(0, 50);
       const lockExpiry = (r.lockInExpiryDate || "00000000").padEnd(8, "0").slice(0, 8);
@@ -465,8 +496,10 @@ export const CdscBonusService = {
     XLSX.utils.book_append_sheet(wb, ws, "ConnectIPS_Fractional_Cash");
 
     const safeName =
-      (fileName || `ConnectIPS_Fractional_Cash_${summary.companyCode}_${summary.fiscalYear.replace("/", "_")}`)
-        .replace(/[^a-zA-Z0-9-_]/g, "_") + ".xlsx";
+      (
+        fileName ||
+        `ConnectIPS_Fractional_Cash_${summary.companyCode}_${summary.fiscalYear.replace("/", "_")}`
+      ).replace(/[^a-zA-Z0-9-_]/g, "_") + ".xlsx";
 
     XLSX.writeFile(wb, safeName);
   },
@@ -502,9 +535,7 @@ export const CdscBonusService = {
       remarks: `Bonus fraction cash distribution (${r.fractionalKitta} kitta @ NPR ${summary.faceValue})`,
     }));
 
-    const { error } = await (supabase as any)
-      .from("dividend_payables")
-      .insert(payload);
+    const { error } = await (supabase as any).from("dividend_payables").insert(payload);
 
     if (error) {
       console.error("Error syncing fractional cash payables:", error);

@@ -232,7 +232,8 @@ export const WorkflowEngine = {
         console.warn("Failed to check maker-checker settings:", settingsErr);
         return {
           success: false,
-          error: "System error: Unable to verify maker-checker compliance settings. Action blocked for security.",
+          error:
+            "System error: Unable to verify maker-checker compliance settings. Action blocked for security.",
         };
       }
     }
@@ -337,12 +338,25 @@ export const WorkflowEngine = {
                     ? "completed"
                     : `${action}ed`;
 
+      const notifCategory =
+        action === "submit"
+          ? "approval_pending"
+          : action === "complete" || action === "process"
+            ? table === "payment_batches"
+              ? "payment_success"
+              : "system_alert"
+            : action === "reject"
+              ? table === "payment_batches"
+                ? "payment_failed"
+                : "system_alert"
+              : "system_alert";
+
       await NotificationService.sendNotification({
         user_id: user?.id || null,
         title: `${table.replace("_", " ")} ${action}`,
         message: `Record ${recordId.slice(0, 8)} was ${actionPast}. Status: ${currentStatus} → ${newStatus}`,
         channel: "System",
-        category: "approval_pending",
+        category: notifCategory,
         reference_type: table,
         reference_id: recordId,
       });

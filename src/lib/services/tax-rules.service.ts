@@ -126,6 +126,7 @@ export function investorCategoryToClassification(
     case "LOCAL":
     case "EMPLOYEE":
     case "STAFF":
+    case "PRIVATE":
     case "NATURAL_PERSON":
     case "NATURAL PERSON - PUBLIC":
     case "NATURAL PERSON - LOCAL":

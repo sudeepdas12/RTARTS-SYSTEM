@@ -298,15 +298,7 @@ function InterestPage() {
   const { data: clients = [] } = useQuery({
     queryKey: ["clients_selector"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("clients")
-        .select(
-          "id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no",
-        )
-        .order("full_name")
-        .limit(2000);
-      if (error) throw error;
-      return data as {
+      return fetchAllRows<{
         id: string;
         client_code: string;
         full_name: string;
@@ -319,7 +311,15 @@ function InterestPage() {
         phone: string | null;
         bank_name: string | null;
         bank_account_no: string | null;
-      }[];
+      }>(async (from, to) => {
+        return await supabase
+          .from("clients")
+          .select(
+            "id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no",
+          )
+          .order("full_name")
+          .range(from, to);
+      });
     },
     staleTime: 5 * 60 * 1000,
   });

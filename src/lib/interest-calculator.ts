@@ -1,3 +1,5 @@
+import { normalizeTaxRate } from "./dividend-calculator";
+
 export interface InterestCalculationParams {
   debentureKitta: number; // Number of debentures held
   unitFaceValue?: number; // Default NPR 1000 per debenture
@@ -83,7 +85,7 @@ export const InterestCalculator = {
       days > 0 ? (totalPrincipal * annualInterestRate * days) / (100 * divisor) : 0;
 
     // TDS rate logic
-    let tdsRate = params.taxRate !== undefined ? params.taxRate : 0.06;
+    let tdsRate = params.taxRate !== undefined ? normalizeTaxRate(params.taxRate) : 0.06;
 
     if (params.taxCategory === "TAX_EXEMPTED" || params.taxCategory === "MUTUAL_FUND") {
       tdsRate = 0.0; // Tax Exempted / Mutual Fund
@@ -98,7 +100,7 @@ export const InterestCalculator = {
     ) {
       tdsRate = 0.06; // Natural Person (6% on debenture coupon)
     } else if (params.taxCategory === "CUSTOM" && params.taxRate !== undefined) {
-      tdsRate = params.taxRate;
+      tdsRate = normalizeTaxRate(params.taxRate);
     }
 
     const rawTaxAmount = grossPeriodInterest * tdsRate;

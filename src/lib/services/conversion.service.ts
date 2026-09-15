@@ -17,6 +17,7 @@
 
 import { supabase } from "@/integrations/supabase/client";
 import * as XLSX from "xlsx";
+import { getPayeeTaxRate } from "./payable-summary";
 
 export type ConversionType =
   | "PROMOTER_TO_PUBLIC"
@@ -35,18 +36,18 @@ export interface ConversionRow {
   newHolderType: string;
   oldLockInCode: string;
   newLockInCode: string;
-  
+
   // Balance Adjustments
   initialBalance: number; // original kitta or debenture amount
   convertedKitta: number; // newly issued / converted whole shares
   finalBalance: number; // final post-conversion holding
-  
+
   // Fractional Remainder & Cash Payout
   fractionalKitta: number;
   fractionalGrossCash: number;
   fractionalTaxAmount: number; // 5% TDS
   fractionalNetPayable: number;
-  
+
   bankName?: string;
   bankAccountNo?: string;
   remarks: string;
@@ -59,13 +60,13 @@ export interface ConversionResultSummary {
   companyCode: string;
   isin: string;
   fiscalYear: string;
-  
+
   // Parameter metadata
   conversionRatio: number; // e.g. 19% for PO->Ord, or 100:85 swap ratio, or 10:1 split
   conversionPrice?: number; // for debenture conversion
   oldFaceValue?: number;
   newFaceValue?: number;
-  
+
   totalEligibleShareholders: number;
   totalInitialBalance: number;
   totalConvertedKitta: number;
@@ -187,7 +188,9 @@ export const ConversionService = {
 
     const { data: debentures } = await (supabase as any)
       .from("interest_payables")
-      .select("client_id, kitta, gross_interest, client:clients(id, full_name, boid, pan_no, holder_type, bank_name, bank_account_no)")
+      .select(
+        "client_id, kitta, gross_interest, client:clients(id, full_name, boid, pan_no, holder_type, bank_name, bank_account_no)",
+      )
       .eq("company_id", companyId);
 
     const rows: ConversionRow[] = [];
@@ -200,11 +203,13 @@ export const ConversionService = {
 
       const rawEquityFloat = debentureFaceTotal / conversionPrice;
       const convertedKitta = Math.floor(rawEquityFloat);
-      const fractionalKitta = Math.round((rawEquityFloat - convertedKitta + Number.EPSILON) * 10000) / 10000;
+      const fractionalKitta =
+        Math.round((rawEquityFloat - convertedKitta + Number.EPSILON) * 10000) / 10000;
 
       // Remaining unutilized bond principal = fractionalKitta * conversionPrice.
       // Under Nepal Income Tax Act §88 / §2(ज), principal refunds are Return of Capital and carry 0% TDS.
-      const fractionalGrossCash = Math.round((fractionalKitta * conversionPrice + Number.EPSILON) * 100) / 100;
+      const fractionalGrossCash =
+        Math.round((fractionalKitta * conversionPrice + Number.EPSILON) * 100) / 100;
       const fractionalTaxAmount = 0;
       const fractionalNetPayable = fractionalGrossCash;
 
@@ -296,11 +301,16 @@ export const ConversionService = {
 
       const rawSwapFloat = initialKitta * ratioMultiplier;
       const convertedKitta = Math.floor(rawSwapFloat);
-      const fractionalKitta = Math.round((rawSwapFloat - convertedKitta + Number.EPSILON) * 10000) / 10000;
+      const fractionalKitta =
+        Math.round((rawSwapFloat - convertedKitta + Number.EPSILON) * 10000) / 10000;
 
-      const fractionalGrossCash = Math.round((fractionalKitta * faceValue + Number.EPSILON) * 100) / 100;
-      const fractionalTaxAmount = Math.round((fractionalGrossCash * 0.05 + Number.EPSILON) * 100) / 100;
-      const fractionalNetPayable = Math.round((fractionalGrossCash - fractionalTaxAmount + Number.EPSILON) * 100) / 100;
+      const fractionalGrossCash =
+        Math.round((fractionalKitta * faceValue + Number.EPSILON) * 100) / 100;
+      const tdsRate = getPayeeTaxRate(c.holder_type || "PUBLIC", false);
+      const fractionalTaxAmount =
+        Math.round((fractionalGrossCash * tdsRate + Number.EPSILON) * 100) / 100;
+      const fractionalNetPayable =
+        Math.round((fractionalGrossCash - fractionalTaxAmount + Number.EPSILON) * 100) / 100;
 
       rows.push({
         sn: sn++,
@@ -443,9 +453,10 @@ export const ConversionService = {
   async simulatePhysicalToDemat(params: {
     companyId: string;
     fiscalYear: string;
-    records: Array<{
-      boid: string;
-      shareholderName: string;
+    records?: Array<{
+      clientId?: string;
+      boid?: string;
+      shareholderName?: string;
       kitta: number;
       certificateNo?: string;
       folioNo?: string;
@@ -463,24 +474,69 @@ export const ConversionService = {
     const companyCode = comp?.company_code || "COMP";
     const isin = comp?.isin || "NP0000000000";
 
-    const rows: ConversionRow[] = records.map((r, idx) => ({
-      sn: idx + 1,
-      clientId: `PHYS-${idx + 1}`,
-      boid: r.boid,
-      shareholderName: r.shareholderName,
-      oldHolderType: "PHYSICAL_FOLIO",
-      newHolderType: "PUBLIC",
-      oldLockInCode: "00",
-      newLockInCode: "00",
-      initialBalance: r.kitta,
-      convertedKitta: r.kitta,
-      finalBalance: r.kitta,
-      fractionalKitta: 0,
-      fractionalGrossCash: 0,
-      fractionalTaxAmount: 0,
-      fractionalNetPayable: 0,
-      remarks: `DRN Dematerialization: Cert #${r.certificateNo || "N/A"}, Folio #${r.folioNo || "N/A"}`,
-    }));
+    let rows: ConversionRow[] = [];
+
+    if (records && records.length > 0) {
+      rows = records.map((r, idx) => ({
+        sn: idx + 1,
+        clientId: r.clientId || `PHYS-${idx + 1}`,
+        boid: r.boid || "",
+        shareholderName: r.shareholderName || `Shareholder ${idx + 1}`,
+        oldHolderType: "PHYSICAL_FOLIO",
+        newHolderType: "PUBLIC",
+        oldLockInCode: "00",
+        newLockInCode: "00",
+        initialBalance: Number(r.kitta || 0),
+        convertedKitta: Number(r.kitta || 0),
+        finalBalance: Number(r.kitta || 0),
+        fractionalKitta: 0,
+        fractionalGrossCash: 0,
+        fractionalTaxAmount: 0,
+        fractionalNetPayable: 0,
+        remarks: `DRN Dematerialization: Cert #${r.certificateNo || "N/A"}, Folio #${r.folioNo || "N/A"}`,
+      }));
+    } else {
+      // Query physical or non-dematted clients from database
+      const { data: physicalClients } = await (supabase as any)
+        .from("clients")
+        .select("id, full_name, boid, pan_no, kitta, holder_type, bank_name, bank_account_no")
+        .eq("company_id", companyId);
+
+      let sn = 1;
+      for (const c of physicalClients || []) {
+        const isPhysical =
+          !c.boid ||
+          c.boid.trim().length < 16 ||
+          (c.holder_type || "").toUpperCase().includes("PHYSICAL");
+
+        if (!isPhysical) continue;
+
+        const kitta = Number(c.kitta || 0);
+        if (kitta <= 0) continue;
+
+        rows.push({
+          sn: sn++,
+          clientId: c.id,
+          boid: c.boid || "",
+          shareholderName: c.full_name || "Physical Shareholder",
+          panNo: c.pan_no || undefined,
+          oldHolderType: c.holder_type || "PHYSICAL",
+          newHolderType: "PUBLIC",
+          oldLockInCode: "00",
+          newLockInCode: "00",
+          initialBalance: kitta,
+          convertedKitta: kitta,
+          finalBalance: kitta,
+          fractionalKitta: 0,
+          fractionalGrossCash: 0,
+          fractionalTaxAmount: 0,
+          fractionalNetPayable: 0,
+          bankName: c.bank_name || undefined,
+          bankAccountNo: c.bank_account_no || undefined,
+          remarks: `Physical Folio converted to DEMAT Ordinary Public Share`,
+        });
+      }
+    }
 
     const totalKitta = rows.reduce((s, r) => s + r.convertedKitta, 0);
 
@@ -505,86 +561,71 @@ export const ConversionService = {
   },
 
   /**
-   * ATOMIC DATABASE COMMIT: Commits conversion results directly into RTARTS database.
+   * ATOMIC DATABASE COMMIT: Commits conversion results directly into RTARTS database using apply_share_conversion_atomic.
    */
   async commitConversionToDatabase(summary: ConversionResultSummary): Promise<{
     updatedClientsCount: number;
     syncedFractionalPayablesCount: number;
     totalFractionalAmount: number;
   }> {
-    let updatedClientsCount = 0;
-    let syncedFractionalPayablesCount = 0;
-
-    // 1. Update Clients Holding & Classifications
-    for (const r of summary.rows) {
-      if (
-        summary.conversionType === "PROMOTER_TO_PUBLIC" ||
-        summary.conversionType === "STOCK_SPLIT" ||
-        summary.conversionType === "MERGER_SWAP" ||
-        summary.conversionType === "DEBENTURE_TO_EQUITY"
-      ) {
-        const { error } = await (supabase as any)
-          .from("clients")
-          .update({
-            kitta: r.finalBalance,
-            holder_type: r.newHolderType.includes("PROMOTER") ? "PROMOTER" : "PUBLIC",
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", r.clientId);
-
-        if (!error) updatedClientsCount++;
-      }
-    }
-
-    // 2. Insert Fractional Cash Payables to dividend_payables (if any)
     const fractionRows = summary.rows.filter((r) => r.fractionalNetPayable > 0);
-    if (fractionRows.length > 0) {
-      const payload = fractionRows.map((r) => ({
-        company_id: summary.companyId,
-        client_id: r.clientId,
-        fiscal_year: summary.fiscalYear,
-        dividend_type: `${summary.conversionType} Fraction Cash`,
-        shares_held: r.initialBalance,
-        dividend_rate: summary.conversionRatio,
-        gross_dividend: r.fractionalGrossCash,
-        tax_amount: r.fractionalTaxAmount,
-        net_payable: r.fractionalNetPayable,
-        payment_status: "Pending",
-        bank_name: r.bankName || null,
-        bank_account_no: r.bankAccountNo || null,
-        remarks: r.remarks,
-      }));
+    const totalFractionalAmount = fractionRows.reduce((s, r) => s + r.fractionalNetPayable, 0);
 
-      const { error: payError } = await (supabase as any)
-        .from("dividend_payables")
-        .insert(payload);
-
-      if (!payError) syncedFractionalPayablesCount = fractionRows.length;
-    }
-
-    // 3. Create Audit Log Entry
-    try {
-      await (supabase as any).from("audit_logs").insert({
-        table_name: "clients_conversion",
-        action: `CONVERSION_${summary.conversionType}`,
-        record_id: summary.companyId,
-        new_value: {
-          company_code: summary.companyCode,
-          fiscal_year: summary.fiscalYear,
-          conversion_ratio: summary.conversionRatio,
-          total_shareholders: summary.totalEligibleShareholders,
-          total_converted_kitta: summary.totalConvertedKitta,
-          total_fractional_cash: summary.totalFractionalNetPayable,
-        },
+    const clientUpdates = summary.rows
+      .filter((r) => r.clientId && !r.clientId.startsWith("PHYS-"))
+      .map((r) => {
+        let updatedHolderType = r.newHolderType;
+        if (updatedHolderType.includes("PROMOTER")) {
+          updatedHolderType = "PROMOTER";
+        } else if (updatedHolderType === "DEBENTURE_HOLDER" || updatedHolderType === "PHYSICAL") {
+          updatedHolderType = "PUBLIC";
+        } else if (!updatedHolderType) {
+          updatedHolderType = r.oldHolderType || "PUBLIC";
+        }
+        return {
+          client_id: r.clientId,
+          kitta: r.finalBalance,
+          holder_type: updatedHolderType,
+          boid: r.boid || null,
+        };
       });
-    } catch (e) {
-      console.warn("Could not write conversion audit log:", e);
+
+    const fractionalPayables = fractionRows.map((r) => ({
+      client_id: r.clientId,
+      dividend_type: `${summary.conversionType} Fraction Cash`,
+      shares_held: r.initialBalance,
+      dividend_rate: summary.conversionRatio,
+      gross_dividend: r.fractionalGrossCash,
+      tax_amount: r.fractionalTaxAmount,
+      net_payable: r.fractionalNetPayable,
+      bank_name: r.bankName || null,
+      bank_account_no: r.bankAccountNo || null,
+      remarks: r.remarks,
+    }));
+
+    // Invoke atomic RPC
+    const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc(
+      "apply_share_conversion_atomic",
+      {
+        p_company_id: summary.companyId,
+        p_conversion_type: summary.conversionType,
+        p_fiscal_year: summary.fiscalYear,
+        p_ratio: Number(summary.conversionRatio || 1),
+        p_client_updates: clientUpdates,
+        p_fractional_payables: fractionalPayables,
+      },
+    );
+
+    if (rpcErr) {
+      throw new Error(`Atomic share conversion failed: ${rpcErr.message}`);
     }
 
     return {
-      updatedClientsCount,
-      syncedFractionalPayablesCount,
-      totalFractionalAmount: summary.totalFractionalNetPayable,
+      updatedClientsCount: Number(rpcRes?.clients_updated ?? clientUpdates.length),
+      syncedFractionalPayablesCount: Number(
+        rpcRes?.fractional_payables_inserted ?? fractionalPayables.length,
+      ),
+      totalFractionalAmount,
     };
   },
 
@@ -652,8 +693,10 @@ export const ConversionService = {
     XLSX.utils.book_append_sheet(wb, ws, "CDSC_CAS_Conversion");
 
     const safeName =
-      (fileName || `CDSC_Conversion_${summary.conversionType}_${summary.companyCode}_${summary.fiscalYear.replace("/", "_")}`)
-        .replace(/[^a-zA-Z0-9-_]/g, "_") + ".xlsx";
+      (
+        fileName ||
+        `CDSC_Conversion_${summary.conversionType}_${summary.companyCode}_${summary.fiscalYear.replace("/", "_")}`
+      ).replace(/[^a-zA-Z0-9-_]/g, "_") + ".xlsx";
 
     XLSX.writeFile(wb, safeName);
   },
@@ -708,8 +751,10 @@ export const ConversionService = {
     XLSX.utils.book_append_sheet(wb, ws, "ConnectIPS_Conversion_Cash");
 
     const safeName =
-      (fileName || `ConnectIPS_Conversion_Fraction_${summary.companyCode}_${summary.fiscalYear.replace("/", "_")}`)
-        .replace(/[^a-zA-Z0-9-_]/g, "_") + ".xlsx";
+      (
+        fileName ||
+        `ConnectIPS_Conversion_Fraction_${summary.companyCode}_${summary.fiscalYear.replace("/", "_")}`
+      ).replace(/[^a-zA-Z0-9-_]/g, "_") + ".xlsx";
 
     XLSX.writeFile(wb, safeName);
   },

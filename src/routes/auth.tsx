@@ -148,17 +148,39 @@ function AuthPage() {
       return;
     }
 
-    const { data } = await supabase.auth.getSession();
-    if (data.session) {
-      navigate({ to: "/dashboard", replace: true });
-      return;
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (data?.session) {
+        navigate({ to: "/dashboard", replace: true });
+        return;
+      }
+    } catch (err) {
+      console.error("Failed to get session:", err);
     }
     setView(mode === "forgot" ? "forgot" : "signin");
   }, [mode, navigate]);
 
   useEffect(() => {
-    handleAuthCallback().catch((err) => console.error("Auth callback error:", err));
-  }, [handleAuthCallback]);
+    let active = true;
+    handleAuthCallback().catch((err) => {
+      console.error("Auth callback error:", err);
+      if (active) setView(mode === "forgot" ? "forgot" : "signin");
+    });
+
+    // Fallback: If session check hangs or takes longer than 3 seconds, force signin form view
+    const fallbackTimer = setTimeout(() => {
+      if (active) {
+        setView((current) =>
+          current === "loading" ? (mode === "forgot" ? "forgot" : "signin") : current,
+        );
+      }
+    }, 3000);
+
+    return () => {
+      active = false;
+      clearTimeout(fallbackTimer);
+    };
+  }, [handleAuthCallback, mode]);
 
   const handleSignInSuccess = useCallback((email: string) => {
     setCallbackEmail(email);
@@ -384,7 +406,8 @@ function SignInForm({
       <form onSubmit={onSubmit} className="space-y-4">
         {lockoutRemaining > 0 && (
           <div className="p-3 text-xs rounded border border-destructive/30 bg-destructive/10 text-destructive text-center font-medium">
-            Account temporarily locked due to multiple failed sign-in attempts. Please wait {lockoutRemaining}s before retrying.
+            Account temporarily locked due to multiple failed sign-in attempts. Please wait{" "}
+            {lockoutRemaining}s before retrying.
           </div>
         )}
         <FormField

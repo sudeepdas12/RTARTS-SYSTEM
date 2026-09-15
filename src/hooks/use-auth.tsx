@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { RBACService, type UserContext } from "@/lib/rbac-service";
 
 export type AppRole =
   | "admin"
@@ -81,13 +82,25 @@ export function useAuth() {
     };
   }, [loadRoles]);
 
+  const userContext = useMemo<UserContext | null>(
+    () => (user ? { id: user.id, roles } : null),
+    [user, roles],
+  );
+
   const helpers = useMemo(
     () => ({
       hasRole: (r: AppRole) => roles.includes(r),
       hasAny: (rs: AppRole[]) => rs.some((r) => roles.includes(r)),
       isAdmin: roles.includes("admin"),
+      canRead: (domain: string) => RBACService.canRead(userContext, domain),
+      canWrite: (domain: string) => RBACService.canWrite(userContext, domain),
+      canApprove: (recordType = "payment_batches") =>
+        RBACService.canApprove(userContext, recordType),
+      canExport: (domain = "reports") => RBACService.canExport(userContext, domain),
+      canAccessCompany: (companyId: string) => RBACService.canAccessCompany(userContext, companyId),
+      userContext,
     }),
-    [roles],
+    [roles, userContext],
   );
 
   return { user, roles, loading, ...helpers };

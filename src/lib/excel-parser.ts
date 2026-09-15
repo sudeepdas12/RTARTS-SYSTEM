@@ -502,16 +502,15 @@ const COLUMN_ALIASES: Record<keyof ColumnMapping, string[]> = {
 };
 
 export const ExcelParser = {
-  async parseFile(file: File): Promise<ParsedExcelData> {
-    const data = await file.arrayBuffer();
+  async parseBuffer(data: ArrayBuffer | Uint8Array, fileName: string): Promise<ParsedExcelData> {
     const workbook = XLSX.read(data, { type: "array" });
 
     let fileType: DetectedFileType = "unknown";
-    const fileNameLower = file.name.toLowerCase();
+    const fileNameLower = fileName.toLowerCase();
     let detectedRate: number | undefined;
 
     // Detect rate from filename, e.g., "PRIME DEBENTURE_8.75%.xlsx" -> 8.75
-    const rateMatch = file.name.match(/(\d+(?:\.\d+)?)\s*%/);
+    const rateMatch = fileName.match(/(\d+(?:\.\d+)?)\s*%/);
     if (rateMatch && rateMatch[1]) {
       detectedRate = Number(rateMatch[1]);
     }
@@ -523,9 +522,12 @@ export const ExcelParser = {
       fileType = "debenture";
     } else if (
       fileNameLower.includes("mutual fund") ||
+      fileNameLower.includes("mutual_fund") ||
+      fileNameLower.includes("mutualfund") ||
       fileNameLower.includes("rmf") ||
       fileNameLower.includes("mf ") ||
-      fileNameLower.includes("mf-")
+      fileNameLower.includes("mf-") ||
+      fileNameLower.includes("mf_")
     ) {
       fileType = "mutual_fund";
     } else if (
@@ -1070,7 +1072,7 @@ export const ExcelParser = {
     // 2. Fallback: Try to extract from file name
     if (!detectedCompanyName) {
       // Common patterns: "COMPANY NAME - TYPE" or "TYPE - COMPANY NAME" or "COMPANY TYPE"
-      const fileNameNoExt = file.name.replace(/\.[^/.]+$/, ""); // remove extension
+      const fileNameNoExt = fileName.replace(/\.[^/.]+$/, ""); // remove extension
 
       // Remove common suffixes/prefixes that are not company names
       const cleanName = fileNameNoExt
@@ -1091,7 +1093,7 @@ export const ExcelParser = {
 
     return {
       fileType,
-      fileName: file.name,
+      fileName,
       sheets,
       detectedCompanyName,
       detectedIsin: overallIsin,
@@ -1099,4 +1101,19 @@ export const ExcelParser = {
       grandTotals,
     };
   },
+
+  async parseFile(file: File): Promise<ParsedExcelData> {
+    const data = await file.arrayBuffer();
+    return this.parseBuffer(data, file.name);
+  },
+};
+
+export const parseExcelFile = (
+  data: ArrayBuffer | Uint8Array | File,
+  fileName?: string,
+): Promise<ParsedExcelData> => {
+  if (data instanceof File) {
+    return ExcelParser.parseFile(data);
+  }
+  return ExcelParser.parseBuffer(data, fileName || "upload.xlsx");
 };

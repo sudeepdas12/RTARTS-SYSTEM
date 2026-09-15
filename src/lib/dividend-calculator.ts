@@ -34,6 +34,14 @@ export interface DividendResult {
   appliedTdsRate: number;
 }
 
+export function normalizeTaxRate(rate: number): number {
+  if (isNaN(rate) || rate <= 0) return 0;
+  // If user passes whole percentage (e.g. 15 for 15%), convert to decimal (0.15)
+  if (rate > 1.0 && rate <= 100) return rate / 100;
+  // Cap at 1.0 (100%)
+  return Math.min(1.0, rate);
+}
+
 export const DividendCalculator = {
   calculate(params: DividendCalculationParams): DividendResult {
     const faceValue = Math.max(0, params.faceValue ?? 100);
@@ -46,7 +54,7 @@ export const DividendCalculator = {
     } else if (params.taxCategory === "FOREIGN" || params.taxCategory === "FOREIGN_INVESTOR") {
       appliedTdsRate = 0.05;
     } else if (params.taxCategory === "CUSTOM" && params.customTaxRate !== undefined) {
-      appliedTdsRate = Math.max(0, params.customTaxRate);
+      appliedTdsRate = normalizeTaxRate(params.customTaxRate);
     }
 
     // 1. Bonus / Right Share Calculations
@@ -75,12 +83,11 @@ export const DividendCalculator = {
     const cashDividendRate = Math.max(0, params.cashDividendRate ?? 0);
     if (cashDividendRate > 0) {
       // For combined/bonus, cash dividend is paid on after-bonus kitta by default, or pre-bonus if cashOnPreBonus is true
-      const kittaForCash =
-        params.cashOnPreBonus
-          ? sharesHeld
-          : params.dividendType === "Combined"
-            ? afterBonusKitta
-            : sharesHeld;
+      const kittaForCash = params.cashOnPreBonus
+        ? sharesHeld
+        : params.dividendType === "Combined"
+          ? afterBonusKitta
+          : sharesHeld;
 
       if (params.cashRateIsPerShare) {
         grossCashDividend = kittaForCash * cashDividendRate;

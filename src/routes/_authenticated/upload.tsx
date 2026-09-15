@@ -606,7 +606,7 @@ function UploadRoute() {
         queryClient.invalidateQueries({ queryKey: ["classification-review-count"] }),
       ]);
 
-      if (result.successRows <= 0 && result.errorRows > 0) {
+      if (result.successRows <= 0) {
         throw new Error("Import completed without inserting any rows.");
       }
 
@@ -705,7 +705,7 @@ function UploadRoute() {
         status: "Processing",
       });
 
-      let uploadId: string = crypto.randomUUID();
+      let uploadId: string;
       let userId: string | undefined;
       try {
         const {
@@ -724,8 +724,13 @@ function UploadRoute() {
           user_id: userId,
         });
         uploadId = rec.id;
-      } catch {
-        /* silent */
+      } catch (recErr: any) {
+        toast.error(
+          `Failed to initialize upload record for "${sheet.sheetName}": ${recErr?.message || "Tracking error"}`,
+        );
+        overallProcessed += sheet.rowCount;
+        overallErrors += sheet.rowCount;
+        continue;
       }
 
       const sheetDivRate = sheetDividendRates[sheetIdxInParsed];
@@ -815,7 +820,7 @@ function UploadRoute() {
           sharedContext,
         );
 
-        if (result.successRows <= 0 && result.errorRows > 0) {
+        if (result.successRows <= 0) {
           throw new Error(`Sheet "${sheet.sheetName}" completed without inserting any rows.`);
         }
         overallProcessed += sheet.rowCount;

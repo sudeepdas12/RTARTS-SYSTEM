@@ -84,7 +84,7 @@ export const SearchService = {
     const { data, error } = await q;
     if (error) {
       console.error("Error searching interest payables:", error);
-      return [];
+      throw error;
     }
     return data || [];
   },
@@ -120,7 +120,7 @@ export const SearchService = {
     const { data, error } = await q;
     if (error) {
       console.error("Error searching dividend payables:", error);
-      return [];
+      throw error;
     }
     return data || [];
   },

@@ -129,6 +129,7 @@ describe("centralized tax rules (payable type + investor category → rate)", ()
     expect(investorCategoryToClassification("FOREIGN")).toBe("FOREIGN_INVESTOR");
     expect(investorCategoryToClassification("MUTUAL_FUND")).toBe("TAX_EXEMPT");
     expect(investorCategoryToClassification("TAX_EXEMPTED")).toBe("TAX_EXEMPT");
+    expect(investorCategoryToClassification("PRIVATE")).toBe("NATURAL_PERSON");
     expect(investorCategoryToClassification("UNKNOWN")).toBeNull();
     expect(investorCategoryToClassification(null)).toBeNull();
   });

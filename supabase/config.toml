@@ -2,3 +2,6 @@
 # This whole stack runs locally in Docker via `supabase start`.
 # See README.md ("Supabase runs locally in Docker").
 project_id = "illokcvaflhzrpxlwhtj"
+
+[analytics]
+enabled = false

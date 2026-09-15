@@ -302,7 +302,7 @@ function ReportsRoute() {
     refetchOnWindowFocus: false,
     queryFn: () =>
       IrdEtdsService.getAnnex10Report({
-        companyId: companyId === "all" ? (companies[0]?.id || "") : companyId,
+        companyId: companyId === "all" ? undefined : companyId,
       }),
     enabled: companies.length > 0,
   });
@@ -1073,7 +1073,15 @@ function ReportsRoute() {
 
         {/* ─── TAB 3: DEBENTURES (PUMORI) ─── */}
         <TabsContent value="debenture" className="space-y-4">
-          {debentureSummary && debentureSummary.rows.length > 0 ? (
+          {debentureSummaryQuery.isLoading ? (
+            <Card className="border-primary/20 shadow-sm">
+              <CardContent className="p-4 space-y-2">
+                {[...Array(4)].map((_, i) => (
+                  <Skeleton key={i} className="h-8 w-full rounded" />
+                ))}
+              </CardContent>
+            </Card>
+          ) : debentureSummary && debentureSummary.rows.length > 0 ? (
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
@@ -1340,7 +1348,8 @@ function ReportsRoute() {
                   Government of Nepal — Inland Revenue Department (IRD) Annex-10 e-TDS Return
                 </CardTitle>
                 <CardDescription className="text-xs">
-                  Pursuant to Section 87 & 88 of the Nepal Income Tax Act 2058. Formatted for direct upload to the IRD e-filing portal.
+                  Pursuant to Section 87 & 88 of the Nepal Income Tax Act 2058. Formatted for direct
+                  upload to the IRD e-filing portal.
                 </CardDescription>
               </div>
               {irdEtds && (
@@ -1366,21 +1375,40 @@ function ReportsRoute() {
                   {/* Summary Metric Cards */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div className="p-4 bg-muted/30 border rounded-lg">
-                      <span className="text-xs text-muted-foreground font-medium uppercase">Total Withholdees</span>
-                      <div className="text-xl font-bold mt-1">{irdEtds.totalWithholdees.toLocaleString()}</div>
-                      <span className="text-[11px] text-muted-foreground">PAN: {irdEtds.panWithholdees} | Unregistered: {irdEtds.unregisteredWithholdees}</span>
+                      <span className="text-xs text-muted-foreground font-medium uppercase">
+                        Total Withholdees
+                      </span>
+                      <div className="text-xl font-bold mt-1">
+                        {irdEtds.totalWithholdees.toLocaleString()}
+                      </div>
+                      <span className="text-[11px] text-muted-foreground">
+                        PAN: {irdEtds.panWithholdees} | Unregistered:{" "}
+                        {irdEtds.unregisteredWithholdees}
+                      </span>
                     </div>
                     <div className="p-4 bg-muted/30 border rounded-lg">
-                      <span className="text-xs text-muted-foreground font-medium uppercase">Total Gross Payment</span>
-                      <div className="text-xl font-bold mt-1 text-primary">{format(irdEtds.totalGrossAmount)}</div>
+                      <span className="text-xs text-muted-foreground font-medium uppercase">
+                        Total Gross Payment
+                      </span>
+                      <div className="text-xl font-bold mt-1 text-primary">
+                        {format(irdEtds.totalGrossAmount)}
+                      </div>
                     </div>
                     <div className="p-4 bg-muted/30 border rounded-lg">
-                      <span className="text-xs text-muted-foreground font-medium uppercase">Total TDS Withheld</span>
-                      <div className="text-xl font-bold mt-1 text-rose-600">{format(irdEtds.totalTdsAmount)}</div>
+                      <span className="text-xs text-muted-foreground font-medium uppercase">
+                        Total TDS Withheld
+                      </span>
+                      <div className="text-xl font-bold mt-1 text-rose-600">
+                        {format(irdEtds.totalTdsAmount)}
+                      </div>
                     </div>
                     <div className="p-4 bg-muted/30 border rounded-lg">
-                      <span className="text-xs text-muted-foreground font-medium uppercase">Total Net Payment</span>
-                      <div className="text-xl font-bold mt-1 text-emerald-600">{format(irdEtds.totalNetAmount)}</div>
+                      <span className="text-xs text-muted-foreground font-medium uppercase">
+                        Total Net Payment
+                      </span>
+                      <div className="text-xl font-bold mt-1 text-emerald-600">
+                        {format(irdEtds.totalNetAmount)}
+                      </div>
                     </div>
                   </div>
 
@@ -1406,24 +1434,37 @@ function ReportsRoute() {
                             <TableCell className="font-mono text-xs">{row.sn}</TableCell>
                             <TableCell className="font-mono text-xs font-medium">
                               {row.withholdeePan === "UNREGISTERED" ? (
-                                <Badge variant="outline" className="text-[10px] text-amber-600 bg-amber-50 dark:bg-amber-950/20">
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] text-amber-600 bg-amber-50 dark:bg-amber-950/20"
+                                >
                                   Unregistered
                                 </Badge>
                               ) : (
                                 row.withholdeePan
                               )}
                             </TableCell>
-                            <TableCell className="font-medium text-xs">{row.withholdeeName}</TableCell>
+                            <TableCell className="font-medium text-xs">
+                              {row.withholdeeName}
+                            </TableCell>
                             <TableCell className="font-mono text-xs">{row.boid}</TableCell>
                             <TableCell className="text-xs">
                               <Badge variant="secondary" className="text-[10px]">
                                 {row.paymentType}
                               </Badge>
                             </TableCell>
-                            <TableCell className="text-right font-mono text-xs">{fmtNr(row.grossAmount)}</TableCell>
-                            <TableCell className="text-right font-mono text-xs font-semibold">{row.tdsRate.toFixed(1)}%</TableCell>
-                            <TableCell className="text-right font-mono text-xs text-rose-600 font-semibold">{fmtNr(row.tdsAmount)}</TableCell>
-                            <TableCell className="text-right font-mono text-xs text-emerald-600 font-semibold">{fmtNr(row.netPayable)}</TableCell>
+                            <TableCell className="text-right font-mono text-xs">
+                              {fmtNr(row.grossAmount)}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-xs font-semibold">
+                              {row.tdsRate.toFixed(1)}%
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-xs text-rose-600 font-semibold">
+                              {fmtNr(row.tdsAmount)}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-xs text-emerald-600 font-semibold">
+                              {fmtNr(row.netPayable)}
+                            </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -1431,7 +1472,8 @@ function ReportsRoute() {
                   </div>
                   {irdEtds.rows.length > 15 && (
                     <p className="text-xs text-muted-foreground text-center">
-                      Showing first 15 of {irdEtds.rows.length.toLocaleString()} withholdee records. Download full Annex-10 Excel file for complete e-filing schedule.
+                      Showing first 15 of {irdEtds.rows.length.toLocaleString()} withholdee records.
+                      Download full Annex-10 Excel file for complete e-filing schedule.
                     </p>
                   )}
                 </>
@@ -1451,10 +1493,12 @@ function ReportsRoute() {
               <div>
                 <CardTitle className="text-base font-semibold flex items-center gap-2">
                   <ShieldCheck className="h-5 w-5 text-amber-600" />
-                  SEBON & Office of Company Registrar — Investor Protection Fund (IPF) 5-Year Aging Tracker
+                  SEBON & Office of Company Registrar — Investor Protection Fund (IPF) 5-Year Aging
+                  Tracker
                 </CardTitle>
                 <CardDescription className="text-xs">
-                  Pursuant to Section 182 of the Nepal Companies Act 2063: Unclaimed dividends older than 5 years must be transferred to the Investor Protection Fund.
+                  Pursuant to Section 182 of the Nepal Companies Act 2063: Unclaimed dividends older
+                  than 5 years must be transferred to the Investor Protection Fund.
                 </CardDescription>
               </div>
               {ipfReport && ipfReport.ipfEligibleCount > 0 && (
@@ -1499,7 +1543,9 @@ function ReportsRoute() {
                         <div className="text-xl font-bold mt-2 font-mono">
                           {format(bucket.totalAmount)}
                         </div>
-                        <span className="text-xs text-muted-foreground">{bucket.count.toLocaleString()} payables</span>
+                        <span className="text-xs text-muted-foreground">
+                          {bucket.count.toLocaleString()} payables
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -1509,10 +1555,13 @@ function ReportsRoute() {
                     <div>
                       <h4 className="font-semibold text-sm">Total Unclaimed Payable Balance</h4>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Total {ipfReport.totalUnclaimedCount.toLocaleString()} unclaimed payables amounting to {format(ipfReport.totalUnclaimedAmount)}.
+                        Total {ipfReport.totalUnclaimedCount.toLocaleString()} unclaimed payables
+                        amounting to {format(ipfReport.totalUnclaimedAmount)}.
                         {ipfReport.ipfEligibleCount > 0 ? (
                           <span className="text-amber-700 dark:text-amber-400 font-semibold ml-1">
-                            {ipfReport.ipfEligibleCount.toLocaleString()} payables ({format(ipfReport.ipfEligibleAmount)}) have exceeded 5 years and are ready for statutory transfer.
+                            {ipfReport.ipfEligibleCount.toLocaleString()} payables (
+                            {format(ipfReport.ipfEligibleAmount)}) have exceeded 5 years and are
+                            ready for statutory transfer.
                           </span>
                         ) : (
                           <span className="text-emerald-700 dark:text-emerald-400 font-semibold ml-1">

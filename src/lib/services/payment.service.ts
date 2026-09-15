@@ -80,14 +80,52 @@ export const PaymentService = {
         .range(offset, offset + limit - 1);
 
       if (error) {
-        console.warn("Failed to fetch payment batches:", error.message);
-        return [];
+        console.error("Failed to fetch payment batches:", error.message);
+        throw error;
       }
       return (data || []) as PaymentBatch[];
     } catch (err: any) {
-      console.warn("Failed to fetch payment batches:", err?.message || err);
-      return [];
+      console.error("Failed to fetch payment batches:", err?.message || err);
+      throw err;
     }
+  },
+
+  async getBatchesPaginated(
+    page = 1,
+    pageSize = 50,
+    companyId?: string,
+  ): Promise<{
+    data: PaymentBatch[];
+    total: number;
+    page: number;
+    pageSize: number;
+    totalPages: number;
+  }> {
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+    let query = (supabase as any)
+      .from("payment_batches")
+      .select("*", { count: "exact" })
+      .order("created_at", { ascending: false })
+      .range(from, to);
+
+    if (companyId && companyId !== "all") {
+      query = query.eq("company_id", companyId);
+    }
+
+    const { data, count, error } = await query;
+    if (error) {
+      console.error("Failed to fetch paginated payment batches:", error.message);
+      throw error;
+    }
+    const total = count || 0;
+    return {
+      data: (data || []) as PaymentBatch[],
+      total,
+      page,
+      pageSize,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    };
   },
 
   async getBatchById(batchId: string): Promise<PaymentBatch | null> {
@@ -99,13 +137,14 @@ export const PaymentService = {
         .single();
 
       if (error) {
-        console.warn("Failed to fetch batch:", error.message);
-        return null;
+        if (error.code === "PGRST116") return null;
+        console.error("Failed to fetch batch:", error.message);
+        throw error;
       }
       return data as PaymentBatch;
     } catch (err: any) {
-      console.warn("Failed to fetch batch:", err?.message || err);
-      return null;
+      console.error("Failed to fetch batch:", err?.message || err);
+      throw err;
     }
   },
 
@@ -118,13 +157,13 @@ export const PaymentService = {
         .order("created_at", { ascending: true });
 
       if (error) {
-        console.warn("Failed to fetch line items:", error.message);
-        return [];
+        console.error("Failed to fetch line items:", error.message);
+        throw error;
       }
       return (data || []) as PaymentLineItem[];
     } catch (err: any) {
-      console.warn("Failed to fetch line items:", err?.message || err);
-      return [];
+      console.error("Failed to fetch line items:", err?.message || err);
+      throw err;
     }
   },
 
@@ -134,32 +173,61 @@ export const PaymentService = {
     fiscal_year?: string;
     payable_type?: string;
     payment_method: string;
-  }): Promise<PaymentBatch | null> {
-    try {
-      const { data, error } = await (supabase as any)
-        .from("payment_batches")
-        .insert({
-          batch_name: batchData.batch_name,
-          company_id: batchData.company_id,
-          fiscal_year: batchData.fiscal_year,
-          payable_type: batchData.payable_type,
-          payment_method: batchData.payment_method,
-          status: "Draft",
-          total_payments: 0,
-          total_amount: 0,
-          total_tax: 0,
-        })
-        .select()
-        .single();
+  }): Promise<PaymentBatch> {
+    const { data, error } = await (supabase as any)
+      .from("payment_batches")
+      .insert({
+        batch_name: batchData.batch_name,
+        company_id: batchData.company_id,
+        fiscal_year: batchData.fiscal_year,
+        payable_type: batchData.payable_type,
+        payment_method: batchData.payment_method,
+        status: "Draft",
+        total_payments: 0,
+        total_amount: 0,
+        total_tax: 0,
+      })
+      .select()
+      .single();
 
-      if (error) {
-        console.warn("Failed to create batch:", error.message);
-        return null;
+    if (error) {
+      console.error("Failed to create batch:", error.message);
+      throw new Error(`Failed to create payment batch: ${error.message}`);
+    }
+    return data as PaymentBatch;
+  },
+
+  /**
+   * Transactional batch creation with automatic rollback if line item insertion fails.
+   */
+  async createBatchWithLineItems(
+    batchData: {
+      batch_name: string;
+      company_id?: string;
+      fiscal_year?: string;
+      payable_type?: string;
+      payment_method: string;
+    },
+    lineItems: Omit<PaymentLineItem, "id" | "batch_id" | "created_at" | "updated_at">[],
+  ): Promise<PaymentBatch> {
+    const batch = await this.createBatch(batchData);
+    if (!batch?.id) {
+      throw new Error("Failed to initialize payment batch");
+    }
+
+    try {
+      if (lineItems.length > 0) {
+        await this.addLineItems(batch.id, lineItems);
       }
-      return data as PaymentBatch;
-    } catch (err: any) {
-      console.warn("Failed to create batch:", err?.message || err);
-      return null;
+      const reloaded = await this.getBatchById(batch.id);
+      return reloaded || batch;
+    } catch (insertErr) {
+      console.error("Error inserting line items for batch; rolling back draft batch:", insertErr);
+      // Rollback: delete line items and draft batch header
+      await this.deleteBatch(batch.id).catch((rollbackErr) => {
+        console.error("Rollback failed for batch:", batch.id, rollbackErr);
+      });
+      throw insertErr;
     }
   },
 
@@ -167,34 +235,29 @@ export const PaymentService = {
    * Delete a draft or canceled batch and remove its line items
    */
   async deleteBatch(batchId: string): Promise<boolean> {
-    try {
-      // 1. Delete associated payments / line items
-      const { error: lineItemsError } = await (supabase as any)
-        .from("payments")
-        .delete()
-        .eq("batch_id", batchId);
+    // 1. Delete associated payments / line items
+    const { error: lineItemsError } = await (supabase as any)
+      .from("payments")
+      .delete()
+      .eq("batch_id", batchId);
 
-      if (lineItemsError) {
-        console.warn("Failed to delete payment line items:", lineItemsError.message);
-        return false;
-      }
-
-      // 2. Delete the batch header
-      const { error: batchError } = await (supabase as any)
-        .from("payment_batches")
-        .delete()
-        .eq("id", batchId);
-
-      if (batchError) {
-        console.warn("Failed to delete payment batch:", batchError.message);
-        return false;
-      }
-
-      return true;
-    } catch (err: any) {
-      console.warn("Failed to delete batch:", err?.message || err);
-      return false;
+    if (lineItemsError) {
+      console.error("Failed to delete payment line items:", lineItemsError.message);
+      throw new Error(`Failed to delete line items: ${lineItemsError.message}`);
     }
+
+    // 2. Delete the batch header
+    const { error: batchError } = await (supabase as any)
+      .from("payment_batches")
+      .delete()
+      .eq("id", batchId);
+
+    if (batchError) {
+      console.error("Failed to delete payment batch:", batchError.message);
+      throw new Error(`Failed to delete batch: ${batchError.message}`);
+    }
+
+    return true;
   },
 
   async addLineItems(
@@ -269,100 +332,49 @@ export const PaymentService = {
     status: PaymentBatch["status"],
     userId?: string,
   ): Promise<boolean> {
-    try {
-      const updateData: any = { status };
+    // When completing a batch, require atomic database-level transaction:
+    if (status === "Completed") {
+      const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc(
+        "complete_payment_batch_atomic",
+        {
+          p_batch_id: batchId,
+          p_user_id: userId || null,
+        },
+      );
 
-      if (status === "Approved" && userId) {
-        updateData.approved_by = userId;
-        updateData.approved_at = new Date().toISOString();
-      } else if (status === "Processed" || status === "Completed") {
-        updateData.processed_at = new Date().toISOString();
-      }
-
-      const { error } = await (supabase as any)
-        .from("payment_batches")
-        .update(updateData)
-        .eq("id", batchId);
-
-      if (error) {
-        console.warn("Failed to update batch status:", error.message);
-        return false;
-      }
-
-      // When a batch is Completed, synchronize linked line items and underlying payables atomically
-      if (status === "Completed") {
-        try {
-          // Attempt atomic database-level transaction via RPC first
-          const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc(
-            "complete_payment_batch_atomic",
-            {
-              p_batch_id: batchId,
-              p_user_id: userId || null,
-            },
-          );
-
-          if (!rpcErr && rpcRes?.success) {
-            return true;
-          }
-        } catch (rpcEx) {
-          console.warn(
-            "Atomic batch RPC not available, falling back to client batch cascade:",
-            rpcEx,
-          );
-        }
-
-        // Fallback: Client-orchestrated cascade
-        try {
-          const { data: lineItems } = await (supabase as any)
-            .from("payments")
-            .select("id, payable_type, payable_id, status")
-            .eq("batch_id", batchId);
-
-          const today = new Date().toISOString().split("T")[0];
-
-          // Update pending payments in this batch to Completed
-          await (supabase as any)
-            .from("payments")
-            .update({
-              status: "Completed",
-              payment_date: today,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("batch_id", batchId)
-            .eq("status", "Pending");
-
-          // Update underlying payables to Paid in bulk chunks
-          const payablesByTable: Record<string, string[]> = {
-            dividend_payables: [],
-            interest_payables: [],
-            mutual_fund_payables: [],
-          };
-
-          for (const item of lineItems || []) {
-            if (!item.payable_id) continue;
-            if (item.payable_type === "dividend")
-              payablesByTable.dividend_payables.push(item.payable_id);
-            else if (item.payable_type === "interest")
-              payablesByTable.interest_payables.push(item.payable_id);
-            else if (item.payable_type === "mutual_fund")
-              payablesByTable.mutual_fund_payables.push(item.payable_id);
-          }
-
-          for (const [table, ids] of Object.entries(payablesByTable)) {
-            if (ids.length > 0) {
-              await bulkUpdateByIds(table, ids, { payment_status: "Paid", payment_date: today });
-            }
-          }
-        } catch (syncErr) {
-          console.warn("Failed to cascade batch completion to payables:", syncErr);
-        }
+      if (rpcErr || !rpcRes?.success) {
+        const msg = rpcErr?.message || rpcRes?.error || "Unknown RPC error";
+        console.error(
+          "Failed to complete payment batch: atomic completion RPC required and rejected:",
+          msg,
+        );
+        throw new Error(`Atomic batch completion failed: ${msg}`);
       }
 
       return true;
-    } catch (err: any) {
-      console.warn("Failed to update batch status:", err?.message || err);
-      return false;
     }
+
+    // Non-Completed status updates (Draft, Pending, Approved, Processed, Rejected, etc.)
+    const updateData: any = { status };
+
+    if (status === "Approved" && userId) {
+      updateData.approved_by = userId;
+      updateData.approved_at = new Date().toISOString();
+    } else if (status === "Processed") {
+      updateData.processed_at = new Date().toISOString();
+    }
+
+    const { error } = await (supabase as any)
+      .from("payment_batches")
+      .update(updateData)
+      .eq("id", batchId);
+
+    if (error) {
+      console.error("Failed to update batch status:", error.message);
+      throw new Error(`Failed to update batch status: ${error.message}`);
+    }
+
+    return true;
   },
 
   async updatePaymentStatus(
@@ -370,132 +382,126 @@ export const PaymentService = {
     status: string,
     additionalData: Record<string, any> = {},
   ): Promise<boolean> {
-    try {
-      const { error } = await (supabase as any)
-        .from("payments")
-        .update({
-          status,
-          ...additionalData,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", paymentId);
+    const { error } = await (supabase as any)
+      .from("payments")
+      .update({
+        status,
+        ...additionalData,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", paymentId);
 
-      if (error) {
-        console.warn("Failed to update payment status:", error.message);
-        return false;
-      }
-      return true;
-    } catch (err: any) {
-      console.warn("Failed to update payment status:", err?.message || err);
-      return false;
+    if (error) {
+      console.error("Failed to update payment status:", error.message);
+      throw new Error(`Failed to update payment status: ${error.message}`);
     }
+    return true;
   },
 
   /**
    * Reverse a payment - marks it as Reversed and restores the payable status
    */
   async reversePayment(paymentId: string, reason: string, userId?: string): Promise<boolean> {
-    try {
-      // Get the payment record
-      const { data: payment, error: fetchError } = await (supabase as any)
-        .from("payments")
-        .select("*")
-        .eq("id", paymentId)
-        .single();
+    // Get the payment record
+    const { data: payment, error: fetchError } = await (supabase as any)
+      .from("payments")
+      .select("*")
+      .eq("id", paymentId)
+      .single();
 
-      if (fetchError || !payment) {
-        console.warn("Failed to fetch payment for reversal:", fetchError?.message);
-        return false;
-      }
-
-      if (payment.status === "Reversed") {
-        console.warn("Payment is already reversed:", paymentId);
-        return false;
-      }
-
-      // Update payment status to Reversed
-      const { error: updateError } = await (supabase as any)
-        .from("payments")
-        .update({
-          status: "Reversed",
-          reversal_reason: reason,
-          reversed_by: userId || null,
-          reversed_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", paymentId);
-
-      if (updateError) {
-        console.warn("Failed to reverse payment:", updateError.message);
-        return false;
-      }
-
-      // Restore the payable status to Pending
-      if (payment.payable_type && payment.payable_id) {
-        const tableName =
-          payment.payable_type === "dividend"
-            ? "dividend_payables"
-            : payment.payable_type === "interest"
-              ? "interest_payables"
-              : payment.payable_type === "mutual_fund"
-                ? "mutual_fund_payables"
-                : null;
-
-        if (tableName) {
-          await (supabase as any)
-            .from(tableName)
-            .update({ payment_status: "Pending" })
-            .eq("id", payment.payable_id);
-        }
-      }
-
-      // Log the reversal
-      try {
-        await (supabase as any).from("payment_logs").insert({
-          payment_id: paymentId,
-          action: "reversed",
-          previous_status: payment.status,
-          new_status: "Reversed",
-          amount: payment.net_amount,
-          notes: reason,
-          performed_by: userId || null,
-        });
-      } catch (logErr) {
-        console.warn("Failed to log payment reversal:", logErr);
-      }
-
-      // Synchronize parent batch totals and lifecycle status if batch exists
-      if (payment.batch_id) {
-        try {
-          await this.updateBatchTotals(payment.batch_id);
-
-          const { data: batchPayments } = await (supabase as any)
-            .from("payments")
-            .select("status")
-            .eq("batch_id", payment.batch_id);
-
-          if (batchPayments && batchPayments.length > 0) {
-            const allReversed = batchPayments.every(
-              (p: any) =>
-                p.status === "Reversed" || p.status === "Failed" || p.status === "Returned",
-            );
-            if (allReversed) {
-              await (supabase as any)
-                .from("payment_batches")
-                .update({ status: "Returned", updated_at: new Date().toISOString() })
-                .eq("id", payment.batch_id);
-            }
-          }
-        } catch (batchSyncErr) {
-          console.warn("Could not synchronize parent batch after reversal:", batchSyncErr);
-        }
-      }
-
-      return true;
-    } catch (err: any) {
-      console.warn("Failed to reverse payment:", err?.message || err);
-      return false;
+    if (fetchError || !payment) {
+      const msg = fetchError?.message || "Payment not found";
+      console.error("Failed to fetch payment for reversal:", msg);
+      throw new Error(`Failed to fetch payment for reversal: ${msg}`);
     }
+
+    if (payment.status === "Reversed") {
+      throw new Error(`Payment ${paymentId} is already reversed`);
+    }
+
+    // Update payment status to Reversed
+    const { error: updateError } = await (supabase as any)
+      .from("payments")
+      .update({
+        status: "Reversed",
+        reversal_reason: reason,
+        reversed_by: userId || null,
+        reversed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", paymentId);
+
+    if (updateError) {
+      console.error("Failed to reverse payment:", updateError.message);
+      throw new Error(`Failed to reverse payment: ${updateError.message}`);
+    }
+
+    // Restore the payable status to Pending
+    if (payment.payable_type && payment.payable_id) {
+      const tableName =
+        payment.payable_type === "dividend"
+          ? "dividend_payables"
+          : payment.payable_type === "interest"
+            ? "interest_payables"
+            : payment.payable_type === "mutual_fund"
+              ? "mutual_fund_payables"
+              : null;
+
+      if (tableName) {
+        const { error: restoreErr } = await (supabase as any)
+          .from(tableName)
+          .update({ payment_status: "Pending" })
+          .eq("id", payment.payable_id);
+
+        if (restoreErr) {
+          console.error("Failed to restore payable status:", restoreErr.message);
+          throw new Error(`Failed to restore payable status: ${restoreErr.message}`);
+        }
+      }
+    }
+
+    // Log the reversal
+    try {
+      await (supabase as any).from("payment_logs").insert({
+        payment_id: paymentId,
+        action: "reversed",
+        previous_status: payment.status,
+        new_status: "Reversed",
+        amount: payment.net_amount,
+        notes: reason,
+        performed_by: userId || null,
+      });
+    } catch (logErr) {
+      console.warn("Failed to log payment reversal:", logErr);
+    }
+
+    // Synchronize parent batch totals and lifecycle status if batch exists
+    if (payment.batch_id) {
+      try {
+        await this.updateBatchTotals(payment.batch_id);
+
+        const { data: batchPayments } = await (supabase as any)
+          .from("payments")
+          .select("status")
+          .eq("batch_id", payment.batch_id);
+
+        if (batchPayments && batchPayments.length > 0) {
+          const allReversed = batchPayments.every(
+            (p: any) => p.status === "Reversed" || p.status === "Failed" || p.status === "Returned",
+          );
+          if (allReversed) {
+            await (supabase as any)
+              .from("payment_batches")
+              .update({ status: "Returned", updated_at: new Date().toISOString() })
+              .eq("id", payment.batch_id);
+          }
+        }
+      } catch (batchSyncErr) {
+        console.warn("Could not synchronize parent batch after reversal:", batchSyncErr);
+      }
+    }
+
+    return true;
   },
 
   /**
@@ -746,8 +752,8 @@ export const PaymentService = {
       // Filter out payables that are already part of an active payment batch
       return payables.filter((p) => !batchedPayableIds.has(p.id));
     } catch (err: any) {
-      console.warn("Failed to fetch payables:", err?.message || err);
-      return [];
+      console.error("Failed to fetch payables for payment:", err?.message || err);
+      throw err;
     }
   },
 };

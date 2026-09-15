@@ -230,6 +230,7 @@ export function formatIafDetailLine(record: IafRecord, defaultRtaRef = ""): stri
   const boid = String(record.boid || "")
     .trim()
     .replace(/[^0-9A-Za-z]/g, "")
+    .padStart(16, "0")
     .slice(0, 16);
   const currentQty = formatIafQuantity(record.currentKitta);
   const lockInQty = formatIafQuantity(record.lockInKitta);

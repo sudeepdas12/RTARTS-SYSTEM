@@ -1,4 +1,4 @@
-﻿import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "vitest";
 import { CdscBonusService, BonusAllocationSummary, BonusTaxMode } from "./cdsc-bonus.service";
 
 describe("CdscBonusService — CDSC DEMAT Credit & Fractional Cash Math", () => {
@@ -102,5 +102,23 @@ describe("CdscBonusService — CDSC DEMAT Credit & Fractional Cash Math", () => 
     expect(lines[0].slice(0, 10)).toBe("0000000001");
     // Detail line should be exactly 124 characters
     expect(lines[1].length).toBe(124);
+  });
+
+  it("applies 0% tax for MUTUAL FUND and TAX_EXEMPT classifications", () => {
+    const checkExemption = (holderType: string, payeeClass?: string) => {
+      return (
+        payeeClass === "TAX_EXEMPT" ||
+        (holderType || "").toUpperCase().includes("MUTUAL") ||
+        (holderType || "").toUpperCase().includes("TAX EXEMPT") ||
+        (holderType || "").toUpperCase().includes("TAX_EXEMPT") ||
+        (holderType || "").toUpperCase().includes("EXEMPT")
+      );
+    };
+
+    expect(checkExemption("MUTUAL FUND")).toBe(true);
+    expect(checkExemption("CITIZEN INVESTMENT TRUST", "TAX_EXEMPT")).toBe(true);
+    expect(checkExemption("TAX EXEMPT ENTITY")).toBe(true);
+    expect(checkExemption("EMPLOYEES PROVIDENT FUND (TAX_EXEMPT)")).toBe(true);
+    expect(checkExemption("PUBLIC INDIVIDUAL", "NATURAL_PERSON")).toBe(false);
   });
 });

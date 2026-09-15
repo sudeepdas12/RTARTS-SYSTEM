@@ -2,6 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 import * as XLSX from "xlsx";
 import { z } from "zod";
 import { RECONCILIATION_TOLERANCE_NPR } from "./constants";
+import { chunkArray } from "./bulk-ops";
 import { detectPayeeCategory } from "./services/payable-summary";
 import {
   getTaxRateFromRules,
@@ -90,6 +91,81 @@ interface ValidationContext {
 
 const PAYABLE_TABLES = ["dividend_payables", "interest_payables", "mutual_fund_payables"] as const;
 
+export const BOID_ALIASES = [
+  "boid",
+  "BOID",
+  "BENEFICIARY ID",
+  "CLIENT ID",
+  "BENEFICIARY_ID",
+  "CLIENT_ID",
+  "DP ID",
+  "DPID",
+  "BO ID",
+  "BO_ID",
+  "BENEFICIARY_NO",
+  "BENEFICIARY NO",
+  "BENEFICIARY",
+  "CLIENT CODE",
+  "CLIENT_CODE",
+  "DMAT A/C",
+  "DEMAT A/C",
+  "DEMAT_ACCOUNT",
+  "DEMAT",
+  "BOID NO",
+  "BOID NO.",
+];
+
+export function cleanBoidString(raw: string): string {
+  let cleaned = String(raw || "")
+    .trim()
+    .replace(/[, -]/g, "")
+    .split(".")[0];
+  if (cleaned.includes("e") || cleaned.includes("E")) {
+    const num = Number(cleaned);
+    if (!isNaN(num)) {
+      cleaned = num.toLocaleString("fullwide", { useGrouping: false });
+    }
+  }
+  return cleaned;
+}
+
+export function extractCanonicalBoid(row: any, mappings?: Record<string, string>): string {
+  if (!row) return "";
+  if (mappings) {
+    const mappedKey = Object.entries(mappings).find(([_, v]) => v === "boid")?.[0];
+    if (mappedKey && row[mappedKey] !== undefined && row[mappedKey] !== null) {
+      const val = cleanBoidString(row[mappedKey]);
+      if (val) return val;
+    }
+  }
+
+  for (const alias of BOID_ALIASES) {
+    if (row[alias] !== undefined && row[alias] !== null && String(row[alias]).trim() !== "") {
+      return cleanBoidString(String(row[alias]));
+    }
+  }
+
+  // Fallback: check case-insensitively
+  for (const [key, val] of Object.entries(row)) {
+    if (val !== undefined && val !== null && String(val).trim() !== "") {
+      const cleanKey = key
+        .trim()
+        .toUpperCase()
+        .replace(/[\s_.-]/g, "");
+      if (
+        cleanKey === "BOID" ||
+        cleanKey === "BENEFICIARYID" ||
+        cleanKey === "DEMATAC" ||
+        cleanKey === "CLIENTID"
+      ) {
+        return cleanBoidString(String(val));
+      }
+    }
+  }
+
+  return "";
+}
+
 async function hasActiveRowsForUpload(
   uploadId: string,
   targetTable?: string | null,
@@ -104,8 +180,11 @@ async function hasActiveRowsForUpload(
       .eq("upload_id", uploadId);
 
     if (error) {
-      console.warn(`Duplicate-check row probe failed for ${table}:`, error.message);
-      continue;
+      console.error(
+        `Duplicate-check row probe failed for ${table} (failing closed):`,
+        error.message,
+      );
+      throw new Error(`Duplicate-check row probe failed for ${table}: ${error.message}`);
     }
 
     if ((count || 0) > 0) {
@@ -124,8 +203,8 @@ async function hasActiveDuplicateFileHash(fileHash: string): Promise<boolean> {
     .eq("status", "Completed");
 
   if (error) {
-    console.warn("Failed to check duplicate file hash:", error.message);
-    return false;
+    console.error("Failed to check duplicate file hash (failing closed):", error.message);
+    throw new Error(`Failed to check duplicate file hash: ${error.message}`);
   }
 
   for (const upload of data || []) {
@@ -161,10 +240,11 @@ const isValidDateString = (value: string): boolean => {
 
   // Bikram Sambat (BS) calendar check (years 2050 - 2150)
   const parts = str.split(/[-/]/).map(Number);
-  const year = parts[0] > 1000 ? parts[0] : parts[2];
+  const isYearFirst = parts[0] > 1000;
+  const year = isYearFirst ? parts[0] : parts[2];
   if (year >= 2050 && year <= 2150) {
-    const month = parts[0] > 1000 ? parts[1] : parts[1];
-    const day = parts[0] > 1000 ? parts[2] : parts[0];
+    const month = parts[1];
+    const day = isYearFirst ? parts[2] : parts[0];
     return month >= 1 && month <= 12 && day >= 1 && day <= 32;
   }
 
@@ -225,21 +305,33 @@ export const ValidationEngine = {
     return entry ? entry[0] : dbField;
   },
 
-  async buildContext(rows: any[], fileType?: string): Promise<ValidationContext> {
-    const boids = rows.map((r) => r["BOID"] || r["boid"]).filter(Boolean);
-    const { data: clients } = await supabase
-      .from("clients")
-      .select("boid, client_code, pan_or_citizenship")
-      .in("boid", boids);
-    const existingBoids = new Set<string>(
-      clients?.map((c) => c.boid).filter((b): b is string => b !== null) || [],
-    );
-    const existingClientCodes = new Set<string>(
-      clients?.map((c) => c.client_code).filter((c): c is string => c !== null) || [],
-    );
-    const existingPans = new Set<string>(
-      clients?.map((c) => c.pan_or_citizenship).filter((p): p is string => p !== null) || [],
-    );
+  async buildContext(
+    rows: any[],
+    fileType?: string,
+    mappings?: Record<string, string>,
+  ): Promise<ValidationContext> {
+    const rawBoids = rows.map((r) => extractCanonicalBoid(r, mappings)).filter(Boolean);
+    const uniqueBoids = Array.from(new Set(rawBoids));
+
+    const existingBoids = new Set<string>();
+    const existingClientCodes = new Set<string>();
+    const existingPans = new Set<string>();
+
+    if (uniqueBoids.length > 0) {
+      const boidChunks = chunkArray(uniqueBoids, 500);
+      for (const chunk of boidChunks) {
+        const { data: clients } = await supabase
+          .from("clients")
+          .select("boid, client_code, pan_or_citizenship")
+          .in("boid", chunk);
+
+        clients?.forEach((c) => {
+          if (c.boid) existingBoids.add(c.boid);
+          if (c.client_code) existingClientCodes.add(c.client_code);
+          if (c.pan_or_citizenship) existingPans.add(c.pan_or_citizenship);
+        });
+      }
+    }
 
     const { data: companies } = await supabase
       .from("companies")
@@ -331,18 +423,31 @@ export const ValidationEngine = {
   ): Promise<ValidationError[]> {
     const errors: ValidationError[] = [];
 
-    if (fileHash && (await hasActiveDuplicateFileHash(fileHash))) {
-      errors.push({
-        row: 0,
-        field: "file",
-        type: "duplicate_upload",
-        message: "This file has already been uploaded.",
-        rawData: {},
-      });
-      return errors;
+    if (fileHash) {
+      try {
+        if (await hasActiveDuplicateFileHash(fileHash)) {
+          errors.push({
+            row: 0,
+            field: "file",
+            type: "duplicate_upload",
+            message: "This file has already been uploaded.",
+            rawData: {},
+          });
+          return errors;
+        }
+      } catch (checkErr: any) {
+        errors.push({
+          row: 0,
+          field: "file",
+          type: "duplicate_check_error",
+          message: `Unable to verify duplicate upload status: ${checkErr?.message || checkErr}. Upload blocked for safety.`,
+          rawData: {},
+        });
+        return errors;
+      }
     }
 
-    const ctx = await this.buildContext(rows, fileType);
+    const ctx = await this.buildContext(rows, fileType, mappings);
 
     // Derive a TDS rate from the TAX column's header when it encodes the rate
     // (e.g. "TAX @6%", "TAX @15%") so we can cross-check tax = gross × rate
@@ -365,17 +470,7 @@ export const ValidationEngine = {
         return row[mappedKey] ?? row[field];
       };
 
-      // Clean up BOID: strip commas, spaces, decimals, and fix scientific notation if any
-      let rawBoid = normalizeString(get("boid") || get("BOID"));
-      rawBoid = rawBoid.replace(/[, -]/g, "").split(".")[0]; // Remove commas/spaces/dashes, drop decimals
-      if (rawBoid.includes("e") || rawBoid.includes("E")) {
-        // If Excel converted large number to scientific notation (e.g. 1.30123e+15)
-        const num = Number(rawBoid);
-        if (!isNaN(num)) {
-          rawBoid = num.toLocaleString("fullwide", { useGrouping: false });
-        }
-      }
-      const boid = rawBoid;
+      const boid = extractCanonicalBoid(row, mappings);
 
       const fullName = normalizeString(get("full_name") || get("NAME"));
       const clientCode = normalizeString(get("client_code") || get("CLIENT_CODE"));
@@ -617,6 +712,7 @@ export const ValidationEngine = {
           "NATURAL_PERSON",
           "PUBLIC_LEGAL_PERSON",
           "COMPANY_INSTITUTION",
+          "FOREIGN_INVESTOR",
           "TAX_EXEMPT",
           "UNCLASSIFIED",
         ]);
@@ -625,7 +721,7 @@ export const ValidationEngine = {
             row: rowNum,
             field: "payee_classification",
             type: "invalid_payee_classification",
-            message: `Payee classification "${rawClassification}" is not a recognized classification. Expected one of NATURAL_PERSON, PUBLIC_LEGAL_PERSON, COMPANY_INSTITUTION, TAX_EXEMPT, UNCLASSIFIED.`,
+            message: `Payee classification "${rawClassification}" is not a recognized classification. Expected one of NATURAL_PERSON, PUBLIC_LEGAL_PERSON, COMPANY_INSTITUTION, FOREIGN_INVESTOR, TAX_EXEMPT, UNCLASSIFIED.`,
             rawData,
           });
         }

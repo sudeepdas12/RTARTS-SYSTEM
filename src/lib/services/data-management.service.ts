@@ -364,8 +364,8 @@ export const DataManagementService = {
           a.fiscal_year.localeCompare(b.fiscal_year),
       );
     } catch (err: any) {
-      console.warn("Failed to get company fiscal summary:", err?.message || err);
-      return [];
+      console.error("Failed to get company fiscal summary:", err?.message || err);
+      throw err;
     }
   },
 
@@ -493,8 +493,8 @@ export const DataManagementService = {
 
       return results;
     } catch (err: any) {
-      console.warn("Failed to get client fiscal detail:", err?.message || err);
-      return [];
+      console.error("Failed to get client fiscal detail:", err?.message || err);
+      throw err;
     }
   },
 
@@ -515,14 +515,19 @@ export const DataManagementService = {
           .not("fiscal_year", "is", null),
       ]);
 
+      if (divRes.error) throw divRes.error;
+      if (intRes.error) throw intRes.error;
+      if (mfRes.error) throw mfRes.error;
+
       const years = new Set<string>();
       for (const r of divRes.data || []) if (r.fiscal_year) years.add(r.fiscal_year);
       for (const r of intRes.data || []) if (r.fiscal_year) years.add(r.fiscal_year);
       for (const r of mfRes.data || []) if (r.fiscal_year) years.add(r.fiscal_year);
 
       return Array.from(years).sort((a, b) => b.localeCompare(a));
-    } catch {
-      return [];
+    } catch (err: any) {
+      console.error("Failed to get distinct fiscal years:", err?.message || err);
+      throw err;
     }
   },
 

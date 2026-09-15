@@ -117,27 +117,30 @@ export function ReconciliationRoute() {
     if (historySourceFilter === "bank_statement") {
       list = list.filter(
         (l) =>
+          l.sourceType === "bank_statement" ||
+          l.records.some((r) => r.source_a_type === "bank_statement") ||
           (l.fileName && l.fileName.toLowerCase().includes("statement")) ||
           l.lotName.toLowerCase().includes("statement") ||
-          l.records.some(
-            (r) =>
-              r.source_a_type === "bank_statement" ||
-              (r.notes && r.notes.toLowerCase().includes("statement")),
-          ),
+          l.records.some((r) => r.notes && r.notes.toLowerCase().includes("statement")),
       );
     } else if (historySourceFilter === "connectips") {
-      list = list.filter(
-        (l) =>
-          !(
-            (l.fileName && l.fileName.toLowerCase().includes("statement")) ||
-            l.lotName.toLowerCase().includes("statement")
-          ) &&
-          ((l.fileName && l.fileName.toLowerCase().includes("ips")) ||
-            l.lotName.toLowerCase().includes("ips") ||
-            l.lotName.toLowerCase().includes("lot") ||
-            l.lotName.toLowerCase().includes("batch") ||
-            l.records.some((r) => r.notes && r.notes.toLowerCase().includes("connectips"))),
-      );
+      list = list.filter((l) => {
+        const isBank =
+          l.sourceType === "bank_statement" ||
+          l.records.some((r) => r.source_a_type === "bank_statement");
+        if (isBank) return false;
+
+        return (
+          l.sourceType === "excel" ||
+          l.sourceType === "connectips" ||
+          l.records.some((r) => r.source_a_type === "excel" || r.source_a_type === "connectips") ||
+          (l.fileName && l.fileName.toLowerCase().includes("ips")) ||
+          l.lotName.toLowerCase().includes("ips") ||
+          l.lotName.toLowerCase().includes("lot") ||
+          l.lotName.toLowerCase().includes("batch") ||
+          l.records.some((r) => r.notes && r.notes.toLowerCase().includes("connectips"))
+        );
+      });
     }
     return list;
   }, [groupedLots, historyCompanyFilter, historySourceFilter]);

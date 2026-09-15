@@ -9,6 +9,7 @@ export interface ReconciliationResultRow {
   source_b_id: string | null;
   client_id: string | null;
   company_id: string | null;
+  fiscal_year?: string | null;
   payable_type: string | null;
   payable_id: string | null;
   expected_amount: number | null;
@@ -37,6 +38,7 @@ export interface ReconciliationGroupedLot {
   date: string;
   companyName: string;
   payableType: string;
+  sourceType?: string;
   fileName?: string;
   batchRef?: string;
   totalRecords: number;
@@ -50,6 +52,22 @@ export interface ReconciliationGroupedLot {
 }
 
 export const ReconciliationService = {
+  async getResultsCount(): Promise<number> {
+    try {
+      const { count, error } = await (supabase as any)
+        .from("reconciliation_results")
+        .select("id", { count: "exact", head: true });
+      if (error) {
+        console.error("Failed to count reconciliation results:", error.message);
+        return 0;
+      }
+      return count ?? 0;
+    } catch (err: any) {
+      console.error("Failed to count reconciliation results:", err?.message || err);
+      return 0;
+    }
+  },
+
   async getResults(limit = 10000, offset = 0): Promise<ReconciliationResultRow[]> {
     try {
       const { data, error } = await (supabase as any)
@@ -64,13 +82,13 @@ export const ReconciliationService = {
         .order("created_at", { ascending: false })
         .range(offset, offset + limit - 1);
       if (error) {
-        console.warn("Failed to fetch reconciliation results:", error.message);
-        return [];
+        console.error("Failed to fetch reconciliation results:", error.message);
+        throw error;
       }
       return (data || []) as ReconciliationResultRow[];
     } catch (err: any) {
-      console.warn("Failed to fetch reconciliation results:", err?.message || err);
-      return [];
+      console.error("Failed to fetch reconciliation results:", err?.message || err);
+      throw err;
     }
   },
 
@@ -126,6 +144,9 @@ export const ReconciliationService = {
           date: dateStr,
           companyName,
           payableType,
+          sourceType:
+            r.source_a_type ||
+            (extractedFileName?.toLowerCase().includes("statement") ? "bank_statement" : "excel"),
           fileName: extractedFileName,
           batchRef,
           totalRecords: 0,
@@ -140,6 +161,9 @@ export const ReconciliationService = {
       }
 
       const lot = map.get(lotKey)!;
+      if (r.source_a_type === "bank_statement") {
+        lot.sourceType = "bank_statement";
+      }
       lot.totalRecords += 1;
       const actualAmt = Number(r.actual_amount || r.expected_amount || 0);
       lot.totalAmount += actualAmt;
@@ -210,6 +234,38 @@ export const ReconciliationService = {
     historyDeleted: boolean;
     success: boolean;
   }> {
+    const resultIds = (lot.records || []).map((r) => r.id).filter(Boolean);
+    if (!resultIds.length) {
+      return { revertedPayables: 0, deletedPayments: 0, historyDeleted: false, success: true };
+    }
+
+    try {
+      // 1. Primary: Use atomic SECURITY DEFINER database transaction
+      const { data, error } = await (supabase as any).rpc("revert_reconciliation_lot_atomic", {
+        p_result_ids: resultIds,
+      });
+
+      if (!error && data) {
+        return {
+          revertedPayables: Number(data.reverted_payables ?? 0),
+          deletedPayments: Number(data.updated_payments ?? 0),
+          historyDeleted: Number(data.deleted_results ?? 0) > 0,
+          success: Boolean(data.success),
+        };
+      }
+      if (error) {
+        console.warn(
+          "revert_reconciliation_lot_atomic RPC failed, trying fallback:",
+          error.message,
+        );
+      }
+    } catch (rpcErr: any) {
+      console.warn(
+        "revert_reconciliation_lot_atomic invocation error, falling back:",
+        rpcErr?.message,
+      );
+    }
+
     let revertedPayables = 0;
     let deletedPayments = 0;
 
@@ -285,7 +341,6 @@ export const ReconciliationService = {
       }
 
       // 3. Delete reconciliation history records for this lot
-      const resultIds = lot.records.map((r) => r.id);
       const historyDeleted = await this.deleteRecords(resultIds);
 
       return { revertedPayables, deletedPayments, historyDeleted, success: true };
@@ -467,117 +522,44 @@ export const ReconciliationService = {
       cds_batch_ref: "RECON-APPLY",
     };
 
-    // Try transactional RPC first
-    try {
-      const itemsPayload = matchedResults.map((r) => ({
-        id: r.id,
-        payable_id: r.payable_id || (r.source_b_type !== "payment" ? r.source_b_id : null) || null,
-        payment_id: r.source_b_type === "payment" ? r.source_b_id : null,
-        company_id: r.company_id || companyId,
-        client_id: r.client_id,
-        payable_type: r.payable_type || dominantPayableType,
-        actual_amount: Number(r.actual_amount || r.expected_amount || 0),
-        expected_amount: Number(r.expected_amount || r.actual_amount || 0),
-        paid_amount: Number(r.actual_amount || r.expected_amount || 0),
-        result: r.result,
-        bank_name: r.client?.bank_name || (r as any).bank_name || null,
-        bank_account_no: r.client?.bank_account_no || (r as any).bank_account_no || null,
-        payment_reference: `RECON-${r.id ? String(r.id).slice(0, 8) : "AUTO"}`,
-      }));
+    // 3. Resolve payable IDs strictly without ambiguous fuzzy-matching
+    const itemsPayload: any[] = [];
+    for (const r of matchedResults) {
+      let payableId =
+        r.payable_id || (r.source_b_type !== "payment" ? r.source_b_id : null) || null;
+      const paymentId = r.source_b_type === "payment" ? r.source_b_id : null;
+      let payableType = r.payable_type || dominantPayableType;
 
-      const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc(
-        "apply_reconciliation_batch",
-        {
-          p_items: itemsPayload,
-          p_batch_info: batchInfo,
-        },
-      );
+      // If payableId is missing, strictly look up an exact matching pending payable
+      if (!payableId && !paymentId && r.client_id) {
+        const expAmt = Number(r.expected_amount || r.actual_amount || 0);
+        const searchTables = payableType
+          ? [
+              payableType === "dividend"
+                ? "dividend_payables"
+                : payableType === "interest"
+                  ? "interest_payables"
+                  : "mutual_fund_payables",
+            ]
+          : ["dividend_payables", "interest_payables", "mutual_fund_payables"];
 
-      if (!rpcErr && rpcRes && rpcRes.success) {
-        updated = Number(rpcRes.updated || 0);
-        paymentsCreated = Number(
-          rpcRes.payments_created ?? rpcRes.paymentsCreated ?? 0,
-        );
-        if (Array.isArray(rpcRes.errors) && rpcRes.errors.length > 0) {
-          for (const err of rpcRes.errors) {
-            errors.push(err?.error || JSON.stringify(err));
-          }
-        }
-        return { updated, paymentsCreated, errors };
-      }
-    } catch (rpcEx: any) {
-      console.warn(
-        "apply_reconciliation_batch RPC failed, falling back to direct apply:",
-        rpcEx?.message,
-      );
-    }
+        for (const tbl of searchTables) {
+          let q = (supabase as any)
+            .from(tbl)
+            .select("id, net_payable, payment_status, fiscal_year, company_id")
+            .eq("client_id", r.client_id)
+            .neq("payment_status", "Paid");
 
-    let reconBatchId: string | null = null;
-    try {
-      const { data: newBatch, error: batchErr } = await (supabase as any)
-        .from("payment_batches")
-        .insert({
-          ...batchInfo,
-          total_gross: matchedResults.reduce((acc, r) => acc + Number(r.expected_amount || 0), 0),
-          status: "Completed",
-          processed_at: new Date().toISOString(),
-        })
-        .select("id")
-        .single();
+          if (r.company_id || companyId) q = q.eq("company_id", r.company_id || companyId);
+          if (r.fiscal_year) q = q.eq("fiscal_year", r.fiscal_year);
 
-      if (!batchErr && newBatch) {
-        reconBatchId = newBatch.id;
-      }
-    } catch (bErr) {
-      console.warn("Could not create reconciliation tracking batch:", bErr);
-    }
-
-    let batchTotalGross = 0;
-    let batchTotalTax = 0;
-    let batchTotalNet = 0;
-
-    for (const result of matchedResults) {
-      try {
-        let payableType = result.payable_type || dominantPayableType || "dividend";
-        let payableId = result.payable_id;
-        let matchedPaymentId: string | null = null;
-
-        // If payable_id was not directly set, check if source_b_id was a payment or payable
-        if (!payableId && result.source_b_id) {
-          // Check if source_b_id is a payment record
-          const { data: pRec } = await (supabase as any)
-            .from("payments")
-            .select("id, payable_id, payable_type, company_id, client_id")
-            .eq("id", result.source_b_id)
-            .maybeSingle();
-
-          if (pRec) {
-            matchedPaymentId = pRec.id;
-            payableId = pRec.payable_id || payableId;
-            payableType = pRec.payable_type || payableType;
-          } else {
-            // source_b_id might be the payable ID directly
-            payableId = result.source_b_id;
-          }
-        }
-
-        // If still missing, attempt lookup by client_id in all payable tables
-        if (!payableId && result.client_id) {
-          const expAmt = Number(result.expected_amount || result.actual_amount || 0);
-          for (const tbl of ["interest_payables", "dividend_payables", "mutual_fund_payables"]) {
-            let q = (supabase as any)
-              .from(tbl)
-              .select("id, net_payable, payment_status")
-              .eq("client_id", result.client_id);
-            if (result.company_id) q = q.eq("company_id", result.company_id);
-            const { data: foundRows } = await q.limit(10);
-            if (foundRows && foundRows.length > 0) {
-              const exactMatch = foundRows.find(
-                (p: any) => expAmt > 0 && Math.abs(Number(p.net_payable) - expAmt) <= 0.5,
-              );
-              const pendingMatch = foundRows.find((p: any) => p.payment_status !== "Paid");
-              const chosen = exactMatch || pendingMatch || foundRows[0];
-              payableId = chosen.id;
+          const { data: foundRows } = await q.limit(10);
+          if (foundRows && foundRows.length > 0) {
+            const exact = foundRows.find(
+              (p: any) => expAmt > 0 && Math.abs(Number(p.net_payable) - expAmt) <= 0.01,
+            );
+            if (exact) {
+              payableId = exact.id;
               payableType =
                 tbl === "interest_payables"
                   ? "interest"
@@ -589,149 +571,63 @@ export const ReconciliationService = {
           }
         }
 
-        const tableName =
-          payableType === "dividend"
-            ? "dividend_payables"
-            : payableType === "interest"
-              ? "interest_payables"
-              : payableType === "mutual_fund"
-                ? "mutual_fund_payables"
-                : null;
-
-        let payableTax = 0;
-        let payableGross = Number(result.expected_amount ?? 0);
-
-        if (tableName && payableId) {
-          try {
-            const { data: pRow } = await (supabase as any)
-              .from(tableName)
-              .select("tax_amount, gross_dividend, gross_interest, net_payable")
-              .eq("id", payableId)
-              .maybeSingle();
-
-            if (pRow) {
-              payableTax = Number(pRow.tax_amount || 0);
-              payableGross = Number(
-                pRow.gross_dividend ??
-                  pRow.gross_interest ??
-                  Number(pRow.net_payable || 0) + payableTax,
-              );
-            }
-          } catch {
-            // fallback
-          }
-
-          // Determine new payment status
-          const newStatus = result.result === "Matched" ? "Paid" : "Partial";
-
-          // Update the payable's payment_status
-          const { error: updateError } = await (supabase as any)
-            .from(tableName)
-            .update({
-              payment_status: newStatus,
-              payment_date: new Date().toISOString().split("T")[0],
-              payment_reference: `RECON-${result.id ? String(result.id).slice(0, 8) : "AUTO"}`,
-            })
-            .eq("id", payableId);
-
-          if (!updateError) {
-            updated += 1;
-          } else {
-            errors.push(`Failed to update ${tableName} ${payableId}: ${updateError.message}`);
-          }
+        if (!payableId) {
+          errors.push(
+            `Skipping client ${r.client_id}: no exact pending payable found matching amount ${expAmt}`,
+          );
+          continue;
         }
+      }
 
-        // Handle payment creation / update
-        if (matchedPaymentId) {
-          await (supabase as any)
-            .from("payments")
-            .update({
-              status: "Completed",
-              payment_date: new Date().toISOString().split("T")[0],
-              paid_amount: Number(result.actual_amount ?? result.expected_amount ?? 0),
-            })
-            .eq("id", matchedPaymentId);
-          paymentsCreated += 1;
-        } else if (payableId) {
-          // Idempotency: Check if payment already exists for this payable_id
-          const { data: existingPayment } = await (supabase as any)
-            .from("payments")
-            .select("id")
-            .eq("payable_id", payableId)
-            .limit(1)
-            .maybeSingle();
+      itemsPayload.push({
+        id: r.id,
+        payable_id: payableId,
+        payment_id: paymentId,
+        company_id: r.company_id || companyId,
+        client_id: r.client_id,
+        payable_type: payableType,
+        actual_amount: Number(r.actual_amount || r.expected_amount || 0),
+        expected_amount: Number(r.expected_amount || r.actual_amount || 0),
+        paid_amount: Number(r.actual_amount || r.expected_amount || 0),
+        result: r.result,
+        bank_name: r.client?.bank_name || (r as any).bank_name || null,
+        bank_account_no: r.client?.bank_account_no || (r as any).bank_account_no || null,
+        payment_reference: `RECON-${r.id ? String(r.id).slice(0, 8) : "AUTO"}`,
+      });
+    }
 
-          if (existingPayment) {
-            await (supabase as any)
-              .from("payments")
-              .update({
-                status: "Completed",
-                payment_date: new Date().toISOString().split("T")[0],
-                paid_amount: Number(result.actual_amount ?? result.expected_amount ?? 0),
-              })
-              .eq("id", existingPayment.id);
-            paymentsCreated += 1;
-          } else {
-            const actualAmount = Number(result.actual_amount ?? 0);
-            const expectedAmount = Number(result.expected_amount ?? 0);
-            const paidAmount = actualAmount || expectedAmount;
-            const netAmount = paidAmount;
-            const varianceRatio = expectedAmount > 0 ? paidAmount / expectedAmount : 1;
-            const grossAmount = Math.round((payableGross || netAmount) * varianceRatio * 100) / 100;
-            const taxAmount = Math.round(payableTax * varianceRatio * 100) / 100;
+    if (itemsPayload.length === 0) {
+      return { updated: 0, paymentsCreated: 0, errors };
+    }
 
-            batchTotalGross += grossAmount;
-            batchTotalTax += taxAmount;
-            batchTotalNet += paidAmount;
+    // 4. Atomic Execution via SECURITY DEFINER Stored Procedure
+    const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc(
+      "apply_reconciliation_batch",
+      {
+        p_items: itemsPayload,
+        p_batch_info: batchInfo,
+      },
+    );
 
-            const { error: paymentError } = await (supabase as any).from("payments").insert({
-              batch_id: reconBatchId,
-              company_id: result.company_id,
-              client_id: result.client_id,
-              payable_type: payableType,
-              payable_id: payableId,
-              gross_amount: grossAmount,
-              tax_amount: taxAmount,
-              net_amount: netAmount,
-              paid_amount: paidAmount,
-              payment_method: paymentMethod,
-              payment_date: new Date().toISOString().split("T")[0],
-              payment_reference: `RECON-${result.id ? String(result.id).slice(0, 8) : "auto"}`,
-              status: "Completed",
-              remarks: `Auto-reconciled (${result.result})`,
-            });
+    if (rpcErr) {
+      throw new Error(`Atomic reconciliation batch failed: ${rpcErr.message}`);
+    }
 
-            if (!paymentError) {
-              paymentsCreated += 1;
-            } else {
-              errors.push(`Failed to create payment for ${payableId}: ${paymentError.message}`);
-            }
-          }
-        }
-      } catch (err: any) {
-        errors.push(`Exception for result ${result.id}: ${err?.message || String(err)}`);
+    if (!rpcRes || !rpcRes.success) {
+      throw new Error(
+        `Reconciliation transaction failed: ${rpcRes?.error || "Transaction rolled back"}`,
+      );
+    }
+
+    updated = Number(rpcRes.updated || 0);
+    paymentsCreated = Number(rpcRes.payments_created ?? rpcRes.paymentsCreated ?? 0);
+    if (Array.isArray(rpcRes.errors) && rpcRes.errors.length > 0) {
+      for (const err of rpcRes.errors) {
+        errors.push(err?.error || JSON.stringify(err));
       }
     }
 
-    // Update batch totals with computed tax & gross if batch was created
-    if (reconBatchId && paymentsCreated > 0) {
-      try {
-        await (supabase as any)
-          .from("payment_batches")
-          .update({
-            total_gross: batchTotalGross,
-            total_tax: batchTotalTax,
-            total_net: batchTotalNet,
-            total_amount: batchTotalNet,
-            total_payments: paymentsCreated,
-          })
-          .eq("id", reconBatchId);
-      } catch {
-        // non-blocking
-      }
-    }
-
-    // 3. Process and update remarks for Rejected transactions
+    // 5. Process remarks for Rejected transactions strictly
     const rejectedResults = results.filter((r) => r.result === "Rejected");
     for (const rej of rejectedResults) {
       try {
@@ -746,21 +642,22 @@ export const ReconciliationService = {
               .select("id, net_payable, payment_status")
               .eq("client_id", rej.client_id);
             if (rej.company_id) q = q.eq("company_id", rej.company_id);
+            if (rej.fiscal_year) q = q.eq("fiscal_year", rej.fiscal_year);
             const { data: foundRows } = await q.limit(10);
             if (foundRows && foundRows.length > 0) {
               const exactMatch = foundRows.find(
-                (p: any) => expAmt > 0 && Math.abs(Number(p.net_payable) - expAmt) <= 0.5,
+                (p: any) => expAmt > 0 && Math.abs(Number(p.net_payable) - expAmt) <= 0.01,
               );
-              const pendingMatch = foundRows.find((p: any) => p.payment_status !== "Paid");
-              const chosen = exactMatch || pendingMatch || foundRows[0];
-              payableId = chosen.id;
-              payableType =
-                tbl === "interest_payables"
-                  ? "interest"
-                  : tbl === "mutual_fund_payables"
-                    ? "mutual_fund"
-                    : "dividend";
-              break;
+              if (exactMatch) {
+                payableId = exactMatch.id;
+                payableType =
+                  tbl === "interest_payables"
+                    ? "interest"
+                    : tbl === "mutual_fund_payables"
+                      ? "mutual_fund"
+                      : "dividend";
+                break;
+              }
             }
           }
         }

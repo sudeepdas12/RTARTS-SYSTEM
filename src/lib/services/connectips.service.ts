@@ -82,7 +82,7 @@ export const ConnectIPSService = {
 
     if (isProduction && !secretKey) {
       throw new Error(
-        "ConnectIPS signing failed: Edge Function 'connectips-sign' is unreachable and no secret key was provided. Cannot emit an unsigned signature in production."
+        "ConnectIPS signing failed: Edge Function 'connectips-sign' is unreachable and no secret key was provided. Cannot emit an unsigned signature in production.",
       );
     }
 
@@ -314,11 +314,41 @@ export const ConnectIPSService = {
   async checkTransactionStatus(
     appPaymentId: string,
   ): Promise<{ status: "SUCCESS" | "FAILED" | "PENDING"; refId: string; message: string }> {
-    return {
-      status: "SUCCESS",
-      refId: `CIPS-VERIFIED-${Date.now().toString(36).toUpperCase()}`,
-      message: `Transaction ${appPaymentId} verified successfully with NCHL ConnectIPS.`,
-    };
+    try {
+      // Check database payment record first
+      const { data: payment } = await (supabase as any)
+        .from("payments")
+        .select("status, connectips_ref, remarks")
+        .or(`connectips_ref.eq.${appPaymentId},payment_reference.eq.${appPaymentId}`)
+        .maybeSingle();
+
+      if (payment) {
+        const isSuccess = payment.status === "Completed" || payment.status === "Paid";
+        const isFailed = payment.status === "Failed" || payment.status === "Rejected";
+        return {
+          status: isSuccess ? "SUCCESS" : isFailed ? "FAILED" : "PENDING",
+          refId: payment.connectips_ref || appPaymentId,
+          message: isSuccess
+            ? `Transaction ${appPaymentId} verified successfully in system ledger.`
+            : isFailed
+              ? `Transaction ${appPaymentId} marked as failed: ${payment.remarks || "Payment rejected"}.`
+              : `Transaction ${appPaymentId} status is currently ${payment.status}. Manual reconciliation required.`,
+        };
+      }
+
+      // If not found in payments, report pending verification requiring reconciliation
+      return {
+        status: "PENDING",
+        refId: appPaymentId,
+        message: `Transaction ${appPaymentId} status inquiry pending gateway confirmation. Manual reconciliation recommended.`,
+      };
+    } catch (err: any) {
+      return {
+        status: "PENDING",
+        refId: appPaymentId,
+        message: `Unable to verify transaction ${appPaymentId}: ${err?.message || "Gateway unreachable"}. Verification pending.`,
+      };
+    }
   },
 
   /**
@@ -405,7 +435,10 @@ export const ConnectIPSService = {
     const fileName = `NCHL_CorporatePay_${companyCode}_Batch_${batchNo}.xlsx`;
     XLSX.writeFile(wb, fileName);
 
-    const totalAmount = lineItems.reduce((s, i) => s + Number(i.net_amount || i.gross_amount || 0), 0);
+    const totalAmount = lineItems.reduce(
+      (s, i) => s + Number(i.net_amount || i.gross_amount || 0),
+      0,
+    );
     return { totalRows: lineItems.length, totalAmount, fileName };
   },
 
@@ -423,7 +456,8 @@ export const ConnectIPSService = {
     const ws = workbook.Sheets[firstSheetName];
     const json = XLSX.utils.sheet_to_json<any>(ws, { defval: "" });
 
-    const failedItems: { lineItemId?: string; boid?: string; reason: string; amount: number }[] = [];
+    const failedItems: { lineItemId?: string; boid?: string; reason: string; amount: number }[] =
+      [];
 
     for (const row of json) {
       const rowStr = JSON.stringify(row).toUpperCase();

@@ -125,4 +125,55 @@ describe("DividendCalculator & InterestCalculator Edge Cases", () => {
     expect(result.taxAmount).toBe(147.95);
     expect(result.netInterestPayable).toBe(2317.8);
   });
+
+  it("caps and normalizes tax rates (handles negative, whole percentage, and over 100%)", () => {
+    // Negative rate clamped to 0
+    const negResult = DividendCalculator.calculate({
+      sharesHeld: 100,
+      dividendType: "Cash",
+      cashDividendRate: 10,
+      cashRateIsPerShare: true,
+      taxCategory: "CUSTOM",
+      customTaxRate: -0.1,
+    });
+    expect(negResult.appliedTdsRate).toBe(0);
+    expect(negResult.totalTaxAmount).toBe(0);
+
+    // Whole percentage (e.g. 15 for 15%) normalized to 0.15
+    const pctResult = DividendCalculator.calculate({
+      sharesHeld: 100,
+      dividendType: "Cash",
+      cashDividendRate: 10,
+      cashRateIsPerShare: true,
+      taxCategory: "CUSTOM",
+      customTaxRate: 15,
+    });
+    expect(pctResult.appliedTdsRate).toBe(0.15);
+    expect(pctResult.totalTaxAmount).toBe(150);
+
+    // Over 100% capped at 1.0 (100%)
+    const over100Result = DividendCalculator.calculate({
+      sharesHeld: 100,
+      dividendType: "Cash",
+      cashDividendRate: 10,
+      cashRateIsPerShare: true,
+      taxCategory: "CUSTOM",
+      customTaxRate: 150,
+    });
+    expect(over100Result.appliedTdsRate).toBe(1.0);
+    expect(over100Result.totalTaxAmount).toBe(1000);
+    expect(over100Result.netCashPayable).toBe(0);
+
+    // Interest calculator normalization
+    const intResult = InterestCalculator.calculate({
+      debentureKitta: 100,
+      unitFaceValue: 1000,
+      annualInterestRate: 10,
+      daysCount: 365,
+      taxCategory: "CUSTOM",
+      taxRate: 20, // 20%
+    });
+    expect(intResult.tdsRate).toBe(0.2);
+    expect(intResult.taxAmount).toBe(2000);
+  });
 });

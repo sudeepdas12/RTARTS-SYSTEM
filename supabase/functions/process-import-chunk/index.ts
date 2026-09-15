@@ -8,7 +8,9 @@ interface ChunkPayload {
   uploadId: string;
   chunkData: any[];
   targetTable: string;
+  companyId?: string;
   companyName?: string;
+  companyIsin?: string;
   fiscalYear?: string;
   dividendRate?: number;
   tdsRate?: number;
@@ -26,11 +28,13 @@ interface ChunkPayload {
  * Ensure the upload_history record exists before inserting payables.
  * The edge function uses the service_role key which bypasses RLS,
  * so it can create the record even when the frontend client (subject to RLS) cannot.
+ * Binds strictly to the authenticated user ID from JWT verification.
  */
 async function ensureUploadRecord(
   supabase: any,
   uploadId: string,
   payload: ChunkPayload,
+  authenticatedUserId: string,
 ): Promise<void> {
   // Check if the record already exists
   const { data: existing, error: checkErr } = await supabase
@@ -46,10 +50,10 @@ async function ensureUploadRecord(
 
   if (existing) return; // Record already exists
 
-  // Create it using service_role (bypasses RLS)
+  // Create it using service_role with the authenticated user ID
   const { error: insertErr } = await supabase.from("upload_history").insert({
     id: uploadId,
-    user_id: payload.userId || null,
+    user_id: authenticatedUserId,
     file_name: payload.fileName || "import.xlsx",
     file_size: payload.fileSize || 0,
     file_type: payload.fileType || null,
@@ -191,9 +195,9 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
   // 1. Tax Exempt Funds (Mutual funds & Statutory Social Funds)
   if (
     /\b(MUTUAL\s*FUND|MF|FOCUS\s*(40|30|\d+)|SELECT\s*(30|40|\d+)|SUPER\s*(30|40|\d+)|NMB\s*(50|HYBRID|SARAL)|\b50\b|SAMRIDDHI\s*FUND|DHANABRIDDHI|EQUITY\s*FUND|DYNAMIC\s*DEBT|LARGE\s*CAP|CITIZEN\s*INVESTMENT\s*TRUST|\bCIT\b|KARMACHARI\s*SANCHAYA\s*KOSH|\bEPF\b|SOCIAL\s*SECURITY\s*FUND|\bSSF\b)\b/i.test(
-      name,
+      legalPersonName,
     ) ||
-    /MUTUAL|MF\b|TAX.?EXEMPT/i.test(explicitType)
+    /MUTUAL|MF\b|TAX.?EXEMPT/i.test(rawType)
   ) {
     return "TAX_EXEMPT";
   }
@@ -201,7 +205,7 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
   // 2. Corporate Suffixes & Partnerships
   if (
     /\b(PVT\.?\s*LTD|PRIVATE\s*LIMITED|P\.?\s*LTD|LIMITED|LTD\.?|COMPANY|CORP|CORPORATION|INC\.?|LLC|PLC|PARTNERS|PARTNERSHIP|HOLDINGS\s*COMPANY)\b/i.test(
-      name,
+      legalPersonName,
     )
   ) {
     return "COMPANY_INSTITUTION";
@@ -210,9 +214,9 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
   // 3. Institutional Organizations (including Army Welfare & Police Welfare trusts)
   if (
     /\b(BANK|FINANCE|MICROFINANCE|LAGHUBITTA|BITTIYA|BIMA|BEEMA|INSURANCE|REINSURANCE|HYDROPOWER|DOORSANCHAR|TELECOM|CLEARING\s*HOUSE|STOCK\s*EXCHANGE|CDS|COOPERATIVE|SAHAKARI|ENTERPRISES|TRADING|TRADERS|SECURITIES|BROKER|ARMY\s*WELFARE|SAINIK\s*KALYAN|POLICE\s*WELFARE|PRAHARI\s*KALYAN)\b/i.test(
-      name,
+      legalPersonName,
     ) ||
-    /LEGAL|INSTIT|COMPANY|CORPORAT/i.test(explicitType)
+    /LEGAL|INSTIT|COMPANY|CORPORAT/i.test(rawType)
   ) {
     return "COMPANY_INSTITUTION";
   }
@@ -308,18 +312,6 @@ function mapToHolderType(category: string): string | null {
   }
 }
 
-function payableClassification(category: string): string {
-  if (category === "INSTITUTION" || category === "FOREIGN") return "COMPANY_INSTITUTION";
-  if (category === "MUTUAL_FUND" || category === "TAX_EXEMPT") return "TAX_EXEMPT";
-  if (category === "PUBLIC") return "PUBLIC_LEGAL_PERSON";
-  if (category === "PROMOTER" || category === "LOCAL") return "NATURAL_PERSON";
-  return "UNCLASSIFIED";
-}
-
-function payableSegment(category: string): string | null {
-  return category === "PROMOTER" || category === "LOCAL" || category === "PUBLIC" ? category : null;
-}
-
 /**
  * Look up real client IDs for a set of BOIDs.
  *
@@ -353,7 +345,8 @@ async function insertRowsWithSchemaFallback(supabase: any, tableName: string, ro
   let insertedCount = 0;
   const errors: any[] = [];
 
-  rows.forEach((row, rowIndex) => {
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+    const row = rows[rowIndex];
     let currentRow = { ...row };
     let attempts = 0;
 
@@ -363,7 +356,7 @@ async function insertRowsWithSchemaFallback(supabase: any, tableName: string, ro
       const { error } = await supabase.from(tableName).insert(currentRow).maybeSingle();
       if (!error) {
         insertedCount += 1;
-        return;
+        break;
       }
 
       const missingColumn = getMissingColumnName(error);
@@ -377,23 +370,88 @@ async function insertRowsWithSchemaFallback(supabase: any, tableName: string, ro
           error: error.message,
           client_id: row?.client_id ?? null,
         });
-        return;
+        break;
       }
 
       delete currentRow[missingColumn];
     }
-  });
+  }
 
   return { inserted: insertedCount, errors };
 }
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
 serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
   try {
+    // 1. Enforce JWT authentication on the Edge Function
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Unauthorized: missing or invalid authorization header",
+        }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    const token = authHeader.replace("Bearer ", "").trim();
+
+    // Create Supabase client with service_role key for bypassing RLS
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Verify caller session using the token
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser(token);
+
+    if (userError || !user) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Unauthorized: invalid caller authentication token",
+        }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    // Verify caller has role permission (admin, supervisor, finance_operator)
+    const { data: roles, error: rolesError } = await supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", user.id);
+
+    const hasAllowedRole = (roles || []).some((r: any) =>
+      ["admin", "supervisor", "finance_operator"].includes(r.role),
+    );
+
+    if (rolesError || !hasAllowedRole) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Forbidden: caller lacks required role (admin, supervisor, finance_operator)",
+        }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
     const payload: ChunkPayload = await req.json();
     const {
       uploadId,
       targetTable,
+      companyId: payloadCompanyId,
       companyName,
+      companyIsin,
       fiscalYear,
       dividendRate,
       tdsRate,
@@ -405,17 +463,11 @@ serve(async (req) => {
     if (!uploadId) {
       return new Response(
         JSON.stringify({ success: false, error: "Missing required field: uploadId" }),
-        { status: 400, headers: { "Content-Type": "application/json" } },
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
     let chunkData = Array.isArray(payload.chunkData) ? payload.chunkData : [];
-
-    // Create Supabase client with service_role key for bypassing RLS
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
-
     const isDebenture = targetTable === "interest_payables";
 
     // Filter out footer/total/summary rows that carry no BOID but contain
@@ -447,67 +499,88 @@ serve(async (req) => {
     chunkData = filteredData;
 
     // 0. Ensure the upload_history record exists (bypasses RLS via service_role)
-    // This prevents FK constraint violations when the frontend client couldn't create it
-    await ensureUploadRecord(supabase, uploadId, payload);
+    // Strictly bound to authenticated user.id from verified JWT
+    await ensureUploadRecord(supabase, uploadId, payload, user.id);
 
-    // 1. Resolve company: try to find/create by detected name, or fallback to default
-    let companyId = "";
+    // 1. Resolve target company strictly without silent defaults or unauthorized creation
+    let companyId = payloadCompanyId || "";
 
-    // 1a. If company name was detected from file, try to find or create it
-    if (companyName) {
-      const cleanName = companyName.trim();
-      const { data: matchedCompanies } = await supabase
-        .from("companies")
-        .select("id, company_name")
-        .ilike("company_name", `%${cleanName}%`);
+    if (companyId) {
+      // Validate company exists and caller has access
+      const { data: hasAccess, error: accessErr } = await supabase.rpc("has_company_access", {
+        _user_id: user.id,
+        _company_id: companyId,
+      });
 
-      if (matchedCompanies && matchedCompanies.length > 0) {
-        companyId = matchedCompanies[0].id;
-      } else {
-        // Generate a short code from company name (max 4 chars)
-        const code = cleanName
-          .replace(/[^A-Za-z]/g, "")
-          .substring(0, 4)
-          .toUpperCase();
-        const { data: newCompany, error: compErr } = await supabase
+      if (accessErr || !hasAccess) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: `Forbidden: caller does not have permission for company ${companyId}`,
+          }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+    } else {
+      // Try resolving by ISIN if supplied
+      if (companyIsin) {
+        const { data: isinComp } = await supabase
           .from("companies")
-          .insert({
-            company_name: cleanName,
-            company_code: code || "UNKN",
-            status: "Active",
-          })
           .select("id")
-          .single();
+          .eq("isin", companyIsin.trim())
+          .maybeSingle();
 
-        if (!compErr) {
-          companyId = newCompany.id;
-        } else {
-          console.warn("Could not create company from detected name:", compErr.message);
+        if (isinComp?.id) {
+          companyId = isinComp.id;
         }
       }
-    }
 
-    // 1b. Fallback to first existing company or create default
-    if (!companyId) {
-      const { data: companies } = await supabase.from("companies").select("id").limit(1);
-
-      if (companies && companies.length > 0) {
-        companyId = companies[0].id;
-      } else {
-        const { data: newCompany, error: compErr } = await supabase
+      // Try resolving by exact company name if still not resolved
+      if (!companyId && companyName) {
+        const cleanName = companyName.trim();
+        const { data: matchedCompanies } = await supabase
           .from("companies")
-          .insert({
-            company_name: "Supermai Hydropower Ltd.",
-            company_code: "SMHL",
-            status: "Active",
-          })
           .select("id")
-          .single();
+          .ilike("company_name", cleanName);
 
-        if (compErr) {
-          throw new Error(`Failed to create company: ${compErr.message}`);
+        if (matchedCompanies && matchedCompanies.length === 1) {
+          companyId = matchedCompanies[0].id;
+        } else if (matchedCompanies && matchedCompanies.length > 1) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: `Ambiguous company name "${cleanName}". Please specify companyId explicitly.`,
+            }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
         }
-        companyId = newCompany.id;
+      }
+
+      if (!companyId) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error:
+              "Unable to resolve target company for import. Please select a valid company before importing.",
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      // Validate caller has access to the resolved company
+      const { data: hasAccess, error: accessErr } = await supabase.rpc("has_company_access", {
+        _user_id: user.id,
+        _company_id: companyId,
+      });
+
+      if (accessErr || !hasAccess) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: `Forbidden: caller does not have permission for company ${companyId}`,
+          }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
       }
     }
 
@@ -536,7 +609,7 @@ serve(async (req) => {
         }
         return boid;
       })
-      .filter(Boolean);
+      .filter((b): b is string => Boolean(b));
 
     if (boids.length === 0) {
       return new Response(JSON.stringify({ success: true, rowsProcessed: 0, errors: rowErrors }), {

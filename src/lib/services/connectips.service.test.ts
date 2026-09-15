@@ -48,4 +48,11 @@ describe("ConnectIPSService", () => {
     expect(res.success).toBe(true);
     expect(res.message).toContain("ConnectIPS Sandbox test handshake verified");
   });
+
+  it("inquires transaction status gracefully and handles pending/unconfirmed references", async () => {
+    const statusResult = await ConnectIPSService.checkTransactionStatus("CIPS-NON-EXISTENT-TXN");
+    expect(statusResult).toBeDefined();
+    expect(["SUCCESS", "FAILED", "PENDING"]).toContain(statusResult.status);
+    expect(statusResult.refId).toBe("CIPS-NON-EXISTENT-TXN");
+  });
 });

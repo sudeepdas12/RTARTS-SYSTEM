@@ -396,7 +396,6 @@ function AllocationsPage() {
         res = await ConversionService.simulatePhysicalToDemat({
           companyId: convCompanyId,
           fiscalYear: convFiscalYear,
-          records: [],
         });
       }
 
@@ -1122,7 +1121,8 @@ function AllocationsPage() {
                     CDSC Corporate Action System (CAS) — DEMAT Bonus Share & Fractional Cash Engine
                   </CardTitle>
                   <CardDescription className="text-xs mt-1">
-                    SEBON & CDSC compliant bonus share allotment, automatic lock-in classification, Nepal Sec 54 tax settlement, and ConnectIPS fractional cash payouts.
+                    SEBON & CDSC compliant bonus share allotment, automatic lock-in classification,
+                    Nepal Sec 54 tax settlement, and ConnectIPS fractional cash payouts.
                   </CardDescription>
                 </div>
                 {bonusSummary && bonusSummary.rows.length > 0 && (
@@ -1225,8 +1225,12 @@ function AllocationsPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="COMPANY_PAID">🏢 Company Pays 5% Bonus Tax</SelectItem>
-                      <SelectItem value="INVESTOR_PAID">👤 Shareholder Must Deposit 5% Tax</SelectItem>
-                      <SelectItem value="CASH_ADJUSTED">⚖️ Combined Cash Dividend Offset</SelectItem>
+                      <SelectItem value="INVESTOR_PAID">
+                        👤 Shareholder Must Deposit 5% Tax
+                      </SelectItem>
+                      <SelectItem value="CASH_ADJUSTED">
+                        ⚖️ Combined Cash Dividend Offset
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1251,11 +1255,14 @@ function AllocationsPage() {
                       Combined Cash Dividend for Tax Adjustment
                     </span>
                     <p className="text-[11px] text-muted-foreground mt-0.5">
-                      Enter the declared Cash Dividend rate to automatically absorb the 5% bonus share tax.
+                      Enter the declared Cash Dividend rate to automatically absorb the 5% bonus
+                      share tax.
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Label className="text-xs font-semibold whitespace-nowrap">Cash Rate (%):</Label>
+                    <Label className="text-xs font-semibold whitespace-nowrap">
+                      Cash Rate (%):
+                    </Label>
                     <Input
                       type="number"
                       step="0.0001"
@@ -1272,33 +1279,65 @@ function AllocationsPage() {
                 <>
                   <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
                     <div className="p-3 bg-muted/20 border rounded-lg">
-                      <span className="text-xs text-muted-foreground font-medium uppercase">Beneficiaries</span>
-                      <div className="text-lg font-bold mt-0.5">{bonusSummary.totalEligibleShareholders.toLocaleString()}</div>
-                      <span className="text-[11px] text-emerald-600 font-medium">{bonusSummary.validBoidCount.toLocaleString()} valid BOIDs</span>
+                      <span className="text-xs text-muted-foreground font-medium uppercase">
+                        Beneficiaries
+                      </span>
+                      <div className="text-lg font-bold mt-0.5">
+                        {bonusSummary.totalEligibleShareholders.toLocaleString()}
+                      </div>
+                      <span className="text-[11px] text-emerald-600 font-medium">
+                        {bonusSummary.validBoidCount.toLocaleString()} valid BOIDs
+                      </span>
                     </div>
                     <div className="p-3 bg-muted/20 border rounded-lg">
-                      <span className="text-xs text-muted-foreground font-medium uppercase">Free DEMAT Bonus</span>
-                      <div className="text-lg font-bold mt-0.5 text-primary">{bonusSummary.totalFreeBonusKitta.toLocaleString()} kitta</div>
+                      <span className="text-xs text-muted-foreground font-medium uppercase">
+                        Free DEMAT Bonus
+                      </span>
+                      <div className="text-lg font-bold mt-0.5 text-primary">
+                        {bonusSummary.totalFreeBonusKitta.toLocaleString()} kitta
+                      </div>
                       <span className="text-[11px] text-muted-foreground">Code 00 (Public)</span>
                     </div>
                     <div className="p-3 bg-muted/20 border rounded-lg">
-                      <span className="text-xs text-muted-foreground font-medium uppercase">Locked Bonus</span>
-                      <div className="text-lg font-bold mt-0.5 text-amber-600">{bonusSummary.totalLockedBonusKitta.toLocaleString()} kitta</div>
-                      <span className="text-[11px] text-muted-foreground">Promoter/Staff/Local</span>
+                      <span className="text-xs text-muted-foreground font-medium uppercase">
+                        Locked Bonus
+                      </span>
+                      <div className="text-lg font-bold mt-0.5 text-amber-600">
+                        {bonusSummary.totalLockedBonusKitta.toLocaleString()} kitta
+                      </div>
+                      <span className="text-[11px] text-muted-foreground">
+                        Promoter/Staff/Local
+                      </span>
                     </div>
                     <div className="p-3 bg-muted/20 border rounded-lg">
-                      <span className="text-xs text-muted-foreground font-medium uppercase">Bonus Tax (5%)</span>
-                      <div className="text-lg font-bold mt-0.5 text-rose-600">NPR {bonusSummary.totalBonusShareTax.toLocaleString()}</div>
-                      <span className="text-[11px] text-muted-foreground">{bonusSummary.taxMode === "COMPANY_PAID" ? "Company Paid" : "Investor Due"}</span>
+                      <span className="text-xs text-muted-foreground font-medium uppercase">
+                        Bonus Tax (5%)
+                      </span>
+                      <div className="text-lg font-bold mt-0.5 text-rose-600">
+                        NPR {bonusSummary.totalBonusShareTax.toLocaleString()}
+                      </div>
+                      <span className="text-[11px] text-muted-foreground">
+                        {bonusSummary.taxMode === "COMPANY_PAID" ? "Company Paid" : "Investor Due"}
+                      </span>
                     </div>
                     <div className="p-3 bg-muted/20 border rounded-lg">
-                      <span className="text-xs text-muted-foreground font-medium uppercase">Fraction Remainder</span>
-                      <div className="text-lg font-bold mt-0.5 text-indigo-600">{bonusSummary.totalFractionalKitta.toLocaleString()} kitta</div>
-                      <span className="text-[11px] text-muted-foreground">Gross: NPR {bonusSummary.totalFractionalGrossCash.toLocaleString()}</span>
+                      <span className="text-xs text-muted-foreground font-medium uppercase">
+                        Fraction Remainder
+                      </span>
+                      <div className="text-lg font-bold mt-0.5 text-indigo-600">
+                        {bonusSummary.totalFractionalKitta.toLocaleString()} kitta
+                      </div>
+                      <span className="text-[11px] text-muted-foreground">
+                        Gross: NPR {bonusSummary.totalFractionalGrossCash.toLocaleString()}
+                      </span>
                     </div>
                     <div className="p-3 bg-muted/20 border rounded-lg">
-                      <span className="text-xs text-muted-foreground font-medium uppercase">Net Fraction Payout</span>
-                      <div className="text-lg font-bold mt-0.5 text-emerald-600">NPR {bonusSummary.totalFractionalNetPayable.toLocaleString()}</div>
+                      <span className="text-xs text-muted-foreground font-medium uppercase">
+                        Net Fraction Payout
+                      </span>
+                      <div className="text-lg font-bold mt-0.5 text-emerald-600">
+                        NPR {bonusSummary.totalFractionalNetPayable.toLocaleString()}
+                      </div>
                       <span className="text-[11px] text-muted-foreground">5% TDS Deducted</span>
                     </div>
                   </div>
@@ -1313,10 +1352,14 @@ function AllocationsPage() {
                           <TableHead>Shareholder Name</TableHead>
                           <TableHead>Lock-in</TableHead>
                           <TableHead className="text-right">Existing</TableHead>
-                          <TableHead className="text-right font-semibold text-primary">CDSC Bonus</TableHead>
+                          <TableHead className="text-right font-semibold text-primary">
+                            CDSC Bonus
+                          </TableHead>
                           <TableHead className="text-right">Bonus Tax (5%)</TableHead>
                           <TableHead className="text-right">Fraction</TableHead>
-                          <TableHead className="text-right font-semibold text-emerald-600">Net Fraction Cash</TableHead>
+                          <TableHead className="text-right font-semibold text-emerald-600">
+                            Net Fraction Cash
+                          </TableHead>
                           <TableHead className="text-right">Investor Tax Due</TableHead>
                           <TableHead className="text-center">Status</TableHead>
                         </TableRow>
@@ -1326,23 +1369,42 @@ function AllocationsPage() {
                           <TableRow key={row.sn}>
                             <TableCell className="font-mono text-xs">{row.sn}</TableCell>
                             <TableCell className="font-mono text-xs">{row.boid}</TableCell>
-                            <TableCell className="font-medium text-xs">{row.shareholderName}</TableCell>
+                            <TableCell className="font-medium text-xs">
+                              {row.shareholderName}
+                            </TableCell>
                             <TableCell className="text-xs">
-                              <Badge variant={row.lockInCode === "00" ? "outline" : "secondary"} className="text-[10px]">
+                              <Badge
+                                variant={row.lockInCode === "00" ? "outline" : "secondary"}
+                                className="text-[10px]"
+                              >
                                 Code {row.lockInCode}
                               </Badge>
                             </TableCell>
-                            <TableCell className="text-right font-mono text-xs">{row.existingKitta.toLocaleString()}</TableCell>
-                            <TableCell className="text-right font-mono text-xs font-bold text-primary">{row.creditedBonusKitta.toLocaleString()}</TableCell>
-                            <TableCell className="text-right font-mono text-xs text-rose-600">{row.bonusShareTaxPayable.toFixed(2)}</TableCell>
-                            <TableCell className="text-right font-mono text-xs">{row.fractionalKitta.toFixed(4)}</TableCell>
-                            <TableCell className="text-right font-mono text-xs font-semibold text-emerald-600">{row.fractionalNetPayable.toFixed(2)}</TableCell>
+                            <TableCell className="text-right font-mono text-xs">
+                              {row.existingKitta.toLocaleString()}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-xs font-bold text-primary">
+                              {row.creditedBonusKitta.toLocaleString()}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-xs text-rose-600">
+                              {row.bonusShareTaxPayable.toFixed(2)}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-xs">
+                              {row.fractionalKitta.toFixed(4)}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-xs font-semibold text-emerald-600">
+                              {row.fractionalNetPayable.toFixed(2)}
+                            </TableCell>
                             <TableCell className="text-right font-mono text-xs text-amber-600 font-medium">
-                              {row.taxPayableByInvestor > 0 ? `NPR ${row.taxPayableByInvestor.toFixed(2)}` : "—"}
+                              {row.taxPayableByInvestor > 0
+                                ? `NPR ${row.taxPayableByInvestor.toFixed(2)}`
+                                : "—"}
                             </TableCell>
                             <TableCell className="text-center">
                               <Badge
-                                variant={row.validationStatus === "VALID" ? "default" : "destructive"}
+                                variant={
+                                  row.validationStatus === "VALID" ? "default" : "destructive"
+                                }
                                 className="text-[10px]"
                               >
                                 {row.validationStatus}
@@ -1355,7 +1417,9 @@ function AllocationsPage() {
                   </div>
                   {bonusSummary.rows.length > 15 && (
                     <p className="text-xs text-muted-foreground text-center">
-                      Showing first 15 of {bonusSummary.rows.length.toLocaleString()} shareholder bonus allocations. Download the full CAS Excel or CDSC .cas file for complete data.
+                      Showing first 15 of {bonusSummary.rows.length.toLocaleString()} shareholder
+                      bonus allocations. Download the full CAS Excel or CDSC .cas file for complete
+                      data.
                     </p>
                   )}
                 </>
@@ -1377,7 +1441,8 @@ function AllocationsPage() {
                     Share Conversion & Capital Restructuring Hub
                   </CardTitle>
                   <CardDescription className="text-xs mt-1">
-                    Simulate and execute Promoter-to-Public, Debenture-to-Equity, M&A Swap Ratios, and Stock Splits with direct two-way database persistence.
+                    Simulate and execute Promoter-to-Public, Debenture-to-Equity, M&A Swap Ratios,
+                    and Stock Splits with direct two-way database persistence.
                   </CardDescription>
                 </div>
                 {convSummary && convSummary.rows.length > 0 && (
@@ -1396,7 +1461,9 @@ function AllocationsPage() {
                         variant="outline"
                         size="sm"
                         className="h-9 text-xs border-blue-600/40 text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950"
-                        onClick={() => ConversionService.exportConversionConnectIpsBatch(convSummary)}
+                        onClick={() =>
+                          ConversionService.exportConversionConnectIpsBatch(convSummary)
+                        }
                       >
                         <Download className="h-3.5 w-3.5 mr-1.5 text-blue-600" />
                         ConnectIPS Fraction File
@@ -1434,8 +1501,12 @@ function AllocationsPage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="PROMOTER_TO_PUBLIC">🔄 Promoter to Public (PO ➔ Ord)</SelectItem>
-                      <SelectItem value="DEBENTURE_TO_EQUITY">📈 Debenture ➔ Equity Shares</SelectItem>
+                      <SelectItem value="PROMOTER_TO_PUBLIC">
+                        🔄 Promoter to Public (PO ➔ Ord)
+                      </SelectItem>
+                      <SelectItem value="DEBENTURE_TO_EQUITY">
+                        📈 Debenture ➔ Equity Shares
+                      </SelectItem>
                       <SelectItem value="MERGER_SWAP">🤝 M&A / Merger Swap Ratio</SelectItem>
                       <SelectItem value="STOCK_SPLIT">✂️ Stock Split / Sub-division</SelectItem>
                     </SelectContent>
@@ -1500,8 +1571,8 @@ function AllocationsPage() {
                       {convType === "PROMOTER_TO_PUBLIC"
                         ? "Conversion Ratio (%)"
                         : convType === "DEBENTURE_TO_EQUITY"
-                        ? "Conversion Price (NPR)"
-                        : "Swap Ratio (100:X)"}
+                          ? "Conversion Price (NPR)"
+                          : "Swap Ratio (100:X)"}
                     </Label>
                     <Input
                       type="number"
@@ -1551,33 +1622,63 @@ function AllocationsPage() {
                 <>
                   <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
                     <div className="p-3 bg-muted/20 border rounded-lg">
-                      <span className="text-xs text-muted-foreground font-medium uppercase">Beneficiaries</span>
-                      <div className="text-lg font-bold mt-0.5">{convSummary.totalEligibleShareholders.toLocaleString()}</div>
-                      <span className="text-[11px] text-muted-foreground">{convSummary.conversionType}</span>
+                      <span className="text-xs text-muted-foreground font-medium uppercase">
+                        Beneficiaries
+                      </span>
+                      <div className="text-lg font-bold mt-0.5">
+                        {convSummary.totalEligibleShareholders.toLocaleString()}
+                      </div>
+                      <span className="text-[11px] text-muted-foreground">
+                        {convSummary.conversionType}
+                      </span>
                     </div>
                     <div className="p-3 bg-muted/20 border rounded-lg">
-                      <span className="text-xs text-muted-foreground font-medium uppercase">Initial Balance</span>
-                      <div className="text-lg font-bold mt-0.5">{convSummary.totalInitialBalance.toLocaleString()}</div>
+                      <span className="text-xs text-muted-foreground font-medium uppercase">
+                        Initial Balance
+                      </span>
+                      <div className="text-lg font-bold mt-0.5">
+                        {convSummary.totalInitialBalance.toLocaleString()}
+                      </div>
                       <span className="text-[11px] text-muted-foreground">Pre-conversion</span>
                     </div>
                     <div className="p-3 bg-muted/20 border rounded-lg">
-                      <span className="text-xs text-muted-foreground font-medium uppercase">Converted Kitta</span>
-                      <div className="text-lg font-bold mt-0.5 text-primary">{convSummary.totalConvertedKitta.toLocaleString()} kitta</div>
-                      <span className="text-[11px] text-emerald-600 font-medium">Newly created</span>
+                      <span className="text-xs text-muted-foreground font-medium uppercase">
+                        Converted Kitta
+                      </span>
+                      <div className="text-lg font-bold mt-0.5 text-primary">
+                        {convSummary.totalConvertedKitta.toLocaleString()} kitta
+                      </div>
+                      <span className="text-[11px] text-emerald-600 font-medium">
+                        Newly created
+                      </span>
                     </div>
                     <div className="p-3 bg-muted/20 border rounded-lg">
-                      <span className="text-xs text-muted-foreground font-medium uppercase">Final Total Kitta</span>
-                      <div className="text-lg font-bold mt-0.5 text-cyan-600">{convSummary.totalFinalBalance.toLocaleString()} kitta</div>
+                      <span className="text-xs text-muted-foreground font-medium uppercase">
+                        Final Total Kitta
+                      </span>
+                      <div className="text-lg font-bold mt-0.5 text-cyan-600">
+                        {convSummary.totalFinalBalance.toLocaleString()} kitta
+                      </div>
                       <span className="text-[11px] text-muted-foreground">Post-restructuring</span>
                     </div>
                     <div className="p-3 bg-muted/20 border rounded-lg">
-                      <span className="text-xs text-muted-foreground font-medium uppercase">Fraction Remainder</span>
-                      <div className="text-lg font-bold mt-0.5 text-amber-600">{convSummary.totalFractionalKitta.toLocaleString()} kitta</div>
-                      <span className="text-[11px] text-muted-foreground">Gross: NPR {convSummary.totalFractionalGrossCash.toLocaleString()}</span>
+                      <span className="text-xs text-muted-foreground font-medium uppercase">
+                        Fraction Remainder
+                      </span>
+                      <div className="text-lg font-bold mt-0.5 text-amber-600">
+                        {convSummary.totalFractionalKitta.toLocaleString()} kitta
+                      </div>
+                      <span className="text-[11px] text-muted-foreground">
+                        Gross: NPR {convSummary.totalFractionalGrossCash.toLocaleString()}
+                      </span>
                     </div>
                     <div className="p-3 bg-muted/20 border rounded-lg">
-                      <span className="text-xs text-muted-foreground font-medium uppercase">Fraction Net Cash</span>
-                      <div className="text-lg font-bold mt-0.5 text-emerald-600">NPR {convSummary.totalFractionalNetPayable.toLocaleString()}</div>
+                      <span className="text-xs text-muted-foreground font-medium uppercase">
+                        Fraction Net Cash
+                      </span>
+                      <div className="text-lg font-bold mt-0.5 text-emerald-600">
+                        NPR {convSummary.totalFractionalNetPayable.toLocaleString()}
+                      </div>
                       <span className="text-[11px] text-muted-foreground">5% TDS Deducted</span>
                     </div>
                   </div>
@@ -1592,10 +1693,16 @@ function AllocationsPage() {
                           <TableHead>Shareholder Name</TableHead>
                           <TableHead>Classification</TableHead>
                           <TableHead className="text-right">Initial Balance</TableHead>
-                          <TableHead className="text-right font-semibold text-primary">Converted Kitta</TableHead>
-                          <TableHead className="text-right font-semibold text-cyan-600">Final Balance</TableHead>
+                          <TableHead className="text-right font-semibold text-primary">
+                            Converted Kitta
+                          </TableHead>
+                          <TableHead className="text-right font-semibold text-cyan-600">
+                            Final Balance
+                          </TableHead>
                           <TableHead className="text-right">Fraction Kitta</TableHead>
-                          <TableHead className="text-right font-semibold text-emerald-600">Net Fraction Cash</TableHead>
+                          <TableHead className="text-right font-semibold text-emerald-600">
+                            Net Fraction Cash
+                          </TableHead>
                           <TableHead>Remarks</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -1604,20 +1711,34 @@ function AllocationsPage() {
                           <TableRow key={row.sn}>
                             <TableCell className="font-mono text-xs">{row.sn}</TableCell>
                             <TableCell className="font-mono text-xs">{row.boid}</TableCell>
-                            <TableCell className="font-medium text-xs">{row.shareholderName}</TableCell>
+                            <TableCell className="font-medium text-xs">
+                              {row.shareholderName}
+                            </TableCell>
                             <TableCell className="text-xs">
                               <Badge variant="outline" className="text-[10px]">
                                 {row.oldHolderType} ➔ {row.newHolderType}
                               </Badge>
                             </TableCell>
-                            <TableCell className="text-right font-mono text-xs">{row.initialBalance.toLocaleString()}</TableCell>
-                            <TableCell className="text-right font-mono text-xs font-bold text-primary">{row.convertedKitta.toLocaleString()}</TableCell>
-                            <TableCell className="text-right font-mono text-xs font-bold text-cyan-600">{row.finalBalance.toLocaleString()}</TableCell>
-                            <TableCell className="text-right font-mono text-xs">{row.fractionalKitta.toFixed(4)}</TableCell>
-                            <TableCell className="text-right font-mono text-xs font-semibold text-emerald-600">
-                              {row.fractionalNetPayable > 0 ? `NPR ${row.fractionalNetPayable.toFixed(2)}` : "—"}
+                            <TableCell className="text-right font-mono text-xs">
+                              {row.initialBalance.toLocaleString()}
                             </TableCell>
-                            <TableCell className="text-xs text-muted-foreground max-w-[240px] truncate">{row.remarks}</TableCell>
+                            <TableCell className="text-right font-mono text-xs font-bold text-primary">
+                              {row.convertedKitta.toLocaleString()}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-xs font-bold text-cyan-600">
+                              {row.finalBalance.toLocaleString()}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-xs">
+                              {row.fractionalKitta.toFixed(4)}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-xs font-semibold text-emerald-600">
+                              {row.fractionalNetPayable > 0
+                                ? `NPR ${row.fractionalNetPayable.toFixed(2)}`
+                                : "—"}
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground max-w-[240px] truncate">
+                              {row.remarks}
+                            </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -1625,7 +1746,9 @@ function AllocationsPage() {
                   </div>
                   {convSummary.rows.length > 15 && (
                     <p className="text-xs text-muted-foreground text-center">
-                      Showing first 15 of {convSummary.rows.length.toLocaleString()} shareholder conversion records. Click 'Commit & Save to Database' or download the batch files to process all records.
+                      Showing first 15 of {convSummary.rows.length.toLocaleString()} shareholder
+                      conversion records. Click 'Commit & Save to Database' or download the batch
+                      files to process all records.
                     </p>
                   )}
                 </>

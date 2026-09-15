@@ -15,7 +15,8 @@ import {
 } from "@/lib/services/sms-broadcast.service";
 import { WorkflowEngine, ApprovalAction } from "@/lib/workflow-engine";
 import { NotificationService } from "@/lib/services/notification.service";
-import { UserContext } from "@/lib/rbac-service";
+import { RBACService, UserContext } from "@/lib/rbac-service";
+import { fetchAllRows } from "@/lib/services/database";
 import { useAuth } from "@/hooks/use-auth";
 import {
   Table,
@@ -91,6 +92,8 @@ function PaymentsRoute() {
   const currentUser: UserContext | null = user
     ? { id: user.id, roles: (roles as any) || ["read_only"] }
     : null;
+  const canApprove = RBACService.canApprove(currentUser, "payment_batches");
+  const canExport = RBACService.canExport(currentUser, "payments");
   const [createOpen, setCreateOpen] = useState(false);
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("ConnectIPS");
@@ -115,8 +118,11 @@ function PaymentsRoute() {
   // SMS Broadcast State
   const [broadcastOpen, setBroadcastOpen] = useState<boolean>(false);
   const [broadcastBatch, setBroadcastBatch] = useState<PaymentBatch | null>(null);
-  const [broadcastTemplateType, setBroadcastTemplateType] = useState<BroadcastTemplateType>("PAYMENT_SUCCESS");
-  const [customMessageTemplate, setCustomMessageTemplate] = useState<string>(DEFAULT_TEMPLATES.PAYMENT_SUCCESS);
+  const [broadcastTemplateType, setBroadcastTemplateType] =
+    useState<BroadcastTemplateType>("PAYMENT_SUCCESS");
+  const [customMessageTemplate, setCustomMessageTemplate] = useState<string>(
+    DEFAULT_TEMPLATES.PAYMENT_SUCCESS,
+  );
   const [broadcastSummary, setBroadcastSummary] = useState<BroadcastSummary | null>(null);
 
   // Main table filters
@@ -134,26 +140,28 @@ function PaymentsRoute() {
   const { data: allIndividualPayments = [], isLoading: isIndividualLoading } = useQuery({
     queryKey: ["all-individual-payments", shareholderCompany, shareholderStatus],
     queryFn: async () => {
-      let q = (supabase as any)
-        .from("payments")
-        .select(
-          `
-          *,
-          client:clients(id, full_name, boid, bank_name, bank_account_no, pan_no, citizenship_no, phone, holder_type),
-          company:companies(id, company_name, company_code)
-        `,
-        )
-        .order("created_at", { ascending: false })
-        .limit(2000);
+      return fetchAllRows<any>(async (from, to) => {
+        let q = (supabase as any)
+          .from("payments")
+          .select(
+            `
+            *,
+            client:clients(id, full_name, boid, bank_name, bank_account_no, pan_no, citizenship_no, phone, holder_type),
+            company:companies(id, company_name, company_code)
+          `,
+          )
+          .order("created_at", { ascending: false })
+          .range(from, to);
 
-      if (shareholderCompany !== "all") q = q.eq("company_id", shareholderCompany);
-      if (shareholderStatus !== "all") q = q.eq("status", shareholderStatus);
-      const { data, error } = await q;
-      if (error) {
-        console.error("Error fetching payments:", error);
-        return [];
-      }
-      return data || [];
+        if (shareholderCompany !== "all") q = q.eq("company_id", shareholderCompany);
+        if (shareholderStatus !== "all") q = q.eq("status", shareholderStatus);
+        const { data, error } = await q;
+        if (error) {
+          console.error("Error fetching individual payments:", error);
+          throw error;
+        }
+        return { data, error: null };
+      });
     },
   });
 
@@ -244,55 +252,46 @@ function PaymentsRoute() {
     mutationFn: async () => {
       if (!canWrite) throw new Error("You do not have permission to create payment batches.");
       if (!batchName.trim()) throw new Error("Batch name is required");
-      const batch = await PaymentService.createBatch({
-        batch_name: batchName.trim(),
-        company_id: selectedCompany !== "all" ? selectedCompany : undefined,
-        fiscal_year: fiscalYear || undefined,
-        payable_type: selectedPayableType !== "all" ? selectedPayableType : undefined,
-        payment_method: paymentMethod,
+
+      const items = availablePayables.map((payable) => {
+        const grossAmount = Number(payable.gross_dividend ?? payable.gross_interest ?? 0);
+        const netAmount = Number(payable.net_payable ?? 0);
+        const taxAmount = Number(payable.tax_amount ?? grossAmount - netAmount);
+        return {
+          company_id: payable.company_id,
+          client_id: payable.client_id,
+          payable_type:
+            payable.payable_type ||
+            (selectedPayableType !== "all" ? selectedPayableType : "dividend"),
+          payable_id: payable.id,
+          gross_amount: grossAmount,
+          tax_amount: taxAmount,
+          net_amount: netAmount,
+          paid_amount: netAmount,
+          payment_method: paymentMethod,
+          payment_date: null,
+          payment_reference: null,
+          bank_name: payable.clients?.bank_name || payable.bank_name || null,
+          bank_account_no: payable.clients?.bank_account_no || payable.bank_account_no || null,
+          neft_ref: null,
+          connectips_ref: null,
+          rtgs_ref: null,
+          cheque_no: null,
+          status: "Pending",
+          remarks: null,
+        };
       });
 
-      if (!batch) throw new Error("Failed to create batch");
-
-      // Auto-populate all matching payables into the created batch
-      if (availablePayables.length > 0) {
-        try {
-          const items = availablePayables.map((payable) => {
-            const grossAmount = Number(payable.gross_dividend ?? payable.gross_interest ?? 0);
-            const netAmount = Number(payable.net_payable ?? 0);
-            const taxAmount = Number(payable.tax_amount ?? grossAmount - netAmount);
-            return {
-              company_id: payable.company_id,
-              client_id: payable.client_id,
-              payable_type:
-                payable.payable_type ||
-                (selectedPayableType !== "all" ? selectedPayableType : "dividend"),
-              payable_id: payable.id,
-              gross_amount: grossAmount,
-              tax_amount: taxAmount,
-              net_amount: netAmount,
-              paid_amount: netAmount,
-              payment_method: paymentMethod,
-              payment_date: null,
-              payment_reference: null,
-              bank_name: payable.clients?.bank_name || payable.bank_name || null,
-              bank_account_no: payable.clients?.bank_account_no || payable.bank_account_no || null,
-              neft_ref: null,
-              connectips_ref: null,
-              rtgs_ref: null,
-              cheque_no: null,
-              status: "Pending",
-              remarks: null,
-            };
-          });
-
-          await PaymentService.addLineItems(batch.id, items);
-        } catch (addErr) {
-          // Clean up created batch to avoid zombie records
-          await (supabase as any).from("payment_batches").delete().eq("id", batch.id);
-          throw addErr;
-        }
-      }
+      const batch = await PaymentService.createBatchWithLineItems(
+        {
+          batch_name: batchName.trim(),
+          company_id: selectedCompany !== "all" ? selectedCompany : undefined,
+          fiscal_year: fiscalYear || undefined,
+          payable_type: selectedPayableType !== "all" ? selectedPayableType : undefined,
+          payment_method: paymentMethod,
+        },
+        items,
+      );
 
       // Update cds_batch_ref and registrar if provided
       if (cdsBatchRef || registrar) {
@@ -494,6 +493,10 @@ function PaymentsRoute() {
   };
 
   const handleDownloadExcel = async (batch: PaymentBatch) => {
+    if (!canExport) {
+      toast.error("Unauthorized: You do not have permission to export payment reports.");
+      return;
+    }
     let itemsToExport = lineItems;
     if (!itemsToExport || itemsToExport.length === 0 || activeBatchId !== batch.id) {
       itemsToExport = await PaymentService.getLineItems(batch.id);
@@ -527,13 +530,19 @@ function PaymentsRoute() {
   };
 
   const handleDownloadCorporatePay = async (batch: PaymentBatch) => {
+    if (!canExport) {
+      toast.error("Unauthorized: You do not have permission to export payment files.");
+      return;
+    }
     const toastId = toast.loading("Generating NCHL CorporatePay / ConnectIPS batch file...");
     try {
       const res = await ConnectIPSService.generateCorporatePayBatchFile({
         batchId: batch.id,
       });
       toast.dismiss(toastId);
-      toast.success(`NCHL CorporatePay batch (${res.totalRows} payees, NPR ${res.totalAmount.toLocaleString()}) exported successfully.`);
+      toast.success(
+        `NCHL CorporatePay batch (${res.totalRows} payees, NPR ${res.totalAmount.toLocaleString()}) exported successfully.`,
+      );
     } catch (err: any) {
       toast.dismiss(toastId);
       toast.error(err?.message || "Failed to generate CorporatePay batch file.");
@@ -1272,7 +1281,7 @@ function PaymentsRoute() {
                               )}
                             </>
                           )}
-                          {batch.status === "Pending" && (
+                          {batch.status === "Pending" && canApprove && (
                             <>
                               <Button
                                 variant="ghost"
@@ -1699,39 +1708,45 @@ function PaymentsRoute() {
                   >
                     Awaiting Checker / Supervisor Approval
                   </Badge>
-                  <Button
-                    size="sm"
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow-sm"
-                    onClick={() => {
-                      if (activeBatchId) {
-                        updateBatchStatus({ batchId: activeBatchId, action: "approve" });
-                      }
-                    }}
-                  >
-                    <CheckCircle2 className="w-4 h-4 mr-1.5" />
-                    Approve Batch
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="text-destructive hover:bg-destructive/10"
-                    onClick={() => {
-                      if (activeBatchId) {
-                        updateBatchStatus({ batchId: activeBatchId, action: "reject" });
-                      }
-                    }}
-                  >
-                    <XCircle className="w-4 h-4 mr-1.5" />
-                    Reject Batch
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleDownloadExcel(activeBatchData)}
-                  >
-                    <FileSpreadsheet className="w-4 h-4 mr-1.5 text-emerald-600" />
-                    Export Excel (.xlsx)
-                  </Button>
+                  {canApprove && (
+                    <>
+                      <Button
+                        size="sm"
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow-sm"
+                        onClick={() => {
+                          if (activeBatchId) {
+                            updateBatchStatus({ batchId: activeBatchId, action: "approve" });
+                          }
+                        }}
+                      >
+                        <CheckCircle2 className="w-4 h-4 mr-1.5" />
+                        Approve Batch
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-destructive hover:bg-destructive/10"
+                        onClick={() => {
+                          if (activeBatchId) {
+                            updateBatchStatus({ batchId: activeBatchId, action: "reject" });
+                          }
+                        }}
+                      >
+                        <XCircle className="w-4 h-4 mr-1.5" />
+                        Reject Batch
+                      </Button>
+                    </>
+                  )}
+                  {canExport && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleDownloadExcel(activeBatchData)}
+                    >
+                      <FileSpreadsheet className="w-4 h-4 mr-1.5 text-emerald-600" />
+                      Export Excel (.xlsx)
+                    </Button>
+                  )}
                 </div>
               )}
 
@@ -2008,7 +2023,7 @@ function PaymentsRoute() {
         <ApprovalBar
           recordId={activeBatchId}
           tableName="payment_batches"
-          canApprove={true}
+          canApprove={canApprove}
           onStatusChange={() => {
             setActiveBatchId(null);
             qc.invalidateQueries({ queryKey: ["payments"] });
@@ -2031,20 +2046,36 @@ function PaymentsRoute() {
               {/* Batch Metadata & Metric Strip */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="p-3 bg-muted/30 border rounded-lg">
-                  <span className="text-xs text-muted-foreground uppercase font-medium">Recipients</span>
-                  <div className="text-lg font-bold mt-0.5">{broadcastSummary.totalRecipients.toLocaleString()}</div>
+                  <span className="text-xs text-muted-foreground uppercase font-medium">
+                    Recipients
+                  </span>
+                  <div className="text-lg font-bold mt-0.5">
+                    {broadcastSummary.totalRecipients.toLocaleString()}
+                  </div>
                 </div>
                 <div className="p-3 bg-muted/30 border rounded-lg">
-                  <span className="text-xs text-muted-foreground uppercase font-medium">Valid Mobile (Nepal)</span>
-                  <div className="text-lg font-bold mt-0.5 text-emerald-600">{broadcastSummary.validPhones.toLocaleString()}</div>
+                  <span className="text-xs text-muted-foreground uppercase font-medium">
+                    Valid Mobile (Nepal)
+                  </span>
+                  <div className="text-lg font-bold mt-0.5 text-emerald-600">
+                    {broadcastSummary.validPhones.toLocaleString()}
+                  </div>
                 </div>
                 <div className="p-3 bg-muted/30 border rounded-lg">
-                  <span className="text-xs text-muted-foreground uppercase font-medium">Invalid / Missing</span>
-                  <div className="text-lg font-bold mt-0.5 text-amber-600">{broadcastSummary.invalidPhones.toLocaleString()}</div>
+                  <span className="text-xs text-muted-foreground uppercase font-medium">
+                    Invalid / Missing
+                  </span>
+                  <div className="text-lg font-bold mt-0.5 text-amber-600">
+                    {broadcastSummary.invalidPhones.toLocaleString()}
+                  </div>
                 </div>
                 <div className="p-3 bg-muted/30 border rounded-lg">
-                  <span className="text-xs text-muted-foreground uppercase font-medium">Total Payout</span>
-                  <div className="text-lg font-bold mt-0.5 text-primary">NPR {broadcastSummary.totalAmount.toLocaleString()}</div>
+                  <span className="text-xs text-muted-foreground uppercase font-medium">
+                    Total Payout
+                  </span>
+                  <div className="text-lg font-bold mt-0.5 text-primary">
+                    NPR {broadcastSummary.totalAmount.toLocaleString()}
+                  </div>
                 </div>
               </div>
 
@@ -2059,9 +2090,15 @@ function PaymentsRoute() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="PAYMENT_SUCCESS">✅ Payment Disbursed (ConnectIPS Payout Confirmation)</SelectItem>
-                    <SelectItem value="PAYMENT_FAILED">⚠️ Payment Failed / Invalid Bank Mandate Notice</SelectItem>
-                    <SelectItem value="BONUS_CREDITED">🎁 Bonus Shares Credited to DEMAT Alert</SelectItem>
+                    <SelectItem value="PAYMENT_SUCCESS">
+                      ✅ Payment Disbursed (ConnectIPS Payout Confirmation)
+                    </SelectItem>
+                    <SelectItem value="PAYMENT_FAILED">
+                      ⚠️ Payment Failed / Invalid Bank Mandate Notice
+                    </SelectItem>
+                    <SelectItem value="BONUS_CREDITED">
+                      🎁 Bonus Shares Credited to DEMAT Alert
+                    </SelectItem>
                     <SelectItem value="AGM_NOTICE">📢 AGM & Book Closure Announcement</SelectItem>
                     <SelectItem value="CUSTOM">✏️ Custom Message Template</SelectItem>
                   </SelectContent>
@@ -2071,9 +2108,13 @@ function PaymentsRoute() {
               {/* Message Content Editor / Preview */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label className="text-xs font-semibold">Message Preview (Supports Tokens: {"{{name}}"}, {"{{amount}}"}, {"{{company}}"}, {"{{boid}}"}, {"{{fy}}"}, {"{{ref}}"})</Label>
+                  <Label className="text-xs font-semibold">
+                    Message Preview (Supports Tokens: {"{{name}}"}, {"{{amount}}"}, {"{{company}}"},{" "}
+                    {"{{boid}}"}, {"{{fy}}"}, {"{{ref}}"})
+                  </Label>
                   <span className="text-[11px] text-muted-foreground font-mono">
-                    ~{customMessageTemplate.length} chars ({Math.ceil(customMessageTemplate.length / 160) || 1} SMS)
+                    ~{customMessageTemplate.length} chars (
+                    {Math.ceil(customMessageTemplate.length / 160) || 1} SMS)
                   </span>
                 </div>
                 <Textarea
@@ -2119,10 +2160,14 @@ function PaymentsRoute() {
                     {broadcastSummary.messages.slice(0, 10).map((msg, idx) => (
                       <TableRow key={msg.id || idx}>
                         <TableCell className="font-mono text-xs">{idx + 1}</TableCell>
-                        <TableCell className="font-mono text-xs font-medium">{msg.phone || "—"}</TableCell>
+                        <TableCell className="font-mono text-xs font-medium">
+                          {msg.phone || "—"}
+                        </TableCell>
                         <TableCell className="text-xs font-medium">{msg.recipientName}</TableCell>
                         <TableCell className="font-mono text-xs">{msg.boid}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground max-w-[280px] truncate">{msg.messageText}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground max-w-[280px] truncate">
+                          {msg.messageText}
+                        </TableCell>
                         <TableCell className="text-right">
                           <Badge
                             variant={msg.status === "QUEUED" ? "default" : "outline"}
@@ -2158,14 +2203,15 @@ function PaymentsRoute() {
                   size="sm"
                   className="h-8 text-xs bg-purple-600 hover:bg-purple-700"
                   onClick={() => {
+                    SmsBroadcastService.exportBroadcastCsv(broadcastSummary);
                     toast.success(
-                      `Broadcast queue dispatched to ${broadcastSummary.validPhones.toLocaleString()} verified mobile numbers via Nepal SMS Gateway.`,
+                      `Broadcast file generated for ${broadcastSummary.validPhones.toLocaleString()} verified mobile numbers. Ready for SMS gateway dispatch (Sparrow/Aakash/NTC).`,
                     );
                     setBroadcastOpen(false);
                   }}
                 >
                   <Send className="h-3.5 w-3.5 mr-1.5" />
-                  Dispatch SMS Broadcast
+                  Export & Dispatch Gateway Broadcast
                 </Button>
               </div>
             )}

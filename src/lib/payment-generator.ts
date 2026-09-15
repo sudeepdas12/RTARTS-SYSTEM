@@ -78,20 +78,43 @@ function numberToWords(num: number): string {
   return result.trim() + " Only";
 }
 
+export interface PaymentExportRecord {
+  clients?: {
+    full_name?: string | null;
+    name?: string | null;
+    boid?: string | null;
+  } | null;
+  shareholderName?: string | null;
+  full_name?: string | null;
+  bank_name?: string | null;
+  bankName?: string | null;
+  bank_account_no?: string | null;
+  bankAccountNo?: string | null;
+  boid?: string | null;
+  net_amount?: number | string | null;
+  netAmount?: number | string | null;
+  excelAmount?: number | string | null;
+  net_payable?: number | string | null;
+  payable_type?: string | null;
+  remarks?: string | null;
+}
+
 export const PaymentGenerator = {
   /**
    * Generates a standard NEFT/RTGS txt or csv format string.
    * NEFT format: Date, Beneficiary Name, Account Number, Bank Name, Amount, Remarks
    */
-  generateNEFT(payments: any[], batchName: string): string {
+  generateNEFT(payments: PaymentExportRecord[], batchName: string): string {
     let fileContent = `S.N,Account_Name,Account_Number,Bank_Name,Amount,Remarks\n`;
 
     payments.forEach((p, index) => {
-      const name = p.clients?.full_name || p.clients?.name || p.shareholderName || "Unknown";
+      const name =
+        p.clients?.full_name || p.clients?.name || p.shareholderName || p.full_name || "Unknown";
       const accountNo = p.bank_account_no || p.bankAccountNo || "";
       const bankName = p.bank_name || p.bankName || "";
-      const amount = p.net_amount || p.netAmount || p.excelAmount || p.net_payable || 0;
-      fileContent += `${index + 1},"${name.replace(/"/g, '""')}","${accountNo}","${bankName.replace(/"/g, '""')}",${Number(amount).toFixed(2)},RTARTS_Payment\n`;
+      const rawAmount = Number(p.net_amount ?? p.netAmount ?? p.excelAmount ?? p.net_payable ?? 0);
+      const amount = Math.max(0, isNaN(rawAmount) ? 0 : rawAmount);
+      fileContent += `${index + 1},"${name.replace(/"/g, '""')}","${accountNo}","${bankName.replace(/"/g, '""')}",${amount.toFixed(2)},RTARTS_Payment\n`;
     });
 
     return fileContent;
@@ -101,22 +124,24 @@ export const PaymentGenerator = {
    * Generates ConnectIPS specific CSV format for bulk batch upload.
    * ConnectIPS format: batch header + beneficiary rows with destination bank routing
    */
-  generateConnectIPS(payments: any[], batchName: string): string {
+  generateConnectIPS(payments: PaymentExportRecord[], batchName: string): string {
     let fileContent = `BENEFICIARY_ID,BANK_NAME,ACCOUNT_NUMBER,BENEFICIARY_NAME,AMOUNT,PAYMENT_TYPE,NARRATION\n`;
 
     payments.forEach((p, index) => {
-      const name = p.clients?.full_name || p.clients?.name || p.shareholderName || "Unknown";
+      const name =
+        p.clients?.full_name || p.clients?.name || p.shareholderName || p.full_name || "Unknown";
       const accountNo = p.bank_account_no || p.bankAccountNo || "";
       const bankName = p.bank_name || p.bankName || "";
       const boid = p.clients?.boid || p.boid || String(index + 1);
-      const amount = p.net_amount || p.netAmount || p.excelAmount || p.net_payable || 0;
+      const rawAmount = Number(p.net_amount ?? p.netAmount ?? p.excelAmount ?? p.net_payable ?? 0);
+      const amount = Math.max(0, isNaN(rawAmount) ? 0 : rawAmount);
       const payableType = (p.payable_type || "dividend").toUpperCase();
       const pType = payableType.includes("INTEREST")
         ? "INTEREST"
         : payableType.includes("MUTUAL")
           ? "MUTUAL_FUND"
           : "DIVIDEND";
-      fileContent += `"${boid}","${bankName.replace(/"/g, '""')}","${accountNo}","${name.replace(/"/g, '""')}",${Number(amount).toFixed(2)},${pType},RTARTS Payment\n`;
+      fileContent += `"${boid}","${bankName.replace(/"/g, '""')}","${accountNo}","${name.replace(/"/g, '""')}",${amount.toFixed(2)},${pType},RTARTS Payment\n`;
     });
 
     return fileContent;
@@ -126,16 +151,18 @@ export const PaymentGenerator = {
    * Generates Cheque listing format - a payable listing for cheque printing.
    * Format: Cheque No, Date, Payee Name, Amount in Words, Amount, Bank, Account
    */
-  generateCheque(payments: any[], batchName: string): string {
+  generateCheque(payments: PaymentExportRecord[], batchName: string): string {
     const today = new Date().toISOString().split("T")[0];
     let fileContent = `CHEQUE_BATCH,${batchName},${today}\n`;
     fileContent += `CHEQUE_NO,PAYEE_NAME,AMOUNT_IN_WORDS,AMOUNT,BANK_NAME,ACCOUNT_NO\n`;
 
     payments.forEach((p, index) => {
-      const name = p.clients?.full_name || p.clients?.name || p.shareholderName || "Unknown";
+      const name =
+        p.clients?.full_name || p.clients?.name || p.shareholderName || p.full_name || "Unknown";
       const accountNo = p.bank_account_no || p.bankAccountNo || "";
       const bankName = p.bank_name || p.bankName || "";
-      const amount = Number(p.net_amount || p.netAmount || p.excelAmount || p.net_payable || 0);
+      const rawAmount = Number(p.net_amount ?? p.netAmount ?? p.excelAmount ?? p.net_payable ?? 0);
+      const amount = Math.max(0, isNaN(rawAmount) ? 0 : rawAmount);
       const chequeNo = `CHQ-${String(index + 1).padStart(6, "0")}`;
       const inWords = numberToWords(amount);
       fileContent += `${chequeNo},"${name.replace(/"/g, '""')}","${inWords}",${amount.toFixed(2)},"${bankName.replace(/"/g, '""')}","${accountNo}"\n`;
@@ -147,7 +174,7 @@ export const PaymentGenerator = {
   /**
    * Generates Cash payment listing format.
    */
-  generateCash(payments: any[], batchName: string): string {
+  generateCash(payments: PaymentExportRecord[], batchName: string): string {
     const today = new Date().toISOString().split("T")[0];
     let fileContent = `BatchName: ${batchName}\n`;
     fileContent += `Date: ${today}\n`;
@@ -155,9 +182,11 @@ export const PaymentGenerator = {
     fileContent += `S.N,Payee_Name,Amount,Remarks\n`;
 
     payments.forEach((p, index) => {
-      const name = p.clients?.full_name || p.clients?.name || p.shareholderName || "Unknown";
-      const amount = p.net_amount || p.netAmount || p.excelAmount || p.net_payable || 0;
-      fileContent += `${index + 1},"${name.replace(/"/g, '""')}",${Number(amount).toFixed(2)},CASH_DISBURSEMENT\n`;
+      const name =
+        p.clients?.full_name || p.clients?.name || p.shareholderName || p.full_name || "Unknown";
+      const rawAmount = Number(p.net_amount ?? p.netAmount ?? p.excelAmount ?? p.net_payable ?? 0);
+      const amount = Math.max(0, isNaN(rawAmount) ? 0 : rawAmount);
+      fileContent += `${index + 1},"${name.replace(/"/g, '""')}",${amount.toFixed(2)},CASH_DISBURSEMENT\n`;
     });
 
     return fileContent;

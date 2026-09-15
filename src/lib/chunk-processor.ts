@@ -111,6 +111,11 @@ export const ChunkProcessor = {
     let processed = 0;
     let success = 0;
     let errors = 0;
+    if (chunkSize && chunkSize < 250) {
+      console.warn(
+        `[ChunkProcessor] Requested chunkSize (${chunkSize}) is below minimum threshold (250). Adjusted to 250 for optimal bulk database operations.`,
+      );
+    }
     const effectiveChunkSize = Math.max(250, chunkSize || 1000);
     const sharedContext: ChunkSharedContext = externalSharedContext || {
       companyId: options?.companyId || "", // Use direct ID if provided (bypasses name lookup)

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Inland Revenue Department (IRD) Nepal — e-TDS Annex-10 & Withholding Certificate Service
  *
  * Implements standard IRD e-TDS reporting formats pursuant to Nepal Income Tax Act 2058:
@@ -62,40 +62,114 @@ export interface TdsCertificateData {
 
 export const IrdEtdsService = {
   /**
-   * Fetches and builds standard IRD Annex-10 report data for a company and fiscal year.
+   * Asserts report mathematical invariants.
+   * Throws an error if row counts or financial totals do not balance.
+   */
+  assertReportInvariants(summary: IrdAnnex10Summary): void {
+    if (!summary) {
+      throw new Error("Report invariant violation: summary object is null or undefined.");
+    }
+    const computedGross = summary.rows.reduce((s, r) => s + Number(r.grossAmount || 0), 0);
+    const computedTds = summary.rows.reduce((s, r) => s + Number(r.tdsAmount || 0), 0);
+    const computedNet = summary.rows.reduce((s, r) => s + Number(r.netPayable || 0), 0);
+    const rowCount = summary.rows.length;
+
+    if (summary.totalWithholdees !== rowCount) {
+      throw new Error(
+        `Report invariant violation: totalWithholdees (${summary.totalWithholdees}) != rows.length (${rowCount}).`,
+      );
+    }
+    if (Math.abs(summary.totalGrossAmount - Math.round(computedGross * 100) / 100) > 0.05) {
+      throw new Error(
+        `Report invariant violation: totalGrossAmount (${summary.totalGrossAmount}) != sum(grossAmount) (${Math.round(computedGross * 100) / 100}).`,
+      );
+    }
+    if (Math.abs(summary.totalTdsAmount - Math.round(computedTds * 100) / 100) > 0.05) {
+      throw new Error(
+        `Report invariant violation: totalTdsAmount (${summary.totalTdsAmount}) != sum(tdsAmount) (${Math.round(computedTds * 100) / 100}).`,
+      );
+    }
+    if (Math.abs(summary.totalNetAmount - Math.round(computedNet * 100) / 100) > 0.05) {
+      throw new Error(
+        `Report invariant violation: totalNetAmount (${summary.totalNetAmount}) != sum(netPayable) (${Math.round(computedNet * 100) / 100}).`,
+      );
+    }
+  },
+
+  /**
+   * Fetches and builds standard IRD Annex-10 report data for a company (or all companies) and fiscal year.
    */
   async getAnnex10Report(params: {
-    companyId: string;
+    companyId?: string;
     fiscalYear?: string;
     payableType?: "dividend" | "interest" | "mutual_fund" | "all";
   }): Promise<IrdAnnex10Summary> {
     const { companyId, fiscalYear, payableType = "all" } = params;
+    const isAllCompanies = !companyId || companyId === "all";
 
-    // 1. Fetch Company Info
-    const { data: comp } = await (supabase as any)
-      .from("companies")
-      .select("company_name, company_code, pan_no, address")
-      .eq("id", companyId)
-      .maybeSingle();
+    let companyName = "All Authorized Companies (Consolidated)";
+    let companyPan = "CONSOLIDATED";
 
-    const companyName = comp?.company_name || "Company";
-    const companyPan = comp?.pan_no || "N/A";
+    // 1. Fetch Company Info if specific company requested
+    if (!isAllCompanies) {
+      const { data: comp, error: compErr } = await (supabase as any)
+        .from("companies")
+        .select("company_name, company_code, pan_no, address")
+        .eq("id", companyId)
+        .maybeSingle();
+
+      if (compErr) {
+        throw new Error(`Failed to fetch company info for Annex-10: ${compErr.message}`);
+      }
+      companyName = comp?.company_name || "Company";
+      companyPan = comp?.pan_no || "N/A";
+    }
 
     const rows: IrdAnnex10Row[] = [];
     let sn = 1;
 
+    // Helper to fetch all rows paginated in 1000-item chunks
+    const fetchAllPayables = async (tableName: string) => {
+      const allRows: any[] = [];
+      const PAGE_SIZE = 1000;
+      let from = 0;
+      let hasMore = true;
+
+      while (hasMore) {
+        let q = (supabase as any)
+          .from(tableName)
+          .select(
+            "*, client:clients(id, full_name, boid, pan_no, pan_or_citizenship, citizenship_no)",
+          )
+          .range(from, from + PAGE_SIZE - 1);
+
+        if (!isAllCompanies) {
+          q = q.eq("company_id", companyId);
+        }
+        if (fiscalYear && fiscalYear !== "all") {
+          q = q.eq("fiscal_year", fiscalYear);
+        }
+
+        const { data, error } = await q;
+        if (error) {
+          throw new Error(`Failed to fetch ${tableName} for Annex-10: ${error.message}`);
+        }
+
+        const batch = data || [];
+        allRows.push(...batch);
+        if (batch.length < PAGE_SIZE) {
+          hasMore = false;
+        } else {
+          from += PAGE_SIZE;
+        }
+      }
+      return allRows;
+    };
+
     // 2. Fetch Dividend Payables if requested
     if (payableType === "all" || payableType === "dividend") {
-      let q = (supabase as any)
-        .from("dividend_payables")
-        .select("*, client:clients(id, full_name, boid, pan_no, pan_or_citizenship, citizenship_no)")
-        .eq("company_id", companyId);
+      const divRows = await fetchAllPayables("dividend_payables");
 
-      if (fiscalYear && fiscalYear !== "all") {
-        q = q.eq("fiscal_year", fiscalYear);
-      }
-
-      const { data: divRows } = await q;
       for (const d of divRows || []) {
         const client = d.client || {};
         const pan = client.pan_no || client.pan_or_citizenship || "";
@@ -103,7 +177,15 @@ export const IrdEtdsService = {
         const gross = Number(d.gross_dividend || 0);
         const tax = Number(d.tax_amount || 0);
         const net = Number(d.net_payable || gross - tax);
-        const rate = Number(d.tds_rate != null ? Number(d.tds_rate) * 100 : gross > 0 ? (tax / gross) * 100 : 5);
+        const rate = Number(
+          d.tds_rate != null
+            ? Number(d.tds_rate) * 100
+            : gross > 0
+              ? (tax / gross) * 100
+              : tax > 0
+                ? 5
+                : 0,
+        );
 
         rows.push({
           sn: sn++,
@@ -123,16 +205,8 @@ export const IrdEtdsService = {
 
     // 3. Fetch Interest Payables if requested
     if (payableType === "all" || payableType === "interest") {
-      let q = (supabase as any)
-        .from("interest_payables")
-        .select("*, client:clients(id, full_name, boid, pan_no, pan_or_citizenship, citizenship_no)")
-        .eq("company_id", companyId);
+      const intRows = await fetchAllPayables("interest_payables");
 
-      if (fiscalYear && fiscalYear !== "all") {
-        q = q.eq("fiscal_year", fiscalYear);
-      }
-
-      const { data: intRows } = await q;
       for (const d of intRows || []) {
         const client = d.client || {};
         const pan = client.pan_no || client.pan_or_citizenship || "";
@@ -140,7 +214,15 @@ export const IrdEtdsService = {
         const gross = Number(d.gross_interest || 0);
         const tax = Number(d.tax_amount || 0);
         const net = Number(d.net_payable || gross - tax);
-        const rate = Number(d.tds_rate != null ? Number(d.tds_rate) * 100 : gross > 0 ? (tax / gross) * 100 : 6);
+        const rate = Number(
+          d.tds_rate != null
+            ? Number(d.tds_rate) * 100
+            : gross > 0
+              ? (tax / gross) * 100
+              : tax > 0
+                ? 6
+                : 0,
+        );
 
         rows.push({
           sn: sn++,
@@ -160,16 +242,8 @@ export const IrdEtdsService = {
 
     // 4. Fetch Mutual Fund Payables if requested
     if (payableType === "all" || payableType === "mutual_fund") {
-      let q = (supabase as any)
-        .from("mutual_fund_payables")
-        .select("*, client:clients(id, full_name, boid, pan_no, pan_or_citizenship, citizenship_no)")
-        .eq("company_id", companyId);
+      const mfRows = await fetchAllPayables("mutual_fund_payables");
 
-      if (fiscalYear && fiscalYear !== "all") {
-        q = q.eq("fiscal_year", fiscalYear);
-      }
-
-      const { data: mfRows } = await q;
       for (const d of mfRows || []) {
         const client = d.client || {};
         const pan = client.pan_no || client.pan_or_citizenship || "";
@@ -177,7 +251,9 @@ export const IrdEtdsService = {
         const gross = Number(d.gross_dividend || 0);
         const tax = Number(d.tax_amount || 0);
         const net = Number(d.net_payable || gross - tax);
-        const rate = Number(d.tds_rate != null ? Number(d.tds_rate) * 100 : 0);
+        const rate = Number(
+          d.tds_rate != null ? Number(d.tds_rate) * 100 : gross > 0 ? (tax / gross) * 100 : 0,
+        );
 
         rows.push({
           sn: sn++,
@@ -201,7 +277,7 @@ export const IrdEtdsService = {
     const panWithholdees = rows.filter((r) => r.withholdeePan !== "UNREGISTERED").length;
     const unregisteredWithholdees = rows.length - panWithholdees;
 
-    return {
+    const summary: IrdAnnex10Summary = {
       companyName,
       companyPan,
       fiscalYear: fiscalYear || "All Fiscal Years",
@@ -214,12 +290,20 @@ export const IrdEtdsService = {
       totalNetAmount: Math.round(totalNetAmount * 100) / 100,
       rows,
     };
+
+    // Assert mathematical invariants before returning
+    this.assertReportInvariants(summary);
+
+    return summary;
   },
 
   /**
    * Generates formatted Excel file for IRD Annex-10 e-TDS return upload.
    */
   exportAnnex10Excel(summary: IrdAnnex10Summary, fileName?: string): void {
+    // Assert report invariants before generating workbook
+    this.assertReportInvariants(summary);
+
     const wb = XLSX.utils.book_new();
 
     // Sheet 1: IRD Annex-10 e-TDS Return
@@ -287,8 +371,10 @@ export const IrdEtdsService = {
     XLSX.utils.book_append_sheet(wb, ws, "IRD_Annex_10_eTDS");
 
     const safeName =
-      (fileName || `IRD_Annex10_${summary.companyName}_${summary.fiscalYear}`)
-        .replace(/[^a-zA-Z0-9-_]/g, "_") + ".xlsx";
+      (fileName || `IRD_Annex10_${summary.companyName}_${summary.fiscalYear}`).replace(
+        /[^a-zA-Z0-9-_]/g,
+        "_",
+      ) + ".xlsx";
 
     XLSX.writeFile(wb, safeName);
   },
@@ -323,7 +409,9 @@ export const IrdEtdsService = {
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(textColor[0], textColor[1], textColor[2]);
-    doc.text("Registrar to Shares (RTS) Department | Central Office, Kathmandu, Nepal", 105, 30, { align: "center" });
+    doc.text("Registrar to Shares (RTS) Department | Central Office, Kathmandu, Nepal", 105, 30, {
+      align: "center",
+    });
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(12);
@@ -331,7 +419,9 @@ export const IrdEtdsService = {
 
     doc.setFontSize(9);
     doc.setFont("helvetica", "normal");
-    doc.text("Pursuant to Section 87, 88 & 90 of the Nepal Income Tax Act, 2058", 105, 46, { align: "center" });
+    doc.text("Pursuant to Section 87, 88 & 90 of the Nepal Income Tax Act, 2058", 105, 46, {
+      align: "center",
+    });
 
     // Meta Info Block
     doc.setDrawColor(220, 220, 220);
@@ -364,7 +454,15 @@ export const IrdEtdsService = {
     autoTable(doc, {
       startY: 126,
       margin: { left: 20, right: 20 },
-      head: [["Particulars / Income Head", "Gross Amount (NPR)", "TDS Rate (%)", "TDS Withheld (NPR)", "Net Amount Paid (NPR)"]],
+      head: [
+        [
+          "Particulars / Income Head",
+          "Gross Amount (NPR)",
+          "TDS Rate (%)",
+          "TDS Withheld (NPR)",
+          "Net Amount Paid (NPR)",
+        ],
+      ],
       body: [
         [
           data.paymentType,
@@ -422,7 +520,9 @@ export const IrdEtdsService = {
     const verifHash = `RBB-TDS-${data.boid.slice(-6)}-${data.fiscalYear.replace("/", "")}-${Math.round(data.tdsAmount)}`;
     doc.setFontSize(7.5);
     doc.setTextColor(120, 120, 120);
-    doc.text(`Digital Verification Code: ${verifHash} | Generated by RTARTS System`, 105, 280, { align: "center" });
+    doc.text(`Digital Verification Code: ${verifHash} | Generated by RTARTS System`, 105, 280, {
+      align: "center",
+    });
 
     doc.save(`TDS_Certificate_${data.shareholderName}_${data.fiscalYear.replace("/", "_")}.pdf`);
   },

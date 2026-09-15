@@ -184,7 +184,7 @@ export const ReconciliationEngine = {
       fetcher: (chunk: string[]) => PromiseLike<{ data: T[] | null; error?: any }> | any,
     ): Promise<T[]> => {
       if (!items || items.length === 0) return [];
-      const safeChunkSize = 100;
+      const safeChunkSize = BULK_CHUNK_SIZE || 200;
       const results: T[] = [];
       for (let i = 0; i < items.length; i += safeChunkSize) {
         const chunk = items.slice(i, i + safeChunkSize);
@@ -428,8 +428,7 @@ export const ReconciliationEngine = {
           if (!bestPayment) {
             // Fallback: match by amount, but strictly scoped to the same company or verified client
             const amountCandidates = paymentsByAmount.get(buildAmountKey(excelAmount)) || [];
-            const targetCompId =
-              bestPayable?.company_id || (client as any)?.company_id || null;
+            const targetCompId = bestPayable?.company_id || (client as any)?.company_id || null;
             bestPayment =
               amountCandidates.find(
                 (p) =>

@@ -15,6 +15,7 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:e2e": "playwright test",
+    "check:edge": "deno check supabase/functions/process-import-chunk/index.ts",
     "prepare": "husky"
   },
   "dependencies": {

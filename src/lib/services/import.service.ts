@@ -106,8 +106,8 @@ async function hasActiveRowsForUpload(
       .eq("upload_id", uploadId);
 
     if (error) {
-      console.warn(`Duplicate-check row probe failed for ${table}:`, error.message);
-      continue;
+      console.error(`Duplicate-check row probe failed for ${table}:`, error.message);
+      throw error;
     }
 
     if ((count || 0) > 0) {
@@ -217,6 +217,20 @@ async function insertRowsWithSchemaFallback(targetTable: string, rows: any[]) {
 
   let insertedCount = 0;
 
+  const ALLOWED_STRIPPABLE_OPTIONAL_COLUMNS = new Set([
+    "remarks",
+    "bank_code",
+    "account_type",
+    "due_date",
+    "instrument_ref",
+    "pledge",
+    "lot_name",
+    "approve_date",
+    "payee_segment",
+    "classification_status",
+    "classification_source",
+  ]);
+
   for (const row of rows) {
     const currentRow = { ...row };
     let attempts = 0;
@@ -233,9 +247,13 @@ async function insertRowsWithSchemaFallback(targetTable: string, rows: any[]) {
       if (
         !missingColumn ||
         currentRow[missingColumn] === undefined ||
-        strippedColumns.has(missingColumn)
+        strippedColumns.has(missingColumn) ||
+        !ALLOWED_STRIPPABLE_OPTIONAL_COLUMNS.has(missingColumn)
       ) {
-        console.error("Failed to insert payable row:", error.message);
+        console.error(
+          `Failed to insert payable row (refusing to silently strip required or non-whitelisted column '${missingColumn}'):`,
+          error.message,
+        );
         break;
       }
 
@@ -328,6 +346,7 @@ export const ImportService = {
           uploadId,
           chunkData,
           targetTable,
+          companyId: options?.companyId,
           companyName: options?.companyName,
           companyIsin: options?.companyIsin,
           fiscalYear: options?.fiscalYear,
@@ -396,21 +415,6 @@ export const ImportService = {
     if (!companyId) {
       const cleanName = (options?.companyName || "Unknown Company").trim();
 
-      // Generate a distinct code for new companies (e.g., "PRIM10" or "NECO")
-      const words = cleanName.split(/\s+/).filter(Boolean);
-      let baseCode = "";
-      if (words.length >= 2) {
-        baseCode = (
-          words[0].slice(0, 3) + words[1].replace(/[^A-Za-z0-9]/g, "").slice(0, 3)
-        ).toUpperCase();
-      } else {
-        baseCode =
-          cleanName
-            .replace(/[^A-Za-z0-9]/g, "")
-            .slice(0, 6)
-            .toUpperCase() || "COMP";
-      }
-
       // 1. If ISIN detected, try lookup by exact ISIN
       if (detectedIsin) {
         try {
@@ -443,86 +447,11 @@ export const ImportService = {
         }
       }
 
-      // 3. Fallback: Direct insert as a new company
+      // 3. Reject if company resolution failed — never silently create arbitrary companies
       if (!companyId) {
-        try {
-          // Ensure company_code is unique
-          let candidateCode = baseCode;
-          const { data: existingCode } = await (supabase as any)
-            .from("companies")
-            .select("id")
-            .eq("company_code", candidateCode)
-            .limit(1);
-          if (existingCode && existingCode.length > 0) {
-            candidateCode = `${baseCode.slice(0, 4)}${Math.floor(10 + Math.random() * 90)}`;
-          }
-
-          const cleanLower = cleanName.toLowerCase();
-          let companyType = "Equity";
-          let sectorType = "Other";
-          let faceValue = 100;
-
-          if (
-            targetTable === "interest_payables" ||
-            options?.fileType === "debenture" ||
-            cleanLower.includes("debenture") ||
-            cleanLower.includes("bond")
-          ) {
-            companyType = "Debenture";
-            sectorType = "Institution";
-            faceValue = 1000;
-          } else if (
-            targetTable === "mutual_fund_payables" ||
-            options?.fileType === "mutual_fund" ||
-            cleanLower.includes("fund") ||
-            cleanLower.includes("scheme") ||
-            cleanLower.includes("yojana")
-          ) {
-            companyType = "Mutual Fund";
-            sectorType = "Institution";
-            faceValue = 10;
-          } else {
-            companyType = "Equity";
-            sectorType = "Public";
-          }
-
-          const { data: createdComp, error: createErr } = await (supabase as any)
-            .from("companies")
-            .insert({
-              company_name: cleanName,
-              company_code: candidateCode,
-              isin: detectedIsin || null,
-              status: "Active",
-              company_type: companyType,
-              sector_type: sectorType,
-              face_value: faceValue,
-              dividend_rate:
-                targetTable === "dividend_payables" && options?.dividendRate
-                  ? Number(options.dividendRate)
-                  : null,
-              debenture_rate:
-                targetTable === "interest_payables" && options?.dividendRate
-                  ? Number(options.dividendRate)
-                  : null,
-              coupon_rate:
-                targetTable === "interest_payables" && options?.dividendRate
-                  ? Number(options.dividendRate)
-                  : null,
-            })
-            .select("id")
-            .maybeSingle();
-
-          if (!createErr && createdComp?.id) {
-            companyId = createdComp.id;
-          }
-        } catch (cErr) {
-          console.warn("Direct company insert failed:", cErr);
-        }
-      }
-
-      // 4. Fallback warning if resolution/creation was unsuccessful
-      if (!companyId) {
-        console.warn("Could not determine or create company for import:", cleanName);
+        throw new Error(
+          `Target company "${cleanName}" could not be resolved. Please select or register the company before importing payables.`,
+        );
       }
 
       if (sharedContext) {
@@ -1160,6 +1089,23 @@ export const ImportService = {
 
     const taxRules: TaxRule[] | undefined = await loadTaxRules().catch(() => undefined);
 
+    const boidToRowIdx = new Map<string, number>();
+    chunkData.forEach((row, idx) => {
+      const b = String(
+        row.boid ||
+          row.BOID ||
+          row["BENEFICIARY ID"] ||
+          row["CLIENT ID"] ||
+          row["DP ID"] ||
+          row["DPID"] ||
+          row["BO ID"] ||
+          row.client_code ||
+          row.ClientCode ||
+          "",
+      ).trim();
+      if (b && !boidToRowIdx.has(b)) boidToRowIdx.set(b, idx + 1);
+    });
+
     for (const row of chunkData) {
       const boid = String(
         row.boid ||
@@ -1176,8 +1122,9 @@ export const ImportService = {
       if (!boid || boid.length < 6) continue;
       const clientId = resolvedClientIds.get(boid);
       if (!clientId) {
+        const rowNum = boidToRowIdx.get(boid) ?? 0;
         rowErrors.push({
-          row_number: chunkData.indexOf(row) + 1,
+          row_number: rowNum,
           field_name: "client",
           error_type: "client_not_found",
           error_message: `Client could not be created/resolved for BOID ${boid}.`,
@@ -1343,9 +1290,31 @@ export const ImportService = {
       ]);
       let dueDate: string = new Date().toISOString().split("T")[0];
       if (rawDueDate) {
-        const parsed = new Date(rawDueDate);
-        if (!isNaN(parsed.getTime())) {
-          dueDate = parsed.toISOString().split("T")[0];
+        let parsedDateStr = "";
+        const cleanDate = rawDueDate.trim();
+        if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(cleanDate)) {
+          const parts = cleanDate.split(/[-/]/);
+          parsedDateStr = `${parts[0]}-${parts[1].padStart(2, "0")}-${parts[2].padStart(2, "0")}`;
+        } else if (/^\d{1,2}[-/]\d{1,2}[-/]\d{4}$/.test(cleanDate)) {
+          const parts = cleanDate.split(/[-/]/);
+          parsedDateStr = `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
+        } else {
+          const parsed = new Date(cleanDate);
+          if (!isNaN(parsed.getTime())) {
+            parsedDateStr = parsed.toISOString().split("T")[0];
+          }
+        }
+
+        if (parsedDateStr) {
+          dueDate = parsedDateStr;
+        } else {
+          rowErrors.push({
+            row_number: boidToRowIdx.get(boid) ?? 0,
+            field_name: "due_date",
+            error_type: "invalid_due_date",
+            error_message: `Due date "${rawDueDate}" format notice; defaulted to current date (${dueDate}).`,
+            raw_data: row,
+          });
         }
       }
 
@@ -1583,8 +1552,16 @@ export const ImportService = {
       }
     }
 
+    const expectedPayableCount = payablesToInsert.length;
+    const isPayableCountSatisfied =
+      expectedPayableCount === 0 ? true : payablesInserted === expectedPayableCount;
+    const isSuccess =
+      rowErrors.length === 0 &&
+      isPayableCountSatisfied &&
+      (payablesInserted > 0 || clientsInserted > 0);
+
     return {
-      success: true,
+      success: isSuccess,
       rowsProcessed: payablesInserted,
       clientsCreated: clientsInserted,
       errors: rowErrors,

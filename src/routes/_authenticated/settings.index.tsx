@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
@@ -26,7 +26,7 @@ import {
 } from "@/lib/services/tax-rules.service";
 import { useAuth } from "@/hooks/use-auth";
 import { toast } from "sonner";
-import { Loader2, Save, Send } from "lucide-react";
+import { Loader2, Lock, Save, Send } from "lucide-react";
 
 function TaxRulesEditor() {
   const qc = useQueryClient();
@@ -154,11 +154,12 @@ export const Route = createFileRoute("/_authenticated/settings/")({
 
 function SettingsRoute() {
   const qc = useQueryClient();
-  const { isAdmin } = useAuth();
+  const { isAdmin, loading: authLoading } = useAuth();
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ["system-settings"],
     queryFn: () => SettingsService.getSettings(),
+    enabled: !!isAdmin,
   });
 
   const [form, setForm] = useState<Partial<SystemSettings>>({});
@@ -203,7 +204,25 @@ function SettingsRoute() {
     onError: (err) => toast.error(`Failed to send test email: ${(err as Error).message}`),
   });
 
-  if (isLoading)
+  if (!authLoading && !isAdmin) {
+    return (
+      <div className="flex min-h-[70vh] flex-col items-center justify-center p-6 text-center">
+        <div className="h-14 w-14 rounded-full bg-rose-100 dark:bg-rose-950/50 flex items-center justify-center text-rose-600 dark:text-rose-400 mb-4">
+          <Lock className="h-7 w-7" />
+        </div>
+        <h2 className="text-xl font-bold tracking-tight">Administrator Access Required</h2>
+        <p className="text-sm text-muted-foreground mt-1.5 max-w-md">
+          System settings, payment gateway credentials, and global tax configuration require the{" "}
+          <span className="font-semibold text-foreground">admin</span> role.
+        </p>
+        <Button asChild variant="outline" className="mt-5">
+          <Link to="/dashboard">Return to Dashboard</Link>
+        </Button>
+      </div>
+    );
+  }
+
+  if (isLoading || authLoading)
     return <div className="p-6 text-sm text-muted-foreground">Loading settings...</div>;
 
   return (

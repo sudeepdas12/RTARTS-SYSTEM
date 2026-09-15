@@ -1,0 +1,121 @@
+﻿{
+  "results": [
+    {
+      "name": "function_search_path_mutable",
+      "title": "Function Search Path Mutable",
+      "level": "WARN",
+      "facing": "EXTERNAL",
+      "categories": ["SECURITY"],
+      "description": "Detects functions where the search_path parameter is not set.",
+      "detail": "Function `public.set_updated_at` has a role mutable search_path",
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable",
+      "metadata": { "name": "set_updated_at", "type": "function", "schema": "public" },
+      "cacheKey": "function_search_path_mutable_public_set_updated_at_5b733ab523bad442e4b10f836de9e4ba"
+    },
+    {
+      "name": "function_search_path_mutable",
+      "title": "Function Search Path Mutable",
+      "level": "WARN",
+      "facing": "EXTERNAL",
+      "categories": ["SECURITY"],
+      "description": "Detects functions where the search_path parameter is not set.",
+      "detail": "Function `public.calc_net_payable` has a role mutable search_path",
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable",
+      "metadata": { "name": "calc_net_payable", "type": "function", "schema": "public" },
+      "cacheKey": "function_search_path_mutable_public_calc_net_payable_c5f45f22a98bbdb57703aacdffed5ce2"
+    },
+    {
+      "name": "rls_policy_always_true",
+      "title": "RLS Policy Always True",
+      "level": "WARN",
+      "facing": "EXTERNAL",
+      "categories": ["SECURITY"],
+      "description": "Detects RLS policies that use overly permissive expressions like `USING (true)` or `WITH CHECK (true)` for UPDATE, DELETE, or INSERT operations. SELECT policies with `USING (true)` are intentionally excluded as this pattern is often used deliberately for public read access.",
+      "detail": "Table `public.approval_logs` has an RLS policy `apl_insert` for `INSERT` that allows unrestricted access (WITH CHECK clause is always true). This effectively bypasses row-level security for authenticated.",
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0024_permissive_rls_policy",
+      "metadata": {
+        "name": "approval_logs",
+        "qual": null,
+        "type": "table",
+        "roles": ["authenticated"],
+        "schema": "public",
+        "command": "INSERT",
+        "with_check": "true",
+        "policy_name": "apl_insert",
+        "permissive_using": false,
+        "permissive_with_check": true
+      },
+      "cacheKey": "rls_policy_always_true_public_approval_logs_apl_insert"
+    },
+    {
+      "name": "rls_policy_always_true",
+      "title": "RLS Policy Always True",
+      "level": "WARN",
+      "facing": "EXTERNAL",
+      "categories": ["SECURITY"],
+      "description": "Detects RLS policies that use overly permissive expressions like `USING (true)` or `WITH CHECK (true)` for UPDATE, DELETE, or INSERT operations. SELECT policies with `USING (true)` are intentionally excluded as this pattern is often used deliberately for public read access.",
+      "detail": "Table `public.audit_logs` has an RLS policy `audit_insert` for `INSERT` that allows unrestricted access (WITH CHECK clause is always true). This effectively bypasses row-level security for authenticated.",
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0024_permissive_rls_policy",
+      "metadata": {
+        "name": "audit_logs",
+        "qual": null,
+        "type": "table",
+        "roles": ["authenticated"],
+        "schema": "public",
+        "command": "INSERT",
+        "with_check": "true",
+        "policy_name": "audit_insert",
+        "permissive_using": false,
+        "permissive_with_check": true
+      },
+      "cacheKey": "rls_policy_always_true_public_audit_logs_audit_insert"
+    },
+    {
+      "name": "rls_policy_always_true",
+      "title": "RLS Policy Always True",
+      "level": "WARN",
+      "facing": "EXTERNAL",
+      "categories": ["SECURITY"],
+      "description": "Detects RLS policies that use overly permissive expressions like `USING (true)` or `WITH CHECK (true)` for UPDATE, DELETE, or INSERT operations. SELECT policies with `USING (true)` are intentionally excluded as this pattern is often used deliberately for public read access.",
+      "detail": "Table `public.notifications` has an RLS policy `notif_insert` for `INSERT` that allows unrestricted access (WITH CHECK clause is always true). This effectively bypasses row-level security for authenticated.",
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0024_permissive_rls_policy",
+      "metadata": {
+        "name": "notifications",
+        "qual": null,
+        "type": "table",
+        "roles": ["authenticated"],
+        "schema": "public",
+        "command": "INSERT",
+        "with_check": "true",
+        "policy_name": "notif_insert",
+        "permissive_using": false,
+        "permissive_with_check": true
+      },
+      "cacheKey": "rls_policy_always_true_public_notifications_notif_insert"
+    },
+    {
+      "name": "rls_policy_always_true",
+      "title": "RLS Policy Always True",
+      "level": "WARN",
+      "facing": "EXTERNAL",
+      "categories": ["SECURITY"],
+      "description": "Detects RLS policies that use overly permissive expressions like `USING (true)` or `WITH CHECK (true)` for UPDATE, DELETE, or INSERT operations. SELECT policies with `USING (true)` are intentionally excluded as this pattern is often used deliberately for public read access.",
+      "detail": "Table `public.payment_logs` has an RLS policy `pl_insert` for `INSERT` that allows unrestricted access (WITH CHECK clause is always true). This effectively bypasses row-level security for authenticated.",
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0024_permissive_rls_policy",
+      "metadata": {
+        "name": "payment_logs",
+        "qual": null,
+        "type": "table",
+        "roles": ["authenticated"],
+        "schema": "public",
+        "command": "INSERT",
+        "with_check": "true",
+        "policy_name": "pl_insert",
+        "permissive_using": false,
+        "permissive_with_check": true
+      },
+      "cacheKey": "rls_policy_always_true_public_payment_logs_pl_insert"
+    }
+  ],
+  "message": "db advisors"
+}

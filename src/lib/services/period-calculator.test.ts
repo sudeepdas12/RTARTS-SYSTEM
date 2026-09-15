@@ -56,5 +56,25 @@ describe("Period Calculator", () => {
     // 2026-01-01 to 2026-01-31 = 31 days inclusive
     expect(calculateDaysBetween("2026-01-01", "2026-01-31")).toBe(31);
     expect(calculateDaysBetween("2026-01-15", "2026-07-16")).toBe(183);
+    // Interval mode (inclusive: false)
+    expect(calculateDaysBetween("2026-01-01", "2026-01-31", { inclusive: false })).toBe(30);
+  });
+
+  it("calculates period interest with 30_360 day count convention correctly", () => {
+    // Rs 1,000,000 @ 12% for 90 days with 360-day divisor
+    const res = calculatePeriodInterest({
+      principalAmount: 1000000,
+      couponRatePercent: 12,
+      periodDays: 90,
+      tdsRatePercent: 6,
+      dayCountConvention: "30_360",
+    });
+
+    expect(res.annualInterest).toBe(120000);
+    expect(res.dayCountConvention).toBe("30_360");
+    // (1000000 * 12 * 90) / (100 * 360) = 30000
+    expect(res.grossPeriodInterest).toBe(30000);
+    expect(res.taxAmount).toBe(1800); // 6% of 30000
+    expect(res.netPayable).toBe(28200);
   });
 });

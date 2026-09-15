@@ -149,9 +149,11 @@ const ROLE_PERMISSIONS: Record<AppRole, Permission[]> = {
     "view_companies",
     "view_clients",
     "view_payments",
+    "approve_payment_batch",
     "view_reconciliation",
     "view_reports",
     "view_approvals",
+    "manage_approvals",
   ],
   approver: [
     "view_dashboard",
@@ -244,6 +246,48 @@ export const RBACService = {
     if (user.roles.includes("approver")) return true;
     if (user.roles.includes("supervisor")) return true;
     return false;
+  },
+
+  canRead(user: UserContext | null, domain: string): boolean {
+    if (!user) return false;
+    if (user.roles.includes("admin")) return true;
+    const permMap: Record<string, Permission> = {
+      companies: "view_companies",
+      clients: "view_clients",
+      payments: "view_payments",
+      reconciliation: "view_reconciliation",
+      reports: "view_reports",
+      audit_logs: "view_audit_logs",
+      audit: "view_audit_logs",
+      settings: "manage_settings",
+      approvals: "view_approvals",
+      dashboard: "view_dashboard",
+    };
+    const perm = permMap[domain];
+    return perm ? this.hasPermission(user, perm) : true;
+  },
+
+  canWrite(user: UserContext | null, domain: string): boolean {
+    if (!user) return false;
+    if (user.roles.includes("admin")) return true;
+    const permMap: Record<string, Permission[]> = {
+      companies: ["manage_companies"],
+      clients: ["manage_clients"],
+      payments: ["create_payment_batch"],
+      reconciliation: ["run_reconciliation", "apply_reconciliation"],
+      settings: ["manage_settings"],
+      approvals: ["manage_approvals"],
+      uploads: ["upload_data", "import_data"],
+      validation: ["validate_data"],
+    };
+    const perms = permMap[domain];
+    return perms ? this.hasAnyPermission(user, perms) : false;
+  },
+
+  canExport(user: UserContext | null, _domain = "reports"): boolean {
+    if (!user) return false;
+    if (user.roles.includes("admin")) return true;
+    return this.hasPermission(user, "export_reports");
   },
 
   getRolePermissions(role: AppRole): Permission[] {

@@ -121,37 +121,16 @@ export const UploadService = {
   },
 
   async createUploadRecord(upload: Record<string, any>): Promise<UploadHistoryRow> {
-    try {
-      const { data, error } = await (supabase as any)
-        .from("upload_history")
-        .insert(upload)
-        .select()
-        .single();
-      if (error) {
-        throw error;
-      }
-      return data as UploadHistoryRow;
-    } catch (error: any) {
-      console.warn(
-        "Upload history record unavailable, returning fallback object:",
-        error?.message || error,
-      );
-      return {
-        id: upload.id || crypto.randomUUID(),
-        file_name: upload.file_name || "unknown",
-        file_size: upload.file_size || 0,
-        file_hash: upload.file_hash || null,
-        file_type: upload.file_type || null,
-        sheet_name: upload.sheet_name || null,
-        total_rows: upload.total_rows || 0,
-        success_rows: 0,
-        error_rows: 0,
-        target_table: upload.target_table || null,
-        status: upload.status || "Processing",
-        started_at: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-      } as UploadHistoryRow;
+    const { data, error } = await (supabase as any)
+      .from("upload_history")
+      .insert(upload)
+      .select()
+      .single();
+    if (error) {
+      console.error("Failed to create upload_history record:", error.message);
+      throw new Error(`Failed to create upload record: ${error.message}`);
     }
+    return data as UploadHistoryRow;
   },
 
   async updateUploadStatus(

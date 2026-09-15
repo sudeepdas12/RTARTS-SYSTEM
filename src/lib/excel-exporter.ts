@@ -44,18 +44,45 @@ export interface ModernStatementExportOptions {
   records: ModernStatementRecord[];
 }
 
+import { MAX_EXPORT_BROWSER_ROWS } from "./constants";
+
 export const ExcelExporter = {
   /**
    * Exports data to a formatted Excel file with dynamic column width calculation.
+   * Warns and safely caps at MAX_EXPORT_BROWSER_ROWS with an explicit truncation note if exceeded.
    */
   exportToExcel(data: any[], fileName: string, sheetName = "Data") {
     if (!data || data.length === 0) return;
-    const worksheet = XLSX.utils.json_to_sheet(data);
+
+    let exportRows = data;
+    const isTruncated = data.length > MAX_EXPORT_BROWSER_ROWS;
+    if (isTruncated) {
+      console.warn(
+        `[ExcelExporter] Dataset contains ${data.length} rows, exceeding browser safety threshold (${MAX_EXPORT_BROWSER_ROWS}). Capping export to prevent memory exhaustion.`,
+      );
+      exportRows = data.slice(0, MAX_EXPORT_BROWSER_ROWS);
+    }
+
+    const worksheet = XLSX.utils.json_to_sheet(exportRows);
+
+    if (isTruncated) {
+      // Append a clear audit notice row at the end of the sheet
+      XLSX.utils.sheet_add_aoa(
+        worksheet,
+        [
+          [],
+          [
+            `[NOTE: Export truncated at ${MAX_EXPORT_BROWSER_ROWS} rows out of ${data.length} total records for browser performance. Use server export for full archive.]`,
+          ],
+        ],
+        { origin: -1 },
+      );
+    }
 
     // Auto-calculate column widths to prevent cramped/clipped cells
     const colWidths = Object.keys(data[0] || {}).map((key) => {
       let maxLen = key.length;
-      for (const row of data) {
+      for (const row of exportRows) {
         const val = String(row[key] ?? "");
         if (val.length > maxLen) maxLen = val.length;
       }
@@ -100,7 +127,13 @@ export const ExcelExporter = {
 
     // 2. Shareholder Demographic Profile
     aoa.push(["--- SHAREHOLDER / BENEFICIARY PROFILE ---"]);
-    aoa.push(["Shareholder Name:", shareholder.name, "", "BOID (16-Digit Demat):", String(shareholder.boid)]);
+    aoa.push([
+      "Shareholder Name:",
+      shareholder.name,
+      "",
+      "BOID (16-Digit Demat):",
+      String(shareholder.boid),
+    ]);
     aoa.push([
       "Father's Name:",
       shareholder.fatherName || "—",
@@ -227,12 +260,28 @@ export const ExcelExporter = {
     // Optional Sheet 2: Summary by Scheme
     const schemeMap = new Map<
       string,
-      { company: string; kitta: number; gross: number; tax: number; net: number; paid: number; pending: number }
+      {
+        company: string;
+        kitta: number;
+        gross: number;
+        tax: number;
+        net: number;
+        paid: number;
+        pending: number;
+      }
     >();
     for (const r of records) {
       const key = r.companyName;
       if (!schemeMap.has(key)) {
-        schemeMap.set(key, { company: key, kitta: 0, gross: 0, tax: 0, net: 0, paid: 0, pending: 0 });
+        schemeMap.set(key, {
+          company: key,
+          kitta: 0,
+          gross: 0,
+          tax: 0,
+          net: 0,
+          paid: 0,
+          pending: 0,
+        });
       }
       const item = schemeMap.get(key)!;
       item.kitta += Number(r.kitta || 0);
@@ -260,16 +309,7 @@ export const ExcelExporter = {
 
     let sIdx = 1;
     for (const s of schemeMap.values()) {
-      schemeAoa.push([
-        sIdx++,
-        s.company,
-        s.kitta,
-        s.gross,
-        s.tax,
-        s.net,
-        s.paid,
-        s.pending,
-      ]);
+      schemeAoa.push([sIdx++, s.company, s.kitta, s.gross, s.tax, s.net, s.paid, s.pending]);
     }
     schemeAoa.push([
       "TOTAL",

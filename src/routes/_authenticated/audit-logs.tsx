@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
+import { supabase } from "@/integrations/supabase/client";
 import {
   AuditService,
   type AuditFieldDiff,
@@ -219,6 +220,7 @@ function AuditLogsRoute() {
   const [activityTable, setActivityTable] = useState("all");
   const [activityAction, setActivityAction] = useState("all");
   const [activityUser, setActivityUser] = useState("all");
+  const [activityCompany, setActivityCompany] = useState("all");
   const [datePreset, setDatePreset] = useState<DatePreset>("ALL");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -232,6 +234,19 @@ function AuditLogsRoute() {
   const [loginPage, setLoginPage] = useState(1);
 
   // Queries
+  const { data: companies = [] } = useQuery({
+    queryKey: ["companies-list"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("companies")
+        .select("id, company_name, company_code")
+        .order("company_name");
+      if (error) throw error;
+      return data || [];
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
   const { data: userProfiles = {}, isLoading: loadingProfiles } = useQuery({
     queryKey: ["audit-user-profiles"],
     queryFn: () => AuditService.getUserProfiles(),
@@ -243,13 +258,22 @@ function AuditLogsRoute() {
     isLoading: loadingAudit,
     refetch: refetchAudit,
   } = useQuery({
-    queryKey: ["audit-logs", activityTable, activityAction, activityUser, fromDate, toDate],
+    queryKey: [
+      "audit-logs",
+      activityTable,
+      activityAction,
+      activityUser,
+      activityCompany,
+      fromDate,
+      toDate,
+    ],
     queryFn: () =>
       AuditService.getAuditLogs({
         limit: 2000,
         tableName: activityTable !== "all" ? activityTable : undefined,
         action: activityAction !== "all" ? activityAction : undefined,
         userId: activityUser !== "all" ? activityUser : undefined,
+        companyId: activityCompany !== "all" ? activityCompany : undefined,
         fromDate: fromDate || undefined,
         toDate: toDate || undefined,
       }),
@@ -350,6 +374,15 @@ function AuditLogsRoute() {
       list = list.filter((l) => l.user_id === activityUser);
     }
 
+    // Company filter
+    if (activityCompany !== "all") {
+      list = list.filter(
+        (l) =>
+          (l.new_value as any)?.company_id === activityCompany ||
+          (l.old_value as any)?.company_id === activityCompany,
+      );
+    }
+
     // Keyword Search (searches table, action, record_id, user name, and payload text)
     if (activitySearch.trim()) {
       const q = activitySearch.toLowerCase();
@@ -377,6 +410,7 @@ function AuditLogsRoute() {
     activityTable,
     activityAction,
     activityUser,
+    activityCompany,
     activitySearch,
     userProfiles,
   ]);
@@ -695,6 +729,29 @@ function AuditLogsRoute() {
                     </button>
                   )}
                 </div>
+
+                {/* Company Filter */}
+                <Select
+                  value={activityCompany}
+                  onValueChange={(v) => {
+                    setActivityCompany(v);
+                    setActivityPage(1);
+                  }}
+                >
+                  <SelectTrigger className="h-8 text-xs">
+                    <Building2 className="h-3 w-3 mr-1 text-muted-foreground" />
+                    <SelectValue placeholder="All Companies" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Companies</SelectItem>
+                    {companies.map((c: any) => (
+                      <SelectItem key={c.id} value={c.id} className="text-xs">
+                        {c.company_code ? `[${c.company_code}] ` : ""}
+                        {c.company_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
 
                 {/* Specific Table Filter */}
                 <Select

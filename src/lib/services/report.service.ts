@@ -26,39 +26,77 @@ function applyClassificationFilter(query: any, classification?: string, tableNam
   const hasInstrument = isInterest;
 
   if (classification === "PROMOTER") {
-    const parts = ["payee_segment.eq.PROMOTER"];
-    if (hasLot) parts.push("lot_name.ilike.%PROMOT%");
-    if (hasInstrument) parts.push("instrument_ref.ilike.%PROMOT%");
+    const parts = [
+      "payee_segment.eq.PROMOTER",
+      ...(hasLot ? ["and(payee_segment.is.null,lot_name.ilike.%PROMOT%)"] : []),
+      ...(hasInstrument ? ["and(payee_segment.is.null,instrument_ref.ilike.%PROMOT%)"] : []),
+    ];
     return query.or(parts.join(","));
   } else if (classification === "LOCAL") {
-    const parts = ["payee_segment.eq.LOCAL"];
-    if (hasLot) parts.push("lot_name.ilike.%LOCAL%");
-    if (hasInstrument) parts.push("instrument_ref.ilike.%LOCAL%");
+    const parts = [
+      "payee_segment.eq.LOCAL",
+      ...(hasLot ? ["and(payee_segment.is.null,lot_name.ilike.%LOCAL%)"] : []),
+      ...(hasInstrument ? ["and(payee_segment.is.null,instrument_ref.ilike.%LOCAL%)"] : []),
+    ];
     return query.or(parts.join(","));
   } else if (classification === "EMPLOYEE") {
-    const parts = ["payee_segment.eq.EMPLOYEE"];
-    if (hasLot) parts.push("lot_name.ilike.%STAFF%", "lot_name.ilike.%EMPLOYEE%");
-    if (hasInstrument)
-      parts.push("instrument_ref.ilike.%STAFF%", "instrument_ref.ilike.%EMPLOYEE%");
+    const parts = [
+      "payee_segment.eq.EMPLOYEE",
+      ...(hasLot
+        ? [
+            "and(payee_segment.is.null,lot_name.ilike.%STAFF%)",
+            "and(payee_segment.is.null,lot_name.ilike.%EMPLOYEE%)",
+          ]
+        : []),
+      ...(hasInstrument
+        ? [
+            "and(payee_segment.is.null,instrument_ref.ilike.%STAFF%)",
+            "and(payee_segment.is.null,instrument_ref.ilike.%EMPLOYEE%)",
+          ]
+        : []),
+    ];
     return query.or(parts.join(","));
   } else if (classification === "TAX_EXEMPT") {
-    const parts = ["payee_classification.eq.TAX_EXEMPT"];
-    if (hasLot) parts.push("lot_name.ilike.%MUTUAL%", "lot_name.ilike.%EXEMPT%");
-    if (hasInstrument) parts.push("instrument_ref.ilike.%MUTUAL%", "instrument_ref.ilike.%EXEMPT%");
+    const parts = [
+      "payee_classification.eq.TAX_EXEMPT",
+      ...(hasLot
+        ? [
+            "and(payee_classification.is.null,lot_name.ilike.%MUTUAL%)",
+            "and(payee_classification.is.null,lot_name.ilike.%EXEMPT%)",
+          ]
+        : []),
+      ...(hasInstrument
+        ? [
+            "and(payee_classification.is.null,instrument_ref.ilike.%MUTUAL%)",
+            "and(payee_classification.is.null,instrument_ref.ilike.%EXEMPT%)",
+          ]
+        : []),
+    ];
     return query.or(parts.join(","));
   } else if (classification === "INSTITUTION") {
-    const parts = ["payee_classification.eq.COMPANY_INSTITUTION"];
-    if (hasLot) parts.push("lot_name.ilike.%INSTITUT%", "lot_name.ilike.%COMPANY%");
-    if (hasInstrument)
-      parts.push("instrument_ref.ilike.%INSTITUT%", "instrument_ref.ilike.%COMPANY%");
+    const parts = [
+      "payee_classification.eq.COMPANY_INSTITUTION",
+      ...(hasLot
+        ? [
+            "and(payee_classification.is.null,lot_name.ilike.%INSTITUT%)",
+            "and(payee_classification.is.null,lot_name.ilike.%COMPANY%)",
+          ]
+        : []),
+      ...(hasInstrument
+        ? [
+            "and(payee_classification.is.null,instrument_ref.ilike.%INSTITUT%)",
+            "and(payee_classification.is.null,instrument_ref.ilike.%COMPANY%)",
+          ]
+        : []),
+    ];
     return query.or(parts.join(","));
   } else if (classification === "PUBLIC") {
     const parts = [
       "payee_classification.eq.NATURAL_PERSON",
       "payee_classification.eq.PUBLIC_LEGAL_PERSON",
+      ...(hasLot ? ["and(payee_classification.is.null,lot_name.ilike.%PUBLIC%)"] : []),
+      ...(hasInstrument ? ["and(payee_classification.is.null,instrument_ref.ilike.%PUBLIC%)"] : []),
     ];
-    if (hasLot) parts.push("lot_name.ilike.%PUBLIC%");
-    if (hasInstrument) parts.push("instrument_ref.ilike.%PUBLIC%");
     return query.or(parts.join(","));
   }
   return query.eq("payee_classification", classification);
@@ -222,7 +260,7 @@ export const ReportService = {
           query = query.eq("fiscal_year", filters.fiscalYear);
         if (filters.status && filters.status !== "all")
           query = (query as any).eq("payment_status", filters.status as any);
-        query = applyClassificationFilter(query, filters.classification);
+        query = applyClassificationFilter(query, filters.classification, "dividend_payables");
         query = applyDateFilter(query, "payment_date", filters.startDate, filters.endDate);
         return query;
       });
@@ -248,7 +286,7 @@ export const ReportService = {
       }));
     } catch (err) {
       console.error("getDividendRegister error:", err);
-      return [];
+      throw err;
     }
   },
 
@@ -270,7 +308,7 @@ export const ReportService = {
           query = query.eq("fiscal_year", filters.fiscalYear);
         if (filters.status && filters.status !== "all")
           query = (query as any).eq("payment_status", filters.status as any);
-        query = applyClassificationFilter(query, filters.classification);
+        query = applyClassificationFilter(query, filters.classification, "dividend_payables");
         query = applyDateFilter(query, "payment_date", filters.startDate, filters.endDate);
         return query;
       });
@@ -296,7 +334,7 @@ export const ReportService = {
       }));
     } catch (err) {
       console.error("getMutualFundRegister error:", err);
-      return [];
+      throw err;
     }
   },
 
@@ -318,7 +356,7 @@ export const ReportService = {
           query = query.eq("fiscal_year", filters.fiscalYear);
         if (filters.status && filters.status !== "all")
           query = (query as any).eq("payment_status", filters.status as any);
-        query = applyClassificationFilter(query, filters.classification);
+        query = applyClassificationFilter(query, filters.classification, "interest_payables");
         query = applyDateFilter(query, "due_date", filters.startDate, filters.endDate);
         return query;
       });
@@ -343,7 +381,7 @@ export const ReportService = {
       }));
     } catch (err) {
       console.error("getInterestRegister error:", err);
-      return [];
+      throw err;
     }
   },
 
@@ -364,7 +402,7 @@ export const ReportService = {
             q = q.eq("company_id", filters.companyId);
           if (filters.fiscalYear && filters.fiscalYear !== "all")
             q = q.eq("fiscal_year", filters.fiscalYear);
-          q = applyClassificationFilter(q, filters.classification);
+          q = applyClassificationFilter(q, filters.classification, "dividend_payables");
           return applyDateFilter(q, "payment_date", filters.startDate, filters.endDate);
         }),
         fetchAllRows<any>((from, to) => {
@@ -380,7 +418,7 @@ export const ReportService = {
             q = q.eq("company_id", filters.companyId);
           if (filters.fiscalYear && filters.fiscalYear !== "all")
             q = q.eq("fiscal_year", filters.fiscalYear);
-          q = applyClassificationFilter(q, filters.classification);
+          q = applyClassificationFilter(q, filters.classification, "interest_payables");
           return applyDateFilter(q, "payment_date", filters.startDate, filters.endDate);
         }),
         fetchAllRows<any>((from, to) => {
@@ -396,7 +434,7 @@ export const ReportService = {
             q = q.eq("company_id", filters.companyId);
           if (filters.fiscalYear && filters.fiscalYear !== "all")
             q = q.eq("fiscal_year", filters.fiscalYear);
-          q = applyClassificationFilter(q, filters.classification);
+          q = applyClassificationFilter(q, filters.classification, "dividend_payables");
           return applyDateFilter(q, "payment_date", filters.startDate, filters.endDate);
         }),
       ]);
@@ -463,7 +501,7 @@ export const ReportService = {
       return rows;
     } catch (err) {
       console.error("getTaxRegister error:", err);
-      return [];
+      throw err;
     }
   },
 
@@ -571,7 +609,7 @@ export const ReportService = {
       return rows;
     } catch (err) {
       console.error("getPendingPayments error:", err);
-      return [];
+      throw err;
     }
   },
 
@@ -609,7 +647,7 @@ export const ReportService = {
       }));
     } catch (err) {
       console.error("getPaymentRegister error:", err);
-      return [];
+      throw err;
     }
   },
 
@@ -650,7 +688,7 @@ export const ReportService = {
       }));
     } catch (err) {
       console.error("getBonusShareReport error:", err);
-      return [];
+      throw err;
     }
   },
 
@@ -705,7 +743,7 @@ export const ReportService = {
       }));
     } catch (err) {
       console.error("getReconciliationReport error:", err);
-      return [];
+      throw err;
     }
   },
 
@@ -716,7 +754,7 @@ export const ReportService = {
         let query = (supabase as any)
           .from("upload_history")
           .select(
-            "id, file_name, file_type, status, total_rows, success_rows, error_rows, rows_processed, rows_failed, created_at",
+            "id, file_name, file_type, status, total_rows, success_rows, error_rows, created_at",
           )
           .order("created_at", { ascending: false })
           .range(from, to);
@@ -731,8 +769,8 @@ export const ReportService = {
           file_name: row.file_name ?? "",
           file_type: row.file_type ?? null,
           status: row.status ?? "",
-          rows_processed: nr(row.success_rows ?? row.rows_processed ?? row.total_rows),
-          rows_failed: nr(row.error_rows ?? row.rows_failed),
+          rows_processed: nr(row.success_rows ?? row.total_rows),
+          rows_failed: nr(row.error_rows),
           created_at: row.created_at,
         }));
       }
@@ -782,7 +820,7 @@ export const ReportService = {
         }));
     } catch (err) {
       console.error("getUploadHistoryReport error:", err);
-      return [];
+      throw err;
     }
   },
 
@@ -811,7 +849,7 @@ export const ReportService = {
       }));
     } catch (err) {
       console.error("getAuditReport error:", err);
-      return [];
+      throw err;
     }
   },
 
@@ -833,7 +871,7 @@ export const ReportService = {
       return data || [];
     } catch (err) {
       console.error("getCompanyReport error:", err);
-      return [];
+      throw err;
     }
   },
 
@@ -856,7 +894,7 @@ export const ReportService = {
       return data || [];
     } catch (err) {
       console.error("getClientProfileReport error:", err);
-      return [];
+      throw err;
     }
   },
 
@@ -884,7 +922,7 @@ export const ReportService = {
       }));
     } catch (err) {
       console.error("getReturnedPaymentsReport error:", err);
-      return [];
+      throw err;
     }
   },
 
@@ -912,7 +950,7 @@ export const ReportService = {
       }));
     } catch (err) {
       console.error("getBouncedChequesReport error:", err);
-      return [];
+      throw err;
     }
   },
 
@@ -932,7 +970,7 @@ export const ReportService = {
       return data || [];
     } catch (err) {
       console.error("getAllocationReport error:", err);
-      return [];
+      throw err;
     }
   },
 
@@ -951,7 +989,7 @@ export const ReportService = {
       return data || [];
     } catch (err) {
       console.error("getCdscReport error:", err);
-      return [];
+      throw err;
     }
   },
 
@@ -973,7 +1011,7 @@ export const ReportService = {
       return data || [];
     } catch (err) {
       console.error("getBankStatementReport error:", err);
-      return [];
+      throw err;
     }
   },
 
@@ -1018,7 +1056,7 @@ export const ReportService = {
       }));
     } catch (err) {
       console.error("getShareholderDemographicsReport error:", err);
-      return [];
+      throw err;
     }
   },
 };

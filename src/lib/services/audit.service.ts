@@ -90,13 +90,13 @@ export const AuditService = {
         .order("login_time", { ascending: false })
         .limit(limit);
       if (error) {
-        console.warn("Failed to fetch login logs:", error.message);
-        return [];
+        console.error("Failed to fetch login logs:", error.message);
+        throw error;
       }
       return data || [];
     } catch (err: any) {
-      console.warn("Failed to fetch login logs:", err?.message || err);
-      return [];
+      console.error("Failed to fetch login logs:", err?.message || err);
+      throw err;
     }
   },
 
@@ -108,13 +108,13 @@ export const AuditService = {
         .order("created_at", { ascending: false })
         .limit(limit);
       if (error) {
-        console.warn("Failed to fetch API logs:", error.message);
-        return [];
+        console.error("Failed to fetch API logs:", error.message);
+        throw error;
       }
       return data || [];
     } catch (err: any) {
-      console.warn("Failed to fetch API logs:", err?.message || err);
-      return [];
+      console.error("Failed to fetch API logs:", err?.message || err);
+      throw err;
     }
   },
 
@@ -126,13 +126,13 @@ export const AuditService = {
         .order("created_at", { ascending: false })
         .limit(limit);
       if (error) {
-        console.warn("Failed to fetch error logs:", error.message);
-        return [];
+        console.error("Failed to fetch error logs:", error.message);
+        throw error;
       }
       return data || [];
     } catch (err: any) {
-      console.warn("Failed to fetch error logs:", err?.message || err);
-      return [];
+      console.error("Failed to fetch error logs:", err?.message || err);
+      throw err;
     }
   },
 
@@ -144,6 +144,7 @@ export const AuditService = {
           tableName?: string;
           action?: string;
           userId?: string;
+          companyId?: string;
           fromDate?: string;
           toDate?: string;
         }
@@ -172,17 +173,80 @@ export const AuditService = {
       if (opts.toDate) {
         query = query.lte("action_time", `${opts.toDate}T23:59:59.999Z`);
       }
+      if (opts.companyId && opts.companyId !== "all") {
+        query = query.or(
+          `new_value->>company_id.eq.${opts.companyId},old_value->>company_id.eq.${opts.companyId}`,
+        );
+      }
 
       const { data, error } = await query;
       if (error) {
-        console.warn("Failed to fetch audit logs:", error.message);
-        return [];
+        console.error("Failed to fetch audit logs:", error.message);
+        throw error;
       }
       return data || [];
     } catch (err: any) {
-      console.warn("Failed to fetch audit logs:", err?.message || err);
-      return [];
+      console.error("Failed to fetch audit logs:", err?.message || err);
+      throw err;
     }
+  },
+
+  async getAuditLogsPaginated(options: {
+    page?: number;
+    pageSize?: number;
+    tableName?: string;
+    action?: string;
+    userId?: string;
+    companyId?: string;
+    fromDate?: string;
+    toDate?: string;
+  }): Promise<{ data: any[]; total: number; page: number; pageSize: number; totalPages: number }> {
+    const page = options.page || 1;
+    const pageSize = options.pageSize || 25;
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    let query = (supabase as any)
+      .from("audit_logs")
+      .select("*", { count: "exact" })
+      .order("action_time", { ascending: false })
+      .range(from, to);
+
+    if (options.tableName && options.tableName !== "all") {
+      query = query.eq("table_name", options.tableName);
+    }
+    if (options.action && options.action !== "all") {
+      query = query.eq("action", options.action.toUpperCase());
+    }
+    if (options.userId && options.userId !== "all") {
+      query = query.eq("user_id", options.userId);
+    }
+    if (options.fromDate) {
+      query = query.gte("action_time", `${options.fromDate}T00:00:00.000Z`);
+    }
+    if (options.toDate) {
+      query = query.lte("action_time", `${options.toDate}T23:59:59.999Z`);
+    }
+    if (options.companyId && options.companyId !== "all") {
+      query = query.or(
+        `new_value->>company_id.eq.${options.companyId},old_value->>company_id.eq.${options.companyId}`,
+      );
+    }
+
+    const { data, count, error } = await query;
+    if (error) {
+      console.error("Failed to fetch paginated audit logs:", error.message);
+      throw error;
+    }
+
+    const total = count || 0;
+    return {
+      data: data || [],
+      total,
+      page,
+      pageSize,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    };
   },
 
   /**

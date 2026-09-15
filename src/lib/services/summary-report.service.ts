@@ -366,6 +366,7 @@ export const SummaryReportService = {
           return false;
         return isWithinRange(getRowDate(row), filters.startDate, filters.endDate);
       }),
+      // Mutual Fund cash payouts are aggregated under equity dividend columns in CompanySummaryRow
       "dividend",
       rowsByCompany,
     );

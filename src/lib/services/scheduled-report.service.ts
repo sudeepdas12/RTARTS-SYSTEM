@@ -42,13 +42,13 @@ export const ScheduledReportService = {
         .order("created_at", { ascending: false });
 
       if (error) {
-        console.warn("Failed to fetch scheduled reports:", error.message);
-        return [];
+        console.error("Failed to fetch scheduled reports:", error.message);
+        throw error;
       }
       return (data || []) as ScheduledReport[];
     } catch (err: any) {
-      console.warn("Failed to fetch scheduled reports:", err?.message || err);
-      return [];
+      console.error("Failed to fetch scheduled reports:", err?.message || err);
+      throw err;
     }
   },
 
@@ -60,14 +60,14 @@ export const ScheduledReportService = {
         .eq("id", id)
         .single();
 
-      if (error) {
-        console.warn("Failed to fetch scheduled report:", error.message);
-        return null;
+      if (error && error.code !== "PGRST116") {
+        console.error("Failed to fetch scheduled report:", error.message);
+        throw error;
       }
-      return data as ScheduledReport;
+      return (data as ScheduledReport) || null;
     } catch (err: any) {
-      console.warn("Failed to fetch scheduled report:", err?.message || err);
-      return null;
+      console.error("Failed to fetch scheduled report:", err?.message || err);
+      throw err;
     }
   },
 
@@ -181,13 +181,13 @@ export const ScheduledReportService = {
       const { data, error } = await query;
 
       if (error) {
-        console.warn("Failed to fetch report versions:", error.message);
-        return [];
+        console.error("Failed to fetch report versions:", error.message);
+        throw error;
       }
       return (data || []) as ReportVersion[];
     } catch (err: any) {
-      console.warn("Failed to fetch report versions:", err?.message || err);
-      return [];
+      console.error("Failed to fetch report versions:", err?.message || err);
+      throw err;
     }
   },
 
@@ -199,14 +199,14 @@ export const ScheduledReportService = {
         .eq("id", id)
         .single();
 
-      if (error) {
-        console.warn("Failed to fetch report version:", error.message);
-        return null;
+      if (error && error.code !== "PGRST116") {
+        console.error("Failed to fetch report version:", error.message);
+        throw error;
       }
-      return data as ReportVersion;
+      return (data as ReportVersion) || null;
     } catch (err: any) {
-      console.warn("Failed to fetch report version:", err?.message || err);
-      return null;
+      console.error("Failed to fetch report version:", err?.message || err);
+      throw err;
     }
   },
 

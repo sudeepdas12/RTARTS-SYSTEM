@@ -52,9 +52,19 @@ const DEFAULT_SETTINGS: SystemSettings = {
 };
 
 const SETTINGS_KEY = "global";
+const SETTINGS_CACHE_TTL_MS = 30_000;
+let cachedSettings: { settings: SystemSettings; at: number } | null = null;
+
+export function invalidateSettingsCache(): void {
+  cachedSettings = null;
+}
 
 export const SettingsService = {
-  async getSettings(): Promise<SystemSettings> {
+  async getSettings(force = false): Promise<SystemSettings> {
+    if (!force && cachedSettings && Date.now() - cachedSettings.at < SETTINGS_CACHE_TTL_MS) {
+      return { ...cachedSettings.settings };
+    }
+
     // Reads come from the safe view so the SMTP password is only visible to admins.
     const { data, error } = await (supabase as any)
       .from("system_settings_safe")
@@ -110,10 +120,12 @@ export const SettingsService = {
     // SECURITY: never expose the stored SMTP password to the browser/client.
     settings.smtp_pass = "";
 
+    cachedSettings = { settings: { ...settings }, at: Date.now() };
     return settings;
   },
 
   async saveSettings(settings: SystemSettings): Promise<void> {
+    invalidateSettingsCache();
     // SECURITY: preserve the existing stored SMTP password when the form submits
     // it as blank (password fields are intentionally cleared and never round-tripped).
     const resolved = { ...settings };
