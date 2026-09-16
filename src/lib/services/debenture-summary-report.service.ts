@@ -60,15 +60,33 @@ export function determineDebentureCategory(p: any): DebentureParticular {
   ).toUpperCase();
   const tdsRate = Number(p.tds_rate !== undefined ? p.tds_rate : p.tax_rate);
 
-  // 1. Tax Exempted / Mutual Funds (0% TDS)
-  if (
-    tdsRate === 0 ||
-    lot.includes("MUTUAL") ||
-    lot.includes("EXEMPT") ||
+  // SAFETY: Number(null) === 0, so we must not rely on tdsRate===0 alone
+  // as a signal for MUTUAL FUND. Always require corroborating classification signal.
+  const hasTaxExemptSignal =
+    explicitClass === "TAX_EXEMPT" ||
+    explicitClass === "MUTUAL_FUND" ||
     holder.includes("MUTUAL") ||
     holder.includes("EXEMPT") ||
-    explicitClass === "TAX_EXEMPT" ||
-    explicitClass === "MUTUAL_FUND"
+    lot.includes("MUTUAL") ||
+    lot.includes("EXEMPT");
+
+  const hasInstitutionSignal =
+    explicitClass === "COMPANY_INSTITUTION" ||
+    explicitClass === "INSTITUTION" ||
+    holder.includes("LEGAL") ||
+    holder.includes("INSTITUT") ||
+    holder.includes("COMPANY") ||
+    holder.includes("CORPORAT") ||
+    lot.includes("PRIVATE") ||
+    lot.includes("INSTITUT") ||
+    segment === "INSTITUTION" ||
+    segment === "PRIVATE";
+
+  // 1. Tax Exempted / Mutual Funds (0% TDS)
+  // tdsRate === 0 alone is not sufficient (null → 0). Require a corroborating classification.
+  if (
+    hasTaxExemptSignal ||
+    (tdsRate === 0 && !Number.isNaN(tdsRate) && p.tds_rate !== null && p.tds_rate !== undefined)
   ) {
     return "MUTUAL FUND";
   }
@@ -77,18 +95,9 @@ export function determineDebentureCategory(p: any): DebentureParticular {
   // Debentures do not have Promoters or equity categories.
   // Any corporate/institutional subscription is classified as INSTITUTION.
   if (
+    hasInstitutionSignal ||
     tdsRate === 0.15 ||
     tdsRate === 15 ||
-    lot.includes("PRIVATE") ||
-    lot.includes("INSTITUT") ||
-    holder.includes("LEGAL") ||
-    holder.includes("INSTITUT") ||
-    holder.includes("COMPANY") ||
-    holder.includes("CORPORAT") ||
-    segment === "INSTITUTION" ||
-    segment === "PRIVATE" ||
-    explicitClass === "COMPANY_INSTITUTION" ||
-    explicitClass === "INSTITUTION" ||
     (segment === "PROMOTER" &&
       (holder.includes("LEGAL") || explicitClass === "COMPANY_INSTITUTION" || tdsRate === 0.15))
   ) {
