@@ -339,5 +339,34 @@ describe("End-to-End System Smoke Test", () => {
       );
       expect(detectPayeeCategory({ full_name: "SHUBHA LAGANI PVT. LTD." })).toBe("INSTITUTION");
     });
+
+    it("ensures debentures NEVER have PROMOTER and correctly maps private placements / institutions", () => {
+      // Even if legacy equity tag says PROMOTER, for debentures corporate entities are INSTITUTION
+      expect(
+        determineDebentureCategory({
+          lot_name: "PROMOTER",
+          payee_segment: "PROMOTER",
+          tds_rate: 0.15,
+          client: { full_name: "CDS AND CLEARING LTD", holder_type: "Legal Person" },
+        }),
+      ).toBe("INSTITUTION");
+
+      expect(
+        determineDebentureCategory({
+          lot_name: "PRIVATE",
+          tds_rate: 0.15,
+          client: { full_name: "HIMALAYAN LIFE INSURANCE LIMITED", holder_type: "Legal Person" },
+        }),
+      ).toBe("INSTITUTION");
+
+      // Natural person debenture holder is always PUBLIC (never PROMOTER)
+      expect(
+        determineDebentureCategory({
+          payee_segment: "PROMOTER",
+          tds_rate: 0.06,
+          client: { full_name: "RAM BAHADUR SHRESTHA", holder_type: "Natural Person - Promoter" },
+        }),
+      ).toBe("PUBLIC");
+    });
   });
 });

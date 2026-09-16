@@ -55,36 +55,47 @@ export function determineDebentureCategory(p: any): DebentureParticular {
     .toUpperCase();
   const holder = String(p.client?.holder_type || p.holder_type || "").toUpperCase();
   const segment = String(p.payee_segment || p.client?.payee_segment || "").toUpperCase();
+  const explicitClass = String(
+    p.payee_classification || p.client?.payee_classification || "",
+  ).toUpperCase();
+  const tdsRate = Number(p.tds_rate !== undefined ? p.tds_rate : p.tax_rate);
 
+  // 1. Tax Exempted / Mutual Funds (0% TDS)
   if (
-    lot.includes("PROMOTER") ||
-    lot.includes("PROMOT") ||
-    holder.includes("PROMOT") ||
-    segment === "PROMOTER"
-  )
-    return "PROMOTER";
-  if (
-    lot.includes("LOCAL") ||
-    lot.includes("UNVERIFIED") ||
-    holder.includes("LOCAL") ||
-    segment === "LOCAL"
-  )
-    return "LOCAL";
-  if (
-    lot.includes("STAFF") ||
-    lot.includes("EMPLOYEE") ||
-    holder.includes("EMPLOYEE") ||
-    holder.includes("STAFF") ||
-    segment === "EMPLOYEE"
-  )
-    return "EMPLOYEE";
+    tdsRate === 0 ||
+    lot.includes("MUTUAL") ||
+    lot.includes("EXEMPT") ||
+    holder.includes("MUTUAL") ||
+    holder.includes("EXEMPT") ||
+    explicitClass === "TAX_EXEMPT" ||
+    explicitClass === "MUTUAL_FUND"
+  ) {
+    return "MUTUAL FUND";
+  }
 
-  const explicitClass = p.payee_classification || p.client?.payee_classification;
-  if (explicitClass === "TAX_EXEMPT") return "MUTUAL FUND";
-  if (explicitClass === "COMPANY_INSTITUTION") return "INSTITUTION";
-  if (explicitClass === "NATURAL_PERSON" || explicitClass === "PUBLIC_LEGAL_PERSON")
-    return "PUBLIC";
+  // 2. Institutional / Corporate / Private Placement (15% TDS)
+  // Debentures do not have Promoters or equity categories.
+  // Any corporate/institutional subscription is classified as INSTITUTION.
+  if (
+    tdsRate === 0.15 ||
+    tdsRate === 15 ||
+    lot.includes("PRIVATE") ||
+    lot.includes("INSTITUT") ||
+    holder.includes("LEGAL") ||
+    holder.includes("INSTITUT") ||
+    holder.includes("COMPANY") ||
+    holder.includes("CORPORAT") ||
+    segment === "INSTITUTION" ||
+    segment === "PRIVATE" ||
+    explicitClass === "COMPANY_INSTITUTION" ||
+    explicitClass === "INSTITUTION" ||
+    (segment === "PROMOTER" &&
+      (holder.includes("LEGAL") || explicitClass === "COMPANY_INSTITUTION" || tdsRate === 0.15))
+  ) {
+    return "INSTITUTION";
+  }
 
+  // 3. Fallback smart classification
   const result = smartClassify({
     full_name: p.client?.full_name || p.full_name,
     father_name: p.client?.father_name || p.father_name,
@@ -95,17 +106,18 @@ export function determineDebentureCategory(p: any): DebentureParticular {
     lot_name: p.lot_name,
   });
 
-  if (result.payee_classification === "TAX_EXEMPT" || result.payee_category === "MUTUAL_FUND")
+  if (result.payee_classification === "TAX_EXEMPT" || result.payee_category === "MUTUAL_FUND") {
     return "MUTUAL FUND";
+  }
   if (
     result.payee_classification === "COMPANY_INSTITUTION" ||
     result.payee_category === "INSTITUTION" ||
     result.payee_category === "FOREIGN"
-  )
+  ) {
     return "INSTITUTION";
-  if (result.payee_category === "PROMOTER") return "PROMOTER";
-  if (result.payee_category === "LOCAL") return "LOCAL";
-  if (result.payee_category === "EMPLOYEE") return "EMPLOYEE";
+  }
+
+  // 4. All other debenture holders are Public Issue (Natural Persons / Retail, 6% TDS)
   return "PUBLIC";
 }
 
@@ -182,9 +194,6 @@ export const DebentureSummaryReportService = {
       { key: "PUBLIC", label: "PUBLIC", taxRatePercent: 6 },
       { key: "INSTITUTION", label: "INSTITUTION", taxRatePercent: 15 },
       { key: "MUTUAL FUND", label: "MUTUAL FUND", taxRatePercent: 0 },
-      { key: "PROMOTER", label: "PROMOTER", taxRatePercent: 6 },
-      { key: "LOCAL", label: "LOCAL", taxRatePercent: 6 },
-      { key: "EMPLOYEE", label: "EMPLOYEE", taxRatePercent: 6 },
     ];
 
     const groups = new Map<

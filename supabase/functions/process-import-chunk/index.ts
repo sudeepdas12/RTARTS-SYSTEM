@@ -227,7 +227,7 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
     if (upper.includes("MUTUAL") || upper.includes("MF")) return "MUTUAL_FUND";
     if (upper.includes("TAX") && upper.includes("EXEMPT")) return "TAX_EXEMPT";
     if (upper.includes("PROMOT")) return "PROMOTER";
-    if (upper.includes("INSTIT")) return "INSTITUTION";
+    if (upper.includes("INSTIT") || upper.includes("PRIVATE")) return "INSTITUTION";
     if (upper.includes("LOCAL")) return "LOCAL";
     if (upper.includes("PUBLIC")) return "PUBLIC";
   }
@@ -239,7 +239,12 @@ function payableClassification(category: string): string {
   const upper = String(category || "")
     .trim()
     .toUpperCase();
-  if (upper === "INSTITUTION" || upper === "FOREIGN" || upper === "COMPANY_INSTITUTION")
+  if (
+    upper === "INSTITUTION" ||
+    upper === "FOREIGN" ||
+    upper === "COMPANY_INSTITUTION" ||
+    upper === "PRIVATE"
+  )
     return "COMPANY_INSTITUTION";
   if (upper === "MUTUAL_FUND" || upper === "TAX_EXEMPT" || upper === "TAX_EXEMPTED")
     return "TAX_EXEMPT";
@@ -249,10 +254,15 @@ function payableClassification(category: string): string {
   return "UNCLASSIFIED";
 }
 
-function payableSegment(category: string): string | null {
+function payableSegment(category: string, isDebenture = false): string | null {
   const upper = String(category || "")
     .trim()
     .toUpperCase();
+  if (isDebenture) {
+    if (upper === "INSTITUTION" || upper === "PRIVATE" || upper === "COMPANY_INSTITUTION")
+      return "INSTITUTION";
+    return "PUBLIC";
+  }
   if (upper === "PROMOTER") return "PROMOTER";
   if (upper === "LOCAL") return "LOCAL";
   if (upper === "PUBLIC") return "PUBLIC";
@@ -851,7 +861,7 @@ serve(async (req) => {
           account_type: accountType || null,
           holder_type: holderType,
           payee_classification: payableClassification(investorCategory),
-          payee_segment: payableSegment(investorCategory),
+          payee_segment: payableSegment(investorCategory, isDebenture),
           classification_status:
             investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
           classification_source:
@@ -1138,7 +1148,7 @@ serve(async (req) => {
           remarks: remarks || null,
           payment_status: status === "SUCCESS" ? "Paid" : "Pending",
           payee_classification: payableClassification(investorCategory),
-          payee_segment: payableSegment(investorCategory),
+          payee_segment: payableSegment(investorCategory, true),
           classification_status:
             investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
         });
