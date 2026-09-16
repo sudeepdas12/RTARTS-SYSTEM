@@ -87,6 +87,7 @@ export interface BankTransaction {
   referenceId?: string;
   batchId?: string;
   instructionId?: string;
+  fileName?: string;
   category?:
     | "PAYOUT_DEBIT"
     | "REJECT_RETURN"
@@ -179,6 +180,9 @@ export const BankParser = {
           "referenceid",
         ],
       ]),
+      batchId: findColumnIndexByPriority(headerRow, [
+        ["batch id", "batchid", "batch.sessionid", "batch"],
+      ]),
     };
 
     const transactions: BankTransaction[] = [];
@@ -255,6 +259,8 @@ export const BankParser = {
         beneficiaryName,
         status: resolvedStatus,
         instructionId,
+        batchId: indices.batchId >= 0 ? String(columns[indices.batchId] || "").trim() : undefined,
+        fileName: file.name,
         isLiquiditySweep: isCircular,
         category,
       });
@@ -566,6 +572,7 @@ export const BankParser = {
                 status,
                 instructionId,
                 batchId,
+                fileName: file.name,
                 category,
                 isLiquiditySweep: isCircular,
                 accountHolder: detectedAccountHolder || undefined,
@@ -581,5 +588,49 @@ export const BankParser = {
       reader.onerror = () => reject(new Error("Failed to read file"));
       reader.readAsArrayBuffer(file);
     });
+  },
+
+  /**
+   * Parse multiple bank statement or ACH settlement files concurrently/sequentially,
+   * attach fileName, deduplicate, and combine into a unified transaction list.
+   */
+  async parseMultipleFiles(
+    files: File[],
+    options: {
+      includeCircularSweeps?: boolean;
+      onProgress?: (current: number, total: number, fileName: string) => void;
+    } = {},
+  ): Promise<BankTransaction[]> {
+    if (!files.length) return [];
+    if (files.length === 1) {
+      return this.parseBankStatement(files[0], options);
+    }
+
+    const allTransactions: BankTransaction[] = [];
+    const seenTxnKeys = new Set<string>();
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      options.onProgress?.(i + 1, files.length, file.name);
+
+      try {
+        const txns = await this.parseBankStatement(file, options);
+        for (const t of txns) {
+          // Deduplication key: instructionId if available, else date + amounts + accountNo + desc
+          const key = t.instructionId
+            ? `inst-${t.instructionId}`
+            : `${t.date}_${t.debit}_${t.credit}_${t.balance}_${t.accountNo || ""}_${String(t.description || "").slice(0, 30)}`;
+
+          if (!seenTxnKeys.has(key)) {
+            seenTxnKeys.add(key);
+            allTransactions.push(t);
+          }
+        }
+      } catch (err) {
+        console.warn(`Failed to parse file ${file.name}:`, err);
+      }
+    }
+
+    return allTransactions;
   },
 };

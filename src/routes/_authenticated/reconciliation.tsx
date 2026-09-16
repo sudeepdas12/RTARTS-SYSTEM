@@ -65,6 +65,7 @@ export function ReconciliationRoute() {
   const [report, setReport] = useState<ComprehensiveReconciliationReport | null>(null);
   const [savedResults, setSavedResults] = useState<ReconciliationResultRow[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingProgress, setProcessingProgress] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -266,30 +267,44 @@ export function ReconciliationRoute() {
   }, []);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
 
     setIsProcessing(true);
+    setProcessingProgress(
+      files.length > 1
+        ? `Preparing ${files.length} files for analysis...`
+        : `Analyzing ${files[0].name}...`,
+    );
     try {
-      // First try checking if it is a Bank / ConnectIPS settlement file
-      const fileName = file.name.toLowerCase();
-      const isBankReport =
-        fileName.includes("ips") ||
-        fileName.includes("report") ||
-        fileName.includes("bank") ||
-        fileName.includes("statement") ||
-        fileName.includes("batch");
+      // Check if all files are bank / ConnectIPS settlement reports
+      const areBankReports = files.every((f) => {
+        const fileName = f.name.toLowerCase();
+        return (
+          fileName.includes("ips") ||
+          fileName.includes("report") ||
+          fileName.includes("bank") ||
+          fileName.includes("statement") ||
+          fileName.includes("batch")
+        );
+      });
 
-      if (isBankReport) {
+      if (areBankReports) {
         try {
-          const transactions = await BankParser.parseBankStatement(file);
+          const transactions = await BankParser.parseMultipleFiles(files, {
+            onProgress: (cur, tot, name) =>
+              setProcessingProgress(`Analyzing settlement report ${cur} of ${tot}: ${name}`),
+          });
+
           if (transactions.length > 0) {
+            setProcessingProgress("Performing 5-way multi-source reconciliation...");
             const rep = await ReconciliationEngine.analyzeBankStatement(transactions);
             setReport(rep);
             toast.success(
-              `Successfully analyzed ${file.name} (${transactions.length} transactions)`,
+              `Successfully analyzed ${files.length} settlement file(s) with ${transactions.length.toLocaleString()} total transactions`,
             );
             setIsProcessing(false);
+            setProcessingProgress(null);
             return;
           }
         } catch (bErr) {
@@ -297,35 +312,54 @@ export function ReconciliationRoute() {
         }
       }
 
-      const parsedData = await ExcelParser.parseFile(file);
+      // Default: parse as multi-file Excel records
+      const parsedData = await ExcelParser.parseMultipleFiles(files, (cur, tot, name) => {
+        setProcessingProgress(`Parsing Excel workbook ${cur} of ${tot}: ${name}`);
+      });
+      setProcessingProgress("Matching shareholder records against database...");
       const rep = await ReconciliationEngine.analyzeParsedExcel(parsedData);
       setReport(rep);
-      toast.success(`Successfully analyzed ${file.name}`);
+      toast.success(
+        `Successfully analyzed ${files.length} Excel file(s) (${rep.matches.length.toLocaleString()} records)`,
+      );
     } catch (error) {
       console.error(error);
-      toast.error("Failed to parse Excel file for reconciliation");
+      toast.error("Failed to parse Excel file(s) for reconciliation");
     } finally {
       setIsProcessing(false);
+      setProcessingProgress(null);
+      e.target.value = "";
     }
   };
 
   const handleBankStatementUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
 
     setIsProcessing(true);
+    setProcessingProgress(
+      files.length > 1
+        ? `Preparing ${files.length} bank statements...`
+        : `Parsing ${files[0].name}...`,
+    );
     try {
-      const transactions = await BankParser.parseBankStatement(file);
+      const transactions = await BankParser.parseMultipleFiles(files, {
+        onProgress: (cur, tot, name) =>
+          setProcessingProgress(`Parsing bank statement ${cur} of ${tot}: ${name}`),
+      });
+      setProcessingProgress("Matching statement transactions with disbursements & payouts...");
       const rep = await ReconciliationEngine.analyzeBankStatement(transactions);
       setReport(rep);
       toast.success(
-        `Successfully analyzed settlement / statement ${file.name} (${transactions.length} transactions)`,
+        `Successfully analyzed ${files.length} statement file(s) with ${transactions.length.toLocaleString()} total transactions`,
       );
     } catch (error) {
       console.error(error);
-      toast.error("Failed to parse bank statement file for reconciliation");
+      toast.error("Failed to parse bank statement file(s) for reconciliation");
     } finally {
       setIsProcessing(false);
+      setProcessingProgress(null);
+      e.target.value = "";
     }
   };
 
@@ -836,49 +870,70 @@ export function ReconciliationRoute() {
           title="Reconciliation Engine"
           description="5-way reconciliation: Excel vs Payables, Payments, Bank Statements with multi-source matching and discrepancy detection."
         />
-        <div className="flex flex-wrap gap-2">
-          <label htmlFor="reconcile-excel-upload">
-            <Button
-              variant="default"
-              className="cursor-pointer"
-              asChild
-              disabled={isProcessing || isSaving || isApplying}
-            >
-              <span>
-                <Upload className="w-4 h-4 mr-2" />
-                {isProcessing ? "Analyzing..." : "Upload Excel File"}
-              </span>
-            </Button>
-          </label>
-          <input
-            id="reconcile-excel-upload"
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            className="hidden"
-            onChange={handleFileUpload}
-          />
-          <label htmlFor="reconcile-bank-upload">
-            <Button
-              variant="outline"
-              className="cursor-pointer"
-              asChild
-              disabled={isProcessing || isSaving || isApplying}
-            >
-              <span>
-                <FileSpreadsheet className="w-4 h-4 mr-2" />
-                {isProcessing ? "Analyzing..." : "Upload Bank Statement"}
-              </span>
-            </Button>
-          </label>
-          <input
-            id="reconcile-bank-upload"
-            type="file"
-            accept=".xls,.xlsx,.xlsm,.csv,.txt"
-            className="hidden"
-            onChange={handleBankStatementUpload}
-          />
+        <div className="flex flex-col items-end gap-1.5">
+          <div className="flex flex-wrap gap-2">
+            <label htmlFor="reconcile-excel-upload">
+              <Button
+                variant="default"
+                className="cursor-pointer"
+                asChild
+                disabled={isProcessing || isSaving || isApplying}
+              >
+                <span>
+                  <Upload className="w-4 h-4 mr-2" />
+                  {isProcessing ? "Analyzing..." : "Upload Excel File(s)"}
+                </span>
+              </Button>
+            </label>
+            <input
+              id="reconcile-excel-upload"
+              type="file"
+              multiple
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={handleFileUpload}
+            />
+            <label htmlFor="reconcile-bank-upload">
+              <Button
+                variant="outline"
+                className="cursor-pointer"
+                asChild
+                disabled={isProcessing || isSaving || isApplying}
+              >
+                <span>
+                  <FileSpreadsheet className="w-4 h-4 mr-2" />
+                  {isProcessing ? "Analyzing..." : "Upload Bank Statement(s)"}
+                </span>
+              </Button>
+            </label>
+            <input
+              id="reconcile-bank-upload"
+              type="file"
+              multiple
+              accept=".xls,.xlsx,.xlsm,.csv,.txt"
+              className="hidden"
+              onChange={handleBankStatementUpload}
+            />
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Multi-file upload enabled • Hold Ctrl / Shift to select multiple files at once
+          </p>
         </div>
       </div>
+
+      {processingProgress && (
+        <Alert className="bg-primary/5 border-primary/20 text-primary py-3">
+          <div className="flex items-center gap-2.5">
+            <RefreshCw className="w-4 h-4 animate-spin text-primary shrink-0" />
+            <div className="flex flex-col gap-0.5">
+              <span className="font-semibold text-xs tracking-tight">Processing Files...</span>
+              <AlertDescription className="text-xs text-muted-foreground font-mono">
+                {processingProgress}
+              </AlertDescription>
+            </div>
+          </div>
+        </Alert>
+      )}
 
       {report ? (
         <div className="space-y-4">

@@ -1153,6 +1153,86 @@ export const ExcelParser = {
     const data = await file.arrayBuffer();
     return this.parseBuffer(data, file.name);
   },
+
+  /**
+   * Parse multiple Excel workbooks and combine their sheets into a single consolidated ParsedExcelData
+   */
+  async parseMultipleFiles(
+    files: File[],
+    onProgress?: (current: number, total: number, fileName: string) => void,
+  ): Promise<ParsedExcelData> {
+    if (!files.length) {
+      throw new Error("No files provided");
+    }
+    if (files.length === 1) {
+      return this.parseFile(files[0]);
+    }
+
+    const mergedSheets: ParsedSheetData[] = [];
+    let detectedCompanyName: string | undefined;
+    let detectedIsin: string | undefined;
+    let detectedRate: number | undefined;
+    let detectedType: ParsedExcelData["fileType"] = "UNKNOWN";
+
+    const grandTotals = {
+      totalRows: 0,
+      totalShares: 0,
+      totalAmount: 0,
+      totalTax: 0,
+      totalNetPayable: 0,
+    };
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      onProgress?.(i + 1, files.length, file.name);
+
+      try {
+        const parsed = await this.parseFile(file);
+        if (parsed.fileType !== "UNKNOWN" && detectedType === "UNKNOWN") {
+          detectedType = parsed.fileType;
+        }
+        if (parsed.detectedCompanyName && !detectedCompanyName) {
+          detectedCompanyName = parsed.detectedCompanyName;
+        }
+        if (parsed.detectedIsin && !detectedIsin) {
+          detectedIsin = parsed.detectedIsin;
+        }
+        if (parsed.detectedRate && !detectedRate) {
+          detectedRate = parsed.detectedRate;
+        }
+
+        const baseName = file.name.replace(/\.[^/.]+$/, "");
+        for (const sheet of parsed.sheets) {
+          const sheetName = mergedSheets.some((s) => s.sheetName === sheet.sheetName)
+            ? `[${baseName}] ${sheet.sheetName}`
+            : sheet.sheetName;
+
+          mergedSheets.push({
+            ...sheet,
+            sheetName,
+          });
+
+          grandTotals.totalRows += sheet.rowCount;
+          grandTotals.totalShares += sheet.totalKitta;
+          grandTotals.totalAmount += sheet.totalAmount;
+          grandTotals.totalTax += sheet.totalTax;
+          grandTotals.totalNetPayable += sheet.totalNet;
+        }
+      } catch (err) {
+        console.warn(`Failed to parse Excel file ${file.name}:`, err);
+      }
+    }
+
+    return {
+      fileType: detectedType,
+      fileName: `${files.length} Excel Files (${files.map((f) => f.name).join(", ")})`,
+      sheets: mergedSheets,
+      detectedCompanyName,
+      detectedIsin,
+      detectedRate,
+      grandTotals,
+    };
+  },
 };
 
 export const parseExcelFile = (

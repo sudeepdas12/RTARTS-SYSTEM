@@ -28,6 +28,7 @@ export interface BankTransaction {
   referenceId?: string;
   batchId?: string;
   instructionId?: string;
+  fileName?: string;
   category?:
     | "PAYOUT_DEBIT"
     | "REJECT_RETURN"
@@ -567,6 +568,7 @@ export const ReconciliationEngine = {
    */
   async analyzeBankStatement(
     transactions: BankTransaction[],
+    options?: { fileName?: string },
   ): Promise<ComprehensiveReconciliationReport> {
     const cleanAcct = (val: unknown): string =>
       String(val || "")
@@ -905,6 +907,7 @@ export const ReconciliationEngine = {
         status,
         bankName: txn.bankName || client?.bank_name || "",
         bankAccountNo: txn.accountNo || client?.bank_account_no || "",
+        lotName: txn.batchId ? `Batch ${txn.batchId}` : txn.fileName || categoryName,
         clientId: client?.id || bestPayment?.client_id || matchedPayable?.client_id || null,
         companyId:
           client?.company_id ||
@@ -941,10 +944,18 @@ export const ReconciliationEngine = {
       pledgedCount: 0,
     });
 
+    const uniqueFiles = Array.from(
+      new Set(transactions.map((t) => t.fileName).filter(Boolean)),
+    ) as string[];
+    const defaultFileName =
+      uniqueFiles.length > 1
+        ? `${uniqueFiles.length} Settlement Files (${uniqueFiles.join(", ")})`
+        : uniqueFiles[0] || "Bank Settlement Report";
+
     return {
       fileType: "bank_statement",
       sourceType: "bank_statement",
-      fileName: "Bank Settlement Report",
+      fileName: options?.fileName || defaultFileName,
       categories,
       matches,
       grandTotal,
