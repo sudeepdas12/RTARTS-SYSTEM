@@ -321,6 +321,11 @@ const COLUMN_ALIASES: Record<keyof ColumnMapping, string[]> = {
   bonus_fraction: ["REM FRACTION", "FRACTION", "REMAINING FRACTION", "REM_FRACTION"],
   after_bonus_kitta: ["AFTER BONUS KITTA", "T.KITTA", "AFTER_BONUS_KITTA", "TOTAL AFTER BONUS"],
   cash_dividend: [
+    "INTEREST",
+    "INTEREST @ 8.50%",
+    "INT. @ 8.50%",
+    "INTEREST @ 8.5%",
+    "INT. @ 8.5%",
     "DIVIDEND 5.631",
     "DIVIDEND",
     "AMOUNT/DIVIDEND",
@@ -352,9 +357,16 @@ const COLUMN_ALIASES: Record<keyof ColumnMapping, string[]> = {
   ],
   bon_tax: ["BON_TAX", "BONUS TAX", "BONUS_TAX"],
   div_tax: [
+    "TAX @ 6%",
+    "TAX @6%",
+    "TAX @ 15%",
+    "TAX @15%",
+    "TAX @ 5%",
+    "TAX @5%",
+    "TAX EXEMPTED",
+    "TAX EXEMPT",
     "DIV_TAX",
     "DIVIDEND TAX",
-    "TAX @6%",
     "TAX",
     "TAX AMOUNT",
     "TAX_AMOUNT",
@@ -385,7 +397,7 @@ const COLUMN_ALIASES: Record<keyof ColumnMapping, string[]> = {
     "TOTAL NET",
     "TOTAL_NET",
   ],
-  bank_code: ["BANK CODE", "BANK_CODE"],
+  bank_code: ["B.CODE", "B CODE", "B_CODE", "BANK CODE", "BANK_CODE"],
   bank_name: [
     "BANK NAME",
     "BANK NAME ",
@@ -408,6 +420,8 @@ const COLUMN_ALIASES: Record<keyof ColumnMapping, string[]> = {
     "BRANCHNAME",
   ],
   bank_account_no: [
+    "BANK ACCOUNT",
+    "BANK_ACCOUNT",
     "BANK A/C NO.",
     "BANK A/C NO",
     "BANK_A/C_NO",
@@ -666,8 +680,8 @@ export const ExcelParser = {
 
       let defaultTdsRate = 0.05;
       if (fileType === "debenture") {
-        if (sheetType === "INSTITUTION")
-          defaultTdsRate = 0.15; // Legal Person
+        if (sheetType === "INSTITUTION" || sheetType === "PRIVATE")
+          defaultTdsRate = 0.15; // Legal Person / Private Placement
         else if (sheetType === "TAX_EXEMPTED")
           defaultTdsRate = 0; // Tax Exempted
         else defaultTdsRate = 0.06; // Natural Person (Public, Promoter, etc) pays 6% for debenture
@@ -720,10 +734,13 @@ export const ExcelParser = {
           "INTEREST-PUMORI",
           "INTEREST PUMORI",
           "INTEREST AMOUNT",
+          "INTEREST",
+          "GROSS INTEREST",
+          "COUPON AMOUNT",
+          "INTEREST @ 8.50%",
+          "INT. @ 8.50%",
           "INTEREST @ 7%",
           "INT. @ 7%",
-          "COUPON AMOUNT",
-          "GROSS INTEREST",
           "GROSS AMOUNT",
           "INT AMOUNT",
           "DIVIDEND",

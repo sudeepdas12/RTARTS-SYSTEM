@@ -976,25 +976,34 @@ serve(async (req) => {
           0,
       );
       const rawGross = Number(
-        row.gross_amount ||
-          row.amount ||
-          row.AMOUNT ||
-          row.payable_amount ||
+        row.gross_interest ||
           row.cash_dividend ||
-          row["INTEREST AMOUNT"] ||
+          row.gross_amount ||
+          row.payable_amount ||
+          row.INTEREST ||
+          row.interest ||
           row["GROSS INTEREST"] ||
-          row["GROSS AMOUNT"] ||
-          row["DISTRIBUTION AMOUNT"] ||
+          row["INTEREST AMOUNT"] ||
           row["INT AMOUNT"] ||
           row["COUPON AMOUNT"] ||
+          row["DISTRIBUTION AMOUNT"] ||
+          row["GROSS AMOUNT"] ||
+          row.gross_dividend ||
+          row.amount ||
+          row.AMOUNT ||
           0,
       );
       const rawTax = Number(
         row.tax_amount ||
+          row.div_tax ||
           row.tax ||
           row.TAX ||
+          row["TAX @ 6%"] ||
+          row["TAX @6%"] ||
+          row["TAX @ 15%"] ||
+          row["TAX @15%"] ||
+          row["TAX EXEMPTED"] ||
           row.bon_tax ||
-          row.div_tax ||
           row["TDS"] ||
           row["TDS AMOUNT"] ||
           row["WITHHOLDING TAX"] ||
@@ -1003,6 +1012,8 @@ serve(async (req) => {
       );
       const rawNet = Number(
         row.net_payable ||
+          row["NET INTEREST PAYABLE"] ||
+          row.net_amount ||
           row.net ||
           row.NET ||
           row.ROUNDUP ||
@@ -1093,9 +1104,9 @@ serve(async (req) => {
             investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
         });
       } else if (targetTable === "interest_payables") {
-        // Auto-calculate from shares × rate if gross missing
+        // Auto-calculate from shares × rate if gross missing (Debenture face value is NPR 1,000)
         if (!grossAmount && sharesHeld && dividendRate) {
-          grossAmount = Math.round(sharesHeld * dividendRate * 100) / 100;
+          grossAmount = Math.round(sharesHeld * 1000 * (dividendRate / 100) * 100) / 100;
         }
         // Auto-calculate tax using ROW-LEVEL TDS rate
         if (!taxAmount && grossAmount && rowTdsRate > 0) {
