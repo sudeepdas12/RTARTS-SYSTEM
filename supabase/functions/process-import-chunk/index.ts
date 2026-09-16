@@ -1026,6 +1026,16 @@ serve(async (req) => {
         "";
       const lotName = row.lot_name || row.lot || row.LOT || "";
       const status = row.status || row.STATUS || "Pending";
+      const bankBranch =
+        row.bank_branch ||
+        row.branch ||
+        row["BANK BRANCH"] ||
+        row["BRANCH NAME"] ||
+        row["BRANCH"] ||
+        "";
+      const remarks =
+        row.remarks || row.REMARKS || row.Remarks || row["REMARK"] || row["remark"] || "";
+      const instrumentRef = row.instrument_ref || row.instrument || row.INSTRUMENT || "";
 
       // *** SMART ROW-LEVEL CATEGORIZATION ***
       const investorCategory = detectInvestorCategory(row, sheetType);
@@ -1073,7 +1083,9 @@ serve(async (req) => {
           bonus_tax: Number(row.bon_tax || 0) || null,
           bank_name: bankName || null,
           bank_account_no: bankAccountNo || null,
+          bank_branch: bankBranch || null,
           lot_name: lotName || null,
+          remarks: remarks || null,
           payment_status: status === "SUCCESS" ? "Paid" : "Pending",
           payee_classification: payableClassification(investorCategory),
           payee_segment: payableSegment(investorCategory),
@@ -1099,6 +1111,8 @@ serve(async (req) => {
           upload_id: uploadId,
           company_id: companyId,
           client_id: clientId,
+          shares_held: sharesHeld || null,
+          kitta: sharesHeld || null,
           gross_interest: grossAmount,
           tax_amount: taxAmount,
           net_payable: netPayable,
@@ -1107,7 +1121,10 @@ serve(async (req) => {
           fiscal_year: fiscalYear ?? null,
           bank_name: bankName || null,
           bank_account_no: bankAccountNo || null,
+          bank_branch: bankBranch || null,
           lot_name: lotName || null,
+          instrument_ref: instrumentRef || null,
+          remarks: remarks || null,
           payment_status: status === "SUCCESS" ? "Paid" : "Pending",
           payee_classification: payableClassification(investorCategory),
           payee_segment: payableSegment(investorCategory),
@@ -1117,25 +1134,54 @@ serve(async (req) => {
       }
     }
 
-    // 7. Batch insert payables with schema fallback
+    // 7. Batch insert payables with RPC and direct schema fallback
     let payablesInserted = 0;
 
     if (payables.length > 0) {
-      const payableResult = await insertRowsWithSchemaFallback(supabase, targetTable, payables);
-      payablesInserted = payableResult.inserted;
+      const rpcName =
+        targetTable === "interest_payables"
+          ? "bulk_insert_interest_payables"
+          : targetTable === "mutual_fund_payables"
+            ? "bulk_insert_mutual_fund_payables"
+            : "bulk_insert_dividend_payables";
 
-      // Surface the REAL per-row errors instead of lumping the whole chunk into
-      // one generic "imported 0 rows" exception. Each entry points back at the
-      // original row so the error download shows exactly what failed and why.
-      for (const perRowErr of payableResult.errors) {
-        const rowNumber = Number(perRowErr?.row_number ?? 0);
-        rowErrors.push({
-          row_number: rowNumber,
-          field_name: "payable",
-          error_type: "payable_rpc",
-          error_message: String(perRowErr?.error || "Payable insert failed (see SQL error)."),
-          raw_data: rowNumber > 0 ? payables[rowNumber - 1] : undefined,
-        });
+      const { data: rpcResult, error: rpcErr } = await supabase.rpc(rpcName, {
+        p_payables: payables,
+      });
+
+      if (!rpcErr && rpcResult && rpcResult.success !== false) {
+        payablesInserted = Number(rpcResult?.inserted ?? 0);
+        if (Array.isArray(rpcResult?.errors)) {
+          for (const err of rpcResult.errors) {
+            rowErrors.push({
+              row_number: 0,
+              field_name: "payable",
+              error_type: "payable_rpc",
+              error_message: String(err?.error || "Payable insert failed"),
+            });
+          }
+        }
+      } else {
+        console.warn(
+          `${rpcName} RPC failed, falling back to direct schema fallback:`,
+          rpcErr?.message,
+        );
+        const payableResult = await insertRowsWithSchemaFallback(supabase, targetTable, payables);
+        payablesInserted = payableResult.inserted;
+
+        // Surface the REAL per-row errors instead of lumping the whole chunk into
+        // one generic "imported 0 rows" exception. Each entry points back at the
+        // original row so the error download shows exactly what failed and why.
+        for (const perRowErr of payableResult.errors) {
+          const rowNumber = Number(perRowErr?.row_number ?? 0);
+          rowErrors.push({
+            row_number: rowNumber,
+            field_name: "payable",
+            error_type: "payable_rpc",
+            error_message: String(perRowErr?.error || "Payable insert failed (see SQL error)."),
+            raw_data: rowNumber > 0 ? payables[rowNumber - 1] : undefined,
+          });
+        }
       }
     }
 
