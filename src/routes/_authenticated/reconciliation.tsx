@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/page-header";
@@ -66,9 +66,15 @@ export function ReconciliationRoute() {
   const [savedResults, setSavedResults] = useState<ReconciliationResultRow[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingProgress, setProcessingProgress] = useState<string | null>(null);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+  const headerExcelInputRef = useRef<HTMLInputElement>(null);
+  const headerBankInputRef = useRef<HTMLInputElement>(null);
+  const bodyExcelInputRef = useRef<HTMLInputElement>(null);
+  const bodyBankInputRef = useRef<HTMLInputElement>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [sourceFilter, setSourceFilter] = useState<string>("all");
@@ -266,8 +272,7 @@ export function ReconciliationRoute() {
     loadHistory();
   }, []);
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
+  const processExcelFiles = async (files: File[]) => {
     if (!files.length) return;
 
     setIsProcessing(true);
@@ -303,8 +308,6 @@ export function ReconciliationRoute() {
             toast.success(
               `Successfully analyzed ${files.length} settlement file(s) with ${transactions.length.toLocaleString()} total transactions`,
             );
-            setIsProcessing(false);
-            setProcessingProgress(null);
             return;
           }
         } catch (bErr) {
@@ -328,12 +331,10 @@ export function ReconciliationRoute() {
     } finally {
       setIsProcessing(false);
       setProcessingProgress(null);
-      e.target.value = "";
     }
   };
 
-  const handleBankStatementUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
+  const processBankStatementFiles = async (files: File[]) => {
     if (!files.length) return;
 
     setIsProcessing(true);
@@ -359,7 +360,51 @@ export function ReconciliationRoute() {
     } finally {
       setIsProcessing(false);
       setProcessingProgress(null);
-      e.target.value = "";
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!files.length) return;
+    await processExcelFiles(files);
+  };
+
+  const handleBankStatementUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!files.length) return;
+    await processBankStatementFiles(files);
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDraggingOver) setIsDraggingOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const files = Array.from(e.dataTransfer.files);
+      const isBankLike = files.every((f) => {
+        const name = f.name.toLowerCase();
+        return name.includes("bank") || name.includes("statement");
+      });
+      if (isBankLike) {
+        await processBankStatementFiles(files);
+      } else {
+        await processExcelFiles(files);
+      }
     }
   };
 
@@ -872,20 +917,17 @@ export function ReconciliationRoute() {
         />
         <div className="flex flex-col items-end gap-1.5">
           <div className="flex flex-wrap gap-2">
-            <label htmlFor="reconcile-excel-upload">
-              <Button
-                variant="default"
-                className="cursor-pointer"
-                asChild
-                disabled={isProcessing || isSaving || isApplying}
-              >
-                <span>
-                  <Upload className="w-4 h-4 mr-2" />
-                  {isProcessing ? "Analyzing..." : "Upload Excel File(s)"}
-                </span>
-              </Button>
-            </label>
+            <Button
+              variant="default"
+              className="cursor-pointer"
+              disabled={isProcessing || isSaving || isApplying}
+              onClick={() => headerExcelInputRef.current?.click()}
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              {isProcessing ? "Analyzing..." : "Upload Excel File(s)"}
+            </Button>
             <input
+              ref={headerExcelInputRef}
               id="reconcile-excel-upload"
               type="file"
               multiple
@@ -893,20 +935,17 @@ export function ReconciliationRoute() {
               className="hidden"
               onChange={handleFileUpload}
             />
-            <label htmlFor="reconcile-bank-upload">
-              <Button
-                variant="outline"
-                className="cursor-pointer"
-                asChild
-                disabled={isProcessing || isSaving || isApplying}
-              >
-                <span>
-                  <FileSpreadsheet className="w-4 h-4 mr-2" />
-                  {isProcessing ? "Analyzing..." : "Upload Bank Statement(s)"}
-                </span>
-              </Button>
-            </label>
+            <Button
+              variant="outline"
+              className="cursor-pointer"
+              disabled={isProcessing || isSaving || isApplying}
+              onClick={() => headerBankInputRef.current?.click()}
+            >
+              <FileSpreadsheet className="w-4 h-4 mr-2" />
+              {isProcessing ? "Analyzing..." : "Upload Bank Statement(s)"}
+            </Button>
             <input
+              ref={headerBankInputRef}
               id="reconcile-bank-upload"
               type="file"
               multiple
@@ -1361,60 +1400,77 @@ export function ReconciliationRoute() {
           </Card>
         </div>
       ) : (
-        <Card className="border-dashed border-2 p-8 text-center bg-muted/10">
+        <Card
+          className={`border-dashed border-2 p-8 text-center transition-all ${
+            isDraggingOver
+              ? "border-primary bg-primary/5 shadow-md scale-[1.005]"
+              : "border-muted-foreground/30 bg-muted/10"
+          }`}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
           <CardContent className="flex flex-col items-center gap-4 py-8">
-            <FileSpreadsheet className="w-16 h-16 text-muted-foreground/60 animate-pulse" />
+            <FileSpreadsheet
+              className={`w-16 h-16 ${
+                isDraggingOver ? "text-primary scale-110" : "text-muted-foreground/60 animate-pulse"
+              } transition-transform duration-200`}
+            />
             <div>
               <CardTitle className="text-xl">Upload Files for 5-Way Reconciliation</CardTitle>
               <CardDescription className="max-w-md mx-auto mt-2">
-                Upload Excel payment files or bank statements to perform comprehensive
-                reconciliation across Payables, Payments, and Bank Statements. The system will match
-                records using multiple sources and detect discrepancies.
+                Upload or drag-and-drop multiple Excel payment files or bank statements to perform
+                comprehensive reconciliation across Payables, Payments, and Bank Statements.
               </CardDescription>
             </div>
-            <div className="flex gap-3 mt-2">
-              <label htmlFor="reconcile-file-upload-body" className="cursor-pointer">
-                <Button size="lg" className="cursor-pointer" asChild disabled={isProcessing}>
-                  <span>
-                    <Upload className="w-5 h-5 mr-2" />
-                    Select Excel File
-                  </span>
-                </Button>
-              </label>
+            <div className="flex flex-wrap items-center justify-center gap-3 mt-2">
+              <Button
+                size="lg"
+                className="cursor-pointer"
+                disabled={isProcessing}
+                onClick={() => bodyExcelInputRef.current?.click()}
+              >
+                <Upload className="w-5 h-5 mr-2" />
+                Select Excel File(s)
+              </Button>
               <input
+                ref={bodyExcelInputRef}
                 id="reconcile-file-upload-body"
                 type="file"
+                multiple
                 accept=".xlsx,.xls,.csv"
                 className="hidden"
                 onChange={handleFileUpload}
               />
-              <label htmlFor="reconcile-bank-upload-body" className="cursor-pointer">
-                <Button
-                  size="lg"
-                  variant="outline"
-                  className="cursor-pointer"
-                  asChild
-                  disabled={isProcessing}
-                >
-                  <span>
-                    <FileSpreadsheet className="w-5 h-5 mr-2" />
-                    Bank Statement
-                  </span>
-                </Button>
-              </label>
+              <Button
+                size="lg"
+                variant="outline"
+                className="cursor-pointer"
+                disabled={isProcessing}
+                onClick={() => bodyBankInputRef.current?.click()}
+              >
+                <FileSpreadsheet className="w-5 h-5 mr-2" />
+                Select Bank Statement(s)
+              </Button>
               <input
+                ref={bodyBankInputRef}
                 id="reconcile-bank-upload-body"
                 type="file"
+                multiple
                 accept=".xls,.xlsx,.xlsm,.csv,.txt"
                 className="hidden"
                 onChange={handleBankStatementUpload}
               />
             </div>
+            <p className="text-xs text-muted-foreground">
+              Multi-file upload enabled • Hold Ctrl / Shift to select multiple files at once, or
+              drag and drop files here
+            </p>
             <Alert className="max-w-md mt-4">
               <AlertDescription className="text-xs">
-                <strong>5-Way Matching:</strong> Each record is matched against Payables, Payments,
-                and Bank Statements. The system tracks which sources matched each record and
-                identifies discrepancies, missing records, and over/under payments.
+                <strong>5-Way Matching & Deduplication:</strong> Each record is matched against
+                Payables, Payments, and Bank Statements. Duplicate batches and identical transaction
+                instruction IDs across multiple files are automatically detected and consolidated.
               </AlertDescription>
             </Alert>
           </CardContent>

@@ -5,11 +5,18 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 interface DragDropZoneProps {
-  onFileSelect: (file: File) => void;
+  onFileSelect?: (file: File) => void;
+  onFilesSelect?: (files: File[]) => void;
+  multiple?: boolean;
   isLoading?: boolean;
 }
 
-export function DragDropZone({ onFileSelect, isLoading }: DragDropZoneProps) {
+export function DragDropZone({
+  onFileSelect,
+  onFilesSelect,
+  multiple,
+  isLoading,
+}: DragDropZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -28,35 +35,44 @@ export function DragDropZone({ onFileSelect, isLoading }: DragDropZoneProps) {
     e.stopPropagation();
     setIsDragging(false);
 
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      validateAndPassFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      processFiles(Array.from(e.dataTransfer.files));
     }
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      validateAndPassFile(e.target.files[0]);
+    if (e.target.files && e.target.files.length > 0) {
+      processFiles(Array.from(e.target.files));
     }
   };
 
-  const validateAndPassFile = (file: File) => {
-    // 50 MB limit
-    if (file.size > 50 * 1024 * 1024) {
-      toast.error("File size exceeds 50MB limit");
-      return;
-    }
-
+  const processFiles = (files: File[]) => {
     const validTypes = [
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "application/vnd.ms-excel",
       "text/csv",
     ];
-    if (!validTypes.includes(file.type) && !file.name.match(/\.(xlsx|xls|csv)$/)) {
-      toast.error("Only Excel (.xlsx, .xls) and CSV files are supported");
-      return;
+
+    const validFiles: File[] = [];
+    for (const file of files) {
+      if (file.size > 50 * 1024 * 1024) {
+        toast.error(`File ${file.name} exceeds 50MB limit`);
+        continue;
+      }
+      if (!validTypes.includes(file.type) && !file.name.match(/\.(xlsx|xls|csv)$/i)) {
+        toast.error(`File ${file.name} is not an Excel or CSV file`);
+        continue;
+      }
+      validFiles.push(file);
     }
 
-    onFileSelect(file);
+    if (!validFiles.length) return;
+
+    if (onFilesSelect) {
+      onFilesSelect(validFiles);
+    } else if (onFileSelect) {
+      onFileSelect(validFiles[0]);
+    }
   };
 
   return (
@@ -77,6 +93,7 @@ export function DragDropZone({ onFileSelect, isLoading }: DragDropZoneProps) {
       <input
         type="file"
         ref={fileInputRef}
+        multiple={multiple}
         className="hidden"
         accept=".xlsx, .xls, .csv"
         onChange={handleChange}
