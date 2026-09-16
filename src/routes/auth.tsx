@@ -190,19 +190,17 @@ function AuthPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[oklch(0.22_0.045_255)] via-[oklch(0.28_0.05_255)] to-[oklch(0.32_0.09_255)] p-4">
       <div className="w-full max-w-md">
-        <Link
-          to="/"
-          className="mb-6 flex items-center justify-center gap-3 text-sm text-white/70 hover:text-white transition-colors"
-        >
-          <img
-            src="/rbb-logo.jpg"
-            alt="RBBMBL"
-            className="h-20 w-20 rounded-xl object-contain shadow-lg ring-1 ring-white/20"
-          />
-          <div className="flex flex-col">
-            <span className="text-xl font-bold text-white">RBBMBL</span>
-            <span className="text-xs text-white/50">RTA / RTS Console</span>
+        <Link to="/" className="mb-6 flex flex-col items-center justify-center gap-2 text-sm group">
+          <div className="w-56 max-w-[220px] overflow-hidden rounded-xl bg-white p-2 shadow-lg ring-1 ring-white/20 transition-transform duration-200 group-hover:scale-[1.02]">
+            <img
+              src="/rbb-logo.jpg"
+              alt="RBB Merchant Banking Ltd. (RBBMBL)"
+              className="w-full h-auto object-contain block select-none"
+            />
           </div>
+          <span className="text-[11px] font-medium tracking-wider uppercase text-white/60 group-hover:text-white/80 transition-colors">
+            RTA / RTS Management Console
+          </span>
         </Link>
         <Card className="glass-card border-white/10">
           <CardHeader>

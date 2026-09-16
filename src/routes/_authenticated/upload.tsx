@@ -559,14 +559,11 @@ function UploadRoute() {
       const rawDetect = (
         parsedData.detectedCompanyName || file.name.replace(/\.(xlsx|xls|csv|tsv|xlsm)$/i, "")
       ).trim();
-      const candidate = companies.find((c) => {
-        const cName = c.company_name.toLowerCase().trim();
-        const det = rawDetect.toLowerCase();
-        return cName === det || cName.includes(det) || det.includes(cName);
-      });
-      if (candidate) {
-        resolvedCompanyId = candidate.id;
-        setSelectedCompanyId(candidate.id);
+
+      const matched = await CompanyService.findMatchingCompany(rawDetect, parsedData.detectedIsin);
+      if (matched) {
+        resolvedCompanyId = matched.id;
+        setSelectedCompanyId(matched.id);
       } else {
         try {
           toast.loading(`Auto-registering company "${rawDetect}"...`, { id: "comp-autoreg" });
@@ -623,6 +620,7 @@ function UploadRoute() {
     // Create Upload Record FIRST so we can log validation errors to it
     let uploadId: string = crypto.randomUUID();
     let userId: string | undefined;
+    let uploadRecordCreated = false;
     try {
       const {
         data: { user },
@@ -649,8 +647,11 @@ function UploadRoute() {
         user_id: userId,
       });
       uploadId = uploadRecord.id;
-    } catch (e) {
-      toast.error("Failed to create upload record");
+      uploadRecordCreated = true;
+    } catch (e: any) {
+      const detail = e?.message || String(e);
+      console.error("createUploadRecord failed:", detail);
+      toast.error(`Failed to create upload record: ${detail}`);
       setIsImporting(false);
       return;
     }
@@ -684,8 +685,12 @@ function UploadRoute() {
     });
 
     try {
-      const duplicate = await ImportService.checkDuplicateFile(fileHash);
+      const duplicate = await ImportService.checkDuplicateFile(fileHash, uploadId);
       if (duplicate) {
+        toast.warning(
+          "Duplicate file detected: This file has already been imported previously. No new rows were inserted.",
+          { duration: 5000 },
+        );
         setProgress({
           totalRows: sheet.rowCount,
           processedRows: sheet.rowCount,
@@ -807,14 +812,11 @@ function UploadRoute() {
       const rawDetect = (
         parsedData.detectedCompanyName || file.name.replace(/\.(xlsx|xls|csv|tsv|xlsm)$/i, "")
       ).trim();
-      const candidate = companies.find((c) => {
-        const cName = c.company_name.toLowerCase().trim();
-        const det = rawDetect.toLowerCase();
-        return cName === det || cName.includes(det) || det.includes(cName);
-      });
-      if (candidate) {
-        resolvedCompanyId = candidate.id;
-        setSelectedCompanyId(candidate.id);
+
+      const matched = await CompanyService.findMatchingCompany(rawDetect, parsedData.detectedIsin);
+      if (matched) {
+        resolvedCompanyId = matched.id;
+        setSelectedCompanyId(matched.id);
       } else {
         try {
           toast.loading(`Auto-registering company "${rawDetect}"...`, { id: "comp-autoreg-all" });
