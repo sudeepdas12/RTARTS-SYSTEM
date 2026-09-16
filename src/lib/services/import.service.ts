@@ -14,7 +14,7 @@ import {
   type TaxRule,
 } from "./tax-rules.service";
 
-const EDGE_CHUNK_TIMEOUT_MS = 5000;
+const EDGE_CHUNK_TIMEOUT_MS = 60000;
 
 function getMissingColumnName(error: any): string | null {
   const message = error?.message || "";

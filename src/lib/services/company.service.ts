@@ -244,7 +244,9 @@ export const CompanyService = {
   },
 
   async autoRegisterCompany(params: AutoRegisterCompanyParams): Promise<Company> {
-    const cleanName = (params.name || "Unknown Company").replace(/\.[^/.]+$/, "").trim();
+    const cleanName = (params.name || "Unknown Company")
+      .replace(/\.(xlsx|xls|csv|tsv|xlsm)$/i, "")
+      .trim();
 
     // Check if matching company already exists
     const existing = await this.findMatchingCompany(cleanName, params.isin);
