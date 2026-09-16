@@ -2,16 +2,7 @@ import * as XLSX from "xlsx";
 import { PdfGenerator } from "@/lib/pdf-generator";
 import { smartClassify } from "./smart-classifier";
 
-export type DebentureParticular =
-  | "PUBLIC"
-  | "INSTITUTION"
-  | "MUTUAL FUND"
-  | "PROMOTER"
-  | "LOCAL"
-  | "EMPLOYEE"
-  | "TAX_EXEMPTED"
-  | "PRIVATE"
-  | "OTHER";
+export type DebentureParticular = "PUBLIC" | "INSTITUTION" | "MUTUAL FUND";
 
 export interface DebentureSummaryRow {
   name: string;

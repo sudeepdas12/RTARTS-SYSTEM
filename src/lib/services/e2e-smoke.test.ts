@@ -10,6 +10,10 @@ import {
   determineDebentureCategory,
   DebentureSummaryReportService,
 } from "@/lib/services/debenture-summary-report.service";
+import {
+  AgmDividendSummaryReportService,
+  determineAgmCategory,
+} from "@/lib/services/dividend-summary-report.service";
 
 describe("End-to-End System Smoke Test", () => {
   describe("1. Shareholder Category & Uniform Labels", () => {
@@ -367,6 +371,104 @@ describe("End-to-End System Smoke Test", () => {
           client: { full_name: "RAM BAHADUR SHRESTHA", holder_type: "Natural Person - Promoter" },
         }),
       ).toBe("PUBLIC");
+    });
+  });
+
+  describe("6. Equity Dividend AGM Summary Report (Promoter is visible & required)", () => {
+    it("correctly identifies PROMOTER category in equity dividend payables", () => {
+      expect(
+        determineAgmCategory({
+          lot_name: "PROMOTER",
+          client: { full_name: "Hari Prasad Sharma", holder_type: "Natural Person - Promoter" },
+        }),
+      ).toBe("PROMOTER");
+
+      expect(
+        determineAgmCategory({
+          payee_segment: "PROMOTER",
+          client: { full_name: "Bishnu Maya Shrestha" },
+        }),
+      ).toBe("PROMOTER");
+    });
+
+    it("generates AGM summary table with PROMOTER and PUBLIC rows in correct order", () => {
+      const sampleEquityPayables = [
+        {
+          id: "eq-1",
+          shares_held: 510000,
+          bonus_actual: 51000,
+          bonus_issued: 51000,
+          bonus_fraction: 0,
+          after_bonus_kitta: 561000,
+          gross_dividend: 2550000,
+          tax_amount: 127500, // 5%
+          net_payable: 2422500,
+          lot_name: "PROMOTER",
+          client: {
+            full_name: "Promoter Holder A",
+            holder_type: "Natural Person - Promoter",
+            payee_segment: "PROMOTER",
+          },
+        },
+        {
+          id: "eq-2",
+          shares_held: 490000,
+          bonus_actual: 49000,
+          bonus_issued: 49000,
+          bonus_fraction: 0,
+          after_bonus_kitta: 539000,
+          gross_dividend: 2450000,
+          tax_amount: 122500, // 5%
+          net_payable: 2327500,
+          lot_name: "PUBLIC",
+          client: {
+            full_name: "Public Holder B",
+            holder_type: "Natural Person - Public",
+            payee_segment: "PUBLIC",
+          },
+        },
+      ];
+
+      const report = AgmDividendSummaryReportService.generateReportFromPayables(
+        sampleEquityPayables,
+        "Nepal Bank Limited",
+        "NBL",
+        "2080/81",
+        10,
+        5,
+      );
+
+      expect(report.rows.length).toBe(2);
+
+      // Verify PROMOTER row exists and has exact values
+      const promoterRow = report.rows.find((r) => r.particular === "PROMOTER");
+      expect(promoterRow).toBeDefined();
+      expect(promoterRow?.kitta).toBe(510000);
+      expect(promoterRow?.issuedBonus).toBe(51000);
+      expect(promoterRow?.afterBonusKitta).toBe(561000);
+      expect(promoterRow?.grossDividend).toBe(2550000);
+      expect(promoterRow?.divTax).toBe(127500);
+      expect(promoterRow?.netDividend).toBe(2422500);
+      expect(promoterRow?.composition).toBe(51);
+
+      // Verify PUBLIC row exists and has exact values
+      const publicRow = report.rows.find((r) => r.particular === "PUBLIC");
+      expect(publicRow).toBeDefined();
+      expect(publicRow?.kitta).toBe(490000);
+      expect(publicRow?.issuedBonus).toBe(49000);
+      expect(publicRow?.afterBonusKitta).toBe(539000);
+      expect(publicRow?.grossDividend).toBe(2450000);
+      expect(publicRow?.divTax).toBe(122500);
+      expect(publicRow?.netDividend).toBe(2327500);
+      expect(publicRow?.composition).toBe(49);
+
+      // Verify Totals
+      expect(report.total.kitta).toBe(1000000);
+      expect(report.total.issuedBonus).toBe(100000);
+      expect(report.total.afterBonusKitta).toBe(1100000);
+      expect(report.total.grossDividend).toBe(5000000);
+      expect(report.total.divTax).toBe(250000);
+      expect(report.total.netDividend).toBe(4750000);
     });
   });
 });
