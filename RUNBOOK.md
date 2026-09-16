@@ -491,17 +491,17 @@ graph TD
 
 ### Incident Matrix
 
-| Symptom                               | Severity      | Probable Root Cause                       | Resolution Playbook                                                              |
-| :------------------------------------ | :------------ | :---------------------------------------- | :------------------------------------------------------------------------------- |
-| Upload stuck in `Processing`          | P2 (High)     | Disconnected client chunk upload          | [IR-01](#ir-01-upload-stuck-in-processing-state)                                 |
-| `Failed to create upload record`      | P1 (Critical) | RLS violation or session gap              | [IR-02](#ir-02-failed-to-create-upload-record--ingestion-aborts)                 |
-| `chk_div_balance_invariant` error     | P2 (High)     | Discrepancy between gross, tax, and net   | [IR-03](#ir-03-payable-balance-invariant-violation)                              |
-| Edge Function ReferenceError          | P1 (Critical) | Outdated function code                    | [IR-04](#ir-04-edge-function-referenceerror--deployment)                         |
-| Permission Denied `42501` on RPC      | P1 (Critical) | Unauthenticated or missing company access | [IR-05](#ir-05-unauthorized--permission-denied-42501-on-rpc-calls)               |
-| Duplicate File Upload Blocked         | P3 (Medium)   | Identical file hash already uploaded      | [IR-06](#ir-06-duplicate-file-upload-blocked)                                    |
-| PostgreSQL Timeout `57014` on Clients | P1 (Critical) | Unindexed scan across 70,000+ rows        | [IR-07](#ir-07-postgresql-statement-timeout-57014-on-large-shareholder-datasets) |
-| Column mismatch in Upload History     | P2 (High)     | Querying nonexistent columns              | [IR-08](#ir-08-upload-history-schema-mismatches)                                 |
-| Approver batch completion rejected    | P1 (Critical) | Missing `approver` role in RPC            | [IR-09](#ir-09-approver-payment-batch-authorization--trigger-failures)           |
+| Symptom                               | Severity      | Probable Root Cause                                       | Resolution Playbook                                                              |
+| :------------------------------------ | :------------ | :-------------------------------------------------------- | :------------------------------------------------------------------------------- |
+| Upload stuck in `Processing`          | P2 (High)     | Disconnected client chunk upload                          | [IR-01](#ir-01-upload-stuck-in-processing-state)                                 |
+| `Failed to create upload record`      | P1 (Critical) | Stopped Supabase pooler, expired session, or missing role | [IR-02](#ir-02-failed-to-create-upload-record--ingestion-aborts)                 |
+| `chk_div_balance_invariant` error     | P2 (High)     | Discrepancy between gross, tax, and net                   | [IR-03](#ir-03-payable-balance-invariant-violation)                              |
+| Edge Function ReferenceError          | P1 (Critical) | Outdated function code                                    | [IR-04](#ir-04-edge-function-referenceerror--deployment)                         |
+| Permission Denied `42501` on RPC      | P1 (Critical) | Unauthenticated or missing company access                 | [IR-05](#ir-05-unauthorized--permission-denied-42501-on-rpc-calls)               |
+| Duplicate File Upload Blocked         | P3 (Medium)   | Identical file hash already uploaded                      | [IR-06](#ir-06-duplicate-file-upload-blocked)                                    |
+| PostgreSQL Timeout `57014` on Clients | P1 (Critical) | Unindexed scan across 70,000+ rows                        | [IR-07](#ir-07-postgresql-statement-timeout-57014-on-large-shareholder-datasets) |
+| Column mismatch in Upload History     | P2 (High)     | Querying nonexistent columns                              | [IR-08](#ir-08-upload-history-schema-mismatches)                                 |
+| Approver batch completion rejected    | P1 (Critical) | Missing `approver` role in RPC                            | [IR-09](#ir-09-approver-payment-batch-authorization--trigger-failures)           |
 
 ---
 
@@ -518,8 +518,88 @@ graph TD
 
 ### IR-02: "Failed to create upload record" & Ingestion Aborts
 
-- **Diagnosis**: Check if user session has expired or user lacks role in `user_roles`.
-- **Remedy**: Re-authenticate and verify user has `admin`, `supervisor`, or `finance_operator` role. The upload UI will cleanly abort the sheet and prevent orphaned rows.
+**Severity**: P1 (Critical) — upload pipeline is completely blocked.
+
+#### Symptoms
+
+The upload page shows a red toast: `"Failed to create upload record: <detail>"` immediately after clicking **Confirm & Ingest**. No rows are inserted.
+
+#### Root Causes (in order of likelihood)
+
+| #   | Root Cause                                  | Detail                                                                                                                                                                                                                     |
+| --- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Supabase pooler service stopped**         | The most common cause. Supabase's connection pooler (`supabase_pooler_*`) stops after a system restart or Docker hiccup, cutting PostgREST off from the database. The Supabase DB itself stays up but REST API calls fail. |
+| 2   | **Session expired / no authenticated user** | `supabase.auth.getUser()` returns no user — JWT has expired and not refreshed. The RLS `uh_write` policy requires an authenticated session.                                                                                |
+| 3   | **User missing required role**              | User does not have `admin`, `supervisor`, or `finance_operator` role in `user_roles`.                                                                                                                                      |
+| 4   | **Schema cache stale (PGRST204)**           | PostgREST schema cache hasn't refreshed after a recent migration. Manifests as `"Could not find the 'X' column"` in the error detail.                                                                                      |
+
+#### Diagnosis
+
+**Step 1 — Read the full toast message.** The error toast now shows the actual underlying message (e.g., `"connection refused"`, `"JWT expired"`, `"new row violates row-level security policy"`). This tells you which cause applies.
+
+**Step 2 — Check Supabase service health:**
+
+```powershell
+npx supabase status
+```
+
+Look for `Stopped services:` in the output. If `supabase_pooler_*` or `supabase_edge_runtime_*` is listed as stopped, proceed to Remedy #1.
+
+**Step 3 — Test connectivity directly:**
+
+```powershell
+# Should return HTTP 200 and a JSON array
+Invoke-RestMethod -Uri "http://127.0.0.1:54321/rest/v1/upload_history?limit=1" `
+  -Headers @{ "apikey" = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"; "Authorization" = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0" }
+```
+
+If this fails, Supabase REST is down.
+
+#### Remedies
+
+**Remedy 1 — Full Supabase restart (fixes stopped pooler / stale schema cache):**
+
+```powershell
+# WARNING: --no-backup wipes all local data. Use only in development.
+# For a safe restart that preserves data, omit --no-backup:
+npx supabase stop
+npx supabase start
+```
+
+> [!WARNING]
+> `npx supabase stop --no-backup` **deletes all local database data** and re-seeds from migrations. Use the plain `npx supabase stop` (which backs up) unless you intentionally want a clean slate.
+
+After restart, verify all services are running:
+
+```powershell
+npx supabase status
+# Confirm NO "Stopped services:" line in output
+```
+
+**Remedy 2 — Session expired:** Log out and log back in. The Supabase client auto-refreshes tokens, but if the browser tab was idle overnight the session may be fully expired. Refresh the page and re-authenticate.
+
+**Remedy 3 — Missing role:** As admin, go to `/_authenticated/users`, open the user, and assign `finance_operator` or `supervisor` role.
+
+**Remedy 4 — Stale schema cache only (no data loss):** Restart just the PostgREST container:
+
+```powershell
+# Find the container name
+docker ps --filter "name=supabase_rest"
+# Restart it
+docker restart <container_name>
+```
+
+#### Prevention
+
+- Before an upload session, run `npx supabase status` and confirm no services are stopped.
+- After any OS reboot or Docker Desktop restart, always run `npx supabase start` before opening the app.
+- The upload page error toast now shows the **actual error detail** — always read the full message before escalating.
+
+#### Code Reference
+
+- Error thrown from: [`src/lib/services/upload.service.ts`](src/lib/services/upload.service.ts) — `createUploadRecord()` — PostgREST `INSERT` into `upload_history`.
+- Caught and surfaced in: [`src/routes/_authenticated/upload.tsx`](src/routes/_authenticated/upload.tsx) — `handleImport()` try/catch block.
+- RLS policy governing INSERT: migration `20261148000000_fix_upload_rls_and_edge_timeout.sql` — `uh_write` policy (`FOR INSERT TO authenticated WITH CHECK (true)`).
 
 ---
 
