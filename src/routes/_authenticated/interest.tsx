@@ -82,6 +82,7 @@ interface Payable {
   company_id: string | null;
   client_id: string | null;
   instrument_ref: string | null;
+  lot_name?: string | null;
   shares_held?: number | null;
   kitta?: number | null;
   gross_interest: number | null;
@@ -139,6 +140,7 @@ const emptyForm = {
   // Payable fields
   kitta: "",
   instrument_ref: "",
+  lot_name: "",
   gross_interest: "",
   tax_amount: "",
   net_payable: "",
@@ -676,6 +678,7 @@ function InterestPage() {
         company_id: form.company_id,
         client_id: form.client_id,
         instrument_ref: form.instrument_ref || null,
+        lot_name: form.lot_name || null,
         shares_held: kittaVal,
         kitta: kittaVal,
         gross_interest: gross,
@@ -831,6 +834,7 @@ function InterestPage() {
               ? String(cl.kitta)
               : "",
       instrument_ref: p.instrument_ref ?? "",
+      lot_name: p.lot_name ?? "",
       gross_interest: p.gross_interest?.toString() ?? "",
       tax_amount: p.tax_amount?.toString() ?? "",
       net_payable: p.net_payable?.toString() ?? "",

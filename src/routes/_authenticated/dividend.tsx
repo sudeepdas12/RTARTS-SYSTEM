@@ -696,18 +696,20 @@ function DividendPage() {
           : 0;
       const tax = form.tax_amount ? Number(form.tax_amount) : 0;
       const bonusTax = form.bonus_tax ? Number(form.bonus_tax) : 0;
-      const net = form.net_payable ? Number(form.net_payable) : Math.max(0, gross - tax);
+      const net = form.net_payable ? Number(form.net_payable) : Math.max(0, gross - tax - bonusTax);
 
       if (shares < 0) throw new Error("Shares held cannot be negative.");
       if (gross < 0) throw new Error("Gross dividend cannot be negative.");
       if (tax < 0) throw new Error("Tax amount cannot be negative.");
       if (bonusTax < 0) throw new Error("Bonus tax cannot be negative.");
       if (net < 0) throw new Error("Net payable cannot be negative.");
-      if (tax > gross + 0.05) throw new Error("Tax amount cannot exceed gross dividend.");
+      if (tax + bonusTax > gross + 0.05)
+        throw new Error("Tax + Bonus Tax cannot exceed gross dividend.");
       if (net > gross + 0.05) throw new Error("Net payable cannot exceed gross dividend.");
-      if (Math.abs(gross - tax - net) > 0.05) {
+      // Balance: gross = cash_tax + bonus_tax + net  (±0.05 rounding tolerance)
+      if (Math.abs(gross - tax - bonusTax - net) > 0.05) {
         throw new Error(
-          `Gross dividend (${gross}) must equal Tax (${tax}) + Net Payable (${net}).`,
+          `Gross (${gross}) must equal Tax (${tax}) + Bonus Tax (${bonusTax}) + Net Payable (${net}).`,
         );
       }
 

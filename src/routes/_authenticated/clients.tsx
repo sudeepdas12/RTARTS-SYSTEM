@@ -750,6 +750,7 @@ function ClientsPage() {
           full_name: d.full_name,
           boid: d.boid,
           holding_kitta: d.kitta || 0,
+          company_code: d.company?.company_code || "",
           company: d.company?.company_name || "",
           holder_type: d.holder_type,
           classification: d.payee_classification,
@@ -821,13 +822,18 @@ function ClientsPage() {
             (r.classification as PayeeClassification) ??
             (r["PAYEE CLASSIFICATION"] as PayeeClassification) ??
             "NATURAL_PERSON";
-          return {
-            client_code: String(r.client_code).trim(),
-            company_id: r.company_id
-              ? String(r.company_id).trim()
+          // Resolve company_id: prefer explicit UUID → code lookup → active filter → null
+          const rowCompanyCode = r.company_code ? String(r.company_code).trim() : null;
+          const resolvedCompanyId = r.company_id
+            ? String(r.company_id).trim()
+            : rowCompanyCode
+              ? (companies.find((c) => c.company_code === rowCompanyCode)?.id ?? null)
               : companyFilter !== "all"
                 ? companyFilter
-                : null,
+                : null;
+          return {
+            client_code: String(r.client_code).trim(),
+            company_id: resolvedCompanyId,
             client_id: r.client_id ? String(r.client_id).trim() : null,
             full_name: String(r.full_name).trim(),
             father_name: r.father_name ? String(r.father_name).trim() : null,

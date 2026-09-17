@@ -26,6 +26,8 @@ const normalizeAmount = (value: string | number | undefined | null): number => {
   if (value === undefined || value === null) return 0;
   if (typeof value === "number") return value;
   let str = String(value).trim();
+  // Detect DR/CR suffix before stripping so we can negate debits
+  const isDr = /DR$/i.test(str);
   str = str
     .replace(/[,\s]/g, "")
     .replace(/\(\s*([\d.]+)\s*\)/, "-$1")
@@ -33,7 +35,9 @@ const normalizeAmount = (value: string | number | undefined | null): number => {
   // Handle "NPRs 25679.85" format
   const nprMatch = str.match(/NPRs?\s*([\d.]+)/i);
   const num = Number(nprMatch ? nprMatch[1] : str);
-  return Number.isNaN(num) ? 0 : num;
+  if (Number.isNaN(num)) return 0;
+  // DR = debit = money out = negative; CR = credit = money in = positive
+  return isDr ? -Math.abs(num) : num;
 };
 
 const normalizeDate = (raw: string | number | undefined | null | Date): string => {
@@ -222,7 +226,7 @@ export const BankParser = {
         continue;
       }
 
-      const debit = indices.debit >= 0 ? normalizeAmount(columns[indices.debit]) : 0;
+      const debit = indices.debit >= 0 ? Math.abs(normalizeAmount(columns[indices.debit])) : 0;
       const credit = indices.credit >= 0 ? normalizeAmount(columns[indices.credit]) : 0;
       const balance = indices.balance >= 0 ? normalizeAmount(columns[indices.balance]) : 0;
       const status = indices.status >= 0 ? String(columns[indices.status] || "").trim() : undefined;

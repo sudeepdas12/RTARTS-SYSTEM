@@ -534,7 +534,10 @@ function CompaniesPage() {
           phone: r.phone ? String(r.phone).trim() : null,
           website: r.website ? String(r.website).trim() : null,
           address: r.address ? String(r.address).trim() : null,
-          status: (r.status as Status) ?? "Active",
+          status: r.status
+            ? ((String(r.status).trim().charAt(0).toUpperCase() +
+                String(r.status).trim().slice(1).toLowerCase()) as Status)
+            : "Active",
         }));
       if (!clean.length) return toast.error("No valid company rows found");
       const { error } = await supabase
