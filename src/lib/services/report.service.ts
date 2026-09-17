@@ -395,7 +395,6 @@ export const ReportService = {
             .select(
               "id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)",
             )
-            .neq("payment_status", "Reversed")
             .order("created_at", { ascending: false })
             .range(from, to);
           if (filters.companyId && filters.companyId !== "all")
@@ -411,7 +410,6 @@ export const ReportService = {
             .select(
               "id, gross_interest, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)",
             )
-            .neq("payment_status", "Reversed")
             .order("created_at", { ascending: false })
             .range(from, to);
           if (filters.companyId && filters.companyId !== "all")
@@ -427,7 +425,6 @@ export const ReportService = {
             .select(
               "id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)",
             )
-            .neq("payment_status", "Reversed")
             .order("created_at", { ascending: false })
             .range(from, to);
           if (filters.companyId && filters.companyId !== "all")

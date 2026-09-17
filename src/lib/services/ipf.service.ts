@@ -86,7 +86,7 @@ export const IpfService = {
         .select(
           "*, company:companies(company_name, company_code), client:clients(id, full_name, boid, phone)",
         )
-        .in("payment_status", ["Pending", "Failed", "Discrepancy"])
+        .in("payment_status", ["Pending", "Partial"])
         .order("created_at", { ascending: false })
         .range(from, to);
 
