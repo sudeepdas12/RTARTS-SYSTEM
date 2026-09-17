@@ -620,19 +620,19 @@ export const ReconciliationEngine = {
           supabase
             .from("dividend_payables")
             .select(
-              "id,company_id,client_id,net_payable,gross_dividend,payment_status,fiscal_year,clients(id,boid,full_name,bank_name,bank_account_no)",
+              "id,company_id,client_id,net_payable,gross_dividend,payment_status,fiscal_year,bank_name,bank_account_no,clients(id,boid,full_name,bank_name,bank_account_no)",
             )
             .limit(10000),
           supabase
             .from("interest_payables")
             .select(
-              "id,company_id,client_id,net_payable,gross_interest,payment_status,fiscal_year,clients(id,boid,full_name,bank_name,bank_account_no)",
+              "id,company_id,client_id,net_payable,gross_interest,payment_status,fiscal_year,bank_name,bank_account_no,clients(id,boid,full_name,bank_name,bank_account_no)",
             )
             .limit(10000),
           (supabase as any)
             .from("mutual_fund_payables")
             .select(
-              "id,company_id,client_id,net_payable,payment_status,fiscal_year,clients(id,boid,full_name,bank_name,bank_account_no)",
+              "id,company_id,client_id,net_payable,payment_status,fiscal_year,bank_name,bank_account_no,clients(id,boid,full_name,bank_name,bank_account_no)",
             )
             .limit(10000),
         ]);
@@ -649,7 +649,7 @@ export const ReconciliationEngine = {
       (supabase as any)
         .from("payment_batches")
         .select(
-          "id,company_id,batch_name,total_amount,total_net,total_tax,payable_type,status,cds_batch_ref,created_at",
+          "id,company_id,batch_name,total_amount,total_tax,total_payments,payable_type,status,cds_batch_ref,created_at",
         )
         .limit(1000),
     ]);
@@ -662,6 +662,7 @@ export const ReconciliationEngine = {
     const paymentsByAcct = new Map<string, any[]>();
     const paymentsByName = new Map<string, any[]>();
     const paymentsByAmt = new Map<string, any[]>();
+    const paymentsByRef = new Map<string, any[]>();
 
     payments.forEach((p: any) => {
       const acct = cleanAcct(p.bank_account_no || p.clients?.bank_account_no);
@@ -678,6 +679,17 @@ export const ReconciliationEngine = {
       }
       if (!paymentsByAmt.has(amtKey)) paymentsByAmt.set(amtKey, []);
       paymentsByAmt.get(amtKey)!.push(p);
+
+      if (p.connectips_ref) {
+        const ref = String(p.connectips_ref).trim().toUpperCase();
+        if (!paymentsByRef.has(ref)) paymentsByRef.set(ref, []);
+        paymentsByRef.get(ref)!.push(p);
+      }
+      if (p.payment_reference) {
+        const pRef = String(p.payment_reference).trim().toUpperCase();
+        if (!paymentsByRef.has(pRef)) paymentsByRef.set(pRef, []);
+        paymentsByRef.get(pRef)!.push(p);
+      }
     });
 
     const payablesByAcct = new Map<string, any[]>();
@@ -685,7 +697,7 @@ export const ReconciliationEngine = {
     const payablesByAmt = new Map<string, any[]>();
 
     payables.forEach((p: any) => {
-      const acct = cleanAcct(p.clients?.bank_account_no);
+      const acct = cleanAcct(p.bank_account_no || p.clients?.bank_account_no);
       const name = cleanName(p.clients?.full_name);
       const amtKey = buildAmountKey(Number(p.net_payable ?? 0));
 
@@ -747,8 +759,24 @@ export const ReconciliationEngine = {
       const matchSources: string[] = [];
 
       // PHASE 1: EXACT MATCHES (within RECONCILIATION_TOLERANCE_NPR)
-      // 1a. Match against Payments by Account + Exact Amount
-      if (txnAcct) {
+      // 1a. Match against Payments by ConnectIPS Reference or Instruction ID
+      const refToSearch = txn.instructionId || txn.referenceId;
+      if (refToSearch) {
+        const refPayments = paymentsByRef.get(String(refToSearch).trim().toUpperCase()) || [];
+        bestPayment = refPayments.find((p) => !usedPaymentIds.has(p.id)) || null;
+      }
+      if (!bestPayment && txn.description) {
+        // Extract 10-20 char alphanumeric reference pattern from description (e.g. 0201260720JRL7)
+        const matchRef = txn.description.match(/[0-9]{4,}[A-Za-z0-9]{6,}/);
+        if (matchRef) {
+          const candRef = matchRef[0].toUpperCase();
+          const refPayments = paymentsByRef.get(candRef) || [];
+          bestPayment = refPayments.find((p) => !usedPaymentIds.has(p.id)) || null;
+        }
+      }
+
+      // 1b. Match against Payments by Account + Exact Amount
+      if (!bestPayment && txnAcct) {
         const acctPayments = paymentsByAcct.get(txnAcct) || [];
         bestPayment =
           acctPayments.find(
@@ -758,7 +786,7 @@ export const ReconciliationEngine = {
           ) || null;
       }
 
-      // 1b. Match against Payables by Account + Exact Amount
+      // 1c. Match against Payables by Account + Exact Amount
       if (!bestPayment && txnAcct) {
         const acctPayables = payablesByAcct.get(txnAcct) || [];
         matchedPayable =
@@ -769,7 +797,7 @@ export const ReconciliationEngine = {
           ) || null;
       }
 
-      // 1c. Match against Payments by Name + Exact Amount
+      // 1d. Match against Payments by Name + Exact Amount
       if (!bestPayment && !matchedPayable && txnName) {
         const namePayments = paymentsByName.get(txnName) || [];
         bestPayment =
@@ -780,7 +808,7 @@ export const ReconciliationEngine = {
           ) || null;
       }
 
-      // 1d. Match against Payables by Name + Exact Amount
+      // 1e. Match against Payables by Name + Exact Amount
       if (!bestPayment && !matchedPayable && txnName) {
         const namePayables = payablesByName.get(txnName) || [];
         matchedPayable =
@@ -791,7 +819,7 @@ export const ReconciliationEngine = {
           ) || null;
       }
 
-      // 1e. Match against Payment Batches (for aggregate statement entries) by Exact Amount
+      // 1f. Match against Payment Batches (for aggregate statement entries) by Exact Amount
       if (
         !bestPayment &&
         !matchedPayable &&
@@ -802,7 +830,7 @@ export const ReconciliationEngine = {
       ) {
         const batchMatch = batches.find((b: any) => {
           if (usedBatchIds.has(b.id)) return false;
-          const bAmount = Number(b.total_net || b.total_amount || 0);
+          const bAmount = Number(b.total_amount || 0);
           if (bAmount > 0 && Math.abs(bAmount - amount) <= RECONCILIATION_TOLERANCE_NPR)
             return true;
           if (
@@ -819,13 +847,13 @@ export const ReconciliationEngine = {
         }
       }
 
-      // 1f. Match against Payments by Exact Amount only (fallback for known amount)
+      // 1g. Match against Payments by Exact Amount only (fallback for known amount)
       if (!bestPayment && !matchedPayable && !matchedBatch && amount > 0) {
         const amtPayments = paymentsByAmt.get(amtKey) || [];
         bestPayment = amtPayments.find((p) => !usedPaymentIds.has(p.id)) || null;
       }
 
-      // 1g. Match against Payables by Exact Amount only
+      // 1h. Match against Payables by Exact Amount only
       if (!bestPayment && !matchedPayable && !matchedBatch && amount > 0) {
         const amtPayables = payablesByAmt.get(amtKey) || [];
         matchedPayable = amtPayables.find((p) => !usedPayableIds.has(p.id)) || null;
@@ -973,11 +1001,20 @@ export const ReconciliationEngine = {
         paymentStatus: bestPayment?.status ?? bestPayment?.payment_status ?? null,
         payableId: matchedPayable?.id ?? bestPayment?.payable_id ?? null,
         fiscalYear: matchedPayable?.fiscal_year ?? null,
-        payableType:
-          matchedPayable?.payable_type ??
-          bestPayment?.payable_type ??
-          matchedBatch?.payable_type ??
-          "interest",
+        payableType: (() => {
+          const raw =
+            matchedPayable?.payable_type ??
+            bestPayment?.payable_type ??
+            matchedBatch?.payable_type ??
+            "interest";
+          return raw === "dividend_payables" || raw === "dividend"
+            ? "dividend"
+            : raw === "interest_payables" || raw === "interest"
+              ? "interest"
+              : raw === "mutual_fund_payables" || raw === "mutual_fund"
+                ? "mutual_fund"
+                : "interest";
+        })(),
         transactionDate: txn.date || null,
         transactionDescription: txn.instructionId
           ? `Instruction: ${txn.instructionId}`

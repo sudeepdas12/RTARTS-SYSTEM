@@ -577,6 +577,14 @@ export function ReconciliationRoute() {
     ).length;
     const rejectCount = report.matches.filter((m) => m.status === "Rejected").length;
 
+    if (matchedCount === 0 && partialCount === 0 && rejectCount === 0) {
+      toast.warning(
+        "No matching pending payables were found in the system for this file. All rows are currently marked as 'Missing'. Ensure payables are imported for this company/fiscal year, or verify that the uploaded file matches your pending disbursements.",
+        { duration: 7000 },
+      );
+      return;
+    }
+
     const confirmMsg =
       `Apply Reconciliation Breakdown:\n` +
       `• ${matchedCount} records will be updated to "Paid"\n` +
@@ -1093,7 +1101,29 @@ export function ReconciliationRoute() {
                   variant="default"
                   size="sm"
                   onClick={handleApplyReconciliation}
-                  disabled={isApplying || isProcessing || isSaving}
+                  disabled={
+                    isApplying ||
+                    isProcessing ||
+                    isSaving ||
+                    report.matches.filter(
+                      (m) =>
+                        m.status === "Matched" ||
+                        m.status === "Over_Paid" ||
+                        m.status === "Under_Paid" ||
+                        m.status === "Rejected",
+                    ).length === 0
+                  }
+                  title={
+                    report.matches.filter(
+                      (m) =>
+                        m.status === "Matched" ||
+                        m.status === "Over_Paid" ||
+                        m.status === "Under_Paid" ||
+                        m.status === "Rejected",
+                    ).length === 0
+                      ? "No records matched against pending payables in the system"
+                      : undefined
+                  }
                 >
                   {isApplying ? (
                     "Applying..."
@@ -1228,6 +1258,39 @@ export function ReconciliationRoute() {
                 </div>
               </CardContent>
             </Card>
+          )}
+
+          {report.grandTotal.matchedRecords === 0 && report.matches.length > 0 && (
+            <div className="flex items-start gap-2.5 p-3.5 bg-amber-500/10 border border-amber-500/20 text-amber-900 dark:text-amber-200 rounded-xl text-xs mb-3">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+              <div>
+                <p className="font-semibold text-sm mb-1">No Matching Records Found (0 Matches)</p>
+                <p>
+                  All {report.matches.length.toLocaleString()} records in this file are currently
+                  categorized as &ldquo;Missing&rdquo; because no matching Pending payables or
+                  payments could be found by Account Number, Shareholder Name, or ConnectIPS
+                  Reference.
+                </p>
+                <ul className="list-disc pl-4 mt-1.5 space-y-1">
+                  <li>
+                    <strong>General Bank Statements:</strong> Consolidated sweep entries (e.g.{" "}
+                    <em>NRB Circular</em>) and lump-sum batch debits (e.g. <em>IPS DR</em>) require
+                    the individual ConnectIPS LOT settlement reports to be uploaded and applied
+                    first so payment batches exist.
+                  </li>
+                  <li>
+                    <strong>ConnectIPS Settlement Reports (LOT files):</strong> Ensure that the
+                    underlying payables (Dividend, Interest/Debenture, or Mutual Fund) for this
+                    company and fiscal year have been imported via the <strong>Upload</strong>{" "}
+                    section.
+                  </li>
+                  <li>
+                    <strong>Company Filter:</strong> Verify that the company selected in the top
+                    filter matches the company whose disbursements are in this file.
+                  </li>
+                </ul>
+              </div>
+            </div>
           )}
 
           {report?.sourceType === "bank_statement" && (

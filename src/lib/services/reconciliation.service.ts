@@ -506,10 +506,21 @@ export const ReconciliationService = {
     let alreadyPaid = 0;
     const errors: string[] = [];
 
+    // Helper to normalize payable types from any source format
+    const normalizeType = (type?: string | null): "dividend" | "interest" | "mutual_fund" => {
+      const t = String(type || "")
+        .toLowerCase()
+        .trim();
+      if (t === "dividend" || t === "dividend_payables") return "dividend";
+      if (t === "interest" || t === "interest_payables") return "interest";
+      if (t === "mutual_fund" || t === "mutual_fund_payables") return "mutual_fund";
+      return "dividend";
+    };
+
     // 1. Determine dominant payable type across matched results
     const typeCounts = matchedResults.reduce(
       (acc, r) => {
-        const t = r.payable_type || "dividend";
+        const t = normalizeType(r.payable_type);
         acc[t] = (acc[t] || 0) + 1;
         return acc;
       },
@@ -542,20 +553,18 @@ export const ReconciliationService = {
       let payableId =
         r.payable_id || (r.source_b_type !== "payment" ? r.source_b_id : null) || null;
       const paymentId = r.source_b_type === "payment" ? r.source_b_id : null;
-      let payableType = r.payable_type || dominantPayableType;
+      let payableType: string = normalizeType(r.payable_type || dominantPayableType);
 
       // If payableId is missing, strictly look up an exact matching pending payable
       if (!payableId && !paymentId && r.client_id) {
         const expAmt = Number(r.expected_amount || r.actual_amount || 0);
-        const searchTables = payableType
-          ? [
-              payableType === "dividend"
-                ? "dividend_payables"
-                : payableType === "interest"
-                  ? "interest_payables"
-                  : "mutual_fund_payables",
-            ]
-          : ["dividend_payables", "interest_payables", "mutual_fund_payables"];
+        const searchTables = [
+          payableType === "dividend"
+            ? "dividend_payables"
+            : payableType === "interest"
+              ? "interest_payables"
+              : "mutual_fund_payables",
+        ];
 
         for (const tbl of searchTables) {
           let q = (supabase as any)
@@ -650,12 +659,19 @@ export const ReconciliationService = {
     const rejectedResults = results.filter((r) => r.result === "Rejected");
     for (const rej of rejectedResults) {
       try {
-        let payableType = rej.payable_type || dominantPayableType || "dividend";
+        let payableType = normalizeType(rej.payable_type || dominantPayableType);
         let payableId = rej.payable_id;
 
         if (!payableId && rej.client_id) {
           const expAmt = Number(rej.expected_amount || rej.actual_amount || 0);
-          for (const tbl of ["interest_payables", "dividend_payables", "mutual_fund_payables"]) {
+          const searchTables = [
+            payableType === "dividend"
+              ? "dividend_payables"
+              : payableType === "interest"
+                ? "interest_payables"
+                : "mutual_fund_payables",
+          ];
+          for (const tbl of searchTables) {
             let q = (supabase as any)
               .from(tbl)
               .select("id, net_payable, payment_status")
