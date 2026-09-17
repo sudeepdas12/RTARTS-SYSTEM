@@ -75,6 +75,7 @@ export const Route = createFileRoute("/_authenticated/mutual-fund")({
 });
 
 type PaymentStatus = "Pending" | "Paid" | "Partial";
+type DividendType = "Cash" | "Bonus" | "Both";
 
 interface Payable {
   id: string;
@@ -99,6 +100,7 @@ interface Payable {
   bank_name?: string | null;
   bank_account_no?: string | null;
   lot_name?: string | null;
+  payee_classification?: string | null;
   upload_id?: string | null;
   created_at: string;
   client?: {

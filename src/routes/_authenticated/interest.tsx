@@ -95,6 +95,9 @@ interface Payable {
   fiscal_year: string | null;
   tds_rate?: number | null;
   payee_classification?: string | null;
+  bank_name?: string | null;
+  bank_account_no?: string | null;
+  bank_branch?: string | null;
   upload_id?: string | null;
   created_at: string;
   client?: {

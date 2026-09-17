@@ -1218,14 +1218,14 @@ export const ExcelParser = {
     let detectedCompanyName: string | undefined;
     let detectedIsin: string | undefined;
     let detectedRate: number | undefined;
-    let detectedType: ParsedExcelData["fileType"] = "UNKNOWN";
+    let detectedType: ParsedExcelData["fileType"] = "unknown";
 
     const grandTotals = {
       totalRows: 0,
-      totalShares: 0,
+      totalKitta: 0,
       totalAmount: 0,
       totalTax: 0,
-      totalNetPayable: 0,
+      totalNet: 0,
     };
 
     for (let i = 0; i < files.length; i++) {
@@ -1234,7 +1234,7 @@ export const ExcelParser = {
 
       try {
         const parsed = await this.parseFile(file);
-        if (parsed.fileType !== "UNKNOWN" && detectedType === "UNKNOWN") {
+        if (parsed.fileType !== "unknown" && detectedType === "unknown") {
           detectedType = parsed.fileType;
         }
         if (parsed.detectedCompanyName && !detectedCompanyName) {
@@ -1259,10 +1259,10 @@ export const ExcelParser = {
           });
 
           grandTotals.totalRows += sheet.rowCount;
-          grandTotals.totalShares += sheet.totalKitta;
+          grandTotals.totalKitta += sheet.totalKitta;
           grandTotals.totalAmount += sheet.totalAmount;
           grandTotals.totalTax += sheet.totalTax;
-          grandTotals.totalNetPayable += sheet.totalNet;
+          grandTotals.totalNet += sheet.totalNet;
         }
       } catch (err) {
         console.warn(`Failed to parse Excel file ${file.name}:`, err);

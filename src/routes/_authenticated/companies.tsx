@@ -83,6 +83,10 @@ interface Company {
   pan_no: string | null;
   bank_account_no: string | null;
   bank_name: string | null;
+  email?: string | null;
+  phone?: string | null;
+  website?: string | null;
+  address?: string | null;
   status: Status;
   created_at: string;
 }
