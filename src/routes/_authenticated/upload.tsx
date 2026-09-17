@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
@@ -42,6 +42,7 @@ import {
   Sparkles,
   Loader2,
   Plus,
+  RotateCcw,
 } from "lucide-react";
 import { CompanyService, generateCompanyCode } from "@/lib/services/company.service";
 
@@ -1699,8 +1700,19 @@ function UploadRoute() {
             </div>
           </div>
           {progress.status !== "Processing" && (
-            <div className="flex justify-end mt-4">
-              <Button onClick={reset}>Upload Another File</Button>
+            <div className="flex justify-end gap-2 mt-4">
+              <Link to="/upload-history">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-amber-700 hover:text-amber-800 border-amber-300 dark:text-amber-400 dark:border-amber-800"
+                >
+                  <RotateCcw className="h-4 w-4" /> Manage &amp; Rollback
+                </Button>
+              </Link>
+              <Button size="sm" onClick={reset}>
+                Upload Another File
+              </Button>
             </div>
           )}
         </div>
@@ -1788,7 +1800,20 @@ function UploadRoute() {
                   </span>
                 </div>
               )}
-              <Button onClick={reset}>Upload Another File</Button>
+              <div className="flex items-center gap-2">
+                <Link to="/upload-history">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 text-amber-700 hover:text-amber-800 border-amber-300 dark:text-amber-400 dark:border-amber-800"
+                  >
+                    <RotateCcw className="h-4 w-4" /> Manage &amp; Rollback
+                  </Button>
+                </Link>
+                <Button size="sm" onClick={reset}>
+                  Upload Another File
+                </Button>
+              </div>
             </div>
           )}
         </div>

@@ -130,7 +130,7 @@ function StatusBadge({ status }: { status: string }) {
 
 function UploadHistoryRoute() {
   const qc = useQueryClient();
-  const { isAdmin } = useAuth();
+  const { isAdmin, hasRole } = useAuth();
 
   // ── State ────────────────────────────────────────────────────────────────
   const [search, setSearch] = useState("");
@@ -228,31 +228,18 @@ function UploadHistoryRoute() {
 
   const rollbackMutation = useMutation({
     mutationFn: async (record: any) => {
-      if (!isAdmin) throw new Error("Only administrators are authorized to roll back uploads.");
-      // Determine target table — fall back to all payable tables if null
-      const table = record.target_table;
-      if (table) {
-        await UploadService.rollbackUpload(record.id, table);
-      } else {
-        // Target table unknown — try all three payable tables and mark record
-        const tables = ["dividend_payables", "interest_payables", "mutual_fund_payables"];
-        for (const t of tables) {
-          try {
-            const { error } = await (supabase as any).from(t).delete().eq("upload_id", record.id);
-            if (error) console.warn(`Rollback attempt on ${t}:`, error.message);
-          } catch {
-            /* silent */
-          }
-        }
-        // Mark as RolledBack
-        await (supabase as any)
-          .from("upload_history")
-          .update({ status: "RolledBack", completed_at: new Date().toISOString() })
-          .eq("id", record.id);
+      if (!isAdmin && !hasRole("supervisor") && !hasRole("finance_operator")) {
+        throw new Error("Only administrators and supervisors are authorized to roll back uploads.");
       }
+      return await UploadService.rollbackUpload(record.id, record.target_table);
     },
-    onSuccess: () => {
-      toast.success("Upload rolled back — imported rows removed.");
+    onSuccess: (res: any) => {
+      const count = res?.payablesDeleted;
+      if (typeof count === "number" && count > 0) {
+        toast.success(`Upload rolled back: ${count.toLocaleString()} row(s) removed.`);
+      } else {
+        toast.success("Upload rolled back successfully — file unlocked for re-upload.");
+      }
       qc.invalidateQueries({ queryKey: ["upload-history"] });
       qc.invalidateQueries({ queryKey: ["company-fiscal-summary"] });
       qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
@@ -561,8 +548,7 @@ function UploadHistoryRoute() {
                           </Button>
                         )}
 
-                        {/* Rollback */}
-                        {(record.status === "Completed" || record.status === "Failed") && (
+                        {record.status !== "RolledBack" && (
                           <Button
                             variant="ghost"
                             size="icon"

@@ -225,8 +225,41 @@ export const UploadService = {
     }
   },
 
-  async rollbackUpload(uploadId: string, targetTable?: string): Promise<void> {
-    // 1. Fetch the upload record to get file_hash and target_table
+  async rollbackUpload(
+    uploadId: string,
+    targetTable?: string,
+  ): Promise<{
+    success: boolean;
+    payablesDeleted: number;
+    clientsDeleted: number;
+    errorsDeleted: number;
+  }> {
+    // 1. Preferred approach: Atomic PostgreSQL transaction
+    try {
+      const { data, error } = await (supabase as any).rpc("rollback_upload_atomic", {
+        p_upload_id: uploadId,
+      });
+
+      if (!error && data && typeof data === "object") {
+        return {
+          success: Boolean(data.success),
+          payablesDeleted: Number(data.payables_deleted || 0),
+          clientsDeleted: Number(data.clients_deleted || 0),
+          errorsDeleted: Number(data.errors_deleted || 0),
+        };
+      }
+
+      if (error) {
+        console.warn(
+          "rollback_upload_atomic RPC returned error, using direct fallback:",
+          error.message,
+        );
+      }
+    } catch (rpcErr: any) {
+      console.warn("Could not invoke rollback_upload_atomic RPC:", rpcErr?.message);
+    }
+
+    // 2. Direct fallback: Delete by upload_id directly (not chunked in query params)
     let fileHash: string | null = null;
     let actualTable = targetTable;
     try {
@@ -245,31 +278,36 @@ export const UploadService = {
       console.warn("Could not fetch upload record before rollback:", fetchErr);
     }
 
-    // 2. Delete rows from target table(s)
+    // Delete rows from target table(s) directly
     const tablesToClean = actualTable
       ? [actualTable]
       : ["interest_payables", "dividend_payables", "mutual_fund_payables"];
 
+    let totalPayablesDeleted = 0;
     for (const table of tablesToClean) {
       try {
-        await deleteInBatches(table, [{ field: "upload_id", value: uploadId, op: "eq" }], 250);
+        const { count, error } = await (supabase as any)
+          .from(table)
+          .delete({ count: "exact" })
+          .eq("upload_id", uploadId);
+        if (error) {
+          throw error;
+        }
+        totalPayablesDeleted += Number(count || 0);
       } catch (err: any) {
-        console.warn(`Could not delete from ${table}:`, err?.message);
+        console.error(`Failed to delete from ${table}:`, err?.message);
+        throw new Error(`Failed to delete records from ${table}: ${err?.message}`);
       }
     }
 
-    // Delete errors logged for this upload in batches
+    // Delete errors logged for this upload
     try {
-      await deleteInBatches(
-        "upload_errors",
-        [{ field: "upload_id", value: uploadId, op: "eq" }],
-        250,
-      );
+      await (supabase as any).from("upload_errors").delete().eq("upload_id", uploadId);
     } catch {
       // non-blocking
     }
 
-    // 3. Mark upload record as RolledBack
+    // Mark upload record as RolledBack
     const { error: statusError } = await (supabase as any)
       .from("upload_history")
       .update({ status: "RolledBack", completed_at: new Date().toISOString() })
@@ -277,8 +315,7 @@ export const UploadService = {
 
     throwIfError(statusError, "Failed to update upload status to RolledBack");
 
-    // 4. If there were duplicate upload history entries for the same file_hash (which would block re-upload),
-    // mark them RolledBack as well so the user can re-upload cleanly
+    // Clear active file_hash so file can be re-uploaded cleanly
     if (fileHash) {
       try {
         await (supabase as any)
@@ -291,11 +328,43 @@ export const UploadService = {
       }
     }
 
-    // 5. Cleanup any orphan clients that were created during this upload but no longer have any payables
+    // Cleanup orphan clients
+    let clientsDeleted = 0;
     try {
-      await (supabase as any).rpc("delete_orphan_clients");
+      const { data: orphanRes } = await (supabase as any).rpc("delete_orphan_clients");
+      clientsDeleted = Number(orphanRes?.deleted || 0);
     } catch (orphanErr: any) {
       console.warn("Could not clean up orphan clients:", orphanErr?.message);
     }
+
+    return {
+      success: true,
+      payablesDeleted: totalPayablesDeleted,
+      clientsDeleted,
+      errorsDeleted: 0,
+    };
+  },
+
+  /**
+   * Rolls back all sheets belonging to an entire imported workbook file.
+   */
+  async rollbackEntireFile(params: {
+    fileName?: string;
+    fileHash?: string;
+  }): Promise<{ success: boolean; sheetsRolledBack: number; payablesDeleted: number }> {
+    const { data, error } = await (supabase as any).rpc("rollback_upload_file_atomic", {
+      p_file_name: params.fileName || null,
+      p_file_hash: params.fileHash || null,
+    });
+
+    if (error) {
+      throw new Error(`Failed to rollback file: ${error.message}`);
+    }
+
+    return {
+      success: Boolean(data?.success),
+      sheetsRolledBack: Number(data?.sheets_rolled_back || 0),
+      payablesDeleted: Number(data?.payables_deleted || 0),
+    };
   },
 };

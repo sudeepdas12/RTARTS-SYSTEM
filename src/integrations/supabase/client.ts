@@ -38,8 +38,8 @@ function getSupabaseClientConfig() {
   const DEFAULT_SUPABASE_KEY = isProduction ? "" : "sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH";
 
   let SUPABASE_URL =
-    import.meta.env.NEXT_PUBLIC_SUPABASE_URL ||
-    import.meta.env.VITE_SUPABASE_URL ||
+    (typeof import.meta !== "undefined" && import.meta?.env?.NEXT_PUBLIC_SUPABASE_URL) ||
+    (typeof import.meta !== "undefined" && import.meta?.env?.VITE_SUPABASE_URL) ||
     (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_SUPABASE_URL) ||
     (typeof process !== "undefined" && process.env?.VITE_SUPABASE_URL) ||
     (typeof process !== "undefined" && process.env?.SUPABASE_URL) ||
