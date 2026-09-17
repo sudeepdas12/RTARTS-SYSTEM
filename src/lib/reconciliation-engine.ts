@@ -594,7 +594,7 @@ export const ReconciliationEngine = {
    */
   async analyzeBankStatement(
     transactions: BankTransaction[],
-    options?: { fileName?: string },
+    options?: { fileName?: string; companyId?: string | null },
   ): Promise<ComprehensiveReconciliationReport> {
     const cleanAcct = (val: unknown): string =>
       String(val || "")
@@ -606,35 +606,51 @@ export const ReconciliationEngine = {
         .toLowerCase()
         .replace(/[^a-z0-9]/g, "");
 
+    const filterByCompany = options?.companyId && options.companyId !== "all";
+    const companyId = filterByCompany ? options!.companyId! : null;
+
     // Load data from DB in parallel with complete client joins and payment batches
+    // Filter by company_id when provided to prevent cross-company data leakage
     const [paymentsResult, payablesResult, batchesResult] = await Promise.all([
-      (supabase as any)
-        .from("payments")
-        .select(
-          "id,company_id,client_id,net_amount,gross_amount,bank_name,bank_account_no,status,payable_type,payable_id,payment_date,connectips_ref,clients(id,boid,full_name,company_id,bank_name,bank_account_no)",
-        )
-        .limit(10000),
+      (() => {
+        let q = (supabase as any)
+          .from("payments")
+          .select(
+            "id,company_id,client_id,net_amount,gross_amount,bank_name,bank_account_no,status,payable_type,payable_id,payment_date,connectips_ref,clients(id,boid,full_name,company_id,bank_name,bank_account_no)",
+          );
+        if (companyId) q = q.eq("company_id", companyId);
+        return q.limit(10000);
+      })(),
 
       (async () => {
         const [divResult, intResult, mfResult] = await Promise.all([
-          supabase
-            .from("dividend_payables")
-            .select(
-              "id,company_id,client_id,net_payable,gross_dividend,payment_status,fiscal_year,bank_name,bank_account_no,clients(id,boid,full_name,bank_name,bank_account_no)",
-            )
-            .limit(10000),
-          supabase
-            .from("interest_payables")
-            .select(
-              "id,company_id,client_id,net_payable,gross_interest,payment_status,fiscal_year,bank_name,bank_account_no,clients(id,boid,full_name,bank_name,bank_account_no)",
-            )
-            .limit(10000),
-          (supabase as any)
-            .from("mutual_fund_payables")
-            .select(
-              "id,company_id,client_id,net_payable,payment_status,fiscal_year,bank_name,bank_account_no,clients(id,boid,full_name,bank_name,bank_account_no)",
-            )
-            .limit(10000),
+          (() => {
+            let q = supabase
+              .from("dividend_payables")
+              .select(
+                "id,company_id,client_id,net_payable,gross_dividend,payment_status,fiscal_year,bank_name,bank_account_no,clients(id,boid,full_name,bank_name,bank_account_no)",
+              );
+            if (companyId) q = q.eq("company_id", companyId);
+            return q.limit(10000);
+          })(),
+          (() => {
+            let q = supabase
+              .from("interest_payables")
+              .select(
+                "id,company_id,client_id,net_payable,gross_interest,payment_status,fiscal_year,bank_name,bank_account_no,clients(id,boid,full_name,bank_name,bank_account_no)",
+              );
+            if (companyId) q = q.eq("company_id", companyId);
+            return q.limit(10000);
+          })(),
+          (() => {
+            let q = (supabase as any)
+              .from("mutual_fund_payables")
+              .select(
+                "id,company_id,client_id,net_payable,payment_status,fiscal_year,bank_name,bank_account_no,clients(id,boid,full_name,bank_name,bank_account_no)",
+              );
+            if (companyId) q = q.eq("company_id", companyId);
+            return q.limit(10000);
+          })(),
         ]);
 
         const payables: any[] = [];
@@ -646,12 +662,15 @@ export const ReconciliationEngine = {
         return { data: payables };
       })(),
 
-      (supabase as any)
-        .from("payment_batches")
-        .select(
-          "id,company_id,batch_name,total_amount,total_tax,total_payments,payable_type,status,cds_batch_ref,created_at",
-        )
-        .limit(1000),
+      (() => {
+        let q = (supabase as any)
+          .from("payment_batches")
+          .select(
+            "id,company_id,batch_name,total_amount,total_tax,total_payments,payable_type,status,cds_batch_ref,created_at",
+          );
+        if (companyId) q = q.eq("company_id", companyId);
+        return q.limit(1000);
+      })(),
     ]);
 
     const payments = paymentsResult.data || [];

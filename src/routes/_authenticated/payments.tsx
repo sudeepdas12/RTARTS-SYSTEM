@@ -69,6 +69,7 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  RotateCcw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -428,6 +429,29 @@ function PaymentsRoute() {
       qc.invalidateQueries({ queryKey: ["payables-for-payment"] });
     },
     onError: (err: any) => toast.error(err?.message || "Failed to delete batch."),
+  });
+
+  const { mutate: revertBatch, isPending: isRevertingBatch } = useMutation({
+    mutationFn: async (batch: PaymentBatch) => {
+      if (!isAdmin)
+        throw new Error("Unauthorized: only administrators can revert payment batches.");
+      const res = await PaymentService.revertBatch(batch.id, currentUser?.id, "Admin Batch Revert");
+      return { batch, res };
+    },
+    onSuccess: ({ batch, res }) => {
+      toast.success(
+        `Batch "${batch.batch_name}" reverted: ${res.revertedPayables} payables reset to Pending.`,
+      );
+      setActiveBatchId(null);
+      qc.invalidateQueries({ queryKey: ["payments"] });
+      qc.invalidateQueries({ queryKey: ["payment-batches"] });
+      qc.invalidateQueries({ queryKey: ["payables-for-payment"] });
+      qc.invalidateQueries({ queryKey: ["dividend_payables"] });
+      qc.invalidateQueries({ queryKey: ["interest_payables"] });
+      qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+    },
+    onError: (err: any) => toast.error(err?.message || "Failed to revert batch."),
   });
 
   const { mutate: executeReversal } = useMutation({
@@ -1242,6 +1266,27 @@ function PaymentsRoute() {
                                 <Send className="w-3.5 h-3.5 mr-1" />
                                 SMS Alert
                               </Button>
+                              {isAdmin && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-xs text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950"
+                                  title="Revert Payment Batch & Reset Payables to Pending (Admin Only)"
+                                  disabled={isRevertingBatch}
+                                  onClick={() => {
+                                    if (
+                                      confirm(
+                                        `Are you sure you want to revert completed batch "${batch.batch_name}"?\n\nThis will reset all its associated payables back to "Pending" and delete this payment batch record.`,
+                                      )
+                                    ) {
+                                      revertBatch(batch);
+                                    }
+                                  }}
+                                >
+                                  <RotateCcw className="w-3 h-3 mr-1" />
+                                  Revert
+                                </Button>
+                              )}
                             </>
                           )}
                           {batch.status === "Draft" && (

@@ -260,6 +260,106 @@ export const PaymentService = {
     return true;
   },
 
+  /**
+   * Revert a payment batch (Completed, Approved, or Processed)
+   * Resets all associated payables back to 'Pending', removes payment line items,
+   * and deletes the batch record.
+   */
+  async revertBatch(
+    batchId: string,
+    _userId?: string,
+    _reason?: string,
+  ): Promise<{ success: boolean; revertedPayables: number }> {
+    try {
+      // 1. Fetch all payment line items for this batch to identify linked payables
+      const { data: lineItems, error: fetchErr } = await (supabase as any)
+        .from("payments")
+        .select("id, payable_id, payable_type, net_amount, status")
+        .eq("batch_id", batchId);
+
+      if (fetchErr) {
+        throw new Error(`Failed to fetch batch line items: ${fetchErr.message}`);
+      }
+
+      const items = lineItems || [];
+      const divIds: string[] = [];
+      const intIds: string[] = [];
+      const mfIds: string[] = [];
+
+      for (const item of items) {
+        if (!item.payable_id) continue;
+        const pType = String(item.payable_type || "").toLowerCase();
+        if (pType === "dividend" || pType === "dividend_payables") {
+          divIds.push(item.payable_id);
+        } else if (pType === "interest" || pType === "interest_payables" || pType === "debenture") {
+          intIds.push(item.payable_id);
+        } else if (pType === "mutual_fund" || pType === "mutual_fund_payables") {
+          mfIds.push(item.payable_id);
+        } else {
+          intIds.push(item.payable_id);
+        }
+      }
+
+      let revertedPayables = 0;
+
+      // 2. Reset dividend payables back to Pending
+      if (divIds.length > 0) {
+        const { error: divErr } = await (supabase as any)
+          .from("dividend_payables")
+          .update({
+            payment_status: "Pending",
+            payment_date: null,
+            payment_reference: null,
+            updated_at: new Date().toISOString(),
+          })
+          .in("id", divIds);
+        if (divErr) console.warn("Failed to reset dividend payables:", divErr.message);
+        else revertedPayables += divIds.length;
+      }
+
+      // 3. Reset interest payables back to Pending
+      if (intIds.length > 0) {
+        const { error: intErr } = await (supabase as any)
+          .from("interest_payables")
+          .update({
+            payment_status: "Pending",
+            payment_date: null,
+            payment_reference: null,
+            updated_at: new Date().toISOString(),
+          })
+          .in("id", intIds);
+        if (intErr) console.warn("Failed to reset interest payables:", intErr.message);
+        else revertedPayables += intIds.length;
+      }
+
+      // 4. Reset mutual fund payables back to Pending
+      if (mfIds.length > 0) {
+        const { error: mfErr } = await (supabase as any)
+          .from("mutual_fund_payables")
+          .update({
+            payment_status: "Pending",
+            payment_date: null,
+            payment_reference: null,
+            updated_at: new Date().toISOString(),
+          })
+          .in("id", mfIds);
+        if (mfErr) console.warn("Failed to reset mutual fund payables:", mfErr.message);
+        else revertedPayables += mfIds.length;
+      }
+
+      // 5. Delete payment line items
+      await (supabase as any).from("payments").delete().eq("batch_id", batchId);
+
+      // 6. Delete the payment batch header
+      await (supabase as any).from("payment_batches").delete().eq("id", batchId);
+
+      return { success: true, revertedPayables };
+    } catch (err: any) {
+      console.error("Failed to revert payment batch:", err);
+      throw err;
+    }
+  },
+
   async addLineItems(
     batchId: string,
     lineItems: Omit<PaymentLineItem, "id" | "batch_id" | "created_at" | "updated_at">[],

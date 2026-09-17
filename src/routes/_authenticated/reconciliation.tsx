@@ -79,6 +79,7 @@ export function ReconciliationRoute() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [sourceFilter, setSourceFilter] = useState<string>("all");
+  const [reconCompanyId, setReconCompanyId] = useState<string>("all");
   const [historyVisibleCount, setHistoryVisibleCount] = useState(15);
   const [expandedLotKey, setExpandedLotKey] = useState<string | null>(null);
   const [historySearchQuery, setHistorySearchQuery] = useState<string>("");
@@ -96,17 +97,23 @@ export function ReconciliationRoute() {
     return ReconciliationService.groupResultsIntoLots(savedResults);
   }, [savedResults]);
 
-  const { data: registeredCompanies = [] } = useQuery<string[]>({
-    queryKey: ["registered_companies_recon"],
+  const { data: companiesList = [] } = useQuery<
+    { id: string; company_name: string; company_code: string }[]
+  >({
+    queryKey: ["companies_list_recon"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("companies")
         .select("id, company_name, company_code")
         .order("company_name");
       if (error) return [];
-      return (data || []).map((c: any) => c.company_name).filter(Boolean);
+      return (data || []) as { id: string; company_name: string; company_code: string }[];
     },
   });
+
+  const registeredCompanies = useMemo(() => {
+    return companiesList.map((c) => c.company_name).filter(Boolean);
+  }, [companiesList]);
 
   const historyCompanies = useMemo(() => {
     if (registeredCompanies.length > 0) return registeredCompanies;
@@ -309,7 +316,10 @@ export function ReconciliationRoute() {
 
           if (transactions.length > 0) {
             setProcessingProgress("Performing 5-way multi-source reconciliation...");
-            const rep = await ReconciliationEngine.analyzeBankStatement(transactions);
+            const rep = await ReconciliationEngine.analyzeBankStatement(transactions, {
+              fileName: files.map((f) => f.name).join(", "),
+              companyId: reconCompanyId !== "all" ? reconCompanyId : null,
+            });
             setReport(rep);
             toast.success(
               `Successfully analyzed ${files.length} settlement file(s) with ${transactions.length.toLocaleString()} total transactions`,
@@ -355,7 +365,10 @@ export function ReconciliationRoute() {
           setProcessingProgress(`Parsing bank statement ${cur} of ${tot}: ${name}`),
       });
       setProcessingProgress("Matching statement transactions with disbursements & payouts...");
-      const rep = await ReconciliationEngine.analyzeBankStatement(transactions);
+      const rep = await ReconciliationEngine.analyzeBankStatement(transactions, {
+        fileName: files.map((f) => f.name).join(", "),
+        companyId: reconCompanyId !== "all" ? reconCompanyId : null,
+      });
       setReport(rep);
       toast.success(
         `Successfully analyzed ${files.length} statement file(s) with ${transactions.length.toLocaleString()} total transactions`,
@@ -1019,7 +1032,27 @@ export function ReconciliationRoute() {
           description="5-way reconciliation: Excel vs Payables, Payments, Bank Statements with multi-source matching and discrepancy detection."
         />
         <div className="flex flex-col items-end gap-1.5">
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Select
+              value={reconCompanyId}
+              onValueChange={(val) => {
+                setReconCompanyId(val);
+                if (report) setReport(null);
+              }}
+            >
+              <SelectTrigger className="w-[190px] h-9 text-xs">
+                <Building2 className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
+                <SelectValue placeholder="All Companies" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Companies</SelectItem>
+                {companiesList.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.company_name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button
               variant="default"
               className="cursor-pointer"
@@ -1594,6 +1627,25 @@ export function ReconciliationRoute() {
               </CardDescription>
             </div>
             <div className="flex flex-wrap items-center justify-center gap-3 mt-2">
+              <Select
+                value={reconCompanyId}
+                onValueChange={(val) => {
+                  setReconCompanyId(val);
+                }}
+              >
+                <SelectTrigger className="w-[220px] h-11 text-xs">
+                  <Building2 className="w-4 h-4 mr-2 text-muted-foreground" />
+                  <SelectValue placeholder="All Companies" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Target: All Companies</SelectItem>
+                  {companiesList.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.company_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Button
                 size="lg"
                 className="cursor-pointer"

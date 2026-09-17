@@ -694,14 +694,14 @@ export const BankParser = {
               continue;
             }
             seenInstructionIds.add(instKey);
-          } else if (i > 0 && (t.balance !== 0 || t.accountNo)) {
-            const ledgerKey = `${t.accountNo || ""}_${t.date}_${t.debit}_${t.credit}_${t.balance}_${t.description.trim()}`;
+          } else if (i > 0 && t.balance !== 0 && t.accountNo) {
+            const ledgerKey = `${t.accountNo}_${t.date}_${t.debit}_${t.credit}_${t.balance}_${t.description.trim()}`;
             if (seenCrossFileLedger.has(ledgerKey)) {
               continue;
             }
             seenCrossFileLedger.add(ledgerKey);
-          } else {
-            const ledgerKey = `${t.accountNo || ""}_${t.date}_${t.debit}_${t.credit}_${t.balance}_${t.description.trim()}`;
+          } else if (t.balance !== 0 && t.accountNo) {
+            const ledgerKey = `${t.accountNo}_${t.date}_${t.debit}_${t.credit}_${t.balance}_${t.description.trim()}`;
             seenCrossFileLedger.add(ledgerKey);
           }
 
