@@ -503,9 +503,13 @@ function ClientsPage() {
         if (companyFilter !== "all") query = query.eq("company_id", companyFilter);
         if (categoryFilter !== "all") {
           if (categoryFilter === "INSTITUTION") {
-            query = query.or("payee_classification.in.(COMPANY_INSTITUTION,PUBLIC_LEGAL_PERSON),holder_type.ilike.%Institution%,holder_type.ilike.%Legal Person%");
+            query = query.or(
+              "payee_classification.in.(COMPANY_INSTITUTION,PUBLIC_LEGAL_PERSON),holder_type.ilike.%Institution%,holder_type.ilike.%Legal Person%",
+            );
           } else if (categoryFilter === "PUBLIC") {
-            query = query.or("payee_classification.eq.NATURAL_PERSON,holder_type.eq.Natural Person - Public,holder_type.eq.Public");
+            query = query.or(
+              "payee_classification.eq.NATURAL_PERSON,holder_type.eq.Natural Person - Public,holder_type.eq.Public",
+            );
           } else if (categoryFilter === "PROMOTER") {
             query = query.ilike("holder_type", "%Promoter%");
           } else if (categoryFilter === "LOCAL") {
@@ -812,8 +816,18 @@ function ClientsPage() {
                   ? String(r["CITIZENSHIP NO"]).trim()
                   : null;
           const legacyPanCtz = r.pan_or_citizenship ? String(r.pan_or_citizenship).trim() : null;
+          const payeeClass =
+            (r.payee_classification as PayeeClassification) ??
+            (r.classification as PayeeClassification) ??
+            (r["PAYEE CLASSIFICATION"] as PayeeClassification) ??
+            "NATURAL_PERSON";
           return {
             client_code: String(r.client_code).trim(),
+            company_id: r.company_id
+              ? String(r.company_id).trim()
+              : companyFilter !== "all"
+                ? companyFilter
+                : null,
             client_id: r.client_id ? String(r.client_id).trim() : null,
             full_name: String(r.full_name).trim(),
             father_name: r.father_name ? String(r.father_name).trim() : null,
@@ -822,9 +836,9 @@ function ClientsPage() {
             gender: r.gender ? String(r.gender).trim() : null,
             occupation: r.occupation ? String(r.occupation).trim() : null,
             boid: r.boid ? String(r.boid).trim() : null,
+            kitta: Math.max(0, Number(r.kitta ?? r.holding_kitta ?? 0)),
             holder_type: (r.holder_type as Holder) ?? null,
-            payee_classification:
-              (r.payee_classification as PayeeClassification) ?? "NATURAL_PERSON",
+            payee_classification: payeeClass,
             pan_no: pan,
             citizenship_no: ctz,
             pan_or_citizenship: pan || ctz || legacyPanCtz,
@@ -851,7 +865,9 @@ function ClientsPage() {
           };
         });
       if (!clean.length) return toast.error("No valid client rows found");
-      const { error } = await supabase.from("clients").insert(clean as never);
+      const { error } = await supabase
+        .from("clients")
+        .upsert(clean as never, { onConflict: "client_code" });
       if (error) throw error;
       qc.invalidateQueries({ queryKey: ["clients"] });
       qc.invalidateQueries({ queryKey: ["clients-stats"] });
@@ -960,7 +976,8 @@ function ClientsPage() {
               <div>
                 <h3 className="text-sm font-semibold">RTS Shareholder 360° Counter Lookup</h3>
                 <p className="text-xs text-muted-foreground">
-                  Instantly retrieve consolidated holdings, distribution history & print official ledger statements.
+                  Instantly retrieve consolidated holdings, distribution history & print official
+                  ledger statements.
                 </p>
               </div>
             </div>

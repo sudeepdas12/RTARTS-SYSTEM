@@ -651,31 +651,38 @@ function InterestPage() {
   const upsert = useMutation({
     mutationFn: async () => {
       if (!canWrite) throw new Error("Unauthorized: You do not have permission to modify records.");
-      const kittaVal = form.kitta ? Number(form.kitta) : null;
-      const gross = form.gross_interest ? Number(form.gross_interest) : null;
-      const tax = form.tax_amount ? Number(form.tax_amount) : null;
-      const net = form.net_payable
-        ? Number(form.net_payable)
-        : gross != null && tax != null
-          ? Math.max(0, gross - tax)
-          : (gross ?? null);
+      if (!form.company_id) throw new Error("Please select a company.");
+      if (!form.client_id) throw new Error("Please select a client.");
+      const kittaVal = form.kitta ? Number(form.kitta) : 0;
+      const gross = form.gross_interest ? Number(form.gross_interest) : 0;
+      const tax = form.tax_amount ? Number(form.tax_amount) : 0;
+      const net = form.net_payable ? Number(form.net_payable) : Math.max(0, gross - tax);
 
-      if (kittaVal != null && kittaVal < 0) throw new Error("Kitta cannot be negative.");
-      if (gross != null && gross < 0) throw new Error("Gross interest cannot be negative.");
-      if (tax != null && tax < 0) throw new Error("Tax amount cannot be negative.");
-      if (net != null && net < 0) throw new Error("Net payable cannot be negative.");
+      if (kittaVal < 0) throw new Error("Kitta cannot be negative.");
+      if (gross < 0) throw new Error("Gross interest cannot be negative.");
+      if (tax < 0) throw new Error("Tax amount cannot be negative.");
+      if (net < 0) throw new Error("Net payable cannot be negative.");
+      if (tax > gross + 0.05) throw new Error("Tax amount cannot exceed gross interest.");
+      if (net > gross + 0.05) throw new Error("Net payable cannot exceed gross interest.");
+      if (Math.abs(gross - tax - net) > 0.05) {
+        throw new Error(
+          `Gross interest (${gross}) must equal Tax (${tax}) + Net Payable (${net}).`,
+        );
+      }
+
+      const dueDateVal = form.due_date || new Date().toISOString().slice(0, 10);
 
       const payload = {
-        company_id: form.company_id || null,
-        client_id: form.client_id || null,
+        company_id: form.company_id,
+        client_id: form.client_id,
         instrument_ref: form.instrument_ref || null,
         shares_held: kittaVal,
         kitta: kittaVal,
         gross_interest: gross,
         tax_amount: tax,
         net_payable: net,
-        due_date: form.due_date || null,
-        payment_status: form.payment_status,
+        due_date: dueDateVal,
+        payment_status: form.payment_status || "Pending",
         payment_date: form.payment_date || null,
         payment_reference: form.payment_reference || null,
         fiscal_year: form.fiscal_year || null,
@@ -852,8 +859,8 @@ function InterestPage() {
           holder_type: cl?.holder_type ?? "",
           classification: p.payee_classification || cl?.payee_classification || "",
           pan_or_citizenship: cl?.pan_or_citizenship ?? "",
-          bank_name: cl?.bank_name ?? "",
-          bank_account_no: cl?.bank_account_no ?? "",
+          bank_name: p.bank_name || cl?.bank_name || "",
+          bank_account_no: p.bank_account_no || cl?.bank_account_no || "",
           instrument_ref: p.instrument_ref,
           gross_interest: p.gross_interest,
           tax_amount: p.tax_amount,
@@ -863,6 +870,7 @@ function InterestPage() {
           payment_status: p.payment_status,
           payment_date: p.payment_date,
           payment_reference: p.payment_reference,
+          lot_name: p.lot_name || "",
           fiscal_year: p.fiscal_year,
         };
       }),
@@ -878,13 +886,21 @@ function InterestPage() {
         client_code?: string;
         client_boid?: string;
         client_id?: string;
+        holding_kitta?: number | string;
+        kitta?: number | string;
+        shares_held?: number | string;
         instrument_ref?: string;
         gross_interest?: number | string;
         tax_amount?: number | string;
+        net_payable?: number | string;
         due_date?: string;
         payment_status?: string;
         payment_date?: string;
         payment_reference?: string;
+        lot_name?: string;
+        bank_name?: string;
+        bank_account_no?: string;
+        bank_branch?: string;
         fiscal_year?: string;
       };
       const rows = await importFromExcel<Row>(file);
@@ -902,16 +918,28 @@ function InterestPage() {
           errors.push(`Row ${i + 2}: company/client not found`);
           return;
         }
+        const kittaVal = Number(r.kitta ?? r.holding_kitta ?? r.shares_held ?? 0);
+        const gross = r.gross_interest != null ? Number(r.gross_interest) : 0;
+        const tax = r.tax_amount != null ? Number(r.tax_amount) : 0;
+        const net = r.net_payable != null ? Number(r.net_payable) : Math.max(0, gross - tax);
+        const dueDate = r.due_date ? String(r.due_date) : new Date().toISOString().slice(0, 10);
         clean.push({
           company_id: cid,
           client_id: clid,
           instrument_ref: r.instrument_ref ?? null,
-          gross_interest: r.gross_interest != null ? Number(r.gross_interest) : null,
-          tax_amount: r.tax_amount != null ? Number(r.tax_amount) : null,
-          due_date: r.due_date ?? null,
+          shares_held: kittaVal,
+          kitta: kittaVal,
+          gross_interest: gross,
+          tax_amount: tax,
+          net_payable: net,
+          due_date: dueDate,
           payment_status: (r.payment_status as PaymentStatus) ?? "Pending",
           payment_date: r.payment_date ?? null,
           payment_reference: r.payment_reference ?? null,
+          lot_name: r.lot_name ?? null,
+          bank_name: r.bank_name ?? null,
+          bank_account_no: r.bank_account_no ?? null,
+          bank_branch: r.bank_branch ?? null,
           fiscal_year: r.fiscal_year ?? null,
         });
       });

@@ -487,6 +487,10 @@ function CompaniesPage() {
         pan_no: c.pan_no,
         bank_account_no: c.bank_account_no,
         bank_name: c.bank_name,
+        email: c.email,
+        phone: c.phone,
+        website: c.website,
+        address: c.address,
         status: c.status,
       })),
       "companies_master",
@@ -526,10 +530,16 @@ function CompaniesPage() {
           pan_no: r.pan_no ? String(r.pan_no).trim() : null,
           bank_account_no: r.bank_account_no ? String(r.bank_account_no).trim() : null,
           bank_name: r.bank_name ? String(r.bank_name).trim() : null,
+          email: r.email ? String(r.email).trim() : null,
+          phone: r.phone ? String(r.phone).trim() : null,
+          website: r.website ? String(r.website).trim() : null,
+          address: r.address ? String(r.address).trim() : null,
           status: (r.status as Status) ?? "Active",
         }));
       if (!clean.length) return toast.error("No valid company rows found");
-      const { error } = await supabase.from("companies").insert(clean as never);
+      const { error } = await supabase
+        .from("companies")
+        .upsert(clean as never, { onConflict: "company_code" });
       if (error) throw error;
       qc.invalidateQueries({ queryKey: ["companies"] });
       qc.invalidateQueries({ queryKey: ["companies-lookup"] });

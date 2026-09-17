@@ -685,36 +685,41 @@ function DividendPage() {
   const upsert = useMutation({
     mutationFn: async () => {
       if (!canWrite) throw new Error("Unauthorized: You do not have permission to modify records.");
-      const shares = form.shares_held ? Number(form.shares_held) : null;
-      const rate = form.dividend_rate ? Number(form.dividend_rate) : null;
+      if (!form.company_id) throw new Error("Please select a company.");
+      if (!form.client_id) throw new Error("Please select a client.");
+      const shares = form.shares_held ? Number(form.shares_held) : 0;
+      const rate = form.dividend_rate ? Number(form.dividend_rate) : 0;
       const gross = form.gross_dividend
         ? Number(form.gross_dividend)
         : shares != null && rate != null
           ? shares * rate
-          : null;
-      const tax = form.tax_amount ? Number(form.tax_amount) : null;
+          : 0;
+      const tax = form.tax_amount ? Number(form.tax_amount) : 0;
       const bonusTax = form.bonus_tax ? Number(form.bonus_tax) : 0;
-      const net = form.net_payable
-        ? Number(form.net_payable)
-        : gross != null && tax != null
-          ? Math.max(0, gross - tax - bonusTax)
-          : (gross ?? null);
+      const net = form.net_payable ? Number(form.net_payable) : Math.max(0, gross - tax);
 
-      if (shares != null && shares < 0) throw new Error("Shares held cannot be negative.");
-      if (gross != null && gross < 0) throw new Error("Gross dividend cannot be negative.");
-      if (tax != null && tax < 0) throw new Error("Tax amount cannot be negative.");
+      if (shares < 0) throw new Error("Shares held cannot be negative.");
+      if (gross < 0) throw new Error("Gross dividend cannot be negative.");
+      if (tax < 0) throw new Error("Tax amount cannot be negative.");
       if (bonusTax < 0) throw new Error("Bonus tax cannot be negative.");
-      if (net != null && net < 0) throw new Error("Net payable cannot be negative.");
+      if (net < 0) throw new Error("Net payable cannot be negative.");
+      if (tax > gross + 0.05) throw new Error("Tax amount cannot exceed gross dividend.");
+      if (net > gross + 0.05) throw new Error("Net payable cannot exceed gross dividend.");
+      if (Math.abs(gross - tax - net) > 0.05) {
+        throw new Error(
+          `Gross dividend (${gross}) must equal Tax (${tax}) + Net Payable (${net}).`,
+        );
+      }
 
       const payload = {
-        company_id: form.company_id || null,
-        client_id: form.client_id || null,
+        company_id: form.company_id,
+        client_id: form.client_id,
         shares_held: shares,
         dividend_rate: rate,
         gross_dividend: gross,
         tax_amount: tax,
         net_payable: net,
-        payment_status: form.payment_status,
+        payment_status: form.payment_status || "Pending",
         payment_date: form.payment_date || null,
         payment_reference: form.payment_reference || null,
         fiscal_year: form.fiscal_year || null,
@@ -894,8 +899,8 @@ function DividendPage() {
           holder_type: cl?.holder_type ?? "",
           classification: p.payee_classification || cl?.payee_classification || "",
           pan_or_citizenship: cl?.pan_or_citizenship ?? "",
-          bank_name: cl?.bank_name ?? "",
-          bank_account_no: cl?.bank_account_no ?? "",
+          bank_name: p.bank_name || cl?.bank_name || "",
+          bank_account_no: p.bank_account_no || cl?.bank_account_no || "",
           shares_held: p.shares_held,
           dividend_rate: p.dividend_rate,
           dividend_type: p.dividend_type ?? "Cash",
@@ -940,6 +945,8 @@ function DividendPage() {
         bonus_fraction?: number | string;
         after_bonus_kitta?: number | string;
         bonus_tax?: number | string;
+        bank_name?: string;
+        bank_account_no?: string;
         lot_name?: string;
         fiscal_year?: string;
       };
@@ -958,14 +965,11 @@ function DividendPage() {
           errors.push(`Row ${i + 2}: company/client not found`);
           return;
         }
-        const shares = r.shares_held != null ? Number(r.shares_held) : null;
-        const rate = r.dividend_rate != null ? Number(r.dividend_rate) : null;
-        const gross =
-          r.gross_dividend != null
-            ? Number(r.gross_dividend)
-            : shares != null && rate != null
-              ? shares * rate
-              : null;
+        const shares = r.shares_held != null ? Number(r.shares_held) : 0;
+        const rate = r.dividend_rate != null ? Number(r.dividend_rate) : 0;
+        const gross = r.gross_dividend != null ? Number(r.gross_dividend) : shares * rate;
+        const tax = r.tax_amount != null ? Number(r.tax_amount) : 0;
+        const net = r.net_payable != null ? Number(r.net_payable) : Math.max(0, gross - tax);
         clean.push({
           company_id: cid,
           client_id: clid,
@@ -973,8 +977,8 @@ function DividendPage() {
           dividend_rate: rate,
           dividend_type: r.dividend_type ?? "Cash",
           gross_dividend: gross,
-          tax_amount: r.tax_amount != null ? Number(r.tax_amount) : null,
-          net_payable: r.net_payable != null ? Number(r.net_payable) : null,
+          tax_amount: tax,
+          net_payable: net,
           payment_status: (r.payment_status as PaymentStatus) ?? "Pending",
           payment_date: r.payment_date ?? null,
           payment_reference: r.payment_reference ?? null,
@@ -983,6 +987,8 @@ function DividendPage() {
           bonus_fraction: r.bonus_fraction != null ? Number(r.bonus_fraction) : null,
           after_bonus_kitta: r.after_bonus_kitta != null ? Number(r.after_bonus_kitta) : null,
           bonus_tax: r.bonus_tax != null ? Number(r.bonus_tax) : null,
+          bank_name: r.bank_name ?? null,
+          bank_account_no: r.bank_account_no ?? null,
           lot_name: r.lot_name ?? null,
           fiscal_year: r.fiscal_year ?? null,
         });
