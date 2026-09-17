@@ -190,6 +190,19 @@ export const ReconciliationService = {
     const chunkSize = 200;
     let savedCount = 0;
     try {
+      // Lot/file deduplication: if notes have [File: ...] and same reconciliation_date, remove previous identical lot logs to prevent accumulation
+      const firstNote = results[0]?.notes || "";
+      const fileMatch = firstNote.match(/\[File:\s*([^\]|]+)/i);
+      const today = results[0]?.reconciliation_date || new Date().toISOString().slice(0, 10);
+      if (fileMatch && fileMatch[1]) {
+        const fileName = fileMatch[1].trim();
+        await (supabase as any)
+          .from("reconciliation_results")
+          .delete()
+          .eq("reconciliation_date", today)
+          .ilike("notes", `%[File: ${fileName}%`);
+      }
+
       for (let i = 0; i < results.length; i += chunkSize) {
         const chunk = results.slice(i, i + chunkSize);
         const { error } = await (supabase as any).from("reconciliation_results").insert(chunk);

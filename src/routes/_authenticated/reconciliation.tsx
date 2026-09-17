@@ -52,6 +52,7 @@ import {
   ChevronUp,
   Layers,
   ExternalLink,
+  Info,
 } from "lucide-react";
 import { ReconciliationGroupedLot } from "@/lib/services/reconciliation.service";
 import { toast } from "sonner";
@@ -151,6 +152,11 @@ export function ReconciliationRoute() {
     }
     return list;
   }, [groupedLots, historyCompanyFilter, historySourceFilter]);
+
+  const unlinkedHistoryCount = useMemo(
+    () => savedResults.filter((r) => !r.payable_id && !r.client_id).length,
+    [savedResults],
+  );
 
   const handleRevertLot = async (lot: ReconciliationGroupedLot) => {
     if (!isAdmin) {
@@ -565,6 +571,21 @@ export function ReconciliationRoute() {
       return;
     }
 
+    const matchedCount = report.matches.filter((m) => m.status === "Matched").length;
+    const partialCount = report.matches.filter(
+      (m) => m.status === "Over_Paid" || m.status === "Under_Paid",
+    ).length;
+    const rejectCount = report.matches.filter((m) => m.status === "Rejected").length;
+
+    const confirmMsg =
+      `Apply Reconciliation Breakdown:\n` +
+      `• ${matchedCount} records will be updated to "Paid"\n` +
+      (partialCount > 0 ? `• ${partialCount} records will be updated to "Partial"\n` : "") +
+      (rejectCount > 0 ? `• ${rejectCount} rejected records will be flagged\n` : "") +
+      `\nProceed with atomic database update?`;
+
+    if (!window.confirm(confirmMsg)) return;
+
     setIsApplying(true);
     try {
       const results = buildResults(report.matches);
@@ -619,9 +640,14 @@ export function ReconciliationRoute() {
         "Name",
         "Category",
         "Status",
-        "Excel Amount",
+        "Excel / Bank Amount",
         "System Amount",
         "Difference",
+        "Payable ID",
+        "Client ID",
+        "Fiscal Year",
+        "Bank Name",
+        "Account No",
         "Match Sources",
       ].join(","),
       ...filteredMatches.map((m) =>
@@ -633,6 +659,11 @@ export function ReconciliationRoute() {
           Number(m.excelAmount ?? 0).toFixed(2),
           Number(m.systemAmount ?? 0).toFixed(2),
           Number(m.difference ?? 0).toFixed(2),
+          m.payableId || "",
+          m.clientId || "",
+          m.fiscalYear || "",
+          `"${(m.bankName || "").replace(/"/g, '""')}"`,
+          `"${(m.bankAccountNo || "").replace(/"/g, '""')}"`,
           `"${(m.matchSources?.join(";") || "None").replace(/"/g, '""')}"`,
         ].join(","),
       ),
@@ -722,6 +753,21 @@ export function ReconciliationRoute() {
     const selectedMatches = (report?.matches || []).filter((m) => selectedMatchIds.has(m.id));
     if (selectedMatches.length === 0) return;
 
+    const matchedCount = selectedMatches.filter((m) => m.status === "Matched").length;
+    const partialCount = selectedMatches.filter(
+      (m) => m.status === "Over_Paid" || m.status === "Under_Paid",
+    ).length;
+    const rejectCount = selectedMatches.filter((m) => m.status === "Rejected").length;
+
+    const confirmMsg =
+      `Apply ${selectedMatches.length} Selected Records:\n` +
+      `• ${matchedCount} records will be updated to "Paid"\n` +
+      (partialCount > 0 ? `• ${partialCount} records will be updated to "Partial"\n` : "") +
+      (rejectCount > 0 ? `• ${rejectCount} rejected records will be flagged\n` : "") +
+      `\nProceed with atomic database update?`;
+
+    if (!window.confirm(confirmMsg)) return;
+
     setIsApplying(true);
     try {
       const allSelectedResults = buildResults(selectedMatches);
@@ -784,6 +830,9 @@ export function ReconciliationRoute() {
         "Excel / Bank Amount",
         "System Amount",
         "Difference",
+        "Payable ID",
+        "Client ID",
+        "Fiscal Year",
         "Bank Name",
         "Account No",
         "Match Sources",
@@ -797,6 +846,9 @@ export function ReconciliationRoute() {
           Number(m.excelAmount ?? 0).toFixed(2),
           Number(m.systemAmount ?? 0).toFixed(2),
           Number(m.difference ?? 0).toFixed(2),
+          m.payableId || "",
+          m.clientId || "",
+          m.fiscalYear || "",
           `"${(m.bankName || "").replace(/"/g, '""')}"`,
           `"${(m.bankAccountNo || "").replace(/"/g, '""')}"`,
           `"${(m.matchSources?.join(";") || "None").replace(/"/g, '""')}"`,
@@ -1176,6 +1228,18 @@ export function ReconciliationRoute() {
                 </div>
               </CardContent>
             </Card>
+          )}
+
+          {report?.sourceType === "bank_statement" && (
+            <div className="flex items-start gap-2.5 p-3.5 bg-blue-500/10 border border-blue-500/20 text-blue-800 dark:text-blue-300 rounded-xl text-xs mb-3">
+              <Info className="w-4 h-4 shrink-0 mt-0.5 text-blue-600 dark:text-blue-400" />
+              <div>
+                <strong>Bank Statement Workflow Tip:</strong> For aggregate debit entries (e.g.{" "}
+                <em>IPS DR</em> or bulk bank withdrawals) to reconcile automatically, ensure you
+                have first uploaded and applied the ConnectIPS settlement files (LOT reports) so the
+                corresponding payment batch records are registered in the system.
+              </div>
+            </div>
           )}
 
           <Card>
@@ -1566,6 +1630,18 @@ export function ReconciliationRoute() {
             </div>
           ) : (
             <div className="space-y-4">
+              {unlinkedHistoryCount > 0 && (
+                <div className="flex items-center gap-2 p-3 bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 rounded-lg text-xs">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>
+                    <strong>Notice:</strong> {unlinkedHistoryCount.toLocaleString()} saved records
+                    in history are legacy logs without payable or client IDs. These historical
+                    records cannot be auto-applied; newly analyzed reports carry verified database
+                    linkages.
+                  </span>
+                </div>
+              )}
+
               {/* History Search & Company Filter Controls */}
               <div className="flex flex-wrap gap-2 items-center">
                 <div className="relative flex-1 min-w-[220px]">
