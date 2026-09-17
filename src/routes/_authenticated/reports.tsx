@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   BarChart3,
@@ -17,11 +17,26 @@ import {
   Layers,
   ArrowUpRight,
   Sparkles,
+  Eye,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Loader2,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -33,6 +48,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -118,73 +134,520 @@ const REPORT_COLUMNS: Record<ReportId, Array<{ header: string; dataKey: string }
     { header: "BOID", dataKey: "boid" },
     { header: "Payee", dataKey: "full_name" },
     { header: "Company", dataKey: "company_name" },
-    { header: "Gross", dataKey: "gross_dividend" },
-    { header: "Tax", dataKey: "tax_amount" },
-    { header: "Net", dataKey: "net_payable" },
+    { header: "Shares / Kitta", dataKey: "shares_held" },
+    { header: "Bank Name", dataKey: "bank_name" },
+    { header: "Bank Account", dataKey: "bank_account_no" },
+    { header: "Gross (NPR)", dataKey: "gross_dividend" },
+    { header: "Tax (NPR)", dataKey: "tax_amount" },
+    { header: "Net (NPR)", dataKey: "net_payable" },
     { header: "Status", dataKey: "payment_status" },
   ],
   interest_register: [
     { header: "BOID", dataKey: "boid" },
     { header: "Payee", dataKey: "full_name" },
     { header: "Company", dataKey: "company_name" },
-    { header: "Gross", dataKey: "gross_interest" },
-    { header: "Tax", dataKey: "tax_amount" },
-    { header: "Net", dataKey: "net_payable" },
+    { header: "Instrument", dataKey: "instrument_ref" },
+    { header: "Bank Name", dataKey: "bank_name" },
+    { header: "Bank Account", dataKey: "bank_account_no" },
+    { header: "Gross (NPR)", dataKey: "gross_interest" },
+    { header: "Tax (NPR)", dataKey: "tax_amount" },
+    { header: "Net (NPR)", dataKey: "net_payable" },
     { header: "Status", dataKey: "payment_status" },
   ],
   mutual_fund_register: [
     { header: "BOID", dataKey: "boid" },
     { header: "Payee", dataKey: "full_name" },
     { header: "Company", dataKey: "company_name" },
-    { header: "Gross", dataKey: "gross_dividend" },
-    { header: "Tax", dataKey: "tax_amount" },
-    { header: "Net", dataKey: "net_payable" },
+    { header: "Units / Kitta", dataKey: "shares_held" },
+    { header: "Bank Name", dataKey: "bank_name" },
+    { header: "Bank Account", dataKey: "bank_account_no" },
+    { header: "Gross (NPR)", dataKey: "gross_dividend" },
+    { header: "Tax (NPR)", dataKey: "tax_amount" },
+    { header: "Net (NPR)", dataKey: "net_payable" },
     { header: "Status", dataKey: "payment_status" },
   ],
   tax_register: [
+    { header: "BOID", dataKey: "boid" },
     { header: "Payee", dataKey: "full_name" },
+    { header: "PAN / Ctz", dataKey: "pan_or_citizenship" },
     { header: "Company", dataKey: "company_name" },
     { header: "Type", dataKey: "payable_type" },
-    { header: "Gross", dataKey: "gross_amount" },
+    { header: "Gross (NPR)", dataKey: "gross_amount" },
     { header: "Rate %", dataKey: "tds_rate" },
-    { header: "Tax", dataKey: "tax_amount" },
-    { header: "Net", dataKey: "net_payable" },
+    { header: "Tax (NPR)", dataKey: "tax_amount" },
+    { header: "Net (NPR)", dataKey: "net_payable" },
   ],
   pending_register: [
     { header: "BOID", dataKey: "boid" },
     { header: "Payee", dataKey: "full_name" },
     { header: "Company", dataKey: "company_name" },
     { header: "Type", dataKey: "payable_type" },
-    { header: "Gross", dataKey: "gross_amount" },
-    { header: "Tax", dataKey: "tax_amount" },
-    { header: "Net", dataKey: "net_payable" },
+    { header: "Bank Name", dataKey: "bank_name" },
+    { header: "Bank Account", dataKey: "bank_account_no" },
+    { header: "Gross (NPR)", dataKey: "gross_amount" },
+    { header: "Tax (NPR)", dataKey: "tax_amount" },
+    { header: "Net (NPR)", dataKey: "net_payable" },
   ],
   payment_register: [
-    { header: "Batch", dataKey: "batch_name" },
+    { header: "Batch Name", dataKey: "batch_name" },
     { header: "Method", dataKey: "payment_method" },
     { header: "Payments", dataKey: "total_payments" },
-    { header: "Amount", dataKey: "total_amount" },
+    { header: "Amount (NPR)", dataKey: "total_amount" },
+    { header: "Fiscal Year", dataKey: "fiscal_year" },
     { header: "Status", dataKey: "status" },
   ],
   reconciliation_report: [
-    { header: "Payee", dataKey: "shareholder_name" },
-    { header: "Expected", dataKey: "system_amount" },
-    { header: "Actual", dataKey: "excel_amount" },
+    { header: "Shareholder", dataKey: "shareholder_name" },
+    { header: "Category", dataKey: "category" },
+    { header: "Expected (NPR)", dataKey: "system_amount" },
+    { header: "Actual (NPR)", dataKey: "excel_amount" },
     { header: "Difference", dataKey: "difference" },
     { header: "Status", dataKey: "status" },
   ],
   upload_history_report: [
-    { header: "File", dataKey: "file_name" },
+    { header: "File Name", dataKey: "file_name" },
     { header: "Type", dataKey: "file_type" },
     { header: "Processed", dataKey: "rows_processed" },
     { header: "Failed", dataKey: "rows_failed" },
     { header: "Status", dataKey: "status" },
+    { header: "Uploaded At", dataKey: "created_at" },
   ],
 };
+
+interface RegisterViewerDialogProps {
+  reportId: ReportId | null;
+  reportTitle: string;
+  reportDescription: string;
+  companyName: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  fetchData: (id: ReportId) => Promise<any[]>;
+  onExport: (id: ReportId, kind: "xlsx" | "pdf") => void;
+  isExporting: boolean;
+}
+
+function RegisterViewerDialog({
+  reportId,
+  reportTitle,
+  reportDescription,
+  companyName,
+  open,
+  onOpenChange,
+  fetchData,
+  onExport,
+  isExporting,
+}: RegisterViewerDialogProps) {
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(15);
+
+  const {
+    data = [],
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery({
+    queryKey: ["view-register-dialog-data", reportId, companyName],
+    queryFn: () => (reportId ? fetchData(reportId) : Promise.resolve([])),
+    enabled: open && !!reportId,
+    staleTime: 60 * 1000,
+  });
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, reportId, pageSize]);
+
+  const columns = reportId ? REPORT_COLUMNS[reportId] || [] : [];
+
+  const filteredRows = useMemo(() => {
+    if (!search.trim()) return data;
+    const q = search.toLowerCase().trim();
+    return data.filter((row: any) =>
+      Object.values(row).some((val) => val != null && String(val).toLowerCase().includes(q)),
+    );
+  }, [data, search]);
+
+  const stats = useMemo(() => {
+    let gross = 0;
+    let tax = 0;
+    let net = 0;
+    for (const r of filteredRows as any[]) {
+      gross += Number(
+        r.gross_dividend ||
+          r.gross_interest ||
+          r.gross_amount ||
+          r.total_amount ||
+          r.system_amount ||
+          0,
+      );
+      tax += Number(r.tax_amount || 0);
+      net += Number(r.net_payable || r.total_amount || r.excel_amount || 0);
+    }
+    return { count: filteredRows.length, gross, tax, net };
+  }, [filteredRows]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const paginatedRows = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredRows.slice(start, start + pageSize);
+  }, [filteredRows, page, pageSize]);
+
+  const renderCell = (row: any, dataKey: string) => {
+    const val = row[dataKey];
+    if (val === null || val === undefined || val === "")
+      return <span className="text-muted-foreground/40">—</span>;
+
+    // Status badges
+    if (dataKey === "payment_status" || dataKey === "status") {
+      const s = String(val).toUpperCase();
+      const isGood =
+        s.includes("PAID") ||
+        s.includes("ACSC") ||
+        s.includes("COMPLETED") ||
+        s.includes("SUCCESS") ||
+        s.includes("MATCH");
+      const isBad =
+        s.includes("REJECT") ||
+        s.includes("RJCT") ||
+        s.includes("FAIL") ||
+        s.includes("DISCREPANCY") ||
+        s.includes("REVERS");
+      return (
+        <Badge
+          variant="outline"
+          className={`text-[10px] uppercase font-mono tracking-wider ${
+            isGood
+              ? "text-emerald-700 bg-emerald-50 border-emerald-300 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800"
+              : isBad
+                ? "text-rose-700 bg-rose-50 border-rose-300 dark:bg-rose-950/30 dark:text-rose-300 dark:border-rose-800"
+                : "text-amber-700 bg-amber-50 border-amber-300 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800"
+          }`}
+        >
+          {String(val)}
+        </Badge>
+      );
+    }
+
+    // Monospace text codes
+    if (
+      [
+        "boid",
+        "bank_account_no",
+        "pan_or_citizenship",
+        "batch_name",
+        "file_name",
+        "instrument_ref",
+      ].includes(dataKey)
+    ) {
+      return <span className="font-mono text-xs">{String(val)}</span>;
+    }
+
+    // Monetary amounts (INR/NPR commas, 2 decimals, right aligned)
+    if (
+      [
+        "gross_dividend",
+        "gross_interest",
+        "gross_amount",
+        "tax_amount",
+        "net_payable",
+        "total_amount",
+        "system_amount",
+        "excel_amount",
+        "difference",
+      ].includes(dataKey)
+    ) {
+      const nr = Number(val);
+      return (
+        <span className="font-mono text-xs tabular-nums text-right block font-medium">
+          {Number.isNaN(nr)
+            ? String(val)
+            : nr.toLocaleString("en-IN", {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })}
+        </span>
+      );
+    }
+
+    // Quantity / counts
+    if (["shares_held", "total_payments", "rows_processed", "rows_failed"].includes(dataKey)) {
+      const nr = Number(val);
+      return (
+        <span className="font-mono text-xs tabular-nums text-right block">
+          {Number.isNaN(nr) ? String(val) : nr.toLocaleString("en-IN")}
+        </span>
+      );
+    }
+
+    return <span className="text-xs">{String(val)}</span>;
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-6xl w-[95vw] h-[90vh] flex flex-col p-0 gap-0">
+        <DialogHeader className="p-4 border-b bg-muted/30 shrink-0">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-2">
+                <DialogTitle className="text-lg font-bold flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-primary" />
+                  {reportTitle}
+                </DialogTitle>
+                <Badge variant="secondary" className="text-xs font-normal">
+                  {companyName}
+                </Badge>
+              </div>
+              <DialogDescription className="text-xs text-muted-foreground">
+                {reportDescription}
+              </DialogDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                disabled={isExporting || isLoading || !data.length}
+                onClick={() => reportId && onExport(reportId, "xlsx")}
+              >
+                <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
+                Excel
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                disabled={isExporting || isLoading || !data.length}
+                onClick={() => reportId && onExport(reportId, "pdf")}
+              >
+                <FileText className="mr-1.5 h-3.5 w-3.5 text-rose-600" />
+                PDF
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => refetch()}
+                title="Refresh Register"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+
+          {/* Quick Stats Summary Strip */}
+          {!isLoading && data.length > 0 && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-3">
+              <div className="px-3 py-1.5 bg-background/80 border rounded text-xs flex justify-between items-center">
+                <span className="text-muted-foreground font-medium">Records:</span>
+                <span className="font-bold font-mono">{stats.count.toLocaleString()}</span>
+              </div>
+              {stats.gross > 0 && (
+                <div className="px-3 py-1.5 bg-background/80 border rounded text-xs flex justify-between items-center">
+                  <span className="text-muted-foreground font-medium">Gross:</span>
+                  <span className="font-bold font-mono text-primary">
+                    NPR{" "}
+                    {stats.gross.toLocaleString("en-IN", {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
+              )}
+              {stats.tax > 0 && (
+                <div className="px-3 py-1.5 bg-background/80 border rounded text-xs flex justify-between items-center">
+                  <span className="text-muted-foreground font-medium">Tax:</span>
+                  <span className="font-bold font-mono text-amber-600">
+                    NPR{" "}
+                    {stats.tax.toLocaleString("en-IN", {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
+              )}
+              {stats.net > 0 && (
+                <div className="px-3 py-1.5 bg-background/80 border rounded text-xs flex justify-between items-center">
+                  <span className="text-muted-foreground font-medium">Net:</span>
+                  <span className="font-bold font-mono text-emerald-600">
+                    NPR{" "}
+                    {stats.net.toLocaleString("en-IN", {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+        </DialogHeader>
+
+        {/* Toolbar: Search + PageSize Selector */}
+        <div className="p-3 border-b bg-background/50 flex flex-col sm:flex-row items-center justify-between gap-2 shrink-0">
+          <div className="relative w-full sm:w-80">
+            <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              placeholder="Search across all fields..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-8 pl-8 text-xs"
+            />
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground w-full sm:w-auto justify-end">
+            <span>Show:</span>
+            <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
+              <SelectTrigger className="h-8 w-20 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="10">10</SelectItem>
+                <SelectItem value="15">15</SelectItem>
+                <SelectItem value="25">25</SelectItem>
+                <SelectItem value="50">50</SelectItem>
+                <SelectItem value="100">100</SelectItem>
+              </SelectContent>
+            </Select>
+            <span>per page</span>
+          </div>
+        </div>
+
+        {/* Live Data Grid */}
+        <div className="flex-1 overflow-auto p-0 min-h-0">
+          {isLoading ? (
+            <div className="p-6 space-y-3">
+              {[...Array(6)].map((_, i) => (
+                <Skeleton key={i} className="h-9 w-full rounded" />
+              ))}
+            </div>
+          ) : isError ? (
+            <div className="p-12 text-center text-sm text-destructive">
+              Failed to load register records. Please try again.
+            </div>
+          ) : paginatedRows.length === 0 ? (
+            <div className="p-12 text-center text-sm text-muted-foreground">
+              {search
+                ? "No matching records found for your search."
+                : "No records found in this register."}
+            </div>
+          ) : (
+            <Table>
+              <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur z-10 border-b">
+                <TableRow className="divide-x divide-border">
+                  <TableHead className="w-12 text-center text-[11px] uppercase">#</TableHead>
+                  {columns.map((col) => (
+                    <TableHead
+                      key={col.dataKey}
+                      className={`text-[11px] uppercase whitespace-nowrap px-3 ${
+                        col.header.includes("NPR") ||
+                        col.header.includes("Gross") ||
+                        col.header.includes("Tax") ||
+                        col.header.includes("Net") ||
+                        col.header.includes("Rate") ||
+                        col.header.includes("Shares") ||
+                        col.header.includes("Payments") ||
+                        col.header.includes("Processed") ||
+                        col.header.includes("Failed")
+                          ? "text-right"
+                          : ""
+                      }`}
+                    >
+                      {col.header}
+                    </TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody className="divide-y divide-border">
+                {paginatedRows.map((row: any, idx) => (
+                  <TableRow
+                    key={row.id || idx}
+                    className="hover:bg-muted/40 divide-x divide-border"
+                  >
+                    <TableCell className="text-center font-mono text-xs text-muted-foreground">
+                      {(page - 1) * pageSize + idx + 1}
+                    </TableCell>
+                    {columns.map((col) => (
+                      <TableCell key={col.dataKey} className="px-3 py-2 whitespace-nowrap">
+                        {renderCell(row, col.dataKey)}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+
+        {/* Pagination Footer */}
+        <div className="p-3 border-t bg-muted/20 shrink-0 flex items-center justify-between text-xs text-muted-foreground">
+          <div>
+            Showing{" "}
+            <span className="font-semibold text-foreground">
+              {filteredRows.length === 0 ? 0 : (page - 1) * pageSize + 1}
+            </span>{" "}
+            to{" "}
+            <span className="font-semibold text-foreground">
+              {Math.min(page * pageSize, filteredRows.length)}
+            </span>{" "}
+            of{" "}
+            <span className="font-semibold text-foreground">
+              {filteredRows.length.toLocaleString()}
+            </span>{" "}
+            records
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-7 w-7"
+              disabled={page <= 1}
+              onClick={() => setPage(1)}
+              title="First Page"
+            >
+              <ChevronsLeft className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-7 w-7"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              title="Previous Page"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </Button>
+            <span className="px-2 font-medium">
+              Page {page} of {totalPages}
+            </span>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-7 w-7"
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              title="Next Page"
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-7 w-7"
+              disabled={page >= totalPages}
+              onClick={() => setPage(totalPages)}
+              title="Last Page"
+            >
+              <ChevronsRight className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function ReportsRoute() {
   const [companyId, setCompanyId] = useState("all");
   const [activeExport, setActiveExport] = useState<string | null>(null);
+  const [viewingReport, setViewingReport] = useState<ReportId | null>(null);
 
   const { data: companies = [] } = useQuery({
     queryKey: ["report-companies"],
@@ -400,6 +863,8 @@ function ReportsRoute() {
       agmSummaryQuery.refetch(),
       debentureSummaryQuery.refetch(),
       mfSummaryQuery.refetch(),
+      irdEtdsQuery.refetch(),
+      ipfAgingQuery.refetch(),
     ]);
     const failed = results.filter((r) => r.status === "rejected");
     if (failed.length > 0) {
@@ -509,7 +974,7 @@ function ReportsRoute() {
 
       {/* Main Tabbed Reporting Center */}
       <Tabs defaultValue="all" className="space-y-4">
-        <TabsList className="grid grid-cols-2 md:grid-cols-7 w-full h-auto p-1 bg-muted/60">
+        <TabsList className="flex flex-wrap lg:grid lg:grid-cols-7 w-full h-auto p-1 bg-muted/60 gap-1">
           <TabsTrigger value="all" className="py-2 text-xs md:text-sm">
             All Summaries
           </TabsTrigger>
@@ -614,7 +1079,7 @@ function ReportsRoute() {
                         GROSS DIVIDEND
                       </th>
                       <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
-                        DIV_TAX
+                        TAX
                       </th>
                       <th className="py-2.5 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200 whitespace-nowrap">
                         NET DIVIDEND
@@ -694,6 +1159,12 @@ function ReportsRoute() {
                     </tr>
                   </tfoot>
                 </table>
+              </CardContent>
+            </Card>
+          ) : !agmSummaryQuery.isLoading && (!agmSummary || agmSummary.rows.length === 0) ? (
+            <Card className="border-dashed border-muted-foreground/30 bg-muted/10">
+              <CardContent className="py-6 text-center text-xs text-muted-foreground">
+                No AGM distribution records found for the selected company.
               </CardContent>
             </Card>
           ) : null}
@@ -843,6 +1314,13 @@ function ReportsRoute() {
                 </table>
               </CardContent>
             </Card>
+          ) : !debentureSummaryQuery.isLoading &&
+            (!debentureSummary || debentureSummary.rows.length === 0) ? (
+            <Card className="border-dashed border-muted-foreground/30 bg-muted/10">
+              <CardContent className="py-6 text-center text-xs text-muted-foreground">
+                No debenture interest records found for the selected company.
+              </CardContent>
+            </Card>
           ) : null}
 
           {/* Mutual Fund Summary Preview */}
@@ -988,6 +1466,12 @@ function ReportsRoute() {
                 </table>
               </CardContent>
             </Card>
+          ) : !mfSummaryQuery.isLoading && mfSummary.length === 0 ? (
+            <Card className="border-dashed border-muted-foreground/30 bg-muted/10">
+              <CardContent className="py-6 text-center text-xs text-muted-foreground">
+                No mutual fund distribution records found for the selected company.
+              </CardContent>
+            </Card>
           ) : null}
         </TabsContent>
 
@@ -1059,6 +1543,38 @@ function ReportsRoute() {
                       </TableRow>
                     ))}
                   </TableBody>
+                  {agmSummary.total && (
+                    <TableFooter>
+                      <TableRow className="bg-muted/90 font-bold border-t-2 border-foreground/30 font-mono">
+                        <TableCell></TableCell>
+                        <TableCell className="font-sans uppercase">TOTAL</TableCell>
+                        <TableCell className="text-right">
+                          {fmtNr(agmSummary.total.shareholderCount)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {fmtNr(agmSummary.total.kitta)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {fmtNr(agmSummary.total.issuedBonus)}
+                        </TableCell>
+                        <TableCell className="text-right text-emerald-600 dark:text-emerald-400">
+                          {fmtNr(agmSummary.total.afterBonusKitta)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {format(agmSummary.total.grossDividend)}
+                        </TableCell>
+                        <TableCell className="text-right text-amber-600">
+                          {format(agmSummary.total.divTax + agmSummary.total.bonTax)}
+                        </TableCell>
+                        <TableCell className="text-right text-emerald-600 dark:text-emerald-400">
+                          {format(agmSummary.total.netDividend)}
+                        </TableCell>
+                        <TableCell className="text-right font-sans">
+                          {agmSummary.total.composition.toFixed(2)}%
+                        </TableCell>
+                      </TableRow>
+                    </TableFooter>
+                  )}
                 </Table>
               </CardContent>
             </Card>
@@ -1139,6 +1655,34 @@ function ReportsRoute() {
                       </TableRow>
                     ))}
                   </TableBody>
+                  {debentureSummary.total && (
+                    <TableFooter>
+                      <TableRow className="bg-muted/90 font-bold border-t-2 border-foreground/30 font-mono">
+                        <TableCell className="font-sans uppercase">TOTAL</TableCell>
+                        <TableCell className="text-right">
+                          {fmtNr(debentureSummary.total.kitta)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {format(debentureSummary.total.principalAmount)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {format(debentureSummary.total.annualInterest)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {format(debentureSummary.total.interestPerDay)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {format(debentureSummary.total.grossInterest)}
+                        </TableCell>
+                        <TableCell className="text-right text-amber-600">
+                          {format(debentureSummary.total.taxAmount)}
+                        </TableCell>
+                        <TableCell className="text-right text-emerald-600 dark:text-emerald-400">
+                          {format(debentureSummary.total.netInterestPayable)}
+                        </TableCell>
+                      </TableRow>
+                    </TableFooter>
+                  )}
                 </Table>
               </CardContent>
             </Card>
@@ -1221,6 +1765,24 @@ function ReportsRoute() {
                       </TableRow>
                     ))}
                   </TableBody>
+                  <TableFooter>
+                    <TableRow className="bg-muted/90 font-bold border-t-2 border-foreground/30 font-mono">
+                      <TableCell></TableCell>
+                      <TableCell className="font-sans uppercase">TOTAL</TableCell>
+                      <TableCell className="text-right">
+                        {fmtNr(mfTotal.transaction_count)}
+                      </TableCell>
+                      <TableCell className="text-right">{fmtNr(mfTotal.kitta)}</TableCell>
+                      <TableCell className="text-right">{format(mfTotal.gross)}</TableCell>
+                      <TableCell className="text-right text-amber-600">
+                        {format(mfTotal.tax)}
+                      </TableCell>
+                      <TableCell className="text-right text-emerald-600 dark:text-emerald-400">
+                        {format(mfTotal.net)}
+                      </TableCell>
+                      <TableCell className="text-right font-sans">100.00%</TableCell>
+                    </TableRow>
+                  </TableFooter>
                 </Table>
               </CardContent>
             </Card>
@@ -1258,26 +1820,43 @@ function ReportsRoute() {
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">{report.description}</p>
                     </div>
-                    <div className="mt-4 flex gap-2 pt-2 border-t">
+                    <div className="mt-4 flex gap-1.5 pt-2 border-t">
                       <Button
                         size="sm"
-                        variant="outline"
-                        className="h-8 text-xs flex-1"
-                        disabled={activeExport === `${report.id}-xlsx`}
-                        onClick={() => exportReport(report.id, "xlsx")}
+                        variant="default"
+                        className="h-8 text-xs flex-1 bg-primary/90 hover:bg-primary"
+                        onClick={() => setViewingReport(report.id)}
                       >
-                        <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
-                        Excel
+                        <Eye className="mr-1.5 h-3.5 w-3.5" />
+                        View
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-8 text-xs flex-1"
+                        className="h-8 text-xs px-2.5"
+                        disabled={activeExport === `${report.id}-xlsx`}
+                        onClick={() => exportReport(report.id, "xlsx")}
+                        title="Export Excel"
+                      >
+                        {activeExport === `${report.id}-xlsx` ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-600" />
+                        ) : (
+                          <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
+                        )}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 text-xs px-2.5"
                         disabled={activeExport === `${report.id}-pdf`}
                         onClick={() => exportReport(report.id, "pdf")}
+                        title="Export PDF"
                       >
-                        <FileText className="mr-1.5 h-3.5 w-3.5 text-rose-600" />
-                        PDF
+                        {activeExport === `${report.id}-pdf` ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-rose-600" />
+                        ) : (
+                          <FileText className="h-3.5 w-3.5 text-rose-600" />
+                        )}
                       </Button>
                     </div>
                   </CardContent>
@@ -1309,26 +1888,43 @@ function ReportsRoute() {
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">{report.description}</p>
                     </div>
-                    <div className="mt-4 flex gap-2 pt-2 border-t">
+                    <div className="mt-4 flex gap-1.5 pt-2 border-t">
                       <Button
                         size="sm"
-                        variant="outline"
-                        className="h-8 text-xs flex-1"
-                        disabled={activeExport === `${report.id}-xlsx`}
-                        onClick={() => exportReport(report.id, "xlsx")}
+                        variant="default"
+                        className="h-8 text-xs flex-1 bg-primary/90 hover:bg-primary"
+                        onClick={() => setViewingReport(report.id)}
                       >
-                        <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
-                        Excel
+                        <Eye className="mr-1.5 h-3.5 w-3.5" />
+                        View
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-8 text-xs flex-1"
+                        className="h-8 text-xs px-2.5"
+                        disabled={activeExport === `${report.id}-xlsx`}
+                        onClick={() => exportReport(report.id, "xlsx")}
+                        title="Export Excel"
+                      >
+                        {activeExport === `${report.id}-xlsx` ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-600" />
+                        ) : (
+                          <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
+                        )}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 text-xs px-2.5"
                         disabled={activeExport === `${report.id}-pdf`}
                         onClick={() => exportReport(report.id, "pdf")}
+                        title="Export PDF"
                       >
-                        <FileText className="mr-1.5 h-3.5 w-3.5 text-rose-600" />
-                        PDF
+                        {activeExport === `${report.id}-pdf` ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-rose-600" />
+                        ) : (
+                          <FileText className="h-3.5 w-3.5 text-rose-600" />
+                        )}
                       </Button>
                     </div>
                   </CardContent>
@@ -1581,6 +2177,27 @@ function ReportsRoute() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <RegisterViewerDialog
+        reportId={viewingReport}
+        reportTitle={
+          [...PAYABLE_REPORTS, ...OPERATIONS_REPORTS].find((r) => r.id === viewingReport)?.title ||
+          ""
+        }
+        reportDescription={
+          [...PAYABLE_REPORTS, ...OPERATIONS_REPORTS].find((r) => r.id === viewingReport)
+            ?.description || ""
+        }
+        companyName={
+          selectedCompany?.company_name ||
+          (companyId === "all" ? "All Companies (Consolidated)" : "Selected Company")
+        }
+        open={!!viewingReport}
+        onOpenChange={(isOpen) => !isOpen && setViewingReport(null)}
+        fetchData={fetchReport}
+        onExport={exportReport}
+        isExporting={!!activeExport}
+      />
     </div>
   );
 }

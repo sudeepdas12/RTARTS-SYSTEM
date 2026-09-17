@@ -1,4 +1,4 @@
-﻿/**
+/**
  * SEBON & Company Registrar — Investor Protection Fund (IPF) Aging & Transfer Service
  *
  * Pursuant to Section 182 of the Nepal Companies Act, 2063 (2006):
@@ -7,6 +7,7 @@
  */
 
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "./database";
 import * as XLSX from "xlsx";
 
 export interface IpfAgingBucket {
@@ -78,17 +79,22 @@ export const IpfService = {
 
     const items: IpfUnclaimedItem[] = [];
 
-    // 2. Fetch Unpaid Dividends (Pending, Failed, Discrepancy)
-    let divQ = (supabase as any)
-      .from("dividend_payables")
-      .select("*, company:companies(company_name, company_code), client:clients(id, full_name, boid, phone)")
-      .in("payment_status", ["Pending", "Failed", "Discrepancy"]);
+    // 2. Fetch Unpaid Dividends (Pending, Failed, Discrepancy) paginated across entire dataset
+    const divData = await fetchAllRows<any>((from, to) => {
+      let q = (supabase as any)
+        .from("dividend_payables")
+        .select(
+          "*, company:companies(company_name, company_code), client:clients(id, full_name, boid, phone)",
+        )
+        .in("payment_status", ["Pending", "Failed", "Discrepancy"])
+        .order("created_at", { ascending: false })
+        .range(from, to);
 
-    if (params.companyId && params.companyId !== "all") {
-      divQ = divQ.eq("company_id", params.companyId);
-    }
-
-    const { data: divData } = await divQ;
+      if (params.companyId && params.companyId !== "all") {
+        q = q.eq("company_id", params.companyId);
+      }
+      return q;
+    });
 
     for (const d of divData || []) {
       const declaredDateStr = d.payment_date || d.created_at?.split("T")[0] || "2020-01-01";
@@ -121,9 +127,24 @@ export const IpfService = {
 
     // 3. Build Aging Buckets
     const b1 = { label: "< 1 Year (Fresh)", count: 0, totalAmount: 0, isEligibleForIpf: false };
-    const b2 = { label: "1 - 3 Years (Pending)", count: 0, totalAmount: 0, isEligibleForIpf: false };
-    const b3 = { label: "3 - 5 Years (Notice Period)", count: 0, totalAmount: 0, isEligibleForIpf: false };
-    const b4 = { label: "> 5 Years (IPF Statutory Transfer)", count: 0, totalAmount: 0, isEligibleForIpf: true };
+    const b2 = {
+      label: "1 - 3 Years (Pending)",
+      count: 0,
+      totalAmount: 0,
+      isEligibleForIpf: false,
+    };
+    const b3 = {
+      label: "3 - 5 Years (Notice Period)",
+      count: 0,
+      totalAmount: 0,
+      isEligibleForIpf: false,
+    };
+    const b4 = {
+      label: "> 5 Years (IPF Statutory Transfer)",
+      count: 0,
+      totalAmount: 0,
+      isEligibleForIpf: true,
+    };
 
     for (const item of items) {
       if (item.daysUnclaimed < 365) {
@@ -151,7 +172,8 @@ export const IpfService = {
       totalUnclaimedCount: items.length,
       totalUnclaimedAmount: Math.round(items.reduce((s, i) => s + i.netPayable, 0) * 100) / 100,
       ipfEligibleCount: ipfEligibleItems.length,
-      ipfEligibleAmount: Math.round(ipfEligibleItems.reduce((s, i) => s + i.netPayable, 0) * 100) / 100,
+      ipfEligibleAmount:
+        Math.round(ipfEligibleItems.reduce((s, i) => s + i.netPayable, 0) * 100) / 100,
       nonIpfCount: nonIpfItems.length,
       nonIpfAmount: Math.round(nonIpfItems.reduce((s, i) => s + i.netPayable, 0) * 100) / 100,
       agingBuckets: [
@@ -238,8 +260,10 @@ export const IpfService = {
     XLSX.utils.book_append_sheet(wb, ws, "SEBON_IPF_Transfer");
 
     const safeName =
-      (fileName || `SEBON_IPF_Transfer_${report.companyCode}_${report.asOfDate}`)
-        .replace(/[^a-zA-Z0-9-_]/g, "_") + ".xlsx";
+      (fileName || `SEBON_IPF_Transfer_${report.companyCode}_${report.asOfDate}`).replace(
+        /[^a-zA-Z0-9-_]/g,
+        "_",
+      ) + ".xlsx";
 
     XLSX.writeFile(wb, safeName);
   },

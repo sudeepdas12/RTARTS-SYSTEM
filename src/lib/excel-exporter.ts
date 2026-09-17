@@ -90,6 +90,22 @@ export const ExcelExporter = {
     });
     worksheet["!cols"] = colWidths;
 
+    // Apply standard accounting number format (#,##0.00) to numeric financial cells
+    if (worksheet["!ref"]) {
+      const range = XLSX.utils.decode_range(worksheet["!ref"]);
+      for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+        for (let C = range.s.c; C <= range.e.c; ++C) {
+          const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+          const cell = worksheet[cellAddress];
+          if (cell && cell.t === "n" && typeof cell.v === "number") {
+            if (!Number.isInteger(cell.v) || Math.abs(cell.v) >= 1000) {
+              cell.z = "#,##0.00";
+            }
+          }
+        }
+      }
+    }
+
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
     XLSX.writeFile(workbook, fileName.endsWith(".xlsx") ? fileName : `${fileName}.xlsx`);

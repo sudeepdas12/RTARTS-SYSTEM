@@ -249,7 +249,7 @@ export const ReportService = {
         let query = (supabase as any)
           .from("dividend_payables")
           .select(
-            "id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, payment_status, payment_date, payment_reference, fiscal_year, payee_classification, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
+            "id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, payment_status, payment_date, payment_reference, fiscal_year, payee_classification, bank_name, bank_account_no, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
           )
           .order("created_at", { ascending: false })
           .range(from, to);
@@ -280,8 +280,8 @@ export const ReportService = {
         payment_date: row.payment_date ?? null,
         payment_reference: row.payment_reference ?? null,
         fiscal_year: row.fiscal_year ?? null,
-        bank_name: row.client?.bank_name ?? null,
-        bank_account_no: row.client?.bank_account_no ?? null,
+        bank_name: row.bank_name || row.client?.bank_name || null,
+        bank_account_no: row.bank_account_no || row.client?.bank_account_no || null,
         pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
       }));
     } catch (err) {
@@ -297,7 +297,7 @@ export const ReportService = {
         let query = (supabase as any)
           .from("mutual_fund_payables")
           .select(
-            "id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, payment_status, payment_date, payment_reference, fiscal_year, payee_classification, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
+            "id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, payment_status, payment_date, payment_reference, fiscal_year, payee_classification, bank_name, bank_account_no, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
           )
           .order("created_at", { ascending: false })
           .range(from, to);
@@ -328,8 +328,8 @@ export const ReportService = {
         payment_date: row.payment_date ?? null,
         payment_reference: row.payment_reference ?? null,
         fiscal_year: row.fiscal_year ?? null,
-        bank_name: row.client?.bank_name ?? null,
-        bank_account_no: row.client?.bank_account_no ?? null,
+        bank_name: row.bank_name || row.client?.bank_name || null,
+        bank_account_no: row.bank_account_no || row.client?.bank_account_no || null,
         pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
       }));
     } catch (err) {
@@ -345,7 +345,7 @@ export const ReportService = {
         let query = (supabase as any)
           .from("interest_payables")
           .select(
-            "id, instrument_ref, gross_interest, tax_amount, net_payable, payment_status, due_date, payment_date, payment_reference, fiscal_year, payee_classification, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
+            "id, instrument_ref, gross_interest, tax_amount, net_payable, payment_status, due_date, payment_date, payment_reference, fiscal_year, payee_classification, bank_name, bank_account_no, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
           )
           .order("due_date", { ascending: false })
           .range(from, to);
@@ -375,8 +375,8 @@ export const ReportService = {
         payment_date: row.payment_date ?? null,
         payment_reference: row.payment_reference ?? null,
         fiscal_year: row.fiscal_year ?? null,
-        bank_name: row.client?.bank_name ?? null,
-        bank_account_no: row.client?.bank_account_no ?? null,
+        bank_name: row.bank_name || row.client?.bank_name || null,
+        bank_account_no: row.bank_account_no || row.client?.bank_account_no || null,
         pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
       }));
     } catch (err) {
@@ -513,7 +513,7 @@ export const ReportService = {
           let q = (supabase as any)
             .from("dividend_payables")
             .select(
-              "id, gross_dividend, tax_amount, net_payable, fiscal_year, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)",
+              "id, gross_dividend, tax_amount, net_payable, fiscal_year, bank_name, bank_account_no, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)",
             )
             .eq("payment_status", "Pending")
             .order("created_at", { ascending: false })
@@ -528,7 +528,7 @@ export const ReportService = {
           let q = (supabase as any)
             .from("mutual_fund_payables")
             .select(
-              "id, gross_dividend, tax_amount, net_payable, fiscal_year, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)",
+              "id, gross_dividend, tax_amount, net_payable, fiscal_year, bank_name, bank_account_no, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)",
             )
             .eq("payment_status", "Pending")
             .order("created_at", { ascending: false })
@@ -543,7 +543,7 @@ export const ReportService = {
           let q = (supabase as any)
             .from("interest_payables")
             .select(
-              "id, gross_interest, tax_amount, net_payable, fiscal_year, due_date, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)",
+              "id, gross_interest, tax_amount, net_payable, fiscal_year, due_date, bank_name, bank_account_no, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)",
             )
             .eq("payment_status", "Pending")
             .order("due_date", { ascending: true })
@@ -569,8 +569,8 @@ export const ReportService = {
           net_payable: nr(row.net_payable),
           fiscal_year: row.fiscal_year ?? null,
           due_date: null,
-          bank_name: row.client?.bank_name ?? null,
-          bank_account_no: row.client?.bank_account_no ?? null,
+          bank_name: row.bank_name || row.client?.bank_name || null,
+          bank_account_no: row.bank_account_no || row.client?.bank_account_no || null,
         });
       });
       (intData || []).forEach((row: any) => {
@@ -585,8 +585,8 @@ export const ReportService = {
           net_payable: nr(row.net_payable),
           fiscal_year: row.fiscal_year ?? null,
           due_date: row.due_date ?? null,
-          bank_name: row.client?.bank_name ?? null,
-          bank_account_no: row.client?.bank_account_no ?? null,
+          bank_name: row.bank_name || row.client?.bank_name || null,
+          bank_account_no: row.bank_account_no || row.client?.bank_account_no || null,
         });
       });
       (mfData || []).forEach((row: any) => {
@@ -601,8 +601,8 @@ export const ReportService = {
           net_payable: nr(row.net_payable),
           fiscal_year: row.fiscal_year ?? null,
           due_date: null,
-          bank_name: row.client?.bank_name ?? null,
-          bank_account_no: row.client?.bank_account_no ?? null,
+          bank_name: row.bank_name || row.client?.bank_name || null,
+          bank_account_no: row.bank_account_no || row.client?.bank_account_no || null,
         });
       });
 
@@ -654,21 +654,22 @@ export const ReportService = {
   // 6. Bonus Share Report
   async getBonusShareReport(filters: ReportFilters = {}): Promise<BonusShareRow[]> {
     try {
-      let query = supabase
-        .from("dividend_payables")
-        .select(
-          "id, shares_held, dividend_type, bonus_actual, bonus_issued, bonus_fraction, after_bonus_kitta, bonus_tax, net_payable, fiscal_year, payment_status, client:clients(boid, full_name), company:companies(company_name)",
-        )
-        .in("dividend_type", ["Bonus", "Stock", "Combined"])
-        .order("created_at", { ascending: false });
+      const data = await fetchAllRows<any>((from, to) => {
+        let query = (supabase as any)
+          .from("dividend_payables")
+          .select(
+            "id, shares_held, dividend_type, bonus_actual, bonus_issued, bonus_fraction, after_bonus_kitta, bonus_tax, net_payable, fiscal_year, payment_status, client:clients(boid, full_name), company:companies(company_name)",
+          )
+          .in("dividend_type", ["Bonus", "Stock", "Combined"])
+          .order("created_at", { ascending: false })
+          .range(from, to);
 
-      if (filters.companyId && filters.companyId !== "all")
-        query = query.eq("company_id", filters.companyId);
-      if (filters.fiscalYear && filters.fiscalYear !== "all")
-        query = query.eq("fiscal_year", filters.fiscalYear);
-
-      const { data, error } = await query;
-      if (error) throw error;
+        if (filters.companyId && filters.companyId !== "all")
+          query = query.eq("company_id", filters.companyId);
+        if (filters.fiscalYear && filters.fiscalYear !== "all")
+          query = query.eq("fiscal_year", filters.fiscalYear);
+        return query;
+      });
 
       return (data || []).map((row: any) => ({
         id: row.id,
