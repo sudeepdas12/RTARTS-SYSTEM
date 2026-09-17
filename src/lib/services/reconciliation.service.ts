@@ -480,16 +480,17 @@ export const ReconciliationService = {
   async applyReconciliation(
     results: ReconciliationResultRow[],
     paymentMethod: string = "ConnectIPS",
-  ): Promise<{ updated: number; paymentsCreated: number; errors: string[] }> {
+  ): Promise<{ updated: number; paymentsCreated: number; alreadyPaid: number; errors: string[] }> {
     const matchedResults = results.filter(
       (r) => r.result === "Matched" || r.result === "Over_Paid" || r.result === "Under_Paid",
     );
     if (!matchedResults.length) {
-      return { updated: 0, paymentsCreated: 0, errors: [] };
+      return { updated: 0, paymentsCreated: 0, alreadyPaid: 0, errors: [] };
     }
 
     let updated = 0;
     let paymentsCreated = 0;
+    let alreadyPaid = 0;
     const errors: string[] = [];
 
     // 1. Determine dominant payable type across matched results
@@ -577,6 +578,9 @@ export const ReconciliationService = {
           );
           continue;
         }
+      } else if (!payableId && !paymentId && !r.client_id) {
+        errors.push("Skipping unlinked record: No payable ID, payment ID, or client ID available");
+        continue;
       }
 
       itemsPayload.push({
@@ -598,7 +602,7 @@ export const ReconciliationService = {
     }
 
     if (itemsPayload.length === 0) {
-      return { updated: 0, paymentsCreated: 0, errors };
+      return { updated: 0, paymentsCreated: 0, alreadyPaid: 0, errors };
     }
 
     // 4. Atomic Execution via SECURITY DEFINER Stored Procedure
@@ -622,6 +626,7 @@ export const ReconciliationService = {
 
     updated = Number(rpcRes.payables_updated ?? rpcRes.updated ?? 0);
     paymentsCreated = Number(rpcRes.payments_created ?? rpcRes.paymentsCreated ?? 0);
+    alreadyPaid = Number(rpcRes.already_paid ?? 0);
     if (Array.isArray(rpcRes.errors) && rpcRes.errors.length > 0) {
       for (const err of rpcRes.errors) {
         errors.push(err?.error || JSON.stringify(err));
@@ -696,6 +701,6 @@ export const ReconciliationService = {
       }
     }
 
-    return { updated, paymentsCreated, errors };
+    return { updated, paymentsCreated, alreadyPaid, errors };
   },
 };

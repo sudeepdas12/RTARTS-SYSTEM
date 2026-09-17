@@ -38,6 +38,8 @@ DECLARE
   v_payment_method public.payment_method;
   v_updated int := 0;
   v_payments_created int := 0;
+  v_already_paid int := 0;
+  v_current_status text;
   v_errors jsonb := '[]'::jsonb;
 BEGIN
   -- 1. Check Service Role vs User
@@ -100,10 +102,10 @@ BEGIN
         v_batch_company_id,
         p_batch_info->>'payable_type',
         COALESCE(p_batch_info->>'payment_method', 'ConnectIPS'),
-        COALESCE((p_batch_info->>'total_records')::numeric, 0),
+        COALESCE(floor((p_batch_info->>'total_records')::numeric)::int, 0),
         COALESCE((p_batch_info->>'total_net')::numeric, 0),
         COALESCE((p_batch_info->>'total_tax')::numeric, 0),
-        'Completed',
+        'Completed'::public.payment_batch_status,
         now(),
         COALESCE(p_batch_info->>'cds_batch_ref', 'RECON-APPLY'),
         v_uid
@@ -162,6 +164,16 @@ BEGIN
         v_paid_amt   := 0;
       END IF;
 
+      -- Skip and log unlinked records
+      IF v_payable_id IS NULL AND v_payment_id IS NULL THEN
+        v_errors := v_errors || jsonb_build_object(
+          'item_id', v_item->>'id',
+          'client_id', v_item->>'client_id',
+          'error', 'Skipped: neither payable_id nor payment_id provided'
+        );
+        CONTINUE;
+      END IF;
+
       -- Check if an active payment already exists for this payable
       IF v_payable_id IS NOT NULL AND v_payment_id IS NULL THEN
         SELECT id INTO v_existing_payment_id
@@ -177,6 +189,11 @@ BEGIN
       -- If we have a payable_id, update the payable table
       IF v_payable_id IS NOT NULL THEN
         IF v_target_table = 'dividend_payables' THEN
+          SELECT payment_status::text INTO v_current_status FROM public.dividend_payables WHERE id = v_payable_id;
+          IF v_current_status = 'Paid' AND v_new_status = 'Paid' THEN
+            v_already_paid := v_already_paid + 1;
+          END IF;
+
           UPDATE public.dividend_payables
           SET payment_status    = v_new_status,
               payment_date      = CURRENT_DATE,
@@ -184,6 +201,11 @@ BEGIN
               updated_at        = now()
           WHERE id = v_payable_id;
         ELSIF v_target_table = 'mutual_fund_payables' THEN
+          SELECT payment_status::text INTO v_current_status FROM public.mutual_fund_payables WHERE id = v_payable_id;
+          IF v_current_status = 'Paid' AND v_new_status = 'Paid' THEN
+            v_already_paid := v_already_paid + 1;
+          END IF;
+
           UPDATE public.mutual_fund_payables
           SET payment_status    = v_new_status,
               payment_date      = CURRENT_DATE,
@@ -191,6 +213,11 @@ BEGIN
               updated_at        = now()
           WHERE id = v_payable_id;
         ELSE
+          SELECT payment_status::text INTO v_current_status FROM public.interest_payables WHERE id = v_payable_id;
+          IF v_current_status = 'Paid' AND v_new_status = 'Paid' THEN
+            v_already_paid := v_already_paid + 1;
+          END IF;
+
           UPDATE public.interest_payables
           SET payment_status    = v_new_status,
               payment_date      = CURRENT_DATE,
@@ -281,6 +308,7 @@ BEGIN
     'payables_updated', v_updated,
     'updated', v_updated,
     'payments_created', v_payments_created,
+    'already_paid', v_already_paid,
     'batch_id', v_batch_id,
     'errors', v_errors
   );

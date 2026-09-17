@@ -60,6 +60,7 @@ export interface ReconciliationMatch {
   payableId?: string | null;
   paymentId?: string | null;
   paymentStatus?: string | null;
+  fiscalYear?: string | null;
   transactionDate?: string | null;
   transactionDescription?: string | null;
   sourceType?: "excel" | "bank_statement";
@@ -100,6 +101,7 @@ type PayableRow = {
   gross_amount: number;
   payment_status: string;
   payable_type: "dividend" | "interest" | "mutual_fund";
+  fiscal_year?: string | null;
 };
 
 type PaymentRow = {
@@ -218,19 +220,23 @@ export const ReconciliationEngine = {
           fetchInChunks(clientIds, (chunk) =>
             supabase
               .from("dividend_payables")
-              .select("id,company_id,client_id,net_payable,gross_dividend,payment_status")
+              .select(
+                "id,company_id,client_id,net_payable,gross_dividend,payment_status,fiscal_year",
+              )
               .in("client_id", chunk),
           ),
           fetchInChunks(clientIds, (chunk) =>
             supabase
               .from("interest_payables")
-              .select("id,company_id,client_id,net_payable,gross_interest,payment_status")
+              .select(
+                "id,company_id,client_id,net_payable,gross_interest,payment_status,fiscal_year",
+              )
               .in("client_id", chunk),
           ),
           fetchInChunks(clientIds, (chunk) =>
             (supabase as any)
               .from("mutual_fund_payables")
-              .select("id,company_id,client_id,net_payable,payment_status")
+              .select("id,company_id,client_id,net_payable,payment_status,fiscal_year")
               .in("client_id", chunk),
           ),
         ]);
@@ -279,6 +285,7 @@ export const ReconciliationEngine = {
         gross_amount: Number(p.gross_dividend ?? p.gross_interest ?? 0),
         payment_status: String(p.payment_status || ""),
         payable_type: p.payable_type,
+        fiscal_year: p.fiscal_year || null,
       });
     });
 
@@ -399,12 +406,13 @@ export const ReconciliationEngine = {
             (p) => !usedPayableIds.has(p.id),
           );
           if (candidatePayables.length > 0) {
-            // Prioritize exact or within-tolerance amount matches
+            // Prioritize exact or within-tolerance amount matches (preferring Pending/unpaid over Paid)
             const exactMatches = candidatePayables.filter(
               (p) => Math.abs(p.net_payable - excelAmount) <= RECONCILIATION_TOLERANCE_NPR,
             );
             if (exactMatches.length > 0) {
-              bestPayable = exactMatches[0];
+              bestPayable =
+                exactMatches.find((p) => p.payment_status !== "Paid") || exactMatches[0];
             } else {
               bestPayable = candidatePayables.reduce<PayableRow | null>((best, current) => {
                 if (!best) return current;
@@ -421,13 +429,30 @@ export const ReconciliationEngine = {
           }
         }
 
-        // SOURCE 2: Match against Payments (by client or by amount)
+        // SOURCE 2: Match against Payments (strictly by payable linkage, client + amount, or verified amount fallback)
         if (clientId) {
           const clientPayments = paymentsByClientId.get(clientId) || [];
-          bestPayment = clientPayments.find((p) => !usedPaymentIds.has(p.id)) || null;
 
+          // 2a. Priority: Payment linked directly to bestPayable
+          if (bestPayable) {
+            bestPayment =
+              clientPayments.find(
+                (p) => !usedPaymentIds.has(p.id) && p.payable_id === bestPayable.id,
+              ) || null;
+          }
+
+          // 2b. Priority: Client payment matching exact or near amount
           if (!bestPayment) {
-            // Fallback: match by amount, but strictly scoped to the same company or verified client
+            bestPayment =
+              clientPayments.find(
+                (p) =>
+                  !usedPaymentIds.has(p.id) &&
+                  Math.abs(p.net_amount - excelAmount) <= RECONCILIATION_TOLERANCE_NPR,
+              ) || null;
+          }
+
+          // 2c. Fallback: match by amount across system, strictly scoped to same company
+          if (!bestPayment && excelAmount > 0) {
             const amountCandidates = paymentsByAmount.get(buildAmountKey(excelAmount)) || [];
             const targetCompId = bestPayable?.company_id || (client as any)?.company_id || null;
             bestPayment =
@@ -521,6 +546,7 @@ export const ReconciliationEngine = {
           companyId: bestPayable?.company_id ?? bestPayment?.company_id ?? null,
           payableType: (bestPayable?.payable_type ?? bestPayment?.payable_type ?? null) as any,
           payableId: bestPayable?.id ?? null,
+          fiscalYear: bestPayable?.fiscal_year ?? null,
           paymentId: bestPayment?.id ?? null,
           paymentStatus: bestPayment?.payment_status ?? null,
           sourceType: "excel",
@@ -594,19 +620,19 @@ export const ReconciliationEngine = {
           supabase
             .from("dividend_payables")
             .select(
-              "id,company_id,client_id,net_payable,gross_dividend,payment_status,clients(id,boid,full_name,bank_name,bank_account_no)",
+              "id,company_id,client_id,net_payable,gross_dividend,payment_status,fiscal_year,clients(id,boid,full_name,bank_name,bank_account_no)",
             )
             .limit(10000),
           supabase
             .from("interest_payables")
             .select(
-              "id,company_id,client_id,net_payable,gross_interest,payment_status,clients(id,boid,full_name,bank_name,bank_account_no)",
+              "id,company_id,client_id,net_payable,gross_interest,payment_status,fiscal_year,clients(id,boid,full_name,bank_name,bank_account_no)",
             )
             .limit(10000),
           (supabase as any)
             .from("mutual_fund_payables")
             .select(
-              "id,company_id,client_id,net_payable,payment_status,clients(id,boid,full_name,bank_name,bank_account_no)",
+              "id,company_id,client_id,net_payable,payment_status,fiscal_year,clients(id,boid,full_name,bank_name,bank_account_no)",
             )
             .limit(10000),
         ]);
@@ -946,6 +972,7 @@ export const ReconciliationEngine = {
         paymentId: bestPayment?.id ?? null,
         paymentStatus: bestPayment?.status ?? bestPayment?.payment_status ?? null,
         payableId: matchedPayable?.id ?? bestPayment?.payable_id ?? null,
+        fiscalYear: matchedPayable?.fiscal_year ?? null,
         payableType:
           matchedPayable?.payable_type ??
           bestPayment?.payable_type ??

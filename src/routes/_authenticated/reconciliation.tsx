@@ -467,7 +467,8 @@ export function ReconciliationRoute() {
         source_b_id: sourceBId,
         client_id: clientId,
         company_id: companyId,
-        payable_type: match.payableType || "dividend",
+        fiscal_year: match.fiscalYear || null,
+        payable_type: match.payableType || (isBankStatement ? "interest" : "dividend"),
         payable_id: payableId,
         expected_amount: isBankStatement ? match.systemAmount : match.excelAmount,
         actual_amount: isBankStatement ? match.excelAmount : match.systemAmount,
@@ -571,11 +572,27 @@ export function ReconciliationRoute() {
         results as ReconciliationResultRow[],
       );
       await ReconciliationService.saveResults(results);
-      if (applyRes.updated === 0 && applyRes.paymentsCreated === 0 && applyRes.errors?.length > 0) {
+      if (
+        applyRes.updated === 0 &&
+        applyRes.paymentsCreated === 0 &&
+        (applyRes.alreadyPaid ?? 0) > 0
+      ) {
+        toast.info(`All ${applyRes.alreadyPaid} records are already marked as Paid in the system.`);
+      } else if (
+        applyRes.updated === 0 &&
+        applyRes.paymentsCreated === 0 &&
+        applyRes.errors?.length > 0
+      ) {
         toast.error(`Reconciliation apply skipped: ${applyRes.errors[0]}`);
+      } else if (applyRes.updated === 0 && applyRes.paymentsCreated === 0) {
+        toast.warning(
+          "Applied reconciliation: 0 payables updated. Check that records have matching pending payables in the system.",
+        );
       } else {
+        const alreadyNote =
+          (applyRes.alreadyPaid ?? 0) > 0 ? ` (${applyRes.alreadyPaid} already paid)` : "";
         toast.success(
-          `Applied reconciliation: ${applyRes.updated} payables updated, ${applyRes.paymentsCreated} payments created.`,
+          `Applied reconciliation: ${applyRes.updated} payables updated, ${applyRes.paymentsCreated} payments created${alreadyNote}.`,
         );
       }
       qc.invalidateQueries({ queryKey: ["payments"] });
@@ -713,11 +730,29 @@ export function ReconciliationRoute() {
       );
       await ReconciliationService.saveResults(allSelectedResults);
       const rejectedCount = allSelectedResults.filter((r) => r.result === "Rejected").length;
-      if (applyRes.updated === 0 && applyRes.paymentsCreated === 0 && applyRes.errors?.length > 0) {
+      if (
+        applyRes.updated === 0 &&
+        applyRes.paymentsCreated === 0 &&
+        (applyRes.alreadyPaid ?? 0) > 0
+      ) {
+        toast.info(
+          `All ${applyRes.alreadyPaid} selected records are already marked as Paid in the system.`,
+        );
+      } else if (
+        applyRes.updated === 0 &&
+        applyRes.paymentsCreated === 0 &&
+        applyRes.errors?.length > 0
+      ) {
         toast.error(`Reconciliation apply skipped: ${applyRes.errors[0]}`);
+      } else if (applyRes.updated === 0 && applyRes.paymentsCreated === 0) {
+        toast.warning(
+          "Applied reconciliation: 0 payables updated. Check that records have matching pending payables in the system.",
+        );
       } else {
+        const alreadyNote =
+          (applyRes.alreadyPaid ?? 0) > 0 ? ` (${applyRes.alreadyPaid} already paid)` : "";
         toast.success(
-          `Applied ${allSelectedResults.length} records: ${applyRes.updated} payables updated to Paid${rejectedCount > 0 ? `, ${rejectedCount} rejected recorded in history` : ""}.`,
+          `Applied ${allSelectedResults.length} records: ${applyRes.updated} payables updated to Paid${rejectedCount > 0 ? `, ${rejectedCount} rejected recorded in history` : ""}${alreadyNote}.`,
         );
       }
       qc.invalidateQueries({ queryKey: ["payments"] });
