@@ -180,12 +180,11 @@ export const ConnectIPSService = {
 
     for (let i = 0; i < lineItems.length; i++) {
       const item = lineItems[i];
-      const amount = Number(
-        item.net_amount ||
-          Number(item.gross_amount || 0) - Number(item.tax_amount || 0) ||
-          item.paid_amount ||
-          0,
-      );
+      const rawNet = item.net_amount ?? null;
+      const rawGross = Number(item.gross_amount ?? 0);
+      const rawTax = Number(item.tax_amount ?? 0);
+      const calculatedNet = rawGross > 0 ? rawGross - rawTax : 0;
+      const amount = Number(rawNet !== null ? rawNet : calculatedNet || item.paid_amount || 0);
       const appPaymentId = `RTA${Date.now().toString(36).toUpperCase()}${item.id.slice(0, 6).toUpperCase()}`;
       const payeeName = item.clients?.full_name || "Shareholder";
       const bankAccount = item.bank_account_no || item.clients?.bank_account_no;
@@ -401,7 +400,7 @@ export const ConnectIPSService = {
       const creditBankName = client.bank_name || "";
       const creditAccountNo = client.bank_account_no || "";
       const beneficiaryName = client.full_name || "Beneficiary";
-      const amount = Number(item.net_amount || item.gross_amount || 0);
+      const amount = Number(item.net_amount ?? item.gross_amount ?? 0);
       const boid = client.boid || "";
       const remarks = `DIV PAYOUT ${companyCode} FY ${batch?.fiscal_year || ""}`.trim();
 
@@ -441,7 +440,7 @@ export const ConnectIPSService = {
     XLSX.writeFile(wb, fileName);
 
     const totalAmount = lineItems.reduce(
-      (s, i) => s + Number(i.net_amount || i.gross_amount || 0),
+      (s, i) => s + Number(i.net_amount ?? i.gross_amount ?? 0),
       0,
     );
     return { totalRows: lineItems.length, totalAmount, fileName };
