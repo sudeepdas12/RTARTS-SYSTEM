@@ -25,18 +25,39 @@ const parseCsvRow = (row: string): string[] => {
 const normalizeAmount = (value: string | number | undefined | null): number => {
   if (value === undefined || value === null) return 0;
   if (typeof value === "number") return value;
-  const sanitized = String(value)
+  let str = String(value).trim();
+  str = str
     .replace(/[,\s]/g, "")
-    .replace(/\(\s*([\d.]+)\s*\)/, "-$1");
+    .replace(/\(\s*([\d.]+)\s*\)/, "-$1")
+    .replace(/(?:CR|DR)$/i, "");
   // Handle "NPRs 25679.85" format
-  const nprMatch = sanitized.match(/NPRs?\s*([\d.]+)/i);
-  const num = Number(nprMatch ? nprMatch[1] : sanitized);
+  const nprMatch = str.match(/NPRs?\s*([\d.]+)/i);
+  const num = Number(nprMatch ? nprMatch[1] : str);
   return Number.isNaN(num) ? 0 : num;
 };
 
-const normalizeDate = (raw: string | number | undefined | null): string => {
+const normalizeDate = (raw: string | number | undefined | null | Date): string => {
   if (!raw) return "";
+  if (raw instanceof Date) {
+    return !Number.isNaN(raw.getTime()) ? raw.toISOString().slice(0, 10) : "";
+  }
+  if (typeof raw === "number") {
+    // Handle 5-digit Excel serial dates (approx 1954 to 2077)
+    if (raw >= 20000 && raw <= 70000) {
+      const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+      const date = new Date(excelEpoch.getTime() + raw * 86400000);
+      return date.toISOString().slice(0, 10);
+    }
+  }
   const str = String(raw).trim();
+  if (/^\d{5}$/.test(str)) {
+    const serial = Number(str);
+    if (serial >= 20000 && serial <= 70000) {
+      const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+      const date = new Date(excelEpoch.getTime() + serial * 86400000);
+      return date.toISOString().slice(0, 10);
+    }
+  }
   if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(str)) {
     const parts = str.split(/[-/]/);
     return `${parts[0]}-${parts[1].padStart(2, "0")}-${parts[2].padStart(2, "0")}`;
@@ -245,14 +266,21 @@ export const BankParser = {
             ? "FUNDING_DEPOSIT"
             : "PAYOUT_DEBIT";
 
+      let finalDebit = debit;
+      let finalCredit = credit;
+      if (indices.debit < 0 && finalDebit === 0 && finalCredit > 0 && category === "PAYOUT_DEBIT") {
+        finalDebit = finalCredit;
+        finalCredit = 0;
+      }
+
       const resolvedStatus = status || (isReject ? "Rejected" : undefined);
 
       transactions.push({
         id: `txn-${rowIndex}`,
         date: indices.date >= 0 ? normalizeDate(columns[indices.date]) : "",
         description: desc,
-        debit,
-        credit,
+        debit: finalDebit,
+        credit: finalCredit,
         balance,
         bankName: indices.bankName >= 0 ? columns[indices.bankName] : undefined,
         accountNo: indices.accountNo >= 0 ? columns[indices.accountNo] : undefined,
@@ -281,7 +309,7 @@ export const BankParser = {
       reader.onload = (e) => {
         try {
           const data = new Uint8Array(e.target?.result as ArrayBuffer);
-          const workbook = XLSX.read(data, { type: "array" });
+          const workbook = XLSX.read(data, { type: "array", cellDates: true });
           const transactions: BankTransaction[] = [];
 
           // Choose the primary sheet
@@ -470,6 +498,10 @@ export const BankParser = {
               // Intelligent Classification
               const upperDesc = rawDesc.toUpperCase();
               const upperFileName = file.name.toUpperCase();
+              const rowStatus =
+                indices.status >= 0 && row[indices.status]
+                  ? String(row[indices.status]).trim().toUpperCase()
+                  : "";
               const isCircular = upperDesc.includes("NRB CIRCULAR");
 
               // If options specify to exclude circular sweeps, skip them
@@ -487,15 +519,19 @@ export const BankParser = {
                 upperFileName.includes("SETTLEMENT") ||
                 upperFileName.includes("LOT");
 
-              if (isCircular) {
-                category = "NRB_CIRCULAR";
-              } else if (
+              const isReject =
+                rowStatus === "RJCT" ||
+                rowStatus.includes("REJECT") ||
+                rowStatus.includes("FAIL") ||
                 upperDesc.includes("INCORRECT A/C") ||
                 upperDesc.includes("REJECT") ||
                 upperDesc.includes("RETURN") ||
                 upperDesc.includes("BOUNCE") ||
-                upperDesc.includes("RJCT")
-              ) {
+                upperDesc.includes("RJCT");
+
+              if (isCircular) {
+                category = "NRB_CIRCULAR";
+              } else if (isReject) {
                 category = "REJECT_RETURN";
                 autoStatus = "RJCT";
               } else if (
@@ -522,6 +558,20 @@ export const BankParser = {
                 category = "FUNDING_DEPOSIT";
               } else if (withdrawVal > 0) {
                 category = "PAYOUT_DEBIT";
+              }
+
+              let finalDebit = withdrawVal;
+              let finalCredit = depositVal;
+
+              // If settlement report or payout with a single amount column, map amount to debit
+              if (
+                indices.debit < 0 &&
+                finalDebit === 0 &&
+                finalCredit > 0 &&
+                (category === "PAYOUT_DEBIT" || isSettlementReport)
+              ) {
+                finalDebit = finalCredit;
+                finalCredit = 0;
               }
 
               // Extract account number from description if not in dedicated column
@@ -563,16 +613,16 @@ export const BankParser = {
               const description =
                 rawDesc ||
                 extractedName ||
-                (withdrawVal > 0
-                  ? `Debit Payment ${withdrawVal}`
-                  : `Credit Settlement ${depositVal}`);
+                (finalDebit > 0
+                  ? `Debit Payment ${finalDebit}`
+                  : `Credit Settlement ${finalCredit}`);
 
               transactions.push({
                 id: `txn-${sheetName}-${i}`,
                 date: indices.date >= 0 ? normalizeDate(row[indices.date]) : "",
                 description,
-                debit: withdrawVal,
-                credit: depositVal,
+                debit: finalDebit,
+                credit: finalCredit,
                 balance: balanceVal,
                 bankName:
                   indices.bankName >= 0 ? String(row[indices.bankName] || "").trim() : undefined,
@@ -616,24 +666,42 @@ export const BankParser = {
     }
 
     const allTransactions: BankTransaction[] = [];
-    const seenTxnKeys = new Set<string>();
+    const seenInstructionIds = new Set<string>();
+    const seenFileSignatures = new Set<string>();
+    const seenCrossFileLedger = new Set<string>();
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
+      const fileSig = `${file.name}_${file.size}`;
+      if (seenFileSignatures.has(fileSig)) {
+        continue;
+      }
+      seenFileSignatures.add(fileSig);
+
       options.onProgress?.(i + 1, files.length, file.name);
 
       try {
         const txns = await this.parseBankStatement(file, options);
         for (const t of txns) {
-          // Deduplication key: instructionId if available, else date + amounts + accountNo + desc
-          const key = t.instructionId
-            ? `inst-${t.instructionId}`
-            : `${t.date}_${t.debit}_${t.credit}_${t.balance}_${t.accountNo || ""}_${String(t.description || "").slice(0, 30)}`;
-
-          if (!seenTxnKeys.has(key)) {
-            seenTxnKeys.add(key);
-            allTransactions.push(t);
+          const idRef = t.instructionId || t.referenceId;
+          if (idRef && idRef.trim()) {
+            const instKey = idRef.trim().toUpperCase();
+            if (seenInstructionIds.has(instKey)) {
+              continue;
+            }
+            seenInstructionIds.add(instKey);
+          } else if (i > 0 && (t.balance !== 0 || t.accountNo)) {
+            const ledgerKey = `${t.accountNo || ""}_${t.date}_${t.debit}_${t.credit}_${t.balance}_${t.description.trim()}`;
+            if (seenCrossFileLedger.has(ledgerKey)) {
+              continue;
+            }
+            seenCrossFileLedger.add(ledgerKey);
+          } else {
+            const ledgerKey = `${t.accountNo || ""}_${t.date}_${t.debit}_${t.credit}_${t.balance}_${t.description.trim()}`;
+            seenCrossFileLedger.add(ledgerKey);
           }
+
+          allTransactions.push(t);
         }
       } catch (err) {
         console.warn(`Failed to parse file ${file.name}:`, err);

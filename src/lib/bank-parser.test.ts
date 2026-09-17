@@ -107,4 +107,60 @@ describe("BankParser Comprehensive Unit Tests", () => {
     expect(txs).toHaveLength(1);
     expect(txs[0].date).toBe("2026-04-15");
   });
+
+  it("handles amounts with CR / DR suffixes cleanly", async () => {
+    const csvContent = [
+      "Date,Description,Debit,Credit,Balance",
+      "2026-04-15,Dividend Payout,1500.00 DR,0.00,50000.00 CR",
+    ].join("\n");
+
+    const file = createMockFile(csvContent, "cr_dr.csv");
+    const txs = await BankParser.parseBankStatement(file);
+
+    expect(txs).toHaveLength(1);
+    expect(txs[0].debit).toBe(1500);
+    expect(txs[0].balance).toBe(50000);
+  });
+
+  it("preserves identical payouts within the same file and deduplicates across files", async () => {
+    // File 1 has two identical dividend amounts to different people or multiple payouts
+    const file1Content = [
+      "Date,Description,Debit,Credit,Balance,Account No",
+      "2026-04-15,Dividend Payout,1000,0,50000,001001",
+      "2026-04-15,Dividend Payout,1000,0,49000,001002",
+    ].join("\n");
+
+    // File 2 has an instructionId that matches an existing transaction
+    const file2Content = [
+      "Date,Description,Debit,Credit,Balance,Instruction ID",
+      "2026-04-15,Dividend Payout,1000,0,48000,INST-9999",
+      "2026-04-15,Dividend Payout,1000,0,48000,INST-9999", // duplicate instruction in file 2
+    ].join("\n");
+
+    const file1 = createMockFile(file1Content, "batch1.csv");
+    const file2 = createMockFile(file2Content, "batch2.csv");
+
+    const txs = await BankParser.parseMultipleFiles([file1, file2]);
+
+    // File 1 must keep BOTH rows (no false intra-file deduplication)
+    expect(txs.filter((t) => t.fileName === "batch1.csv")).toHaveLength(2);
+    // File 2 must have deduplicated the duplicate instructionId across rows
+    expect(txs.filter((t) => t.fileName === "batch2.csv")).toHaveLength(1);
+    expect(txs).toHaveLength(3);
+  });
+
+  it("maps single amount column payout settlement to debit", async () => {
+    const csvContent = [
+      "Date,Particulars,Amount,Account No,Beneficiary Name,Status",
+      "2026-04-15,Dividend Payout Batch 2,2500.00,00100100777,Hari Prasad,ACSC",
+    ].join("\n");
+
+    const file = createMockFile(csvContent, "connectips_settlement.csv");
+    const txs = await BankParser.parseBankStatement(file);
+
+    expect(txs).toHaveLength(1);
+    expect(txs[0].debit).toBe(2500);
+    expect(txs[0].credit).toBe(0);
+    expect(txs[0].category).toBe("PAYOUT_DEBIT");
+  });
 });

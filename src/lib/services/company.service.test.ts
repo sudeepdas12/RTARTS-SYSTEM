@@ -43,6 +43,10 @@ describe("CompanyService.autoRegisterCompany and findMatchingCompany", () => {
       email: "admin@rbbmbl.com.np",
       password: "Admin123!",
     });
+    await (supabase as any)
+      .from("companies")
+      .delete()
+      .ilike("company_name", "%RBB Debentures 2083%");
   });
 
   afterEach(async () => {

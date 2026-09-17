@@ -265,7 +265,14 @@ export const CompanyService = {
         updates.dividend_rate = params.rate;
       }
       if (Object.keys(updates).length > 0) {
-        await supabase.from("companies").update(updates).eq("id", existing.id);
+        const { data: updated } = await supabase
+          .from("companies")
+          .update(updates)
+          .eq("id", existing.id)
+          .select()
+          .maybeSingle();
+        if (updated) return updated;
+        Object.assign(existing, updates);
       }
       return existing;
     }

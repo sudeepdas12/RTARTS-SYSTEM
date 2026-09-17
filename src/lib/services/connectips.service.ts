@@ -180,7 +180,12 @@ export const ConnectIPSService = {
 
     for (let i = 0; i < lineItems.length; i++) {
       const item = lineItems[i];
-      const amount = Number(item.net_amount || item.paid_amount || 0);
+      const amount = Number(
+        item.net_amount ||
+          Number(item.gross_amount || 0) - Number(item.tax_amount || 0) ||
+          item.paid_amount ||
+          0,
+      );
       const appPaymentId = `RTA${Date.now().toString(36).toUpperCase()}${item.id.slice(0, 6).toUpperCase()}`;
       const payeeName = item.clients?.full_name || "Shareholder";
       const bankAccount = item.bank_account_no || item.clients?.bank_account_no;
@@ -487,19 +492,40 @@ export const ConnectIPSService = {
 
         failedItems.push({ lineItemId, boid, reason, amount });
 
-        // If lineItemId is provided, update payment record to Failed
+        // If lineItemId is provided, update payment record to Failed and reset underlying payable to Pending
         if (lineItemId && /^[0-9a-fA-F-]{36}$/.test(String(lineItemId))) {
           try {
-            await (supabase as any)
+            const { data: pmt } = await (supabase as any)
               .from("payments")
               .update({
                 status: "Failed",
                 remarks: `Disbursement returned: ${reason}`,
                 updated_at: new Date().toISOString(),
               })
-              .eq("id", lineItemId);
-          } catch {
-            // Ignore
+              .eq("id", lineItemId)
+              .select("payable_id, payable_type")
+              .maybeSingle();
+
+            if (pmt?.payable_id) {
+              const targetTbl =
+                pmt.payable_type === "dividend" || pmt.payable_type === "dividend_payables"
+                  ? "dividend_payables"
+                  : pmt.payable_type === "mutual_fund" ||
+                      pmt.payable_type === "mutual_fund_payables"
+                    ? "mutual_fund_payables"
+                    : "interest_payables";
+
+              await (supabase as any)
+                .from(targetTbl)
+                .update({
+                  payment_status: "Pending",
+                  remarks: `Disbursement returned: ${reason} [${new Date().toISOString().slice(0, 10)}]`,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", pmt.payable_id);
+            }
+          } catch (pmtErr) {
+            console.warn("Failed to update returned disbursement status:", pmtErr);
           }
         }
       }

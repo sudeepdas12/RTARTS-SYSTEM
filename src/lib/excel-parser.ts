@@ -692,23 +692,69 @@ export const ExcelParser = {
         else defaultTdsRate = 0.05; // Both Natural and Legal Persons pay 5% for dividend
       }
 
-      // Find Header Row (first row with >=3 non-empty string column names)
+      // Find Header Row: Scan up to 25 rows and score by domain-specific column keywords.
+      // This prevents selecting metadata/banner rows (which may have 3 strings) instead of actual table headers.
+      const domainKeywords = [
+        "boid",
+        "name",
+        "kitta",
+        "shares",
+        "amount",
+        "dividend",
+        "interest",
+        "tax",
+        "net",
+        "payable",
+        "gross",
+        "bank",
+        "account",
+        "wht",
+        "tds",
+        "sn",
+        "s.n.",
+        "holder",
+        "client",
+        "warrant",
+        "folio",
+        "rate",
+        "pumori",
+        "actual",
+        "round",
+      ];
+
+      let bestHeaderScore = -1;
       let headerRowIndex = 0;
       let headers: string[] = [];
-      for (let i = 0; i < Math.min(12, json.length); i++) {
+
+      for (let i = 0; i < Math.min(25, json.length); i++) {
         const row = json[i] as any[];
-        if (
-          row &&
-          row.length >= 3 &&
-          row.some((c) => typeof c === "string" && c.trim().length > 0)
-        ) {
-          // Check if this row looks like actual column titles (not title banner)
-          const strCount = row.filter((c) => typeof c === "string" && c.trim().length > 0).length;
-          if (strCount >= 3) {
-            headers = row.map((h) => (h !== undefined && h !== null ? h.toString().trim() : ""));
-            headerRowIndex = i;
+        if (!row || row.length < 3) continue;
+
+        const stringCells = row
+          .filter((c) => typeof c === "string" && c.trim().length > 0)
+          .map((c) => c.toString().trim().toLowerCase());
+
+        if (stringCells.length < 3) continue;
+
+        let score = 0;
+        for (const cell of stringCells) {
+          const cleanCell = cell.replace(/[^a-z0-9]/g, "");
+          if (domainKeywords.some((kw) => cleanCell.includes(kw.replace(/[^a-z0-9]/g, "")))) {
+            score++;
+          }
+        }
+
+        if (score > bestHeaderScore && score >= 2) {
+          bestHeaderScore = score;
+          headerRowIndex = i;
+          headers = row.map((h) => (h !== undefined && h !== null ? h.toString().trim() : ""));
+          if (score >= 4) {
             break;
           }
+        } else if (bestHeaderScore < 0 && stringCells.length >= 3) {
+          bestHeaderScore = 0;
+          headerRowIndex = i;
+          headers = row.map((h) => (h !== undefined && h !== null ? h.toString().trim() : ""));
         }
       }
 
