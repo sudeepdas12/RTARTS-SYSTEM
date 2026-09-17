@@ -469,6 +469,7 @@ export const BankParser = {
 
               // Intelligent Classification
               const upperDesc = rawDesc.toUpperCase();
+              const upperFileName = file.name.toUpperCase();
               const isCircular = upperDesc.includes("NRB CIRCULAR");
 
               // If options specify to exclude circular sweeps, skip them
@@ -478,6 +479,13 @@ export const BankParser = {
 
               let category: BankTransaction["category"] = "OTHER";
               let autoStatus: string | undefined = undefined;
+
+              const isSettlementReport =
+                indices.creditorName >= 0 ||
+                indices.batchId >= 0 ||
+                upperFileName.includes("IPS") ||
+                upperFileName.includes("SETTLEMENT") ||
+                upperFileName.includes("LOT");
 
               if (isCircular) {
                 category = "NRB_CIRCULAR";
@@ -491,6 +499,7 @@ export const BankParser = {
                 category = "REJECT_RETURN";
                 autoStatus = "RJCT";
               } else if (
+                isSettlementReport ||
                 upperDesc.includes("INTEREST") ||
                 upperDesc.includes("DEBENTURE") ||
                 upperDesc.includes("DIVIDEND") ||

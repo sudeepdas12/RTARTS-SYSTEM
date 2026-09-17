@@ -571,9 +571,13 @@ export function ReconciliationRoute() {
         results as ReconciliationResultRow[],
       );
       await ReconciliationService.saveResults(results);
-      toast.success(
-        `Applied reconciliation: ${applyRes.updated} payables updated, ${applyRes.paymentsCreated} payments created.`,
-      );
+      if (applyRes.updated === 0 && applyRes.paymentsCreated === 0 && applyRes.errors?.length > 0) {
+        toast.error(`Reconciliation apply skipped: ${applyRes.errors[0]}`);
+      } else {
+        toast.success(
+          `Applied reconciliation: ${applyRes.updated} payables updated, ${applyRes.paymentsCreated} payments created.`,
+        );
+      }
       qc.invalidateQueries({ queryKey: ["payments"] });
       qc.invalidateQueries({ queryKey: ["payables"] });
       qc.invalidateQueries({ queryKey: ["interest_payables"] });
@@ -709,9 +713,13 @@ export function ReconciliationRoute() {
       );
       await ReconciliationService.saveResults(allSelectedResults);
       const rejectedCount = allSelectedResults.filter((r) => r.result === "Rejected").length;
-      toast.success(
-        `Applied ${allSelectedResults.length} records: ${applyRes.updated} payables updated to Paid${rejectedCount > 0 ? `, ${rejectedCount} rejected recorded in history` : ""}.`,
-      );
+      if (applyRes.updated === 0 && applyRes.paymentsCreated === 0 && applyRes.errors?.length > 0) {
+        toast.error(`Reconciliation apply skipped: ${applyRes.errors[0]}`);
+      } else {
+        toast.success(
+          `Applied ${allSelectedResults.length} records: ${applyRes.updated} payables updated to Paid${rejectedCount > 0 ? `, ${rejectedCount} rejected recorded in history` : ""}.`,
+        );
+      }
       qc.invalidateQueries({ queryKey: ["payments"] });
       qc.invalidateQueries({ queryKey: ["payables"] });
       qc.invalidateQueries({ queryKey: ["interest_payables"] });

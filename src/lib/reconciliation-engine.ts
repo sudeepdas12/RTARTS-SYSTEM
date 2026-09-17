@@ -720,7 +720,8 @@ export const ReconciliationEngine = {
       let matchedBatch: any = null;
       const matchSources: string[] = [];
 
-      // 1. Match against Payments
+      // PHASE 1: EXACT MATCHES (within RECONCILIATION_TOLERANCE_NPR)
+      // 1a. Match against Payments by Account + Exact Amount
       if (txnAcct) {
         const acctPayments = paymentsByAcct.get(txnAcct) || [];
         bestPayment =
@@ -730,7 +731,20 @@ export const ReconciliationEngine = {
               Math.abs(Number(p.net_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR,
           ) || null;
       }
-      if (!bestPayment && txnName) {
+
+      // 1b. Match against Payables by Account + Exact Amount
+      if (!bestPayment && txnAcct) {
+        const acctPayables = payablesByAcct.get(txnAcct) || [];
+        matchedPayable =
+          acctPayables.find(
+            (p) =>
+              !usedPayableIds.has(p.id) &&
+              Math.abs(Number(p.net_payable) - amount) <= RECONCILIATION_TOLERANCE_NPR,
+          ) || null;
+      }
+
+      // 1c. Match against Payments by Name + Exact Amount
+      if (!bestPayment && !matchedPayable && txnName) {
         const namePayments = paymentsByName.get(txnName) || [];
         bestPayment =
           namePayments.find(
@@ -739,56 +753,19 @@ export const ReconciliationEngine = {
               Math.abs(Number(p.net_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR,
           ) || null;
       }
-      if (!bestPayment && txnAcct) {
-        const acctPayments = paymentsByAcct.get(txnAcct) || [];
-        bestPayment = acctPayments.find((p) => !usedPaymentIds.has(p.id)) || null;
-      }
-      if (!bestPayment) {
-        const amtPayments = paymentsByAmt.get(amtKey) || [];
-        bestPayment = amtPayments.find((p) => !usedPaymentIds.has(p.id)) || null;
-      }
 
-      if (bestPayment) {
-        matchSources.push("payment");
-        usedPaymentIds.add(bestPayment.id);
+      // 1d. Match against Payables by Name + Exact Amount
+      if (!bestPayment && !matchedPayable && txnName) {
+        const namePayables = payablesByName.get(txnName) || [];
+        matchedPayable =
+          namePayables.find(
+            (p) =>
+              !usedPayableIds.has(p.id) &&
+              Math.abs(Number(p.net_payable) - amount) <= RECONCILIATION_TOLERANCE_NPR,
+          ) || null;
       }
 
-      // 2. If no payment matched, match against Payables
-      if (!bestPayment) {
-        if (txnAcct) {
-          const acctPayables = payablesByAcct.get(txnAcct) || [];
-          matchedPayable =
-            acctPayables.find(
-              (p) =>
-                !usedPayableIds.has(p.id) &&
-                Math.abs(Number(p.net_payable) - amount) <= RECONCILIATION_TOLERANCE_NPR,
-            ) || null;
-        }
-        if (!matchedPayable && txnName) {
-          const namePayables = payablesByName.get(txnName) || [];
-          matchedPayable =
-            namePayables.find(
-              (p) =>
-                !usedPayableIds.has(p.id) &&
-                Math.abs(Number(p.net_payable) - amount) <= RECONCILIATION_TOLERANCE_NPR,
-            ) || null;
-        }
-        if (!matchedPayable && txnAcct) {
-          const acctPayables = payablesByAcct.get(txnAcct) || [];
-          matchedPayable = acctPayables.find((p) => !usedPayableIds.has(p.id)) || null;
-        }
-        if (!matchedPayable) {
-          const amtPayables = payablesByAmt.get(amtKey) || [];
-          matchedPayable = amtPayables.find((p) => !usedPayableIds.has(p.id)) || null;
-        }
-
-        if (matchedPayable) {
-          matchSources.push("payable");
-          usedPayableIds.add(matchedPayable.id);
-        }
-      }
-
-      // 3. Match against Payment Batches (for aggregate statement entries)
+      // 1e. Match against Payment Batches (for aggregate statement entries) by Exact Amount
       if (
         !bestPayment &&
         !matchedPayable &&
@@ -813,17 +790,68 @@ export const ReconciliationEngine = {
 
         if (batchMatch) {
           matchedBatch = batchMatch;
-          matchSources.push("payment_batch");
-          usedBatchIds.add(batchMatch.id);
         }
+      }
+
+      // 1f. Match against Payments by Exact Amount only (fallback for known amount)
+      if (!bestPayment && !matchedPayable && !matchedBatch && amount > 0) {
+        const amtPayments = paymentsByAmt.get(amtKey) || [];
+        bestPayment = amtPayments.find((p) => !usedPaymentIds.has(p.id)) || null;
+      }
+
+      // 1g. Match against Payables by Exact Amount only
+      if (!bestPayment && !matchedPayable && !matchedBatch && amount > 0) {
+        const amtPayables = payablesByAmt.get(amtKey) || [];
+        matchedPayable = amtPayables.find((p) => !usedPayableIds.has(p.id)) || null;
+      }
+
+      // PHASE 2: PARTIAL / DISCREPANCY MATCHES (Only if NO exact match was found anywhere)
+      if (!bestPayment && !matchedPayable && !matchedBatch) {
+        if (txnAcct) {
+          const acctPayments = paymentsByAcct.get(txnAcct) || [];
+          bestPayment = acctPayments.find((p) => !usedPaymentIds.has(p.id)) || null;
+        }
+        if (!bestPayment && txnAcct) {
+          const acctPayables = payablesByAcct.get(txnAcct) || [];
+          matchedPayable = acctPayables.find((p) => !usedPayableIds.has(p.id)) || null;
+        }
+        if (!bestPayment && !matchedPayable && txnName) {
+          const namePayments = paymentsByName.get(txnName) || [];
+          bestPayment = namePayments.find((p) => !usedPaymentIds.has(p.id)) || null;
+        }
+        if (!bestPayment && !matchedPayable && txnName) {
+          const namePayables = payablesByName.get(txnName) || [];
+          matchedPayable = namePayables.find((p) => !usedPayableIds.has(p.id)) || null;
+        }
+      }
+
+      // Link payment to payable if payable matched and payment not yet linked
+      if (matchedPayable && !bestPayment) {
+        const pmtForPayable = payments.find((p: any) => p.payable_id === matchedPayable.id);
+        if (pmtForPayable && !usedPaymentIds.has(pmtForPayable.id)) {
+          bestPayment = pmtForPayable;
+        }
+      }
+
+      if (bestPayment) {
+        matchSources.push("payment");
+        usedPaymentIds.add(bestPayment.id);
+      }
+      if (matchedPayable) {
+        matchSources.push("payable");
+        usedPayableIds.add(matchedPayable.id);
+      }
+      if (matchedBatch) {
+        matchSources.push("payment_batch");
+        usedBatchIds.add(matchedBatch.id);
       }
 
       const client = bestPayment?.clients || matchedPayable?.clients || null;
       let systemAmount = 0;
-      if (bestPayment) {
-        systemAmount = Number(bestPayment.net_amount ?? 0);
-      } else if (matchedPayable) {
+      if (matchedPayable) {
         systemAmount = Number(matchedPayable.net_payable ?? 0);
+      } else if (bestPayment) {
+        systemAmount = Number(bestPayment.net_amount ?? 0);
       } else if (matchedBatch) {
         systemAmount = Number(matchedBatch.total_net || matchedBatch.total_amount || 0);
       }

@@ -590,6 +590,7 @@ export const ReconciliationService = {
         expected_amount: Number(r.expected_amount || r.actual_amount || 0),
         paid_amount: Number(r.actual_amount || r.expected_amount || 0),
         result: r.result,
+        reconciliation_result: r.result,
         bank_name: r.client?.bank_name || (r as any).bank_name || null,
         bank_account_no: r.client?.bank_account_no || (r as any).bank_account_no || null,
         payment_reference: `RECON-${r.id ? String(r.id).slice(0, 8) : "AUTO"}`,
@@ -619,7 +620,7 @@ export const ReconciliationService = {
       );
     }
 
-    updated = Number(rpcRes.updated || 0);
+    updated = Number(rpcRes.payables_updated ?? rpcRes.updated ?? 0);
     paymentsCreated = Number(rpcRes.payments_created ?? rpcRes.paymentsCreated ?? 0);
     if (Array.isArray(rpcRes.errors) && rpcRes.errors.length > 0) {
       for (const err of rpcRes.errors) {
