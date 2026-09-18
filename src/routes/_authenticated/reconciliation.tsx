@@ -458,6 +458,10 @@ export function ReconciliationRoute() {
     return filteredMatches.filter((m) => m.status === "Matched");
   }, [filteredMatches]);
 
+  const partialMatches = useMemo(() => {
+    return filteredMatches.filter((m) => m.status === "Under_Paid" || m.status === "Over_Paid");
+  }, [filteredMatches]);
+
   const isUUID = (str: any): boolean =>
     typeof str === "string" &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
@@ -1179,12 +1183,20 @@ export function ReconciliationRoute() {
           </div>
 
           {report.summary && (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
               <Card>
                 <CardContent className="pt-4 pb-3">
-                  <p className="text-xs text-muted-foreground">Matched (Payable)</p>
+                  <p className="text-xs text-muted-foreground">Exact Matches</p>
                   <p className="text-lg font-bold text-green-600">
-                    {report.summary.matchedFromPayable}
+                    {report.grandTotal.matchedRecords}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-4 pb-3">
+                  <p className="text-xs text-muted-foreground">Partial / Installments</p>
+                  <p className="text-lg font-bold text-amber-600">
+                    {report.grandTotal.partialRecords || 0}
                   </p>
                 </CardContent>
               </Card>
@@ -1212,9 +1224,9 @@ export function ReconciliationRoute() {
               </Card>
               <Card>
                 <CardContent className="pt-4 pb-3">
-                  <p className="text-xs text-muted-foreground">Discrepancies</p>
-                  <p className="text-lg font-bold text-amber-600">
-                    {report.grandTotal.discrepancyCount}
+                  <p className="text-xs text-muted-foreground">Rejected / Bounced</p>
+                  <p className="text-lg font-bold text-rose-600">
+                    {report.grandTotal.rejectedCount}
                   </p>
                 </CardContent>
               </Card>
@@ -1228,21 +1240,38 @@ export function ReconciliationRoute() {
                   <span className="font-medium">Overall Match Rate</span>
                   <span className="font-medium text-primary">
                     {Math.round(
-                      (report.grandTotal.matchedRecords /
+                      (((report.grandTotal.matchedRecords || 0) +
+                        (report.grandTotal.partialRecords || 0)) /
                         Math.max(1, report.grandTotal.totalRecords)) *
                         100,
                     )}
-                    %
+                    % (
+                    {(report.grandTotal.matchedRecords || 0) +
+                      (report.grandTotal.partialRecords || 0)}{" "}
+                    of {report.grandTotal.totalRecords} matched
+                    {(report.grandTotal.partialRecords || 0) > 0
+                      ? ` • ${report.grandTotal.partialRecords} partial/installments`
+                      : ""}
+                    )
                   </span>
                 </div>
                 <div className="h-4 w-full bg-muted rounded-full overflow-hidden flex">
                   <div
                     className="bg-green-500 h-full transition-all"
                     style={{
-                      width: `${(report.summary.matchedFromPayable / Math.max(1, report.grandTotal.totalRecords)) * 100}%`,
+                      width: `${(report.grandTotal.matchedRecords / Math.max(1, report.grandTotal.totalRecords)) * 100}%`,
                     }}
-                    title="Matched from Payable"
+                    title={`Exact Matches (${report.grandTotal.matchedRecords})`}
                   />
+                  {(report.grandTotal.partialRecords || 0) > 0 && (
+                    <div
+                      className="bg-amber-400 h-full transition-all"
+                      style={{
+                        width: `${((report.grandTotal.partialRecords || 0) / Math.max(1, report.grandTotal.totalRecords)) * 100}%`,
+                      }}
+                      title={`Partial / Installment Matches (${report.grandTotal.partialRecords})`}
+                    />
+                  )}
                   <div
                     className="bg-blue-500 h-full transition-all"
                     style={{
@@ -1258,13 +1287,6 @@ export function ReconciliationRoute() {
                     title="Matched from Bank"
                   />
                   <div
-                    className="bg-amber-400 h-full transition-all"
-                    style={{
-                      width: `${(report.grandTotal.discrepancyCount / Math.max(1, report.grandTotal.totalRecords)) * 100}%`,
-                    }}
-                    title="Discrepancies"
-                  />
-                  <div
                     className="bg-red-500 h-full transition-all"
                     style={{
                       width: `${(report.summary.missingInSystem / Math.max(1, report.grandTotal.totalRecords)) * 100}%`,
@@ -1274,16 +1296,16 @@ export function ReconciliationRoute() {
                 </div>
                 <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-muted-foreground">
                   <div className="flex items-center">
-                    <div className="w-2 h-2 rounded-full bg-green-500 mr-1" /> Payable Match
+                    <div className="w-2 h-2 rounded-full bg-green-500 mr-1" /> Exact Match
+                  </div>
+                  <div className="flex items-center">
+                    <div className="w-2 h-2 rounded-full bg-amber-400 mr-1" /> Partial / Installment
                   </div>
                   <div className="flex items-center">
                     <div className="w-2 h-2 rounded-full bg-blue-500 mr-1" /> Payment Match
                   </div>
                   <div className="flex items-center">
                     <div className="w-2 h-2 rounded-full bg-purple-500 mr-1" /> Bank Match
-                  </div>
-                  <div className="flex items-center">
-                    <div className="w-2 h-2 rounded-full bg-amber-400 mr-1" /> Discrepancies
                   </div>
                   <div className="flex items-center">
                     <div className="w-2 h-2 rounded-full bg-red-500 mr-1" /> Missing
@@ -1293,35 +1315,57 @@ export function ReconciliationRoute() {
             </Card>
           )}
 
-          {report.grandTotal.matchedRecords === 0 && report.matches.length > 0 && (
-            <div className="flex items-start gap-2.5 p-3.5 bg-amber-500/10 border border-amber-500/20 text-amber-900 dark:text-amber-200 rounded-xl text-xs mb-3">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+          {report.grandTotal.matchedRecords === 0 &&
+            (report.grandTotal.partialRecords || 0) === 0 &&
+            report.matches.length > 0 && (
+              <div className="flex items-start gap-2.5 p-3.5 bg-amber-500/10 border border-amber-500/20 text-amber-900 dark:text-amber-200 rounded-xl text-xs mb-3">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                <div>
+                  <p className="font-semibold text-sm mb-1">
+                    No Matching Records Found (0 Matches)
+                  </p>
+                  <p>
+                    All {report.matches.length.toLocaleString()} records in this file are currently
+                    categorized as &ldquo;Missing&rdquo; because no matching Pending payables or
+                    payments could be found by Account Number, Shareholder Name, or ConnectIPS
+                    Reference.
+                  </p>
+                  <ul className="list-disc pl-4 mt-1.5 space-y-1">
+                    <li>
+                      <strong>General Bank Statements:</strong> Consolidated sweep entries (e.g.{" "}
+                      <em>NRB Circular</em>) and lump-sum batch debits (e.g. <em>IPS DR</em>)
+                      require the individual ConnectIPS LOT settlement reports to be uploaded and
+                      applied first so payment batches exist.
+                    </li>
+                    <li>
+                      <strong>ConnectIPS Settlement Reports (LOT files):</strong> Ensure that the
+                      underlying payables (Dividend, Interest/Debenture, or Mutual Fund) for this
+                      company and fiscal year have been imported via the <strong>Upload</strong>{" "}
+                      section.
+                    </li>
+                    <li>
+                      <strong>Company Filter:</strong> Verify that the company selected in the top
+                      filter matches the company whose disbursements are in this file.
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            )}
+
+          {(report.grandTotal.partialRecords || 0) > 0 && (
+            <div className="flex items-start gap-2.5 p-3.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-900 dark:text-emerald-200 rounded-xl text-xs mb-3">
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
               <div>
-                <p className="font-semibold text-sm mb-1">No Matching Records Found (0 Matches)</p>
-                <p>
-                  All {report.matches.length.toLocaleString()} records in this file are currently
-                  categorized as &ldquo;Missing&rdquo; because no matching Pending payables or
-                  payments could be found by Account Number, Shareholder Name, or ConnectIPS
-                  Reference.
+                <p className="font-semibold text-sm mb-1">
+                  Semi-Annual / Installment Matches Detected ({report.grandTotal.partialRecords}{" "}
+                  records)
                 </p>
-                <ul className="list-disc pl-4 mt-1.5 space-y-1">
-                  <li>
-                    <strong>General Bank Statements:</strong> Consolidated sweep entries (e.g.{" "}
-                    <em>NRB Circular</em>) and lump-sum batch debits (e.g. <em>IPS DR</em>) require
-                    the individual ConnectIPS LOT settlement reports to be uploaded and applied
-                    first so payment batches exist.
-                  </li>
-                  <li>
-                    <strong>ConnectIPS Settlement Reports (LOT files):</strong> Ensure that the
-                    underlying payables (Dividend, Interest/Debenture, or Mutual Fund) for this
-                    company and fiscal year have been imported via the <strong>Upload</strong>{" "}
-                    section.
-                  </li>
-                  <li>
-                    <strong>Company Filter:</strong> Verify that the company selected in the top
-                    filter matches the company whose disbursements are in this file.
-                  </li>
-                </ul>
+                <p>
+                  These records successfully matched shareholder accounts in the system with partial
+                  payout amounts (e.g. semi-annual debenture interest). Applying reconciliation will
+                  update these payables to <strong>&ldquo;Partial&rdquo;</strong> status and create
+                  corresponding payment records with the disbursed installment amount.
+                </p>
               </div>
             </div>
           )}
@@ -1494,7 +1538,18 @@ export function ReconciliationRoute() {
                 <TabsList className="mb-4">
                   <TabsTrigger value="all">All Records ({filteredMatches.length})</TabsTrigger>
                   <TabsTrigger value="matched">
-                    Matched / Paid ({matchedOnlyMatches.length})
+                    Exact Matches ({matchedOnlyMatches.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="partial">
+                    Partial / Installments ({partialMatches.length})
+                    {partialMatches.length > 0 && (
+                      <Badge
+                        variant="secondary"
+                        className="ml-2 h-5 text-[10px] rounded-full px-1.5 min-w-[20px] justify-center bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200"
+                      >
+                        {partialMatches.length}
+                      </Badge>
+                    )}
                   </TabsTrigger>
                   <TabsTrigger value="rejected">
                     Rejected / Bounced ({rejectedMatches.length})
@@ -1537,10 +1592,32 @@ export function ReconciliationRoute() {
                 >
                   {matchedOnlyMatches.length === 0 ? (
                     <p className="text-sm text-muted-foreground text-center py-8">
-                      No matched records found.
+                      No exact matched records found.
                     </p>
                   ) : (
                     matchedOnlyMatches.map(renderMatchRow)
+                  )}
+                </TabsContent>
+                <TabsContent
+                  value="partial"
+                  className="m-0 space-y-2 max-h-[600px] overflow-y-auto pr-1"
+                >
+                  {partialMatches.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-8">
+                      No partial or installment records found.
+                    </p>
+                  ) : (
+                    <>
+                      <Alert className="mb-3 bg-amber-500/10 border-amber-500/20 text-amber-900 dark:text-amber-200">
+                        <Info className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                        <AlertDescription className="text-xs">
+                          These {partialMatches.length} records matched shareholder accounts in the
+                          system with partial payout amounts (e.g. semi-annual debenture interest).
+                          When applied, payables will update to &ldquo;Partial&rdquo; status.
+                        </AlertDescription>
+                      </Alert>
+                      {partialMatches.map(renderMatchRow)}
+                    </>
                   )}
                 </TabsContent>
                 <TabsContent

@@ -80,6 +80,7 @@ export interface ComprehensiveReconciliationReport {
     totalTaxAmount: number;
     totalNetPayable: number;
     matchedRecords: number;
+    partialRecords?: number;
     discrepancyCount: number;
     pledgedCount: number;
     rejectedCount: number;
@@ -88,6 +89,7 @@ export interface ComprehensiveReconciliationReport {
     matchedFromPayable: number;
     matchedFromPayment: number;
     matchedFromBank: number;
+    partialMatches?: number;
     missingInSystem: number;
     unmatchedBankTransactions: number;
   };
@@ -668,7 +670,7 @@ export const ReconciliationEngine = {
           .select(
             "id,company_id,batch_name,total_amount,total_tax,total_payments,payable_type,status,cds_batch_ref,created_at",
           );
-        if (companyId) q = q.eq("company_id", companyId);
+        if (companyId) q = q.or(`company_id.eq.${companyId},company_id.is.null`);
         return q.limit(1000);
       })(),
     ]);
@@ -741,6 +743,7 @@ export const ReconciliationEngine = {
       totalTaxAmount: 0,
       totalNetPayable: transactions.reduce((sum, txn) => sum + (txn.credit || txn.debit), 0),
       matchedRecords: 0,
+      partialRecords: 0,
       discrepancyCount: 0,
       pledgedCount: 0,
       rejectedCount: 0,
@@ -750,6 +753,7 @@ export const ReconciliationEngine = {
       matchedFromPayable: 0,
       matchedFromPayment: 0,
       matchedFromBank: 0,
+      partialMatches: 0,
       missingInSystem: 0,
       unmatchedBankTransactions: 0,
     };
@@ -943,8 +947,13 @@ export const ReconciliationEngine = {
           if (matchSources.includes("payable")) summary.matchedFromPayable += 1;
           if (matchSources.includes("payment_batch")) summary.matchedFromBank += 1;
         } else {
-          status = difference > 0 ? "Over_Paid" : "Under_Paid";
+          status = difference > 0 ? "Under_Paid" : "Over_Paid";
+          grandTotal.partialRecords = (grandTotal.partialRecords || 0) + 1;
           grandTotal.discrepancyCount += 1;
+          summary.partialMatches = (summary.partialMatches || 0) + 1;
+          if (matchSources.includes("payable")) summary.matchedFromPayable += 1;
+          if (matchSources.includes("payment")) summary.matchedFromPayment += 1;
+          if (matchSources.includes("payment_batch")) summary.matchedFromBank += 1;
         }
       } else if (amount === 0) {
         status = "Pending";
