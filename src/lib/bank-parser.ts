@@ -40,17 +40,21 @@ const normalizeAmount = (value: string | number | undefined | null): number => {
   return isDr ? -Math.abs(num) : num;
 };
 
+const formatDateParts = (y: number, m: number, d: number) =>
+  `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+
 const normalizeDate = (raw: string | number | undefined | null | Date): string => {
   if (!raw) return "";
   if (raw instanceof Date) {
-    return !Number.isNaN(raw.getTime()) ? raw.toISOString().slice(0, 10) : "";
+    if (Number.isNaN(raw.getTime())) return "";
+    return formatDateParts(raw.getFullYear(), raw.getMonth() + 1, raw.getDate());
   }
   if (typeof raw === "number") {
     // Handle 5-digit Excel serial dates (approx 1954 to 2077)
     if (raw >= 20000 && raw <= 70000) {
       const excelEpoch = new Date(Date.UTC(1899, 11, 30));
       const date = new Date(excelEpoch.getTime() + raw * 86400000);
-      return date.toISOString().slice(0, 10);
+      return formatDateParts(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
     }
   }
   const str = String(raw).trim();
@@ -59,7 +63,7 @@ const normalizeDate = (raw: string | number | undefined | null | Date): string =
     if (serial >= 20000 && serial <= 70000) {
       const excelEpoch = new Date(Date.UTC(1899, 11, 30));
       const date = new Date(excelEpoch.getTime() + serial * 86400000);
-      return date.toISOString().slice(0, 10);
+      return formatDateParts(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
     }
   }
   if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(str)) {
@@ -71,7 +75,10 @@ const normalizeDate = (raw: string | number | undefined | null | Date): string =
     return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
   }
   const parsed = new Date(str);
-  return !Number.isNaN(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : str;
+  if (!Number.isNaN(parsed.getTime())) {
+    return formatDateParts(parsed.getFullYear(), parsed.getMonth() + 1, parsed.getDate());
+  }
+  return str;
 };
 
 const cleanPattern = (str: string) => str.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -231,7 +238,7 @@ export const BankParser = {
       }
 
       const debit = indices.debit >= 0 ? Math.abs(normalizeAmount(columns[indices.debit])) : 0;
-      const credit = indices.credit >= 0 ? normalizeAmount(columns[indices.credit]) : 0;
+      const credit = indices.credit >= 0 ? Math.abs(normalizeAmount(columns[indices.credit])) : 0;
       const balance = indices.balance >= 0 ? normalizeAmount(columns[indices.balance]) : 0;
       const status = indices.status >= 0 ? String(columns[indices.status] || "").trim() : undefined;
       const beneficiaryName =
@@ -488,12 +495,12 @@ export const BankParser = {
           indices.description >= 0 && row[indices.description]
             ? String(row[indices.description] || "").trim()
             : "";
-        const withdrawVal = indices.debit >= 0 ? normalizeAmount(row[indices.debit]) : 0;
+        const withdrawVal = indices.debit >= 0 ? Math.abs(normalizeAmount(row[indices.debit])) : 0;
         const depositVal =
           indices.credit >= 0
-            ? normalizeAmount(row[indices.credit])
+            ? Math.abs(normalizeAmount(row[indices.credit]))
             : indices.amount >= 0
-              ? normalizeAmount(row[indices.amount])
+              ? Math.abs(normalizeAmount(row[indices.amount]))
               : 0;
         const balanceVal = indices.balance >= 0 ? normalizeAmount(row[indices.balance]) : 0;
 
@@ -684,7 +691,7 @@ export const BankParser = {
         for (const t of txns) {
           const idRef = t.instructionId || t.referenceId;
           if (idRef && idRef.trim()) {
-            const instKey = idRef.trim().toUpperCase();
+            const instKey = `${idRef.trim().toUpperCase()}_${t.category || ""}_${t.debit}_${t.credit}`;
             if (seenInstructionIds.has(instKey)) {
               continue;
             }

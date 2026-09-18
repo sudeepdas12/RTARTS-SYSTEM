@@ -255,9 +255,24 @@ function PaymentsRoute() {
       if (!batchName.trim()) throw new Error("Batch name is required");
 
       const items = availablePayables.map((payable) => {
-        const grossAmount = Number(payable.gross_dividend ?? payable.gross_interest ?? 0);
-        const netAmount = Number(payable.net_payable ?? 0);
-        const taxAmount = Number(payable.tax_amount ?? grossAmount - netAmount);
+        const origGross = Number(payable.gross_dividend ?? payable.gross_interest ?? 0);
+        const origNet = Number(payable.net_payable ?? 0);
+        const origTax = Number(payable.tax_amount ?? origGross - origNet);
+        const isPartial = payable.payment_status === "Partial";
+        const rem = payable.remaining_amount != null ? Number(payable.remaining_amount) : origNet;
+
+        let grossAmount = origGross;
+        let taxAmount = origTax;
+        let netAmount = origNet;
+
+        if (isPartial && rem > 0 && rem < origNet && origNet > 0) {
+          netAmount = rem;
+          const ratio = netAmount / origNet;
+          grossAmount = Math.round(origGross * ratio * 100) / 100;
+          taxAmount = Number((grossAmount - netAmount).toFixed(2));
+          grossAmount = Number((netAmount + taxAmount).toFixed(2));
+        }
+
         return {
           company_id: payable.company_id,
           client_id: payable.client_id,
@@ -325,9 +340,24 @@ function PaymentsRoute() {
   const { mutate: addPayablesToBatch } = useMutation({
     mutationFn: async (batchId: string) => {
       const items = availablePayables.map((payable) => {
-        const grossAmount = Number(payable.gross_dividend ?? payable.gross_interest ?? 0);
-        const netAmount = Number(payable.net_payable ?? 0);
-        const taxAmount = Number(payable.tax_amount ?? grossAmount - netAmount);
+        const origGross = Number(payable.gross_dividend ?? payable.gross_interest ?? 0);
+        const origNet = Number(payable.net_payable ?? 0);
+        const origTax = Number(payable.tax_amount ?? origGross - origNet);
+        const isPartial = payable.payment_status === "Partial";
+        const rem = payable.remaining_amount != null ? Number(payable.remaining_amount) : origNet;
+
+        let grossAmount = origGross;
+        let taxAmount = origTax;
+        let netAmount = origNet;
+
+        if (isPartial && rem > 0 && rem < origNet && origNet > 0) {
+          netAmount = rem;
+          const ratio = netAmount / origNet;
+          grossAmount = Math.round(origGross * ratio * 100) / 100;
+          taxAmount = Number((grossAmount - netAmount).toFixed(2));
+          grossAmount = Number((netAmount + taxAmount).toFixed(2));
+        }
+
         return {
           company_id: payable.company_id,
           client_id: payable.client_id,

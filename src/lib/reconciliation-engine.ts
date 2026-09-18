@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "./services/database";
 import { ParsedExcelData } from "./excel-parser";
 import { RECONCILIATION_TOLERANCE_NPR, BULK_CHUNK_SIZE } from "./constants";
 
@@ -630,55 +631,57 @@ export const ReconciliationEngine = {
 
     // Load data from DB in parallel with complete client joins and payment batches
     // Filter by company_id when provided to prevent cross-company data leakage
-    const [paymentsResult, payablesResult, batchesResult] = await Promise.all([
-      (() => {
+    const [payments, payables, batchesResult] = await Promise.all([
+      fetchAllRows<any>(async (from, to) => {
         let q = (supabase as any)
           .from("payments")
           .select(
             "id,company_id,client_id,net_amount,gross_amount,bank_name,bank_account_no,status,payable_type,payable_id,payment_date,connectips_ref,clients(id,boid,full_name,company_id,bank_name,bank_account_no)",
-          );
+          )
+          .range(from, to);
         if (companyId) q = q.eq("company_id", companyId);
-        return q.limit(10000);
-      })(),
+        return await q;
+      }),
 
       (async () => {
-        const [divResult, intResult, mfResult] = await Promise.all([
-          (() => {
+        const [divRows, intRows, mfRows] = await Promise.all([
+          fetchAllRows<any>(async (from, to) => {
             let q = supabase
               .from("dividend_payables")
               .select(
                 "id,company_id,client_id,net_payable,gross_dividend,payment_status,fiscal_year,bank_name,bank_account_no,clients(id,boid,full_name,bank_name,bank_account_no)",
-              );
+              )
+              .range(from, to);
             if (companyId) q = q.eq("company_id", companyId);
-            return q.limit(10000);
-          })(),
-          (() => {
+            return await q;
+          }),
+          fetchAllRows<any>(async (from, to) => {
             let q = supabase
               .from("interest_payables")
               .select(
                 "id,company_id,client_id,net_payable,gross_interest,payment_status,fiscal_year,bank_name,bank_account_no,clients(id,boid,full_name,bank_name,bank_account_no)",
-              );
+              )
+              .range(from, to);
             if (companyId) q = q.eq("company_id", companyId);
-            return q.limit(10000);
-          })(),
-          (() => {
+            return await q;
+          }),
+          fetchAllRows<any>(async (from, to) => {
             let q = (supabase as any)
               .from("mutual_fund_payables")
               .select(
                 "id,company_id,client_id,net_payable,payment_status,fiscal_year,bank_name,bank_account_no,clients(id,boid,full_name,bank_name,bank_account_no)",
-              );
+              )
+              .range(from, to);
             if (companyId) q = q.eq("company_id", companyId);
-            return q.limit(10000);
-          })(),
+            return await q;
+          }),
         ]);
 
-        const payables: any[] = [];
-        divResult.data?.forEach((row: any) => payables.push({ ...row, payable_type: "dividend" }));
-        intResult.data?.forEach((row: any) => payables.push({ ...row, payable_type: "interest" }));
-        mfResult.data?.forEach((row: any) =>
-          payables.push({ ...row, payable_type: "mutual_fund" }),
-        );
-        return { data: payables };
+        const payablesList: any[] = [];
+        divRows.forEach((row: any) => payablesList.push({ ...row, payable_type: "dividend" }));
+        intRows.forEach((row: any) => payablesList.push({ ...row, payable_type: "interest" }));
+        mfRows.forEach((row: any) => payablesList.push({ ...row, payable_type: "mutual_fund" }));
+        return payablesList;
       })(),
 
       (() => {
@@ -692,8 +695,8 @@ export const ReconciliationEngine = {
       })(),
     ]);
 
-    const payments = paymentsResult.data || [];
-    const payables = payablesResult.data || [];
+    const paymentsList: any[] = Array.isArray(payments) ? payments : (payments as any)?.data || [];
+    const payablesList: any[] = Array.isArray(payables) ? payables : (payables as any)?.data || [];
     const batches = batchesResult.data || [];
 
     // Build indexing maps for high-performance matching
@@ -702,10 +705,10 @@ export const ReconciliationEngine = {
     const paymentsByAmt = new Map<string, any[]>();
     const paymentsByRef = new Map<string, any[]>();
 
-    payments.forEach((p: any) => {
+    paymentsList.forEach((p: any) => {
       const acct = cleanAcct(p.bank_account_no || p.clients?.bank_account_no);
       const name = cleanName(p.clients?.full_name);
-      const amtKey = buildAmountKey(Number(p.net_amount ?? p.paid_amount ?? 0));
+      const amtKey = buildAmountKey(Number(p.net_amount ?? 0));
 
       if (acct) {
         if (!paymentsByAcct.has(acct)) paymentsByAcct.set(acct, []);
@@ -734,7 +737,7 @@ export const ReconciliationEngine = {
     const payablesByName = new Map<string, any[]>();
     const payablesByAmt = new Map<string, any[]>();
 
-    payables.forEach((p: any) => {
+    payablesList.forEach((p: any) => {
       const acct = cleanAcct(p.bank_account_no || p.clients?.bank_account_no);
       const name = cleanName(p.clients?.full_name);
       const amtKey = buildAmountKey(Number(p.net_payable ?? 0));

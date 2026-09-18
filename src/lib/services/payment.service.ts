@@ -685,13 +685,13 @@ export const PaymentService = {
     },
   ): Promise<any[]> {
     try {
-      // 1. Fetch payable IDs that are already present in existing active payment records (not Reversed / Failed)
+      // 1. Fetch payable IDs that are currently locked in unfinalized batches (Draft, Pending, Approved)
       let batchedPayableIds = new Set<string>();
       try {
         const { data: existingPayments } = await (supabase as any)
           .from("payments")
           .select("payable_id")
-          .not("status", "in", ["Reversed", "Failed"]);
+          .in("status", ["Draft", "Pending", "Approved"]);
 
         if (existingPayments && Array.isArray(existingPayments)) {
           batchedPayableIds = new Set(
@@ -726,7 +726,35 @@ export const PaymentService = {
         if (dividendError)
           console.warn("Failed to fetch dividend payables:", dividendError.message);
         if (dividendData) {
-          payables.push(...dividendData.map((p: any) => ({ ...p, payable_type: "dividend" })));
+          payables.push(
+            ...dividendData.map((p: any) => {
+              const origGross = Number(p.gross_dividend ?? 0);
+              const origTax = Number(p.tax_amount ?? 0);
+              const origNet = Number(p.net_payable ?? origGross - origTax);
+              const isPartial = p.payment_status === "Partial";
+              const rem = p.remaining_amount != null ? Number(p.remaining_amount) : origNet;
+
+              let gross = origGross;
+              let tax = origTax;
+              let net = origNet;
+
+              if (isPartial && rem > 0 && rem < origNet && origNet > 0) {
+                net = rem;
+                const ratio = net / origNet;
+                gross = Math.round(origGross * ratio * 100) / 100;
+                tax = Number((gross - net).toFixed(2));
+                gross = Number((net + tax).toFixed(2));
+              }
+
+              return {
+                ...p,
+                payable_type: "dividend",
+                gross_dividend: gross,
+                tax_amount: tax,
+                net_payable: net,
+              };
+            }),
+          );
         }
       }
 
@@ -755,14 +783,15 @@ export const PaymentService = {
           console.warn("Failed to fetch interest payables:", interestError.message);
         if (interestData) {
           const days =
-            options?.periodDays ||
-            (options?.periodPreset === "3M"
-              ? 91
-              : options?.periodPreset === "6M"
-                ? 183
-                : options?.periodPreset === "9M"
-                  ? 274
-                  : 365);
+            options?.periodDays && options.periodDays > 0
+              ? options.periodDays
+              : options?.periodPreset === "3M"
+                ? 91
+                : options?.periodPreset === "6M"
+                  ? 183
+                  : options?.periodPreset === "9M"
+                    ? 274
+                    : 365;
 
           if (days > 0 && days !== 365) {
             // High-precision proration with exact statutory paisa balancing
@@ -836,9 +865,24 @@ export const PaymentService = {
             });
           } else {
             for (const p of interestData) {
-              const gross = Number(p.gross_interest ?? 0);
-              const tax = Number(p.tax_amount ?? 0);
-              const net = Number(p.net_payable ?? p.net_interest ?? gross - tax);
+              const origGross = Number(p.gross_interest ?? 0);
+              const origTax = Number(p.tax_amount ?? 0);
+              const origNet = Number(p.net_payable ?? p.net_interest ?? origGross - origTax);
+              const isPartial = p.payment_status === "Partial";
+              const rem = p.remaining_amount != null ? Number(p.remaining_amount) : origNet;
+
+              let gross = origGross;
+              let tax = origTax;
+              let net = origNet;
+
+              if (isPartial && rem > 0 && rem < origNet && origNet > 0) {
+                net = rem;
+                const ratio = net / origNet;
+                gross = Math.round(origGross * ratio * 100) / 100;
+                tax = Number((gross - net).toFixed(2));
+                gross = Number((net + tax).toFixed(2));
+              }
+
               payables.push({
                 ...p,
                 payable_type: "interest",
