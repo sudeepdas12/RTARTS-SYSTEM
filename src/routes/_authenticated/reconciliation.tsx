@@ -336,7 +336,9 @@ export function ReconciliationRoute() {
         setProcessingProgress(`Parsing Excel workbook ${cur} of ${tot}: ${name}`);
       });
       setProcessingProgress("Matching shareholder records against database...");
-      const rep = await ReconciliationEngine.analyzeParsedExcel(parsedData);
+      const rep = await ReconciliationEngine.analyzeParsedExcel(parsedData, {
+        companyId: reconCompanyId !== "all" ? reconCompanyId : undefined,
+      });
       setReport(rep);
       toast.success(
         `Successfully analyzed ${files.length} Excel file(s) (${rep.matches.length.toLocaleString()} records)`,

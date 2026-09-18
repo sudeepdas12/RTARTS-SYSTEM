@@ -304,353 +304,344 @@ export const BankParser = {
   /**
    * Parse Excel ACH settlement reports, ConnectIPS status files, and Electronic Bank Statements.
    */
-  parseExcelSettlement(
+  async parseExcelSettlement(
     file: File,
     options: { includeCircularSweeps?: boolean } = {},
   ): Promise<BankTransaction[]> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const data = new Uint8Array(e.target?.result as ArrayBuffer);
-          const workbook = XLSX.read(data, { type: "array", cellDates: true });
-          const transactions: BankTransaction[] = [];
+    let rawBuffer: ArrayBuffer;
+    if (typeof file.arrayBuffer === "function") {
+      rawBuffer = await file.arrayBuffer();
+    } else {
+      rawBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target?.result as ArrayBuffer);
+        reader.onerror = () => reject(new Error("Failed to read file"));
+        reader.readAsArrayBuffer(file);
+      });
+    }
 
-          // Choose the primary sheet
-          let sheetsToProcess = workbook.SheetNames;
-          const nchlSheet = workbook.SheetNames.find(
-            (s) =>
-              s.toLowerCase().includes("nchl") ||
-              s.toLowerCase().includes("bankcentral") ||
-              s.toLowerCase().includes("thapathali"),
+    const data = new Uint8Array(rawBuffer);
+    const workbook = XLSX.read(data, { type: "array", cellDates: true });
+    const transactions: BankTransaction[] = [];
+
+    // Choose the primary sheet
+    let sheetsToProcess = workbook.SheetNames;
+    const nchlSheet = workbook.SheetNames.find(
+      (s) =>
+        s.toLowerCase().includes("nchl") ||
+        s.toLowerCase().includes("bankcentral") ||
+        s.toLowerCase().includes("thapathali"),
+    );
+    if (nchlSheet) {
+      sheetsToProcess = [nchlSheet];
+    } else if (workbook.SheetNames.includes("Statement") && workbook.SheetNames.length > 1) {
+      sheetsToProcess = ["Statement"];
+    } else if (workbook.SheetNames.includes("Sheet1") && workbook.SheetNames.length > 1) {
+      sheetsToProcess = ["Sheet1"];
+    }
+
+    for (const sheetName of sheetsToProcess) {
+      const sheet = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1, defval: "" });
+      if (!rows.length) continue;
+
+      // 1. Scan metadata in the first 20 rows (Account Holder, Account Number)
+      let detectedAccountHolder = "";
+      let detectedAccountNo = "";
+      let headerRowIndex = 0;
+
+      for (let i = 0; i < Math.min(25, rows.length); i++) {
+        const r = rows[i];
+        if (!Array.isArray(r)) continue;
+        const lineText = r.map((c) => String(c).trim()).join(" ");
+
+        if (lineText.includes("Account Holder's Name:") || lineText.includes("Account Name:")) {
+          const m = lineText.match(
+            /Account\s*(?:Holder's\s*)?Name:\s*([^:]+?)(?:\s+From:|\s+To:|$)/i,
           );
-          if (nchlSheet) {
-            sheetsToProcess = [nchlSheet];
-          } else if (workbook.SheetNames.includes("Statement") && workbook.SheetNames.length > 1) {
-            sheetsToProcess = ["Statement"];
-          } else if (workbook.SheetNames.includes("Sheet1") && workbook.SheetNames.length > 1) {
-            sheetsToProcess = ["Sheet1"];
-          }
-
-          for (const sheetName of sheetsToProcess) {
-            const sheet = workbook.Sheets[sheetName];
-            const rows = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1, defval: "" });
-            if (!rows.length) continue;
-
-            // 1. Scan metadata in the first 20 rows (Account Holder, Account Number)
-            let detectedAccountHolder = "";
-            let detectedAccountNo = "";
-            let headerRowIndex = 0;
-
-            for (let i = 0; i < Math.min(25, rows.length); i++) {
-              const r = rows[i];
-              if (!Array.isArray(r)) continue;
-              const lineText = r.map((c) => String(c).trim()).join(" ");
-
-              if (
-                lineText.includes("Account Holder's Name:") ||
-                lineText.includes("Account Name:")
-              ) {
-                const m = lineText.match(
-                  /Account\s*(?:Holder's\s*)?Name:\s*([^:]+?)(?:\s+From:|\s+To:|$)/i,
-                );
-                if (m && m[1]) detectedAccountHolder = m[1].trim();
-              }
-              if (lineText.includes("Account Number:") || lineText.includes("Account No:")) {
-                const m = lineText.match(/Account\s*(?:Number|No):\s*([0-9A-Za-z]+)/i);
-                if (m && m[1]) detectedAccountNo = m[1].trim();
-              }
-
-              // Check if this row is the actual table header row
-              const cleanCells = r.map((c) => cleanPattern(String(c)));
-              const hasDateCol = cleanCells.some(
-                (c) => c.includes("date") || c.includes("txndate") || c.includes("settlement"),
-              );
-              const hasAmountOrDesc = cleanCells.some(
-                (c) =>
-                  c.includes("desc") ||
-                  c.includes("particular") ||
-                  c.includes("withdraw") ||
-                  c.includes("debit") ||
-                  c.includes("amount") ||
-                  c.includes("deposit"),
-              );
-
-              if (hasDateCol && hasAmountOrDesc) {
-                headerRowIndex = i;
-                break;
-              }
-            }
-
-            const headerRow = rows[headerRowIndex].map((h: any) => String(h).trim().toLowerCase());
-            const indices = {
-              amount: findColumnIndexByPriority(headerRow, [
-                ["transaction amount", "transactionamount", "amt"],
-                ["amount", "net amount"],
-              ]),
-              date: findColumnIndexByPriority(headerRow, [
-                [
-                  "created on",
-                  "settlementdt",
-                  "settlement date",
-                  "transaction date",
-                  "txndate",
-                  "date",
-                  "creationdate",
-                ],
-              ]),
-              description: findColumnIndexByPriority(headerRow, [
-                [
-                  "remarks",
-                  "particulars",
-                  "instructionid",
-                  "instruction id",
-                  "description",
-                  "narration",
-                  "endtoendid",
-                ],
-              ]),
-              debit: findColumnIndexByPriority(headerRow, [
-                ["withdraw", "withdrawal", "debit", "payment"],
-              ]),
-              credit: findColumnIndexByPriority(headerRow, [
-                ["transaction amount", "transactionamount", "amt"],
-                ["deposit", "credit", "amount", "net amount"],
-              ]),
-              balance: findColumnIndexByPriority(headerRow, [["balance"]]),
-              bankName: findColumnIndexByPriority(headerRow, [
-                ["creditor bank", "creditorbank", "creditor agent", "creditoragent", "instgbranch"],
-                ["bank", "bank name"],
-              ]),
-              accountNo: findColumnIndexByPriority(headerRow, [
-                ["creditor account", "creditoraccount", "beneficiary account"],
-                ["account no", "account number", "a/c", "account"],
-                ["debtor account", "debtoraccount"],
-              ]),
-              creditorName: findColumnIndexByPriority(headerRow, [
-                ["creditor name", "creditorname", "beneficiary name", "payee name"],
-                ["name", "shareholder name", "beneficiary"],
-                ["debtor name", "debtorname"],
-              ]),
-              status: findColumnIndexByPriority(headerRow, [
-                [
-                  "credit status",
-                  "creditstatus",
-                  "achstatus.description",
-                  "achstatus",
-                  "status",
-                  "tx status",
-                ],
-              ]),
-              instructionId: findColumnIndexByPriority(headerRow, [
-                [
-                  "instruction id",
-                  "instructionid",
-                  "transaction id",
-                  "transid",
-                  "reference id",
-                  "referenceid",
-                  "endtoendid",
-                ],
-              ]),
-              batchId: findColumnIndexByPriority(headerRow, [
-                ["batch id", "batchid", "batch.sessionid"],
-              ]),
-            };
-
-            for (let i = headerRowIndex + 1; i < rows.length; i++) {
-              const row = rows[i];
-              if (
-                !row ||
-                (Array.isArray(row) && row.every((c) => c === "" || c === null || c === undefined))
-              )
-                continue;
-
-              const rowValues = Array.isArray(row) ? row : Object.values(row);
-              const rowText = rowValues.map(String).join(" ").toUpperCase();
-              if (
-                rowText.includes("TOTAL") ||
-                rowText.includes("SUMMARY") ||
-                rowText.includes("OPENING BALANCE") ||
-                rowText.includes("CLOSING BALANCE")
-              ) {
-                continue;
-              }
-
-              const rawDesc =
-                indices.description >= 0 && row[indices.description]
-                  ? String(row[indices.description] || "").trim()
-                  : "";
-              const withdrawVal = indices.debit >= 0 ? normalizeAmount(row[indices.debit]) : 0;
-              const depositVal =
-                indices.credit >= 0
-                  ? normalizeAmount(row[indices.credit])
-                  : indices.amount >= 0
-                    ? normalizeAmount(row[indices.amount])
-                    : 0;
-              const balanceVal = indices.balance >= 0 ? normalizeAmount(row[indices.balance]) : 0;
-
-              if (
-                withdrawVal === 0 &&
-                depositVal === 0 &&
-                !row[indices.accountNo] &&
-                !row[indices.creditorName]
-              ) {
-                continue;
-              }
-
-              // Intelligent Classification
-              const upperDesc = rawDesc.toUpperCase();
-              const upperFileName = file.name.toUpperCase();
-              const rowStatus =
-                indices.status >= 0 && row[indices.status]
-                  ? String(row[indices.status]).trim().toUpperCase()
-                  : "";
-              const isCircular = upperDesc.includes("NRB CIRCULAR");
-
-              // If options specify to exclude circular sweeps, skip them
-              if (isCircular && !options.includeCircularSweeps) {
-                continue;
-              }
-
-              let category: BankTransaction["category"] = "OTHER";
-              let autoStatus: string | undefined = undefined;
-
-              const isSettlementReport =
-                indices.creditorName >= 0 ||
-                indices.batchId >= 0 ||
-                upperFileName.includes("IPS") ||
-                upperFileName.includes("SETTLEMENT") ||
-                upperFileName.includes("LOT");
-
-              const isReject =
-                rowStatus === "RJCT" ||
-                rowStatus.includes("REJECT") ||
-                rowStatus.includes("FAIL") ||
-                upperDesc.includes("INCORRECT A/C") ||
-                upperDesc.includes("REJECT") ||
-                upperDesc.includes("RETURN") ||
-                upperDesc.includes("BOUNCE") ||
-                upperDesc.includes("RJCT");
-
-              if (isCircular) {
-                category = "NRB_CIRCULAR";
-              } else if (isReject) {
-                category = "REJECT_RETURN";
-                autoStatus = "RJCT";
-              } else if (
-                isSettlementReport ||
-                upperDesc.includes("INTEREST") ||
-                upperDesc.includes("DEBENTURE") ||
-                upperDesc.includes("DIVIDEND") ||
-                upperDesc.includes("MUTUAL FUND") ||
-                upperDesc.includes("IPS DR") ||
-                upperDesc.includes("CHQ") ||
-                upperDesc.includes("REINSURANCE") ||
-                upperDesc.includes("KOSH") ||
-                upperDesc.includes("FUND")
-              ) {
-                category = "PAYOUT_DEBIT";
-                autoStatus = "ACSC";
-              } else if (
-                upperDesc.includes("CHG") ||
-                upperDesc.includes("COMMISSION") ||
-                upperDesc.includes("FEE")
-              ) {
-                category = "BANK_CHARGES";
-              } else if (depositVal > 0 && withdrawVal === 0) {
-                category = "FUNDING_DEPOSIT";
-              } else if (withdrawVal > 0) {
-                category = "PAYOUT_DEBIT";
-              }
-
-              let finalDebit = withdrawVal;
-              let finalCredit = depositVal;
-
-              // If settlement report or payout with a single amount column, map amount to debit
-              if (
-                indices.debit < 0 &&
-                finalDebit === 0 &&
-                finalCredit > 0 &&
-                (category === "PAYOUT_DEBIT" || isSettlementReport)
-              ) {
-                finalDebit = finalCredit;
-                finalCredit = 0;
-              }
-
-              // Extract account number from description if not in dedicated column
-              let extractedAccountNo =
-                indices.accountNo >= 0 ? String(row[indices.accountNo] || "").trim() : "";
-              if (!extractedAccountNo) {
-                const accMatch =
-                  rawDesc.match(/(?:A\/C|AC|ACC|ACCOUNT|:)\s*([0-9]{10,20})/i) ||
-                  rawDesc.match(/\b([0-9]{16})\b/);
-                if (accMatch && accMatch[1]) {
-                  extractedAccountNo = accMatch[1];
-                }
-              }
-
-              // Extract beneficiary / institutional name from description
-              let extractedName =
-                indices.creditorName >= 0 ? String(row[indices.creditorName] || "").trim() : "";
-              if (!extractedName) {
-                if (upperDesc.includes("NEPAL REINSURANCE"))
-                  extractedName = "NEPAL REINSURANCE COMPANY LTD";
-                else if (upperDesc.includes("CONTRIBUTION FUND"))
-                  extractedName = "CITIZEN INVESTMENT TRUST (CONTRIBUTION FUND)";
-                else if (upperDesc.includes("SAINIK KALYANKARI"))
-                  extractedName = "SAINIK KALYANKARI KOSH";
-                else if (upperDesc.includes("LAXMI SUNRISE CAPITAL"))
-                  extractedName = "LAXMI SUNRISE CAPITAL LTD";
-              }
-
-              const status =
-                indices.status >= 0 && row[indices.status]
-                  ? String(row[indices.status]).trim()
-                  : autoStatus;
-              const instructionId =
-                indices.instructionId >= 0
-                  ? String(row[indices.instructionId] || "").trim()
-                  : undefined;
-              const batchId =
-                indices.batchId >= 0 ? String(row[indices.batchId] || "").trim() : undefined;
-              const description =
-                rawDesc ||
-                extractedName ||
-                (finalDebit > 0
-                  ? `Debit Payment ${finalDebit}`
-                  : `Credit Settlement ${finalCredit}`);
-
-              transactions.push({
-                id: `txn-${sheetName}-${i}`,
-                date: indices.date >= 0 ? normalizeDate(row[indices.date]) : "",
-                description,
-                debit: finalDebit,
-                credit: finalCredit,
-                balance: balanceVal,
-                bankName:
-                  indices.bankName >= 0 ? String(row[indices.bankName] || "").trim() : undefined,
-                accountNo: extractedAccountNo || undefined,
-                beneficiaryName: extractedName || undefined,
-                status,
-                instructionId,
-                batchId,
-                fileName: file.name,
-                category,
-                isLiquiditySweep: isCircular,
-                accountHolder: detectedAccountHolder || undefined,
-              });
-            }
-          }
-
-          resolve(transactions);
-        } catch (err) {
-          reject(err);
+          if (m && m[1]) detectedAccountHolder = m[1].trim();
         }
+        if (lineText.includes("Account Number:") || lineText.includes("Account No:")) {
+          const m = lineText.match(/Account\s*(?:Number|No):\s*([0-9A-Za-z]+)/i);
+          if (m && m[1]) detectedAccountNo = m[1].trim();
+        }
+
+        // Check if this row is the actual table header row
+        const cleanCells = r.map((c) => cleanPattern(String(c)));
+        const hasDateCol = cleanCells.some(
+          (c) => c.includes("date") || c.includes("txndate") || c.includes("settlement"),
+        );
+        const hasAmountOrDesc = cleanCells.some(
+          (c) =>
+            c.includes("desc") ||
+            c.includes("particular") ||
+            c.includes("withdraw") ||
+            c.includes("debit") ||
+            c.includes("amount") ||
+            c.includes("deposit"),
+        );
+
+        if (hasDateCol && hasAmountOrDesc) {
+          headerRowIndex = i;
+          break;
+        }
+      }
+
+      const headerRow = rows[headerRowIndex].map((h: any) => String(h).trim().toLowerCase());
+      const indices = {
+        amount: findColumnIndexByPriority(headerRow, [
+          ["transaction amount", "transactionamount", "amt"],
+          ["amount", "net amount"],
+        ]),
+        date: findColumnIndexByPriority(headerRow, [
+          [
+            "created on",
+            "settlementdt",
+            "settlement date",
+            "transaction date",
+            "txndate",
+            "date",
+            "creationdate",
+          ],
+        ]),
+        description: findColumnIndexByPriority(headerRow, [
+          [
+            "remarks",
+            "particulars",
+            "instructionid",
+            "instruction id",
+            "description",
+            "narration",
+            "endtoendid",
+          ],
+        ]),
+        debit: findColumnIndexByPriority(headerRow, [
+          ["withdraw", "withdrawal", "debit", "payment"],
+        ]),
+        credit: findColumnIndexByPriority(headerRow, [
+          ["transaction amount", "transactionamount", "amt"],
+          ["deposit", "credit", "amount", "net amount"],
+        ]),
+        balance: findColumnIndexByPriority(headerRow, [["balance"]]),
+        bankName: findColumnIndexByPriority(headerRow, [
+          ["creditor bank", "creditorbank", "creditor agent", "creditoragent", "instgbranch"],
+          ["bank", "bank name"],
+        ]),
+        accountNo: findColumnIndexByPriority(headerRow, [
+          ["creditor account", "creditoraccount", "beneficiary account"],
+          ["account no", "account number", "a/c", "account"],
+          ["debtor account", "debtoraccount"],
+        ]),
+        creditorName: findColumnIndexByPriority(headerRow, [
+          ["creditor name", "creditorname", "beneficiary name", "payee name"],
+          ["name", "shareholder name", "beneficiary"],
+          ["debtor name", "debtorname"],
+        ]),
+        status: findColumnIndexByPriority(headerRow, [
+          [
+            "credit status",
+            "creditstatus",
+            "achstatus.description",
+            "achstatus",
+            "status",
+            "tx status",
+          ],
+        ]),
+        instructionId: findColumnIndexByPriority(headerRow, [
+          [
+            "instruction id",
+            "instructionid",
+            "transaction id",
+            "transid",
+            "reference id",
+            "referenceid",
+            "endtoendid",
+          ],
+        ]),
+        batchId: findColumnIndexByPriority(headerRow, [["batch id", "batchid", "batch.sessionid"]]),
       };
-      reader.onerror = () => reject(new Error("Failed to read file"));
-      reader.readAsArrayBuffer(file);
-    });
+
+      for (let i = headerRowIndex + 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (
+          !row ||
+          (Array.isArray(row) && row.every((c) => c === "" || c === null || c === undefined))
+        )
+          continue;
+
+        const rowValues = Array.isArray(row) ? row : Object.values(row);
+        const rowText = rowValues.map(String).join(" ").toUpperCase();
+        if (
+          rowText.includes("TOTAL") ||
+          rowText.includes("SUMMARY") ||
+          rowText.includes("OPENING BALANCE") ||
+          rowText.includes("CLOSING BALANCE")
+        ) {
+          continue;
+        }
+
+        const rawDesc =
+          indices.description >= 0 && row[indices.description]
+            ? String(row[indices.description] || "").trim()
+            : "";
+        const withdrawVal = indices.debit >= 0 ? normalizeAmount(row[indices.debit]) : 0;
+        const depositVal =
+          indices.credit >= 0
+            ? normalizeAmount(row[indices.credit])
+            : indices.amount >= 0
+              ? normalizeAmount(row[indices.amount])
+              : 0;
+        const balanceVal = indices.balance >= 0 ? normalizeAmount(row[indices.balance]) : 0;
+
+        if (
+          withdrawVal === 0 &&
+          depositVal === 0 &&
+          !row[indices.accountNo] &&
+          !row[indices.creditorName]
+        ) {
+          continue;
+        }
+
+        // Intelligent Classification
+        const upperDesc = rawDesc.toUpperCase();
+        const upperFileName = file.name.toUpperCase();
+        const rowStatus =
+          indices.status >= 0 && row[indices.status]
+            ? String(row[indices.status]).trim().toUpperCase()
+            : "";
+        const isCircular = upperDesc.includes("NRB CIRCULAR");
+
+        // If options specify to exclude circular sweeps, skip them
+        if (isCircular && !options.includeCircularSweeps) {
+          continue;
+        }
+
+        let category: BankTransaction["category"] = "OTHER";
+        let autoStatus: string | undefined = undefined;
+
+        const isSettlementReport =
+          indices.creditorName >= 0 ||
+          indices.batchId >= 0 ||
+          upperFileName.includes("IPS") ||
+          upperFileName.includes("SETTLEMENT") ||
+          upperFileName.includes("LOT");
+
+        const isReject =
+          rowStatus === "RJCT" ||
+          rowStatus.includes("REJECT") ||
+          rowStatus.includes("FAIL") ||
+          upperDesc.includes("INCORRECT A/C") ||
+          upperDesc.includes("REJECT") ||
+          upperDesc.includes("RETURN") ||
+          upperDesc.includes("BOUNCE") ||
+          upperDesc.includes("RJCT");
+
+        if (isCircular) {
+          category = "NRB_CIRCULAR";
+        } else if (isReject) {
+          category = "REJECT_RETURN";
+          autoStatus = "RJCT";
+        } else if (
+          isSettlementReport ||
+          upperDesc.includes("INTEREST") ||
+          upperDesc.includes("DEBENTURE") ||
+          upperDesc.includes("DIVIDEND") ||
+          upperDesc.includes("MUTUAL FUND") ||
+          upperDesc.includes("IPS DR") ||
+          upperDesc.includes("CHQ") ||
+          upperDesc.includes("REINSURANCE") ||
+          upperDesc.includes("KOSH") ||
+          upperDesc.includes("FUND")
+        ) {
+          category = "PAYOUT_DEBIT";
+          autoStatus = "ACSC";
+        } else if (
+          upperDesc.includes("CHG") ||
+          upperDesc.includes("COMMISSION") ||
+          upperDesc.includes("FEE")
+        ) {
+          category = "BANK_CHARGES";
+        } else if (depositVal > 0 && withdrawVal === 0) {
+          category = "FUNDING_DEPOSIT";
+        } else if (withdrawVal > 0) {
+          category = "PAYOUT_DEBIT";
+        }
+
+        let finalDebit = withdrawVal;
+        let finalCredit = depositVal;
+
+        // If settlement report or payout with a single amount column, map amount to debit
+        if (
+          indices.debit < 0 &&
+          finalDebit === 0 &&
+          finalCredit > 0 &&
+          (category === "PAYOUT_DEBIT" || isSettlementReport)
+        ) {
+          finalDebit = finalCredit;
+          finalCredit = 0;
+        }
+
+        // Extract account number from description if not in dedicated column
+        let extractedAccountNo =
+          indices.accountNo >= 0 ? String(row[indices.accountNo] || "").trim() : "";
+        if (!extractedAccountNo) {
+          const accMatch =
+            rawDesc.match(/(?:A\/C|AC|ACC|ACCOUNT|:)\s*([0-9]{10,20})/i) ||
+            rawDesc.match(/\b([0-9]{16})\b/);
+          if (accMatch && accMatch[1]) {
+            extractedAccountNo = accMatch[1];
+          }
+        }
+
+        // Extract beneficiary / institutional name from description
+        let extractedName =
+          indices.creditorName >= 0 ? String(row[indices.creditorName] || "").trim() : "";
+        if (!extractedName) {
+          if (upperDesc.includes("NEPAL REINSURANCE"))
+            extractedName = "NEPAL REINSURANCE COMPANY LTD";
+          else if (upperDesc.includes("CONTRIBUTION FUND"))
+            extractedName = "CITIZEN INVESTMENT TRUST (CONTRIBUTION FUND)";
+          else if (upperDesc.includes("SAINIK KALYANKARI"))
+            extractedName = "SAINIK KALYANKARI KOSH";
+          else if (upperDesc.includes("LAXMI SUNRISE CAPITAL"))
+            extractedName = "LAXMI SUNRISE CAPITAL LTD";
+        }
+
+        const status =
+          indices.status >= 0 && row[indices.status]
+            ? String(row[indices.status]).trim()
+            : autoStatus;
+        const instructionId =
+          indices.instructionId >= 0 ? String(row[indices.instructionId] || "").trim() : undefined;
+        const batchId =
+          indices.batchId >= 0 ? String(row[indices.batchId] || "").trim() : undefined;
+        const description =
+          rawDesc ||
+          extractedName ||
+          (finalDebit > 0 ? `Debit Payment ${finalDebit}` : `Credit Settlement ${finalCredit}`);
+
+        transactions.push({
+          id: `txn-${sheetName}-${i}`,
+          date: indices.date >= 0 ? normalizeDate(row[indices.date]) : "",
+          description,
+          debit: finalDebit,
+          credit: finalCredit,
+          balance: balanceVal,
+          bankName: indices.bankName >= 0 ? String(row[indices.bankName] || "").trim() : undefined,
+          accountNo: extractedAccountNo || undefined,
+          beneficiaryName: extractedName || undefined,
+          status,
+          instructionId,
+          batchId,
+          fileName: file.name,
+          category,
+          isLiquiditySweep: isCircular,
+          accountHolder: detectedAccountHolder || undefined,
+        });
+      }
+    }
+
+    return transactions;
   },
 
   /**

@@ -166,7 +166,11 @@ export const ReconciliationEngine = {
    */
   async analyzeParsedExcel(
     parsedData: ParsedExcelData,
+    options?: { companyId?: string | null },
   ): Promise<ComprehensiveReconciliationReport> {
+    const filterByCompany = Boolean(options?.companyId && options.companyId !== "all");
+    const companyId = filterByCompany ? options!.companyId! : null;
+
     const boids = parsedData.sheets
       .flatMap((sheet) =>
         sheet.sheetType === "SUMMARY"
@@ -200,13 +204,13 @@ export const ReconciliationEngine = {
       return results;
     };
 
-    // Load all related data in parallel
+    // Load all related data in parallel scoped by companyId
     const [clients, payables, paymentsResult, bankStatementsResult] = await Promise.all([
       // 1. Load clients in chunks
       fetchInChunks(boids, (chunk) =>
-        supabase
+        (supabase as any)
           .from("clients")
-          .select("id,boid,full_name,company_id,bank_name,bank_account_no")
+          .select("id,boid,full_name,bank_name,bank_account_no")
           .in("boid", chunk),
       ),
 
@@ -219,28 +223,34 @@ export const ReconciliationEngine = {
         if (clientIds.length === 0) return [];
 
         const [divData, intData, mfData] = await Promise.all([
-          fetchInChunks(clientIds, (chunk) =>
-            supabase
+          fetchInChunks(clientIds, (chunk) => {
+            let q = supabase
               .from("dividend_payables")
               .select(
                 "id,company_id,client_id,net_payable,gross_dividend,payment_status,fiscal_year",
               )
-              .in("client_id", chunk),
-          ),
-          fetchInChunks(clientIds, (chunk) =>
-            supabase
+              .in("client_id", chunk);
+            if (companyId) q = q.eq("company_id", companyId);
+            return q;
+          }),
+          fetchInChunks(clientIds, (chunk) => {
+            let q = supabase
               .from("interest_payables")
               .select(
                 "id,company_id,client_id,net_payable,gross_interest,payment_status,fiscal_year",
               )
-              .in("client_id", chunk),
-          ),
-          fetchInChunks(clientIds, (chunk) =>
-            (supabase as any)
+              .in("client_id", chunk);
+            if (companyId) q = q.eq("company_id", companyId);
+            return q;
+          }),
+          fetchInChunks(clientIds, (chunk) => {
+            let q = (supabase as any)
               .from("mutual_fund_payables")
               .select("id,company_id,client_id,net_payable,payment_status,fiscal_year")
-              .in("client_id", chunk),
-          ),
+              .in("client_id", chunk);
+            if (companyId) q = q.eq("company_id", companyId);
+            return q;
+          }),
         ]);
 
         const payablesList: any[] = [];
@@ -251,11 +261,15 @@ export const ReconciliationEngine = {
       })(),
 
       // 3. Load payments
-      (supabase as any)
-        .from("payments")
-        .select(
-          "id,company_id,client_id,net_amount,bank_name,bank_account_no,payment_status,payable_type,payable_id",
-        ),
+      (() => {
+        let q = (supabase as any)
+          .from("payments")
+          .select(
+            "id,company_id,client_id,net_amount,bank_name,bank_account_no,payment_status,payable_type,payable_id",
+          );
+        if (companyId) q = q.eq("company_id", companyId);
+        return q;
+      })(),
 
       // 4. Load bank statements
       (supabase as any)
@@ -405,7 +419,7 @@ export const ReconciliationEngine = {
         // SOURCE 1: Match against Payables
         if (clientId) {
           const candidatePayables = (payablesByClientId.get(clientId) || []).filter(
-            (p) => !usedPayableIds.has(p.id),
+            (p) => !usedPayableIds.has(p.id) && (!companyId || p.company_id === companyId),
           );
           if (candidatePayables.length > 0) {
             // Prioritize exact or within-tolerance amount matches (preferring Pending/unpaid over Paid)
@@ -433,7 +447,9 @@ export const ReconciliationEngine = {
 
         // SOURCE 2: Match against Payments (strictly by payable linkage, client + amount, or verified amount fallback)
         if (clientId) {
-          const clientPayments = paymentsByClientId.get(clientId) || [];
+          const clientPayments = (paymentsByClientId.get(clientId) || []).filter(
+            (p: any) => !companyId || p.company_id === companyId,
+          );
 
           // 2a. Priority: Payment linked directly to bestPayable
           if (bestPayable) {
@@ -688,7 +704,7 @@ export const ReconciliationEngine = {
     payments.forEach((p: any) => {
       const acct = cleanAcct(p.bank_account_no || p.clients?.bank_account_no);
       const name = cleanName(p.clients?.full_name);
-      const amtKey = buildAmountKey(Number(p.net_amount ?? 0));
+      const amtKey = buildAmountKey(Number(p.net_amount ?? p.paid_amount ?? 0));
 
       if (acct) {
         if (!paymentsByAcct.has(acct)) paymentsByAcct.set(acct, []);

@@ -64,9 +64,10 @@ function getSupabaseClientConfig() {
   }
 
   const SUPABASE_PUBLISHABLE_KEY =
-    import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-    import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-    import.meta.env.VITE_SUPABASE_ANON_KEY ||
+    (typeof import.meta !== "undefined" &&
+      import.meta?.env?.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY) ||
+    (typeof import.meta !== "undefined" && import.meta?.env?.VITE_SUPABASE_PUBLISHABLE_KEY) ||
+    (typeof import.meta !== "undefined" && import.meta?.env?.VITE_SUPABASE_ANON_KEY) ||
     (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY) ||
     (typeof process !== "undefined" && process.env?.VITE_SUPABASE_PUBLISHABLE_KEY) ||
     (typeof process !== "undefined" && process.env?.SUPABASE_PUBLISHABLE_KEY) ||
