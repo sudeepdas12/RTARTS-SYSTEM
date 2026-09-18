@@ -21,8 +21,7 @@ function applyDateFilter(query: any, field: string, startDate?: string, endDate?
 function applyClassificationFilter(query: any, classification?: string, tableName?: string) {
   if (!classification || classification === "all") return query;
   const isInterest = tableName === "interest_payables";
-  const isDividend = tableName === "dividend_payables";
-  const hasLot = isDividend;
+  const hasLot = tableName === "dividend_payables" || tableName === "mutual_fund_payables";
   const hasInstrument = isInterest;
 
   if (classification === "PROMOTER") {
@@ -308,7 +307,7 @@ export const ReportService = {
           query = query.eq("fiscal_year", filters.fiscalYear);
         if (filters.status && filters.status !== "all")
           query = (query as any).eq("payment_status", filters.status as any);
-        query = applyClassificationFilter(query, filters.classification, "dividend_payables");
+        query = applyClassificationFilter(query, filters.classification, "mutual_fund_payables");
         query = applyDateFilter(query, "payment_date", filters.startDate, filters.endDate);
         return query;
       });
@@ -431,7 +430,7 @@ export const ReportService = {
             q = q.eq("company_id", filters.companyId);
           if (filters.fiscalYear && filters.fiscalYear !== "all")
             q = q.eq("fiscal_year", filters.fiscalYear);
-          q = applyClassificationFilter(q, filters.classification, "dividend_payables");
+          q = applyClassificationFilter(q, filters.classification, "mutual_fund_payables");
           return applyDateFilter(q, "payment_date", filters.startDate, filters.endDate);
         }),
       ]);

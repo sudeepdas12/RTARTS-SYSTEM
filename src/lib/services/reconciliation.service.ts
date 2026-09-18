@@ -495,7 +495,11 @@ export const ReconciliationService = {
     paymentMethod: string = "ConnectIPS",
   ): Promise<{ updated: number; paymentsCreated: number; alreadyPaid: number; errors: string[] }> {
     const matchedResults = results.filter(
-      (r) => r.result === "Matched" || r.result === "Over_Paid" || r.result === "Under_Paid",
+      (r) =>
+        r.result === "Matched" ||
+        r.result === "Over_Paid" ||
+        r.result === "Under_Paid" ||
+        r.result === "Partial",
     );
     if (!matchedResults.length) {
       return { updated: 0, paymentsCreated: 0, alreadyPaid: 0, errors: [] };
@@ -583,6 +587,18 @@ export const ReconciliationService = {
             );
             if (exact) {
               payableId = exact.id;
+              payableType =
+                tbl === "interest_payables"
+                  ? "interest"
+                  : tbl === "mutual_fund_payables"
+                    ? "mutual_fund"
+                    : "dividend";
+              break;
+            } else if (
+              foundRows.length === 1 &&
+              (r.result === "Under_Paid" || r.result === "Over_Paid" || r.result === "Partial")
+            ) {
+              payableId = foundRows[0].id;
               payableType =
                 tbl === "interest_payables"
                   ? "interest"
@@ -680,9 +696,10 @@ export const ReconciliationService = {
             if (rej.fiscal_year) q = q.eq("fiscal_year", rej.fiscal_year);
             const { data: foundRows } = await q.limit(10);
             if (foundRows && foundRows.length > 0) {
-              const exactMatch = foundRows.find(
-                (p: any) => expAmt > 0 && Math.abs(Number(p.net_payable) - expAmt) <= 0.01,
-              );
+              const exactMatch =
+                foundRows.find(
+                  (p: any) => expAmt > 0 && Math.abs(Number(p.net_payable) - expAmt) <= 0.01,
+                ) || (foundRows.length === 1 ? foundRows[0] : null);
               if (exactMatch) {
                 payableId = exactMatch.id;
                 payableType =

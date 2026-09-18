@@ -493,8 +493,8 @@ export function ReconciliationRoute() {
         fiscal_year: match.fiscalYear || null,
         payable_type: match.payableType || (isBankStatement ? "interest" : "dividend"),
         payable_id: payableId,
-        expected_amount: isBankStatement ? match.systemAmount : match.excelAmount,
-        actual_amount: isBankStatement ? match.excelAmount : match.systemAmount,
+        expected_amount: match.systemAmount,
+        actual_amount: match.excelAmount,
         difference: match.difference,
         result: match.status,
         notes:

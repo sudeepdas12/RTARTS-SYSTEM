@@ -267,11 +267,35 @@ export const PaymentService = {
    */
   async revertBatch(
     batchId: string,
-    _userId?: string,
-    _reason?: string,
+    userId?: string,
+    reason?: string,
   ): Promise<{ success: boolean; revertedPayables: number }> {
     try {
-      // 1. Fetch all payment line items for this batch to identify linked payables
+      // 1. Primary: Use atomic database transaction procedure
+      const { data: rpcData, error: rpcErr } = await (supabase as any).rpc(
+        "revert_payment_batch_atomic",
+        {
+          p_batch_id: batchId,
+          p_user_id: userId || null,
+          p_reason: reason || "Manual Batch Revert",
+        },
+      );
+
+      if (!rpcErr && rpcData?.success) {
+        return {
+          success: true,
+          revertedPayables: Number(rpcData.reverted_payables ?? 0),
+        };
+      }
+
+      if (rpcErr) {
+        console.warn(
+          "revert_payment_batch_atomic RPC failed or unavailable, using fallback:",
+          rpcErr.message,
+        );
+      }
+
+      // 2. Fallback: Multi-step rollback if RPC unavailable
       const { data: lineItems, error: fetchErr } = await (supabase as any)
         .from("payments")
         .select("id, payable_id, payable_type, net_amount, status")

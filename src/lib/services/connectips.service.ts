@@ -397,8 +397,8 @@ export const ConnectIPSService = {
       const instructionId = `INST-${batchNo}-${String(idx + 1).padStart(5, "0")}`;
       const endToEndId = item.id;
       const creditBankCode = client.bank_code || "";
-      const creditBankName = client.bank_name || "";
-      const creditAccountNo = client.bank_account_no || "";
+      const creditBankName = item.bank_name || client.bank_name || "";
+      const creditAccountNo = item.bank_account_no || client.bank_account_no || "";
       const beneficiaryName = client.full_name || "Beneficiary";
       const amount = Number(item.net_amount ?? item.gross_amount ?? 0);
       const boid = client.boid || "";
@@ -468,6 +468,7 @@ export const ConnectIPSService = {
       const isFailed =
         rowStr.includes("FAIL") ||
         rowStr.includes("REJECT") ||
+        rowStr.includes("RJCT") ||
         rowStr.includes("RETURN") ||
         rowStr.includes("INVALID") ||
         rowStr.includes("DORMANT") ||
