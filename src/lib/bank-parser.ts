@@ -80,13 +80,17 @@ const findColumnIndexByPriority = (header: string[], patternGroups: string[][]):
   for (const group of patternGroups) {
     const idx = header.findIndex((col) => {
       const cleanCol = cleanPattern(col);
+      const lowerCol = col.toLowerCase().trim();
       return group.some((pattern) => {
         const cleanPat = cleanPattern(pattern);
-        return (
-          cleanCol === cleanPat ||
-          cleanCol.includes(cleanPat) ||
-          col.toLowerCase().includes(pattern.toLowerCase())
-        );
+        const lowerPat = pattern.toLowerCase().trim();
+        if (cleanCol === cleanPat || lowerCol === lowerPat) return true;
+        // Avoid short substrings (<= 3 chars, e.g. "ac", "a/c", "amt") matching inside words like "transactiondate"
+        if (cleanPat.length <= 3) {
+          const regex = new RegExp(`\\b${cleanPat}\\b|\\ba/c\\b`, "i");
+          return regex.test(col);
+        }
+        return cleanCol.includes(cleanPat) || lowerCol.includes(lowerPat);
       });
     });
     if (idx >= 0) return idx;
@@ -586,8 +590,8 @@ export const BankParser = {
           indices.accountNo >= 0 ? String(row[indices.accountNo] || "").trim() : "";
         if (!extractedAccountNo) {
           const accMatch =
-            rawDesc.match(/(?:A\/C|AC|ACC|ACCOUNT|:)\s*([0-9]{10,20})/i) ||
-            rawDesc.match(/\b([0-9]{16})\b/);
+            rawDesc.match(/(?:A\/C|AC|ACC|ACCOUNT|:|\.)\s*([0-9A-Za-z]{8,20})/i) ||
+            rawDesc.match(/\b([0-9]{10,20})\b/);
           if (accMatch && accMatch[1]) {
             extractedAccountNo = accMatch[1];
           }

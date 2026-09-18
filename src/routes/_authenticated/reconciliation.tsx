@@ -478,7 +478,16 @@ export function ReconciliationRoute() {
       const companyId = isUUID(match.companyId) ? match.companyId : null;
       const payableId = isUUID(match.payableId) ? match.payableId : null;
       const paymentId = isUUID(match.paymentId) ? match.paymentId : null;
-      const sourceBId = isBankStatement ? paymentId || payableId : payableId;
+      const batchId = isUUID(match.batchId) ? match.batchId : null;
+      const isBatch = Boolean(batchId) || match.matchSources?.includes("payment_batch");
+      const sourceBId = isBankStatement ? paymentId || batchId || payableId : payableId;
+      const sourceBType = isBankStatement
+        ? paymentId
+          ? "payment"
+          : isBatch
+            ? "batch"
+            : "payable"
+        : "payable";
 
       const fileNamePrefix = report?.fileName ? `File: ${report.fileName}` : "";
       const lotPrefix = match.lotName ? `Lot: ${match.lotName}` : "";
@@ -488,13 +497,15 @@ export function ReconciliationRoute() {
         reconciliation_date: today,
         source_a_type: isBankStatement ? "bank_statement" : "excel",
         source_a_id: null,
-        source_b_type: isBankStatement ? (paymentId ? "payment" : "payable") : "payable",
+        source_b_type: sourceBType,
         source_b_id: sourceBId,
         client_id: clientId,
         company_id: companyId,
         fiscal_year: match.fiscalYear || null,
         payable_type: match.payableType || (isBankStatement ? "interest" : "dividend"),
         payable_id: payableId,
+        payment_id: paymentId,
+        batch_id: batchId,
         expected_amount: match.systemAmount,
         actual_amount: match.excelAmount,
         difference: match.difference,
@@ -625,7 +636,9 @@ export function ReconciliationRoute() {
         applyRes.paymentsCreated === 0 &&
         (applyRes.alreadyPaid ?? 0) > 0
       ) {
-        toast.info(`All ${applyRes.alreadyPaid} records are already marked as Paid in the system.`);
+        toast.info(
+          `All ${applyRes.alreadyPaid} records are already marked as Paid / Completed in the system.`,
+        );
       } else if (
         applyRes.updated === 0 &&
         applyRes.paymentsCreated === 0 &&
@@ -639,8 +652,10 @@ export function ReconciliationRoute() {
       } else {
         const alreadyNote =
           (applyRes.alreadyPaid ?? 0) > 0 ? ` (${applyRes.alreadyPaid} already paid)` : "";
+        const skippedNote =
+          applyRes.errors?.length > 0 ? ` (${applyRes.errors.length} unlinked items skipped)` : "";
         toast.success(
-          `Applied reconciliation: ${applyRes.updated} payables updated, ${applyRes.paymentsCreated} payments created${alreadyNote}.`,
+          `Applied reconciliation: ${applyRes.updated} payables updated, ${applyRes.paymentsCreated} payments created${alreadyNote}${skippedNote}.`,
         );
       }
       qc.invalidateQueries({ queryKey: ["payments"] });
@@ -809,7 +824,7 @@ export function ReconciliationRoute() {
         (applyRes.alreadyPaid ?? 0) > 0
       ) {
         toast.info(
-          `All ${applyRes.alreadyPaid} selected records are already marked as Paid in the system.`,
+          `All ${applyRes.alreadyPaid} selected records are already marked as Paid / Completed in the system.`,
         );
       } else if (
         applyRes.updated === 0 &&
@@ -824,8 +839,10 @@ export function ReconciliationRoute() {
       } else {
         const alreadyNote =
           (applyRes.alreadyPaid ?? 0) > 0 ? ` (${applyRes.alreadyPaid} already paid)` : "";
+        const skippedNote =
+          applyRes.errors?.length > 0 ? ` (${applyRes.errors.length} unlinked items skipped)` : "";
         toast.success(
-          `Applied ${allSelectedResults.length} records: ${applyRes.updated} payables updated to Paid${rejectedCount > 0 ? `, ${rejectedCount} rejected recorded in history` : ""}${alreadyNote}.`,
+          `Applied ${allSelectedResults.length} records: ${applyRes.updated} payables updated${rejectedCount > 0 ? `, ${rejectedCount} rejected recorded in history` : ""}${alreadyNote}${skippedNote}.`,
         );
       }
       qc.invalidateQueries({ queryKey: ["payments"] });

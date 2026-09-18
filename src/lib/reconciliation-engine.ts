@@ -59,6 +59,7 @@ export interface ReconciliationMatch {
   payableType?: "dividend" | "interest" | "mutual_fund" | null;
   payableId?: string | null;
   paymentId?: string | null;
+  batchId?: string | null;
   paymentStatus?: string | null;
   fiscalYear?: string | null;
   transactionDate?: string | null;
@@ -1044,7 +1045,8 @@ export const ReconciliationEngine = {
         paymentId: bestPayment?.id ?? null,
         paymentStatus: bestPayment?.status ?? bestPayment?.payment_status ?? null,
         payableId: matchedPayable?.id ?? bestPayment?.payable_id ?? null,
-        fiscalYear: matchedPayable?.fiscal_year ?? null,
+        batchId: matchedBatch?.id ?? null,
+        fiscalYear: matchedPayable?.fiscal_year ?? (matchedBatch as any)?.fiscal_year ?? null,
         payableType: (() => {
           const raw =
             matchedPayable?.payable_type ??

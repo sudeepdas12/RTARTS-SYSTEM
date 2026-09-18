@@ -12,6 +12,8 @@ export interface ReconciliationResultRow {
   fiscal_year?: string | null;
   payable_type: string | null;
   payable_id: string | null;
+  payment_id?: string | null;
+  batch_id?: string | null;
   expected_amount: number | null;
   actual_amount: number | null;
   difference: number;
@@ -521,8 +523,79 @@ export const ReconciliationService = {
       return "dividend";
     };
 
-    // 1. Determine dominant payable type across matched results
-    const typeCounts = matchedResults.reduce(
+    // Helper to identify batch settlement debit records
+    const isBatchRecord = (r: ReconciliationResultRow): boolean => {
+      return (
+        r.source_b_type === "batch" ||
+        Boolean(r.batch_id) ||
+        (Boolean(r.notes) && r.notes!.includes("Category: Payment Batch Debit")) ||
+        (Boolean(r.notes) && r.notes!.includes("Batch:"))
+      );
+    };
+
+    const batchMatches = matchedResults.filter(isBatchRecord);
+    const individualMatches = matchedResults.filter((r) => !isBatchRecord(r));
+
+    // 1. Process Batch Header matches (aggregate debit in bank statement)
+    let batchesUpdated = 0;
+    let batchesAlreadyCompleted = 0;
+    const processedBatchIds = new Set<string>();
+
+    for (const b of batchMatches) {
+      let batchId = b.batch_id || (b.source_b_type === "batch" ? b.source_b_id : null);
+      if (!batchId && b.notes) {
+        const batchNameMatch = b.notes.match(/Batch:\s*([^/\]\n]+)/);
+        if (batchNameMatch && batchNameMatch[1]) {
+          const bName = batchNameMatch[1].trim();
+          const { data: foundBatch } = await (supabase as any)
+            .from("payment_batches")
+            .select("id, status, total_payments")
+            .eq("batch_name", bName)
+            .maybeSingle();
+          if (foundBatch) batchId = foundBatch.id;
+        }
+      }
+
+      if (!batchId || processedBatchIds.has(batchId)) continue;
+      processedBatchIds.add(batchId);
+
+      const { data: batchRow, error: fetchErr } = await (supabase as any)
+        .from("payment_batches")
+        .select("id, status, total_payments")
+        .eq("id", batchId)
+        .maybeSingle();
+
+      if (fetchErr || !batchRow) {
+        errors.push(`Payment batch ${batchId} not found in system.`);
+        continue;
+      }
+
+      if (batchRow.status === "Completed") {
+        batchesAlreadyCompleted += 1;
+        alreadyPaid += Number(batchRow.total_payments || 1);
+        continue;
+      }
+
+      // Setting status = 'Completed' fires trg_payment_batch_completed which runs complete_payment_batch_atomic
+      const { error: updateErr } = await (supabase as any)
+        .from("payment_batches")
+        .update({
+          status: "Completed",
+          processed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", batchId);
+
+      if (updateErr) {
+        errors.push(`Failed to complete payment batch ${batchId}: ${updateErr.message}`);
+      } else {
+        batchesUpdated += 1;
+        updated += Number(batchRow.total_payments || 1);
+      }
+    }
+
+    // 2. Determine dominant payable type across individual matched results
+    const typeCounts = individualMatches.reduce(
       (acc, r) => {
         const t = normalizeType(r.payable_type);
         acc[t] = (acc[t] || 0) + 1;
@@ -533,8 +606,8 @@ export const ReconciliationService = {
     const dominantPayableType =
       Object.entries(typeCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "dividend";
 
-    // 2. Group by company to create clean reconciliation batches
-    const companyId = matchedResults.find((r) => r.company_id)?.company_id || null;
+    // 3. Group by company to create clean reconciliation batches
+    const companyId = individualMatches.find((r) => r.company_id)?.company_id || null;
     const todayStr = new Date().toISOString().split("T")[0];
 
     const batchInfo = {
@@ -542,8 +615,8 @@ export const ReconciliationService = {
       company_id: companyId,
       payable_type: dominantPayableType,
       payment_method: paymentMethod,
-      total_records: matchedResults.length,
-      total_net: matchedResults.reduce(
+      total_records: individualMatches.length,
+      total_net: individualMatches.reduce(
         (acc, r) => acc + Number(r.actual_amount || r.expected_amount || 0),
         0,
       ),
@@ -551,12 +624,14 @@ export const ReconciliationService = {
       cds_batch_ref: "RECON-APPLY",
     };
 
-    // 3. Resolve payable IDs strictly without ambiguous fuzzy-matching
+    // 4. Resolve payable IDs strictly without ambiguous fuzzy-matching
     const itemsPayload: any[] = [];
-    for (const r of matchedResults) {
+    for (const r of individualMatches) {
       let payableId =
-        r.payable_id || (r.source_b_type !== "payment" ? r.source_b_id : null) || null;
-      const paymentId = r.source_b_type === "payment" ? r.source_b_id : null;
+        r.payable_id ||
+        (r.source_b_type !== "payment" && r.source_b_type !== "batch" ? r.source_b_id : null) ||
+        null;
+      const paymentId = r.source_b_type === "payment" ? r.source_b_id : r.payment_id || null;
       let payableType: string = normalizeType(r.payable_type || dominantPayableType);
 
       // If payableId is missing, strictly look up an exact matching pending payable
@@ -612,12 +687,15 @@ export const ReconciliationService = {
 
         if (!payableId) {
           errors.push(
-            `Skipping client ${r.client_id}: no exact pending payable found matching amount ${expAmt}`,
+            `Skipping client ${r.client_id}: no pending payable found matching amount ${expAmt}`,
           );
           continue;
         }
       } else if (!payableId && !paymentId && !r.client_id) {
-        errors.push("Skipping unlinked record: No payable ID, payment ID, or client ID available");
+        // Log descriptive note and skip without failing the entire apply transaction
+        errors.push(
+          `Skipping unlinked record (${r.actual_amount ?? r.expected_amount ?? 0} NPR): no payable ID, payment ID, or client ID available`,
+        );
         continue;
       }
 
@@ -639,36 +717,45 @@ export const ReconciliationService = {
       });
     }
 
-    if (itemsPayload.length === 0) {
-      return { updated: 0, paymentsCreated: 0, alreadyPaid: 0, errors };
-    }
-
-    // 4. Atomic Execution via SECURITY DEFINER Stored Procedure
-    const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc(
-      "apply_reconciliation_batch",
-      {
-        p_items: itemsPayload,
-        p_batch_info: batchInfo,
-      },
-    );
-
-    if (rpcErr) {
-      throw new Error(`Atomic reconciliation batch failed: ${rpcErr.message}`);
-    }
-
-    if (!rpcRes || !rpcRes.success) {
-      throw new Error(
-        `Reconciliation transaction failed: ${rpcRes?.error || "Transaction rolled back"}`,
+    if (itemsPayload.length > 0) {
+      // 5. Atomic Execution via SECURITY DEFINER Stored Procedure
+      const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc(
+        "apply_reconciliation_batch",
+        {
+          p_items: itemsPayload,
+          p_batch_info: batchInfo,
+        },
       );
+
+      if (rpcErr) {
+        throw new Error(`Atomic reconciliation batch failed: ${rpcErr.message}`);
+      }
+
+      if (!rpcRes || !rpcRes.success) {
+        throw new Error(
+          `Reconciliation transaction failed: ${rpcRes?.error || "Transaction rolled back"}`,
+        );
+      }
+
+      updated += Number(rpcRes.payables_updated ?? rpcRes.updated ?? 0);
+      paymentsCreated += Number(rpcRes.payments_created ?? rpcRes.paymentsCreated ?? 0);
+      alreadyPaid += Number(rpcRes.already_paid ?? 0);
+      if (Array.isArray(rpcRes.errors) && rpcRes.errors.length > 0) {
+        for (const err of rpcRes.errors) {
+          errors.push(err?.error || JSON.stringify(err));
+        }
+      }
     }
 
-    updated = Number(rpcRes.payables_updated ?? rpcRes.updated ?? 0);
-    paymentsCreated = Number(rpcRes.payments_created ?? rpcRes.paymentsCreated ?? 0);
-    alreadyPaid = Number(rpcRes.already_paid ?? 0);
-    if (Array.isArray(rpcRes.errors) && rpcRes.errors.length > 0) {
-      for (const err of rpcRes.errors) {
-        errors.push(err?.error || JSON.stringify(err));
-      }
+    if (
+      updated === 0 &&
+      paymentsCreated === 0 &&
+      alreadyPaid === 0 &&
+      itemsPayload.length === 0 &&
+      batchesUpdated === 0 &&
+      batchesAlreadyCompleted === 0
+    ) {
+      return { updated: 0, paymentsCreated: 0, alreadyPaid: 0, errors };
     }
 
     // 5. Process remarks for Rejected transactions strictly
