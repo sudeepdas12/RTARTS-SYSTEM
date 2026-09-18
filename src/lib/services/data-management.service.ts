@@ -13,14 +13,27 @@ export interface CompanyFiscalData {
   dividend_count: number;
   dividend_gross: number;
   dividend_net: number;
+  dividend_paid?: number;
+  dividend_partial?: number;
+  dividend_pending?: number;
+  dividend_disbursed?: number;
   interest_count: number;
   interest_gross: number;
   interest_net: number;
+  interest_paid?: number;
+  interest_partial?: number;
+  interest_pending?: number;
+  interest_disbursed?: number;
   mutual_fund_count: number;
   mutual_fund_gross: number;
   mutual_fund_net: number;
+  mutual_fund_paid?: number;
+  mutual_fund_partial?: number;
+  mutual_fund_pending?: number;
+  mutual_fund_disbursed?: number;
   total_paid: number;
   total_pending: number;
+  total_disbursed?: number;
 }
 
 export interface ClientFiscalData {

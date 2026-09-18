@@ -41,6 +41,7 @@ import {
   XAxis,
   YAxis,
   Tooltip,
+  Legend,
   CartesianGrid,
   PieChart,
   Pie,
@@ -84,7 +85,11 @@ function fmtAxisTick(n: number) {
   return String(n);
 }
 
-const PIE_COLORS = ["#10b981", "#f59e0b", "#ef4444", "#3b82f6", "#8b5cf6"];
+const STATUS_COLORS: Record<string, string> = {
+  Paid: "#10b981", // Emerald
+  Pending: "#f59e0b", // Amber
+  Partial: "#3b82f6", // Blue
+};
 
 function Dashboard() {
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>("all");
@@ -120,7 +125,11 @@ function Dashboard() {
     queryKey: ["dashboard-kpis", selectedCompanyId, selectedFiscalYear],
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
-      type Row = { net_payable: number | null; payment_status: string };
+      type Row = {
+        net_payable: number | null;
+        payment_status: string;
+        paid_amount?: number | null;
+      };
 
       let interestPending = 0;
       let interestPaid = 0;
@@ -134,6 +143,7 @@ function Dashboard() {
       let mutualFundPaid = 0;
       let mutualFundPartial = 0;
       let totalMutualFund = 0;
+      let totalDisbursed = 0;
 
       // 1. Attempt fast server-side aggregation via get_company_fiscal_summary_rpc
       let rpcSucceeded = false;
@@ -172,6 +182,13 @@ function Dashboard() {
               mutualFundPending += Number(r.mutual_fund_pending || 0);
               mutualFundPartial += Number(r.mutual_fund_partial || 0);
               totalMutualFund += Number(r.mutual_fund_net || 0);
+
+              totalDisbursed += Number(
+                r.total_disbursed ??
+                  Number(r.interest_disbursed || 0) +
+                    Number(r.dividend_disbursed || 0) +
+                    Number(r.mutual_fund_disbursed || 0),
+              );
             }
             rpcSucceeded = true;
           }
@@ -186,7 +203,7 @@ function Dashboard() {
           fetchAllRows<Row>((from, to) => {
             let q = (supabase as any)
               .from("interest_payables")
-              .select("net_payable, payment_status")
+              .select("net_payable, payment_status, paid_amount")
               .range(from, to);
             if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
             if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
@@ -195,7 +212,7 @@ function Dashboard() {
           fetchAllRows<Row>((from, to) => {
             let q = (supabase as any)
               .from("dividend_payables")
-              .select("net_payable, payment_status")
+              .select("net_payable, payment_status, paid_amount")
               .range(from, to);
             if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
             if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
@@ -217,6 +234,9 @@ function Dashboard() {
             .filter((r) => String(r.payment_status || "").toLowerCase() === status.toLowerCase())
             .reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
 
+        const sumDisbursed = (rows: Row[] | null) =>
+          (rows ?? []).reduce((a, r) => a + Number(r.paid_amount ?? 0), 0);
+
         totalInterest = interestRows.reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
         totalDividend = dividendRows.reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
         totalMutualFund = mutualFundRows.reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
@@ -229,6 +249,7 @@ function Dashboard() {
         mutualFundPending = sum(mutualFundRows, "Pending");
         mutualFundPaid = sum(mutualFundRows, "Paid");
         mutualFundPartial = sum(mutualFundRows, "Partial");
+        totalDisbursed = sumDisbursed(interestRows) + sumDisbursed(dividendRows);
       }
 
       let paymentsQ = (supabase as any)
@@ -323,6 +344,7 @@ function Dashboard() {
         totalInterest,
         totalDividend,
         totalMutualFund,
+        totalDisbursed,
         bankTotal: bankTotal.count ?? 0,
         bankReconciled: bankReconciled.count ?? 0,
         approvals: approvals.count ?? 0,
@@ -341,8 +363,13 @@ function Dashboard() {
     (data?.interestPending ?? 0) + (data?.dividendPending ?? 0) + (data?.mutualFundPending ?? 0);
   const totalPaid =
     (data?.interestPaid ?? 0) + (data?.dividendPaid ?? 0) + (data?.mutualFundPaid ?? 0);
+  const totalPartial =
+    (data?.interestPartial ?? 0) + (data?.dividendPartial ?? 0) + (data?.mutualFundPartial ?? 0);
   const totalAll =
     (data?.totalInterest ?? 0) + (data?.totalDividend ?? 0) + (data?.totalMutualFund ?? 0);
+  const totalDisbursed = (data?.totalDisbursed ?? 0) > 0 ? (data?.totalDisbursed ?? 0) : totalPaid;
+  const disbursementProgress =
+    totalAll > 0 ? Math.min(100, Math.round((totalDisbursed / totalAll) * 100)) : 0;
   const paymentProgress = totalAll > 0 ? Math.round((totalPaid / totalAll) * 100) : 0;
   const bankReconciledPct =
     (data?.bankTotal ?? 0) > 0
@@ -376,7 +403,7 @@ function Dashboard() {
       icon: Wallet,
       color: "text-emerald-600 dark:text-emerald-400",
       bg: "bg-emerald-500/10 dark:bg-emerald-950/40",
-      trend: `${paymentProgress}% paid`,
+      trend: `${disbursementProgress}% disbursed`,
       trendUp: true,
       href: "/analytics",
     },
@@ -680,6 +707,7 @@ function Dashboard() {
                   tickFormatter={fmtAxisTick}
                 />
                 <Tooltip formatter={(v: any) => `₨ ${fmtCurrency(Number(v))}`} />
+                <Legend wrapperStyle={{ paddingTop: 8, fontSize: "12px" }} />
                 <Bar dataKey="Paid" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={40} />
                 <Bar dataKey="Pending" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={40} />
                 <Bar dataKey="Partial" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={40} />
@@ -712,7 +740,7 @@ function Dashboard() {
                       dataKey="value"
                     >
                       {pieData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                        <Cell key={`cell-${index}`} fill={STATUS_COLORS[entry.name] || "#6b7280"} />
                       ))}
                     </Pie>
                     <Tooltip formatter={(v: any) => `₨ ${fmtCurrency(Number(v))}`} />
@@ -727,17 +755,21 @@ function Dashboard() {
             )}
             <div className="flex justify-center flex-wrap gap-4 pt-3 border-t">
               {pieData.length > 0 ? (
-                pieData.map((d, i) => (
-                  <div key={d.name} className="flex items-center gap-1.5 text-xs">
-                    <span
-                      className="w-2.5 h-2.5 rounded-full"
-                      style={{ backgroundColor: PIE_COLORS[i % PIE_COLORS.length] }}
-                    />
-                    <span className="text-muted-foreground font-medium">
-                      {d.name}: ₨ {fmtCurrency(d.value)}
-                    </span>
-                  </div>
-                ))
+                pieData.map((d) => {
+                  const pct = totalAll > 0 ? ((d.value / totalAll) * 100).toFixed(1) : "0";
+                  return (
+                    <div key={d.name} className="flex items-center gap-1.5 text-xs">
+                      <span
+                        className="w-2.5 h-2.5 rounded-full"
+                        style={{ backgroundColor: STATUS_COLORS[d.name] || "#6b7280" }}
+                      />
+                      <span className="text-muted-foreground font-medium">
+                        {d.name}: ₨ {fmtCurrency(d.value)}{" "}
+                        <span className="text-muted-foreground/70">({pct}%)</span>
+                      </span>
+                    </div>
+                  );
+                })
               ) : (
                 <span className="text-xs text-muted-foreground italic">
                   Data will populate automatically as disbursements are imported
@@ -765,11 +797,13 @@ function Dashboard() {
             <div>
               <div className="flex justify-between text-sm mb-1.5">
                 <span className="text-muted-foreground">
-                  {selectedCompany ? `${selectedCompany.company_code} Payout` : "Overall System"}
+                  {selectedCompany
+                    ? `${selectedCompany.company_code} Funds Disbursed`
+                    : "Funds Disbursed"}
                 </span>
-                <span className="font-medium">{paymentProgress}%</span>
+                <span className="font-semibold text-emerald-600">{disbursementProgress}%</span>
               </div>
-              <Progress value={paymentProgress} className="h-2" />
+              <Progress value={disbursementProgress} className="h-2" />
             </div>
             <div>
               <div className="flex justify-between text-sm mb-1.5">
@@ -778,12 +812,28 @@ function Dashboard() {
               </div>
               <Progress value={bankReconciledPct} className="h-2" />
             </div>
-            <div className="pt-2 border-t">
+            <div className="pt-2 border-t space-y-1.5">
               <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Total Paid</span>
-                <span className="font-semibold text-emerald-600">₨ {fmtCurrency(totalPaid)}</span>
+                <span className="text-muted-foreground">Total Disbursed</span>
+                <span className="font-semibold text-emerald-600">
+                  ₨ {fmtCurrency(totalDisbursed)}
+                </span>
               </div>
-              <div className="flex justify-between text-sm mt-1">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Fully Settled</span>
+                <span className="font-medium text-emerald-700 dark:text-emerald-400">
+                  ₨ {fmtCurrency(totalPaid)}
+                </span>
+              </div>
+              {totalPartial > 0 && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">In Installments (Partial)</span>
+                  <span className="font-semibold text-blue-600 dark:text-blue-400">
+                    ₨ {fmtCurrency(totalPartial)}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Total Pending</span>
                 <span className="font-semibold text-amber-600">₨ {fmtCurrency(totalPending)}</span>
               </div>
