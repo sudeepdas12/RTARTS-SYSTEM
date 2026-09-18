@@ -2,7 +2,10 @@
 -- Migration: 20261192000000_harden_apply_reconciliation_batch_sync_payables.sql
 -- Description:
 -- Harden apply_reconciliation_batch RPC:
--- Synchronize linked payables when reconciliation matches by payment_id only.
+-- 1. Synchronize linked payables when reconciliation matches by payment_id only.
+-- 2. Mark payment transaction as 'Completed' when reconciliation result is either
+--    'Paid' or 'Partial' (installment payout confirmed through settlement report).
+-- 3. Correct status of existing reconciled payments with paid_amount > 0.
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION public.apply_reconciliation_batch(p_items jsonb, p_batch_info jsonb)
@@ -220,10 +223,10 @@ BEGIN
           WHERE id = v_payable_id;
         END IF;
 
-        -- Update or insert payment record
+        -- Update or insert payment record. When a payout is confirmed (Paid or Partial installment), payment is Completed.
         IF v_payment_id IS NOT NULL THEN
           UPDATE public.payments
-          SET status            = CASE WHEN v_new_status = 'Paid' THEN 'Completed' ELSE 'Pending' END,
+          SET status            = CASE WHEN v_new_status IN ('Paid', 'Partial') THEN 'Completed' ELSE 'Pending' END,
               payment_date      = CURRENT_DATE,
               paid_amount       = v_paid_amt,
               payment_reference = COALESCE(v_payment_ref, payment_reference),
@@ -259,13 +262,13 @@ BEGIN
               v_payment_method,
               CURRENT_DATE,
               v_payment_ref,
-              CASE WHEN v_new_status = 'Paid' THEN 'Completed' ELSE 'Pending' END,
+              CASE WHEN v_new_status IN ('Paid', 'Partial') THEN 'Completed' ELSE 'Pending' END,
               v_uid
             );
             v_payments_created := v_payments_created + 1;
           EXCEPTION WHEN unique_violation THEN
             UPDATE public.payments
-            SET status = CASE WHEN v_new_status = 'Paid' THEN 'Completed' ELSE 'Pending' END,
+            SET status = CASE WHEN v_new_status IN ('Paid', 'Partial') THEN 'Completed' ELSE 'Pending' END,
                 payment_date = CURRENT_DATE,
                 paid_amount = v_paid_amt,
                 payment_reference = COALESCE(v_payment_ref, payment_reference),
@@ -282,7 +285,7 @@ BEGIN
         FROM public.payments WHERE id = v_payment_id;
 
         UPDATE public.payments
-        SET status            = CASE WHEN v_new_status = 'Paid' THEN 'Completed' ELSE 'Pending' END,
+        SET status            = CASE WHEN v_new_status IN ('Paid', 'Partial') THEN 'Completed' ELSE 'Pending' END,
             payment_date      = CURRENT_DATE,
             paid_amount       = v_paid_amt,
             payment_reference = COALESCE(v_payment_ref, payment_reference),
@@ -331,3 +334,8 @@ $function$;
 
 REVOKE ALL ON FUNCTION public.apply_reconciliation_batch(jsonb, jsonb) FROM anon, public;
 GRANT EXECUTE ON FUNCTION public.apply_reconciliation_batch(jsonb, jsonb) TO authenticated, service_role;
+
+-- Synchronize existing reconciled payments where disbursed paid_amount > 0 to 'Completed'
+UPDATE public.payments
+SET status = 'Completed', updated_at = now()
+WHERE status = 'Pending' AND paid_amount > 0;
