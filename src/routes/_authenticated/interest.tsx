@@ -2196,7 +2196,13 @@ function InterestPage() {
                             ? (p.kitta || p.shares_held || cl?.kitta)?.toLocaleString()
                             : "—"}
                         </TableCell>
-                        <TableCell className="text-xs">{p.instrument_ref ?? "—"}</TableCell>
+                        <TableCell className="text-xs font-medium">
+                          {p.instrument_ref ||
+                            p.lot_name ||
+                            c?.company_name ||
+                            c?.company_code ||
+                            "—"}
+                        </TableCell>
                         <TableCell className="text-right font-mono">
                           {fmt(p.gross_interest)}
                         </TableCell>
