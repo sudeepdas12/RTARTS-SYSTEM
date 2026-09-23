@@ -20,7 +20,7 @@ If you discover a security vulnerability or sensitive data exposure risk, **plea
 Please report all security vulnerabilities privately:
 
 - **Contact**: Contact the system administrator or repository maintainer privately.
-- **Email**: security@rtarts-system.local
+- **Email**: [dassudeep545@gmail.com](mailto:dassudeep545@gmail.com)
 - **Information to include**:
   - Summary of the vulnerability or security flaw
   - Step-by-step reproduction instructions or proof-of-concept
