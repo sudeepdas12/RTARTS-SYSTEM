@@ -1310,8 +1310,10 @@ function PaymentsRoute() {
             </div>
 
             {/* Date Range Search */}
-            <div className="flex items-center gap-1 bg-background border rounded px-2 h-9 text-xs">
-              <span className="text-[11px] text-muted-foreground">From:</span>
+            <div className="flex items-center gap-1.5 bg-background border rounded-md px-2.5 h-9 text-xs shadow-2xs">
+              <span className="text-[11px] text-muted-foreground whitespace-nowrap font-medium">
+                From:
+              </span>
               <input
                 type="date"
                 value={tableFromDate}
@@ -1319,9 +1321,12 @@ function PaymentsRoute() {
                   setTableFromDate(e.target.value);
                   setTablePeriodPreset("CUSTOM");
                 }}
-                className="bg-transparent text-xs outline-none"
+                className="w-[125px] shrink-0 bg-transparent text-xs outline-none font-mono"
               />
-              <span className="text-[11px] text-muted-foreground ml-1">To:</span>
+              <span className="text-muted-foreground/40 font-light">|</span>
+              <span className="text-[11px] text-muted-foreground whitespace-nowrap font-medium">
+                To:
+              </span>
               <input
                 type="date"
                 value={tableToDate}
@@ -1329,7 +1334,7 @@ function PaymentsRoute() {
                   setTableToDate(e.target.value);
                   setTablePeriodPreset("CUSTOM");
                 }}
-                className="bg-transparent text-xs outline-none"
+                className="w-[125px] shrink-0 bg-transparent text-xs outline-none font-mono"
               />
               {(tableFromDate || tableToDate) && (
                 <button
@@ -1339,7 +1344,7 @@ function PaymentsRoute() {
                     setTableToDate("");
                     setTablePeriodPreset("ALL");
                   }}
-                  className="ml-1 text-[11px] text-destructive hover:underline font-medium"
+                  className="ml-1 text-[11px] text-destructive hover:underline font-semibold shrink-0"
                 >
                   Clear
                 </button>

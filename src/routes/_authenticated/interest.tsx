@@ -1666,70 +1666,127 @@ function InterestPage() {
       </div>
 
       {/* ─── Debenture Interest Distribution Summary Card (Pumori / CDS Format) ─── */}
-      <Card className="mb-4 border-primary/20 shadow-sm">
-        <CardHeader className="py-3 px-4 bg-muted/40 border-b flex flex-row items-center justify-between">
-          <div className="space-y-0.5">
-            <CardTitle className="text-sm font-semibold flex items-center gap-2">
-              <BarChart3 className="h-4 w-4 text-primary" />
-              Debenture Interest Distribution Summary (Pumori / CDS Format)
-              <Badge variant="outline" className="font-mono text-[11px] ml-1">
+      <Card className="mb-6 border-primary/20 shadow-xs overflow-hidden">
+        <CardHeader className="py-3.5 px-4 bg-muted/40 border-b flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="h-7 w-7 rounded-md bg-primary/10 flex items-center justify-center text-primary shrink-0">
+                <BarChart3 className="h-4 w-4" />
+              </div>
+              <CardTitle className="text-sm font-semibold tracking-tight text-foreground">
+                Debenture Interest Distribution Summary (Pumori / CDS Format)
+              </CardTitle>
+              <Badge variant="outline" className="font-mono text-[11px] bg-background">
                 {debentureSummaryReport?.companyCode || "All"}{" "}
                 {debentureSummaryReport?.fiscalYear
                   ? `— FY ${debentureSummaryReport.fiscalYear}`
                   : ""}
               </Badge>
-            </CardTitle>
-            <p className="text-xs text-muted-foreground">
+            </div>
+            <p className="text-xs text-muted-foreground pl-9">
               Holder-wise debenture capital &amp; coupon breakdown (Public{" "}
-              {debentureDisplayRates.publicRatePct}% TDS, Institution{" "}
-              {debentureDisplayRates.institutionRatePct}% TDS, Tax Exempted{" "}
-              {debentureDisplayRates.exemptRatePct}% TDS)
+              <span className="font-medium text-foreground">
+                {debentureDisplayRates.publicRatePct}% TDS
+              </span>
+              , Institution{" "}
+              <span className="font-medium text-foreground">
+                {debentureDisplayRates.institutionRatePct}% TDS
+              </span>
+              , Tax Exempted{" "}
+              <span className="font-medium text-foreground">
+                {debentureDisplayRates.exemptRatePct}% TDS
+              </span>
+              )
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Select
-              value={companyFilter}
-              onValueChange={(v) => {
-                setCompanyFilter(v);
-                setPage(1);
-              }}
+          <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs font-medium shadow-2xs"
+              onClick={() => setSummaryReportOpen((v) => !v)}
             >
-              <SelectTrigger className="h-8 w-44 text-xs bg-background">
-                <SelectValue placeholder="Company: All" />
-              </SelectTrigger>
-              <SelectContent className="max-h-60 overflow-y-auto">
-                <SelectItem value="all">All Debentures</SelectItem>
-                {relevantCompanies.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.company_code} — {c.company_name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select
-              value={fyFilter}
-              onValueChange={(v) => {
-                setFyFilter(v);
-                setPage(1);
-              }}
+              {summaryReportOpen ? (
+                <ChevronUp className="h-3.5 w-3.5 mr-1 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5 mr-1 text-muted-foreground" />
+              )}
+              {summaryReportOpen ? "Hide Breakdown" : "View Breakdown"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs font-medium shadow-2xs hover:bg-emerald-50 hover:text-emerald-700 dark:hover:bg-emerald-950/40"
+              onClick={() =>
+                debentureSummaryReport &&
+                DebentureSummaryReportService.exportToExcel(debentureSummaryReport)
+              }
+              disabled={debentureSummaryReport.rows.length === 0}
             >
-              <SelectTrigger className="h-8 w-28 text-xs bg-background">
-                <SelectValue placeholder="All FY" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All FY</SelectItem>
-                {fiscalYears.map((fy) => (
-                  <SelectItem key={fy} value={fy}>
-                    {fy}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              <FileSpreadsheet className="h-3.5 w-3.5 mr-1 text-emerald-600" />
+              Summary Excel
+            </Button>
+          </div>
+        </CardHeader>
 
+        {/* ─── Dedicated Toolbar / Filter Ribbon ─── */}
+        <div className="px-4 py-2.5 bg-muted/15 border-b flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+                Debenture:
+              </span>
+              <Select
+                value={companyFilter}
+                onValueChange={(v) => {
+                  setCompanyFilter(v);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="h-8 w-48 text-xs bg-background shadow-2xs">
+                  <SelectValue placeholder="All Debentures" />
+                </SelectTrigger>
+                <SelectContent className="max-h-60 overflow-y-auto">
+                  <SelectItem value="all">All Debentures</SelectItem>
+                  {relevantCompanies.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.company_code} — {c.company_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+                FY:
+              </span>
+              <Select
+                value={fyFilter}
+                onValueChange={(v) => {
+                  setFyFilter(v);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="h-8 w-28 text-xs bg-background shadow-2xs">
+                  <SelectValue placeholder="All FY" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All FY</SelectItem>
+                  {fiscalYears.map((fy) => (
+                    <SelectItem key={fy} value={fy}>
+                      {fy}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
             {/* Period Quick Presets */}
-            <div className="flex items-center gap-1 bg-background border rounded px-1.5 py-0.5 h-8">
-              <span className="text-[11px] text-muted-foreground whitespace-nowrap mr-0.5">
+            <div className="flex items-center gap-0.5 bg-background border rounded-md p-0.5 shadow-2xs">
+              <span className="text-[11px] text-muted-foreground font-medium px-2 whitespace-nowrap">
                 Period:
               </span>
               {(["3M", "6M", "9M", "12M"] as PeriodPreset[]).map((p) => {
@@ -1747,10 +1804,10 @@ function InterestPage() {
                       setToDateFilter(end.toISOString().slice(0, 10));
                       setPage(1);
                     }}
-                    className={`text-[11px] font-medium px-1.5 py-0.5 rounded transition-colors ${
+                    className={`text-[11px] font-medium px-2 py-0.5 rounded transition-all whitespace-nowrap ${
                       periodPreset === p
-                        ? "bg-primary text-primary-foreground font-semibold"
-                        : "text-muted-foreground hover:bg-muted"
+                        ? "bg-primary text-primary-foreground font-semibold shadow-2xs"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted/70"
                     }`}
                   >
                     {p}
@@ -1760,8 +1817,10 @@ function InterestPage() {
             </div>
 
             {/* Date Range Search */}
-            <div className="flex items-center gap-1 bg-background border rounded px-2 py-0.5 h-8 text-xs">
-              <span className="text-[11px] text-muted-foreground">From:</span>
+            <div className="flex items-center gap-1.5 bg-background border rounded-md px-2.5 py-0.5 h-8 text-xs shadow-2xs">
+              <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+                From:
+              </span>
               <input
                 type="date"
                 value={fromDateFilter}
@@ -1770,9 +1829,12 @@ function InterestPage() {
                   setPeriodPreset("CUSTOM");
                   setPage(1);
                 }}
-                className="bg-transparent text-xs outline-none"
+                className="w-[125px] shrink-0 bg-transparent text-xs outline-none font-mono"
               />
-              <span className="text-[11px] text-muted-foreground ml-1">To:</span>
+              <span className="text-muted-foreground/40 font-light">|</span>
+              <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+                To:
+              </span>
               <input
                 type="date"
                 value={toDateFilter}
@@ -1781,7 +1843,7 @@ function InterestPage() {
                   setPeriodPreset("CUSTOM");
                   setPage(1);
                 }}
-                className="bg-transparent text-xs outline-none"
+                className="w-[125px] shrink-0 bg-transparent text-xs outline-none font-mono"
               />
               {(fromDateFilter || toDateFilter) && (
                 <button
@@ -1792,41 +1854,14 @@ function InterestPage() {
                     setPeriodPreset("ALL");
                     setPage(1);
                   }}
-                  className="ml-1 text-[11px] text-destructive hover:underline font-medium"
+                  className="ml-1 text-[11px] text-destructive hover:underline font-semibold shrink-0"
                 >
                   Clear
                 </button>
               )}
             </div>
-
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() => setSummaryReportOpen((v) => !v)}
-            >
-              {summaryReportOpen ? (
-                <ChevronUp className="h-3.5 w-3.5 mr-1" />
-              ) : (
-                <ChevronDown className="h-3.5 w-3.5 mr-1" />
-              )}
-              {summaryReportOpen ? "Hide Breakdown" : "View Breakdown"}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() =>
-                debentureSummaryReport &&
-                DebentureSummaryReportService.exportToExcel(debentureSummaryReport)
-              }
-              disabled={debentureSummaryReport.rows.length === 0}
-            >
-              <FileSpreadsheet className="h-3.5 w-3.5 mr-1 text-emerald-600" />
-              Summary Excel
-            </Button>
           </div>
-        </CardHeader>
+        </div>
         {summaryReportOpen && (
           <CardContent className="p-0 overflow-x-auto">
             {summaryLoading ? (
@@ -2044,7 +2079,9 @@ function InterestPage() {
             <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-border/40">
               <div className="flex flex-wrap items-center gap-2">
                 <div className="flex items-center gap-1.5 bg-muted/40 border rounded-md px-2.5 h-8 text-xs">
-                  <span className="text-[11px] text-muted-foreground font-medium">From:</span>
+                  <span className="text-[11px] text-muted-foreground font-medium whitespace-nowrap">
+                    From:
+                  </span>
                   <input
                     type="date"
                     value={fromDateFilter}
@@ -2052,9 +2089,12 @@ function InterestPage() {
                       setFromDateFilter(e.target.value);
                       setPage(1);
                     }}
-                    className="bg-transparent text-xs outline-none"
+                    className="w-[125px] shrink-0 bg-transparent text-xs outline-none font-mono"
                   />
-                  <span className="text-[11px] text-muted-foreground font-medium ml-1">To:</span>
+                  <span className="text-muted-foreground/40 font-light">|</span>
+                  <span className="text-[11px] text-muted-foreground font-medium whitespace-nowrap">
+                    To:
+                  </span>
                   <input
                     type="date"
                     value={toDateFilter}
@@ -2062,7 +2102,7 @@ function InterestPage() {
                       setToDateFilter(e.target.value);
                       setPage(1);
                     }}
-                    className="bg-transparent text-xs outline-none"
+                    className="w-[125px] shrink-0 bg-transparent text-xs outline-none font-mono"
                   />
                 </div>
 
@@ -2106,21 +2146,29 @@ function InterestPage() {
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/50 hover:bg-muted/50">
-                  <TableHead className="font-semibold">Company</TableHead>
-                  <TableHead className="font-semibold">Client</TableHead>
-                  <TableHead className="font-semibold">BOID</TableHead>
-                  <TableHead className="text-right font-semibold">Holding (Kitta)</TableHead>
-                  <TableHead className="font-semibold">Instrument</TableHead>
-                  <TableHead className="text-right font-semibold">Gross</TableHead>
-                  <TableHead className="text-right font-semibold">Tax</TableHead>
-                  <TableHead className="text-right font-semibold">Net</TableHead>
-                  <TableHead className="text-right font-semibold">Paid</TableHead>
-                  <TableHead className="text-right font-semibold">Remaining</TableHead>
-                  <TableHead className="font-semibold">Bank Details</TableHead>
-                  <TableHead className="font-semibold">Due</TableHead>
-                  <TableHead className="font-semibold">Status</TableHead>
-                  <TableHead className="font-semibold">FY</TableHead>
-                  <TableHead className="text-right font-semibold">Actions</TableHead>
+                  <TableHead className="font-semibold whitespace-nowrap">Company</TableHead>
+                  <TableHead className="font-semibold whitespace-nowrap">Client</TableHead>
+                  <TableHead className="font-semibold whitespace-nowrap">BOID</TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">
+                    Holding (Kitta)
+                  </TableHead>
+                  <TableHead className="font-semibold whitespace-nowrap">Instrument</TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">
+                    Gross
+                  </TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">Tax</TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">Net</TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">Paid</TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">
+                    Remaining
+                  </TableHead>
+                  <TableHead className="font-semibold whitespace-nowrap">Bank Details</TableHead>
+                  <TableHead className="font-semibold whitespace-nowrap">Due</TableHead>
+                  <TableHead className="font-semibold whitespace-nowrap">Status</TableHead>
+                  <TableHead className="font-semibold whitespace-nowrap">FY</TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">
+                    Actions
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -2155,7 +2203,7 @@ function InterestPage() {
                           : Math.max(0, netVal - paidVal);
                     return (
                       <TableRow key={p.id} className="hover:bg-muted/30 transition-colors">
-                        <TableCell>
+                        <TableCell className="whitespace-nowrap">
                           {c ? (
                             <span>
                               <span className="font-mono text-xs text-muted-foreground">
@@ -2167,17 +2215,23 @@ function InterestPage() {
                             "—"
                           )}
                         </TableCell>
-                        <TableCell>
-                          <div className="font-medium text-xs text-foreground">
+                        <TableCell className="min-w-[150px] max-w-[220px]">
+                          <div
+                            className="font-medium text-xs text-foreground truncate"
+                            title={cl?.full_name ?? undefined}
+                          >
                             {cl?.full_name ?? "—"}
                           </div>
                           {cl?.father_name && (
-                            <div className="text-[10px] text-muted-foreground">
+                            <div
+                              className="text-[10px] text-muted-foreground truncate"
+                              title={`s/o ${cl.father_name}`}
+                            >
                               s/o {cl.father_name}
                             </div>
                           )}
                         </TableCell>
-                        <TableCell className="font-mono text-xs">
+                        <TableCell className="font-mono text-xs whitespace-nowrap">
                           {cl?.boid ? (
                             <button
                               type="button"
@@ -2191,49 +2245,57 @@ function InterestPage() {
                             "—"
                           )}
                         </TableCell>
-                        <TableCell className="text-right font-mono font-semibold text-primary">
+                        <TableCell className="text-right font-mono font-semibold text-primary whitespace-nowrap">
                           {p.kitta || p.shares_held || cl?.kitta
                             ? (p.kitta || p.shares_held || cl?.kitta)?.toLocaleString()
                             : "—"}
                         </TableCell>
-                        <TableCell className="text-xs font-medium">
+                        <TableCell className="text-xs font-medium whitespace-nowrap">
                           {p.instrument_ref ||
                             p.lot_name ||
                             c?.company_name ||
                             c?.company_code ||
                             "—"}
                         </TableCell>
-                        <TableCell className="text-right font-mono">
+                        <TableCell className="text-right font-mono whitespace-nowrap">
                           {fmt(p.gross_interest)}
                         </TableCell>
-                        <TableCell className="text-right font-mono text-amber-600">
+                        <TableCell className="text-right font-mono text-amber-600 whitespace-nowrap">
                           {fmt(p.tax_amount)}
                         </TableCell>
-                        <TableCell className="text-right font-mono font-bold text-foreground">
+                        <TableCell className="text-right font-mono font-bold text-foreground whitespace-nowrap">
                           {fmt(p.net_payable)}
                         </TableCell>
-                        <TableCell className="text-right font-mono font-bold text-emerald-600">
+                        <TableCell className="text-right font-mono font-bold text-emerald-600 whitespace-nowrap">
                           {fmt(paidVal)}
                         </TableCell>
                         <TableCell
-                          className={`text-right font-mono font-bold ${
+                          className={`text-right font-mono font-bold whitespace-nowrap ${
                             remVal > 0 ? "text-rose-600" : "text-muted-foreground"
                           }`}
                         >
                           {fmt(remVal)}
                         </TableCell>
-                        <TableCell>
-                          <div className="text-[11px] font-medium max-w-[140px] truncate">
+                        <TableCell className="min-w-[150px] max-w-[200px]">
+                          <div
+                            className="text-[11px] font-medium truncate"
+                            title={(p as any).bank_name || cl?.bank_name || undefined}
+                          >
                             {(p as any).bank_name || cl?.bank_name || "—"}
                           </div>
                           {((p as any).bank_account_no || cl?.bank_account_no) && (
-                            <div className="font-mono text-[10px] text-muted-foreground">
+                            <div
+                              className="font-mono text-[10px] text-muted-foreground truncate"
+                              title={(p as any).bank_account_no || cl?.bank_account_no || undefined}
+                            >
                               {(p as any).bank_account_no || cl?.bank_account_no}
                             </div>
                           )}
                         </TableCell>
-                        <TableCell className="text-xs">{p.due_date ?? "—"}</TableCell>
-                        <TableCell>
+                        <TableCell className="text-xs whitespace-nowrap">
+                          {p.due_date ?? "—"}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
                           <Badge
                             variant={
                               p.payment_status === "Paid"
@@ -2261,8 +2323,10 @@ function InterestPage() {
                             </span>
                           )}
                         </TableCell>
-                        <TableCell className="text-xs font-mono">{p.fiscal_year ?? "—"}</TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-xs font-mono whitespace-nowrap">
+                          {p.fiscal_year ?? "—"}
+                        </TableCell>
+                        <TableCell className="text-right whitespace-nowrap">
                           {canWrite && (
                             <div className="flex justify-end gap-1">
                               {p.payment_status !== "Paid" && (

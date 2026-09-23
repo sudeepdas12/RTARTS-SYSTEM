@@ -1741,66 +1741,173 @@ function DividendPage() {
       </div>
 
       {/* ─── AGM Dividend & Bonus Distribution Summary Report ─────────────────── */}
-      <Card className="mb-4 border-primary/20 shadow-sm">
-        <CardHeader className="py-3 px-4 bg-muted/40 border-b flex flex-row items-center justify-between">
-          <div className="space-y-0.5">
-            <CardTitle className="text-sm font-semibold flex items-center gap-2">
-              <BarChart3 className="h-4 w-4 text-primary" />
-              AGM Cash & Bonus Dividend Distribution Summary
-              <Badge variant="outline" className="font-mono text-[11px] ml-1">
+      {/* ─── AGM Dividend & Bonus Distribution Summary Report ─────────────────── */}
+      <Card className="mb-6 border-primary/20 shadow-xs overflow-hidden">
+        <CardHeader className="py-3.5 px-4 bg-muted/40 border-b flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="h-7 w-7 rounded-md bg-primary/10 flex items-center justify-center text-primary shrink-0">
+                <BarChart3 className="h-4 w-4" />
+              </div>
+              <CardTitle className="text-sm font-semibold tracking-tight text-foreground">
+                AGM Cash &amp; Bonus Dividend Distribution Summary
+              </CardTitle>
+              <Badge variant="outline" className="font-mono text-[11px] bg-background">
                 {agmSummaryReport?.companyCode || "All"}{" "}
                 {agmSummaryReport?.fiscalYear ? `— FY ${agmSummaryReport.fiscalYear}` : ""}
               </Badge>
-            </CardTitle>
-            <p className="text-xs text-muted-foreground">
-              Company-wise capital & payable breakdown by shareholder category (Promoter, Public,
-              Local, etc.)
+            </div>
+            <p className="text-xs text-muted-foreground pl-9">
+              Company-wise capital &amp; payable breakdown by shareholder category (Promoter,
+              Public, Local, etc.)
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Select
-              value={companyFilter}
-              onValueChange={(v) => {
-                setCompanyFilter(v);
-                setPage(1);
-              }}
+          <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs font-medium shadow-2xs"
+              onClick={() => loadSummary()}
+              disabled={summaryLoading}
             >
-              <SelectTrigger className="h-8 w-44 text-xs bg-background">
-                <SelectValue placeholder="Company: All" />
-              </SelectTrigger>
-              <SelectContent className="max-h-60 overflow-y-auto">
-                <SelectItem value="all">All Companies</SelectItem>
-                {relevantCompanies.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.company_code} — {c.company_name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select
-              value={fyFilter}
-              onValueChange={(v) => {
-                setFyFilter(v);
-                setPage(1);
-              }}
+              {summaryLoading ? "Loading…" : agmSummaryReport ? "Refresh" : "Load Summary"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs font-medium shadow-2xs hover:bg-emerald-50 hover:text-emerald-700 dark:hover:bg-emerald-950/40"
+              onClick={() =>
+                agmSummaryReport && AgmDividendSummaryReportService.exportToExcel(agmSummaryReport)
+              }
+              disabled={!agmSummaryReport?.rows.length}
             >
-              <SelectTrigger className="h-8 w-28 text-xs bg-background">
-                <SelectValue placeholder="All FY" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All FY</SelectItem>
-                {fiscalYears.map((fy) => (
-                  <SelectItem key={fy} value={fy}>
-                    {fy}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
+              Export Excel
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs font-medium shadow-2xs hover:bg-rose-50 hover:text-rose-700 dark:hover:bg-rose-950/40"
+              onClick={() =>
+                agmSummaryReport && AgmDividendSummaryReportService.exportToPdf(agmSummaryReport)
+              }
+              disabled={!agmSummaryReport?.rows.length}
+            >
+              <FileText className="mr-1.5 h-3.5 w-3.5 text-rose-600" />
+              Export PDF
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs font-medium shadow-2xs"
+              onClick={() => setSummaryReportOpen((v) => !v)}
+            >
+              {summaryReportOpen ? (
+                <ChevronUp className="h-3.5 w-3.5 mr-1 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5 mr-1 text-muted-foreground" />
+              )}
+              {summaryReportOpen ? "Hide Breakdown" : "View Breakdown"}
+            </Button>
+          </div>
+        </CardHeader>
 
+        {/* ─── Dedicated Toolbar / Filter Ribbon ─── */}
+        <div className="px-4 py-2.5 bg-muted/15 border-b flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+                Company:
+              </span>
+              <Select
+                value={companyFilter}
+                onValueChange={(v) => {
+                  setCompanyFilter(v);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="h-8 w-44 text-xs bg-background shadow-2xs">
+                  <SelectValue placeholder="Company: All" />
+                </SelectTrigger>
+                <SelectContent className="max-h-60 overflow-y-auto">
+                  <SelectItem value="all">All Companies</SelectItem>
+                  {relevantCompanies.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.company_code} — {c.company_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+                FY:
+              </span>
+              <Select
+                value={fyFilter}
+                onValueChange={(v) => {
+                  setFyFilter(v);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="h-8 w-28 text-xs bg-background shadow-2xs">
+                  <SelectValue placeholder="All FY" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All FY</SelectItem>
+                  {fiscalYears.map((fy) => (
+                    <SelectItem key={fy} value={fy}>
+                      {fy}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-center gap-1.5 bg-background border rounded-md px-2 py-0.5 h-8 shadow-2xs">
+              <span className="text-[11px] text-muted-foreground whitespace-nowrap font-medium">
+                Bonus %:
+              </span>
+              <input
+                type="number"
+                step="0.01"
+                placeholder={
+                  agmSummaryReport?.detectedBonusRate
+                    ? String(agmSummaryReport.detectedBonusRate)
+                    : "0"
+                }
+                value={summaryBonusRate}
+                onChange={(e) => setSummaryBonusRate(e.target.value)}
+                className="w-14 text-xs font-mono bg-transparent outline-none text-right font-medium text-foreground"
+                title="Override/Set Bonus Share % to calculate Actual Bonus, Issued, Fraction & Bonus Tax"
+              />
+            </div>
+
+            <div className="flex items-center gap-1.5 bg-background border rounded-md px-2 py-0.5 h-8 shadow-2xs">
+              <span className="text-[11px] text-muted-foreground whitespace-nowrap font-medium">
+                Cash Rate:
+              </span>
+              <input
+                type="number"
+                step="0.001"
+                placeholder={
+                  agmSummaryReport?.detectedDividendRate
+                    ? String(agmSummaryReport.detectedDividendRate)
+                    : "0"
+                }
+                value={summaryCashRate}
+                onChange={(e) => setSummaryCashRate(e.target.value)}
+                className="w-14 text-xs font-mono bg-transparent outline-none text-right font-medium text-foreground"
+                title="Override/Set Cash Dividend Rate to calculate Gross Dividend, Tax & Net Dividend"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
             {/* Period Quick Presets */}
-            <div className="flex items-center gap-1 bg-background border rounded px-1.5 py-0.5 h-8">
-              <span className="text-[11px] text-muted-foreground whitespace-nowrap mr-0.5">
+            <div className="flex items-center gap-0.5 bg-background border rounded-md p-0.5 shadow-2xs">
+              <span className="text-[11px] text-muted-foreground font-medium px-2 whitespace-nowrap">
                 Period:
               </span>
               {(["3M", "6M", "9M", "12M"] as PeriodPreset[]).map((p) => {
@@ -1818,10 +1925,10 @@ function DividendPage() {
                       setToDateFilter(end.toISOString().slice(0, 10));
                       setPage(1);
                     }}
-                    className={`text-[11px] font-medium px-1.5 py-0.5 rounded transition-colors ${
+                    className={`text-[11px] font-medium px-2 py-0.5 rounded transition-all whitespace-nowrap ${
                       periodPreset === p
-                        ? "bg-primary text-primary-foreground font-semibold"
-                        : "text-muted-foreground hover:bg-muted"
+                        ? "bg-primary text-primary-foreground font-semibold shadow-2xs"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted/70"
                     }`}
                   >
                     {p}
@@ -1831,8 +1938,10 @@ function DividendPage() {
             </div>
 
             {/* Date Range Search */}
-            <div className="flex items-center gap-1 bg-background border rounded px-2 py-0.5 h-8 text-xs">
-              <span className="text-[11px] text-muted-foreground">From:</span>
+            <div className="flex items-center gap-1.5 bg-background border rounded-md px-2.5 py-0.5 h-8 text-xs shadow-2xs">
+              <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+                From:
+              </span>
               <input
                 type="date"
                 value={fromDateFilter}
@@ -1841,9 +1950,12 @@ function DividendPage() {
                   setPeriodPreset("CUSTOM");
                   setPage(1);
                 }}
-                className="bg-transparent text-xs outline-none"
+                className="w-[125px] shrink-0 bg-transparent text-xs outline-none font-mono"
               />
-              <span className="text-[11px] text-muted-foreground ml-1">To:</span>
+              <span className="text-muted-foreground/40 font-light">|</span>
+              <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+                To:
+              </span>
               <input
                 type="date"
                 value={toDateFilter}
@@ -1852,7 +1964,7 @@ function DividendPage() {
                   setPeriodPreset("CUSTOM");
                   setPage(1);
                 }}
-                className="bg-transparent text-xs outline-none"
+                className="w-[125px] shrink-0 bg-transparent text-xs outline-none font-mono"
               />
               {(fromDateFilter || toDateFilter) && (
                 <button
@@ -1863,95 +1975,14 @@ function DividendPage() {
                     setPeriodPreset("ALL");
                     setPage(1);
                   }}
-                  className="ml-1 text-[11px] text-destructive hover:underline font-medium"
+                  className="ml-1 text-[11px] text-destructive hover:underline font-semibold shrink-0"
                 >
                   Clear
                 </button>
               )}
             </div>
-
-            <div className="flex items-center gap-1 bg-background border rounded px-2 py-0.5 h-8">
-              <span className="text-[11px] text-muted-foreground whitespace-nowrap">Bonus %:</span>
-              <input
-                type="number"
-                step="0.01"
-                placeholder={
-                  agmSummaryReport?.detectedBonusRate
-                    ? String(agmSummaryReport.detectedBonusRate)
-                    : "0"
-                }
-                value={summaryBonusRate}
-                onChange={(e) => setSummaryBonusRate(e.target.value)}
-                className="w-12 text-xs font-mono bg-transparent outline-none text-right font-medium text-foreground"
-                title="Override/Set Bonus Share % to calculate Actual Bonus, Issued, Fraction & Bonus Tax"
-              />
-            </div>
-            <div className="flex items-center gap-1 bg-background border rounded px-2 py-0.5 h-8">
-              <span className="text-[11px] text-muted-foreground whitespace-nowrap">
-                Cash Rate:
-              </span>
-              <input
-                type="number"
-                step="0.001"
-                placeholder={
-                  agmSummaryReport?.detectedDividendRate
-                    ? String(agmSummaryReport.detectedDividendRate)
-                    : "0"
-                }
-                value={summaryCashRate}
-                onChange={(e) => setSummaryCashRate(e.target.value)}
-                className="w-12 text-xs font-mono bg-transparent outline-none text-right font-medium text-foreground"
-                title="Override/Set Cash Dividend Rate to calculate Gross Dividend, Tax & Net Dividend"
-              />
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() => loadSummary()}
-              disabled={summaryLoading}
-            >
-              {summaryLoading ? "Loading…" : agmSummaryReport ? "Refresh" : "Load Summary"}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() =>
-                agmSummaryReport && AgmDividendSummaryReportService.exportToExcel(agmSummaryReport)
-              }
-              disabled={!agmSummaryReport?.rows.length}
-            >
-              <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
-              Export Excel
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() =>
-                agmSummaryReport && AgmDividendSummaryReportService.exportToPdf(agmSummaryReport)
-              }
-              disabled={!agmSummaryReport?.rows.length}
-            >
-              <FileText className="mr-1.5 h-3.5 w-3.5 text-rose-600" />
-              Export PDF
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setSummaryReportOpen((v) => !v)}
-              title={summaryReportOpen ? "Collapse Summary" : "Expand Summary"}
-            >
-              {summaryReportOpen ? (
-                <ChevronUp className="h-4 w-4" />
-              ) : (
-                <ChevronDown className="h-4 w-4" />
-              )}
-            </Button>
           </div>
-        </CardHeader>
+        </div>
         {summaryReportOpen && (
           <CardContent className="p-0 overflow-x-auto">
             {summaryLoading ? (

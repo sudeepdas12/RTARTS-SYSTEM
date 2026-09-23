@@ -1557,67 +1557,122 @@ function MutualFundPage() {
       </div>
 
       {/* ─── Mutual Fund Distribution Summary Card ─────────────────────────── */}
-      <Card className="mb-4 border-primary/20 shadow-sm">
-        <CardHeader className="py-3 px-4 bg-muted/40 border-b flex flex-row items-center justify-between">
-          <div className="space-y-0.5">
-            <CardTitle className="text-sm font-semibold flex items-center gap-2">
-              <BarChart3 className="h-4 w-4 text-primary" />
-              Mutual Fund Distribution Summary (CDS Format)
-              <Badge variant="outline" className="font-mono text-[11px] ml-1">
+      {/* ─── Mutual Fund Distribution Summary Card ─────────────────────────── */}
+      <Card className="mb-6 border-primary/20 shadow-xs overflow-hidden">
+        <CardHeader className="py-3.5 px-4 bg-muted/40 border-b flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="h-7 w-7 rounded-md bg-primary/10 flex items-center justify-center text-primary shrink-0">
+                <BarChart3 className="h-4 w-4" />
+              </div>
+              <CardTitle className="text-sm font-semibold tracking-tight text-foreground">
+                Mutual Fund Distribution Summary (CDS Format)
+              </CardTitle>
+              <Badge variant="outline" className="font-mono text-[11px] bg-background">
                 {companyFilter === "all"
                   ? "All Schemes"
                   : companies.find((c) => c.id === companyFilter)?.company_code || "Selected"}{" "}
                 {fyFilter !== "all" ? `— FY ${fyFilter}` : ""}
               </Badge>
-            </CardTitle>
-            <p className="text-xs text-muted-foreground">
+            </div>
+            <p className="text-xs text-muted-foreground pl-9">
               Scheme-wise unitholder category breakdown (Public 5%, Institution 15%, Tax Exempt 0%)
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Select
-              value={companyFilter}
-              onValueChange={(v) => {
-                setCompanyFilter(v);
-                setPage(1);
-              }}
+          <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs font-medium shadow-2xs hover:bg-emerald-50 hover:text-emerald-700 dark:hover:bg-emerald-950/40"
+              onClick={() =>
+                SummaryReportService.exportMutualFundSummaryToExcel(
+                  mfSummary.data ?? [],
+                  `${companies.find((c) => c.id === companyFilter)?.company_code || "Mutual_Fund"}_Summary`,
+                )
+              }
+              disabled={!mfSummary.data?.length}
             >
-              <SelectTrigger className="h-8 w-44 text-xs bg-background">
-                <SelectValue placeholder="Scheme: All" />
-              </SelectTrigger>
-              <SelectContent className="max-h-60 overflow-y-auto">
-                <SelectItem value="all">All Schemes</SelectItem>
-                {relevantCompanies.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.company_code} — {c.company_name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select
-              value={fyFilter}
-              onValueChange={(v) => {
-                setFyFilter(v);
-                setPage(1);
-              }}
+              <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
+              Export Excel
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs font-medium shadow-2xs hover:bg-rose-50 hover:text-rose-700 dark:hover:bg-rose-950/40"
+              onClick={() =>
+                SummaryReportService.exportMutualFundSummaryToPdf(
+                  mfSummary.data ?? [],
+                  companies.find((c) => c.id === companyFilter)?.company_name ||
+                    "Mutual Fund Distribution",
+                  `${companies.find((c) => c.id === companyFilter)?.company_code || "All Schemes"} — FY ${fyFilter !== "all" ? fyFilter : "All"}`,
+                )
+              }
+              disabled={!mfSummary.data?.length}
             >
-              <SelectTrigger className="h-8 w-28 text-xs bg-background">
-                <SelectValue placeholder="All FY" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All FY</SelectItem>
-                {fiscalYears.map((fy) => (
-                  <SelectItem key={fy} value={fy}>
-                    {fy}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              <FileText className="mr-1.5 h-3.5 w-3.5 text-rose-600" />
+              Export PDF
+            </Button>
+          </div>
+        </CardHeader>
 
+        {/* ─── Dedicated Toolbar / Filter Ribbon ─── */}
+        <div className="px-4 py-2.5 bg-muted/15 border-b flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+                Scheme:
+              </span>
+              <Select
+                value={companyFilter}
+                onValueChange={(v) => {
+                  setCompanyFilter(v);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="h-8 w-44 text-xs bg-background shadow-2xs">
+                  <SelectValue placeholder="Scheme: All" />
+                </SelectTrigger>
+                <SelectContent className="max-h-60 overflow-y-auto">
+                  <SelectItem value="all">All Schemes</SelectItem>
+                  {relevantCompanies.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.company_code} — {c.company_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+                FY:
+              </span>
+              <Select
+                value={fyFilter}
+                onValueChange={(v) => {
+                  setFyFilter(v);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="h-8 w-28 text-xs bg-background shadow-2xs">
+                  <SelectValue placeholder="All FY" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All FY</SelectItem>
+                  {fiscalYears.map((fy) => (
+                    <SelectItem key={fy} value={fy}>
+                      {fy}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
             {/* Period Quick Presets */}
-            <div className="flex items-center gap-1 bg-background border rounded px-1.5 py-0.5 h-8">
-              <span className="text-[11px] text-muted-foreground whitespace-nowrap mr-0.5">
+            <div className="flex items-center gap-0.5 bg-background border rounded-md p-0.5 shadow-2xs">
+              <span className="text-[11px] text-muted-foreground font-medium px-2 whitespace-nowrap">
                 Period:
               </span>
               {(["3M", "6M", "9M", "12M"] as PeriodPreset[]).map((p) => {
@@ -1635,10 +1690,10 @@ function MutualFundPage() {
                       setToDateFilter(end.toISOString().slice(0, 10));
                       setPage(1);
                     }}
-                    className={`text-[11px] font-medium px-1.5 py-0.5 rounded transition-colors ${
+                    className={`text-[11px] font-medium px-2 py-0.5 rounded transition-all whitespace-nowrap ${
                       periodPreset === p
-                        ? "bg-primary text-primary-foreground font-semibold"
-                        : "text-muted-foreground hover:bg-muted"
+                        ? "bg-primary text-primary-foreground font-semibold shadow-2xs"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted/70"
                     }`}
                   >
                     {p}
@@ -1648,8 +1703,10 @@ function MutualFundPage() {
             </div>
 
             {/* Date Range Search */}
-            <div className="flex items-center gap-1 bg-background border rounded px-2 py-0.5 h-8 text-xs">
-              <span className="text-[11px] text-muted-foreground">From:</span>
+            <div className="flex items-center gap-1.5 bg-background border rounded-md px-2.5 py-0.5 h-8 text-xs shadow-2xs">
+              <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+                From:
+              </span>
               <input
                 type="date"
                 value={fromDateFilter}
@@ -1658,9 +1715,12 @@ function MutualFundPage() {
                   setPeriodPreset("CUSTOM");
                   setPage(1);
                 }}
-                className="bg-transparent text-xs outline-none"
+                className="w-[125px] shrink-0 bg-transparent text-xs outline-none font-mono"
               />
-              <span className="text-[11px] text-muted-foreground ml-1">To:</span>
+              <span className="text-muted-foreground/40 font-light">|</span>
+              <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+                To:
+              </span>
               <input
                 type="date"
                 value={toDateFilter}
@@ -1669,7 +1729,7 @@ function MutualFundPage() {
                   setPeriodPreset("CUSTOM");
                   setPage(1);
                 }}
-                className="bg-transparent text-xs outline-none"
+                className="w-[125px] shrink-0 bg-transparent text-xs outline-none font-mono"
               />
               {(fromDateFilter || toDateFilter) && (
                 <button
@@ -1680,47 +1740,14 @@ function MutualFundPage() {
                     setPeriodPreset("ALL");
                     setPage(1);
                   }}
-                  className="ml-1 text-[11px] text-destructive hover:underline font-medium"
+                  className="ml-1 text-[11px] text-destructive hover:underline font-semibold shrink-0"
                 >
                   Clear
                 </button>
               )}
             </div>
-
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() =>
-                SummaryReportService.exportMutualFundSummaryToExcel(
-                  mfSummary.data ?? [],
-                  `${companies.find((c) => c.id === companyFilter)?.company_code || "Mutual_Fund"}_Summary`,
-                )
-              }
-              disabled={!mfSummary.data?.length}
-            >
-              <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
-              Export Excel
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() =>
-                SummaryReportService.exportMutualFundSummaryToPdf(
-                  mfSummary.data ?? [],
-                  companies.find((c) => c.id === companyFilter)?.company_name ||
-                    "Mutual Fund Distribution",
-                  `${companies.find((c) => c.id === companyFilter)?.company_code || "All Schemes"} — FY ${fyFilter !== "all" ? fyFilter : "All"}`,
-                )
-              }
-              disabled={!mfSummary.data?.length}
-            >
-              <FileText className="mr-1.5 h-3.5 w-3.5 text-rose-600" />
-              Export PDF
-            </Button>
           </div>
-        </CardHeader>
+        </div>
         <CardContent className="p-0 overflow-x-auto">
           <table className="w-full text-xs text-left border-collapse">
             <thead>
