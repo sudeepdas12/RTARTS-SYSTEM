@@ -2245,28 +2245,30 @@ function InterestPage() {
                           >
                             {cl?.full_name ?? "—"}
                           </div>
-                          <div className="flex items-center gap-1.5 mt-0.5">
+                          <div className="mt-0.5">
                             {cl?.boid ? (
                               <button
                                 type="button"
-                                className="font-mono text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+                                className="font-mono text-[11px] font-semibold text-primary hover:underline cursor-pointer block"
                                 onClick={() => setSelectedStatementBoid(cl.boid)}
                                 title="Click to view full statement"
                               >
                                 {cl.boid}
                               </button>
                             ) : (
-                              <span className="font-mono text-[11px] text-muted-foreground">—</span>
-                            )}
-                            {cl?.father_name && (
-                              <span
-                                className="text-[10px] text-muted-foreground truncate"
-                                title={`s/o ${cl.father_name}`}
-                              >
-                                · s/o {cl.father_name}
+                              <span className="font-mono text-[11px] text-muted-foreground block">
+                                —
                               </span>
                             )}
                           </div>
+                          {cl?.father_name && (
+                            <div
+                              className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5"
+                              title={`s/o ${cl.father_name}`}
+                            >
+                              s/o {cl.father_name}
+                            </div>
+                          )}
                         </TableCell>
 
                         {/* 3. Holding (Kitta) */}
