@@ -49,21 +49,35 @@ export type DemographicGroup =
  * persisted in the database.
  */
 export function mapToHolderType(category: string): HolderTypeValue | null {
-  switch (category) {
+  const norm = String(category || "")
+    .toUpperCase()
+    .trim();
+  switch (norm) {
     case "PROMOTER":
       return "Natural Person - Promoter";
     case "PUBLIC":
+    case "INDIVIDUAL":
+    case "NATURAL PERSON":
+    case "NATURAL PERSON - PUBLIC":
       return "Natural Person - Public";
     case "LOCAL":
+    case "NATURAL PERSON - LOCAL":
       return "Natural Person - Local";
     case "EMPLOYEE":
     case "STAFF":
+    case "NATURAL PERSON - EMPLOYEE":
       return "Natural Person - Employee";
     case "INSTITUTION":
+    case "CORPORATE":
+    case "COMPANY":
+    case "LEGAL PERSON":
+    case "LEGAL PERSON - PROMOTER":
       return "Legal Person";
     case "MUTUAL_FUND":
+    case "MUTUAL FUND":
       return "Mutual Fund";
     case "TAX_EXEMPT":
+    case "TAX EXEMPT":
       return "Tax Exempt";
     case "FOREIGN":
       return "Foreign";

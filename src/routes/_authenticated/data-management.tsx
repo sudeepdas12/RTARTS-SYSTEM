@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -56,6 +56,7 @@ import {
   Layers,
   CheckCircle2,
   ArrowRight,
+  Database,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -78,6 +79,11 @@ export const Route = createFileRoute("/_authenticated/data-management")({
     fy: typeof search.fy === "string" ? search.fy : undefined,
     tab: typeof search.tab === "string" ? search.tab : undefined,
   }),
+  beforeLoad: ({ search }) => {
+    if (search.tab === "backup") {
+      throw redirect({ to: "/backup" });
+    }
+  },
   component: DataManagementPage,
 });
 
@@ -173,6 +179,12 @@ function DataManagementPage() {
   const search = Route.useSearch();
 
   const [activeTab, setActiveTab] = useState<string>(search.tab || "clients");
+
+  useEffect(() => {
+    if (search.tab && search.tab !== activeTab) {
+      setActiveTab(search.tab);
+    }
+  }, [search.tab]);
 
   const { data: companies = [] } = useQuery({
     queryKey: ["companies-lookup"],

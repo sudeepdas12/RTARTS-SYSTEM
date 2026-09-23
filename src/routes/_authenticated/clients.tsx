@@ -89,7 +89,7 @@ type Verification = "Pending" | "Verified" | "Rejected";
 type PayeeClassification =
   "NATURAL_PERSON" | "PUBLIC_LEGAL_PERSON" | "COMPANY_INSTITUTION" | "TAX_EXEMPT" | "UNCLASSIFIED";
 
-function classificationBadge(c: PayeeClassification | null) {
+function classificationBadge(c: PayeeClassification | null, holderType?: string | null) {
   switch (c) {
     case "NATURAL_PERSON":
       return (
@@ -119,6 +119,26 @@ function classificationBadge(c: PayeeClassification | null) {
         </Badge>
       );
     case "TAX_EXEMPT":
+      if (holderType && /Mutual Fund/i.test(holderType)) {
+        return (
+          <Badge
+            variant="secondary"
+            className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-0 text-[10px]"
+          >
+            Tax Exempt (Mutual Fund — 0% TDS)
+          </Badge>
+        );
+      }
+      if (holderType && /Tax Exempt/i.test(holderType)) {
+        return (
+          <Badge
+            variant="secondary"
+            className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-0 text-[10px]"
+          >
+            Tax Exempt (Statutory Fund — 0% TDS)
+          </Badge>
+        );
+      }
       return (
         <Badge
           variant="secondary"
@@ -185,6 +205,16 @@ function holderBadge(h: Holder | null) {
       >
         <Landmark className="h-3 w-3" />
         Mutual Fund
+      </Badge>
+    );
+  if (/Tax Exempt/i.test(type))
+    return (
+      <Badge
+        variant="secondary"
+        className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-0 gap-1 text-[11px]"
+      >
+        <ShieldAlert className="h-3 w-3" />
+        Tax Exempt (Statutory)
       </Badge>
     );
   if (/Foreign/i.test(type))
@@ -484,7 +514,7 @@ function ClientsPage() {
       // Pass the unified categoryFilter key to get_clients_paginated (which handles full multi-label matching)
       const { data, error } = await (supabase as any).rpc("get_clients_paginated", {
         p_company_id: companyFilter === "all" ? null : companyFilter,
-        p_holder_type: categoryFilter,
+        p_holder_type: categoryFilter === "STATUTORY_FUND" ? "Tax Exempt" : categoryFilter,
         p_classification: "all",
         p_status: statusFilter,
         p_verification: verFilter,
@@ -518,8 +548,12 @@ function ClientsPage() {
             query = query.or("holder_type.ilike.%Employee%,holder_type.ilike.%Staff%");
           } else if (categoryFilter === "MUTUAL_FUND") {
             query = query.ilike("holder_type", "%Mutual Fund%");
+          } else if (categoryFilter === "STATUTORY_FUND") {
+            query = query.eq("holder_type", "Tax Exempt");
           } else if (categoryFilter === "TAX_EXEMPT") {
-            query = query.or("payee_classification.eq.TAX_EXEMPT,holder_type.ilike.%Tax Exempt%");
+            query = query.or(
+              "payee_classification.eq.TAX_EXEMPT,holder_type.ilike.%Tax Exempt%,holder_type.ilike.%Mutual Fund%",
+            );
           } else if (categoryFilter === "FOREIGN") {
             query = query.ilike("holder_type", "%Foreign%");
           }
@@ -595,6 +629,20 @@ function ClientsPage() {
   }
 
   const setF = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  const handleHolderTypeChange = (v: string) => {
+    setForm((f) => {
+      let pc: PayeeClassification = f.payee_classification;
+      if (/Mutual Fund|Tax Exempt/i.test(v)) {
+        pc = "TAX_EXEMPT";
+      } else if (/Legal Person/i.test(v)) {
+        pc = "COMPANY_INSTITUTION";
+      } else if (/Natural Person/i.test(v)) {
+        pc = "NATURAL_PERSON";
+      }
+      return { ...f, holder_type: v as Holder, payee_classification: pc };
+    });
+  };
 
   const upsert = useMutation({
     mutationFn: async () => {
@@ -703,6 +751,8 @@ function ClientsPage() {
         effectiveClassification = "COMPANY_INSTITUTION";
       } else if (categoryFilter === "MUTUAL_FUND") {
         effectiveHolderType = "Mutual Fund";
+      } else if (categoryFilter === "STATUTORY_FUND") {
+        effectiveHolderType = "Tax Exempt";
       } else if (categoryFilter === "TAX_EXEMPT") {
         effectiveClassification = "TAX_EXEMPT";
       } else if (categoryFilter === "FOREIGN") {
@@ -1020,7 +1070,7 @@ function ClientsPage() {
             <div className="relative flex-1 min-w-[220px]">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Search by name, code, BOID, PAN, phone…"
+                placeholder="Search by name, code, BOID, PAN, phone, email…"
                 value={search}
                 onChange={(e) => {
                   setSearch(e.target.value);
@@ -1064,12 +1114,15 @@ function ClientsPage() {
                 <SelectItem value="all">All Shareholder Categories</SelectItem>
                 <SelectItem value="PUBLIC">Public</SelectItem>
                 <SelectItem value="INSTITUTION">Institution (Legal Person)</SelectItem>
-                <SelectItem value="MUTUAL_FUND">Mutual Fund (Tax Exempt)</SelectItem>
+                <SelectItem value="TAX_EXEMPT">Tax Exempt — 0% TDS (All Funds)</SelectItem>
+                <SelectItem value="MUTUAL_FUND">↳ Mutual Fund (SEBON Scheme)</SelectItem>
+                <SelectItem value="STATUTORY_FUND">
+                  ↳ Statutory Pension / Retirement Fund
+                </SelectItem>
                 <SelectItem value="PROMOTER">Promoter</SelectItem>
                 <SelectItem value="LOCAL">Local Affected</SelectItem>
                 <SelectItem value="EMPLOYEE">Employee / Staff Quota</SelectItem>
                 <SelectItem value="FOREIGN">Foreign</SelectItem>
-                <SelectItem value="TAX_EXEMPT">Tax Exempt (Statutory)</SelectItem>
               </SelectContent>
             </Select>
 
@@ -1143,9 +1196,13 @@ function ClientsPage() {
                   >
                     <TableCell>
                       <div className="font-medium text-sm text-foreground">{c.full_name}</div>
-                      {c.father_name && (
-                        <div className="text-[11px] text-muted-foreground">s/o {c.father_name}</div>
-                      )}
+                      <div className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted-foreground">
+                        {c.father_name && <span>s/o {c.father_name}</span>}
+                        {c.phone && <span>• {c.phone}</span>}
+                        {c.email && (
+                          <span className="text-primary font-mono text-[10px]">({c.email})</span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="font-mono text-xs">
                       {c.boid ? (
@@ -1167,7 +1224,9 @@ function ClientsPage() {
                     <TableCell className="text-right font-mono font-semibold text-primary">
                       {c.kitta ? Number(c.kitta).toLocaleString() : "—"}
                     </TableCell>
-                    <TableCell>{classificationBadge(c.payee_classification)}</TableCell>
+                    <TableCell>
+                      {classificationBadge(c.payee_classification, c.holder_type)}
+                    </TableCell>
                     <TableCell>{holderBadge(c.holder_type)}</TableCell>
                     <TableCell>
                       <span className="text-xs text-muted-foreground font-medium">
@@ -1460,6 +1519,9 @@ function ClientsPage() {
                     <SelectItem value="NATURAL_PERSON">
                       Natural Person (Public) — 5% Div / 6% Deb
                     </SelectItem>
+                    <SelectItem value="PUBLIC_LEGAL_PERSON">
+                      Public Legal Person (Semi-Govt / Statutory Body) — 5% Div / 6% Deb
+                    </SelectItem>
                     <SelectItem value="COMPANY_INSTITUTION">
                       Legal Person (Institution / Company) — 5% Div / 15% Deb
                     </SelectItem>
@@ -1471,7 +1533,7 @@ function ClientsPage() {
               </div>
               <div className="space-y-1.5">
                 <Label>Holder Type (Segment)</Label>
-                <Select value={form.holder_type} onValueChange={(v) => setF("holder_type", v)}>
+                <Select value={form.holder_type} onValueChange={handleHolderTypeChange}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>

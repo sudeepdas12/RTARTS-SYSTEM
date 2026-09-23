@@ -55,6 +55,10 @@ import {
   Info,
 } from "lucide-react";
 import { ReconciliationGroupedLot } from "@/lib/services/reconciliation.service";
+import {
+  AccountRemediationDialog,
+  type RejectedAccountItem,
+} from "@/components/account-remediation-dialog";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/reconciliation")({
@@ -71,6 +75,8 @@ export function ReconciliationRoute() {
   const [isSaving, setIsSaving] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [remediationDialogOpen, setRemediationDialogOpen] = useState(false);
+  const [remediationItems, setRemediationItems] = useState<RejectedAccountItem[]>([]);
 
   const headerExcelInputRef = useRef<HTMLInputElement>(null);
   const headerBankInputRef = useRef<HTMLInputElement>(null);
@@ -272,7 +278,7 @@ export function ReconciliationRoute() {
   const loadHistory = async () => {
     setIsLoadingHistory(true);
     try {
-      const results = await ReconciliationService.getResults(10000, 0);
+      const results = await ReconciliationService.getResults(500, 0);
       setSavedResults(results);
     } catch (error) {
       console.warn("Could not load reconciliation history:", error);
@@ -295,14 +301,20 @@ export function ReconciliationRoute() {
         : `Analyzing ${files[0].name}...`,
     );
     try {
-      // Check if all files are bank / ConnectIPS settlement reports
+      // Check if all files are bank account statements or raw ACH settlement reports (not shareholder registry lot files)
       const areBankReports = files.every((f) => {
         const fileName = f.name.toLowerCase();
+        const isRegistryLot =
+          fileName.includes("lot") ||
+          fileName.includes("kitta") ||
+          fileName.includes("shareholder") ||
+          fileName.includes("reconcilation") ||
+          fileName.includes("reconciliation");
+        if (isRegistryLot) return false;
         return (
-          fileName.includes("ips") ||
-          fileName.includes("report") ||
           fileName.includes("bank") ||
           fileName.includes("statement") ||
+          (fileName.includes("ips") && !fileName.includes("lot")) ||
           fileName.includes("batch")
         );
       });
@@ -419,6 +431,13 @@ export function ReconciliationRoute() {
       const files = Array.from(e.dataTransfer.files);
       const isBankLike = files.every((f) => {
         const name = f.name.toLowerCase();
+        const isRegistryLot =
+          name.includes("lot") ||
+          name.includes("kitta") ||
+          name.includes("shareholder") ||
+          name.includes("reconcilation") ||
+          name.includes("reconciliation");
+        if (isRegistryLot) return false;
         return name.includes("bank") || name.includes("statement");
       });
       if (isBankLike) {
@@ -464,6 +483,43 @@ export function ReconciliationRoute() {
     return filteredMatches.filter((m) => m.status === "Under_Paid" || m.status === "Over_Paid");
   }, [filteredMatches]);
 
+  const openRemediationForMatches = () => {
+    const items: RejectedAccountItem[] = rejectedMatches.map((m) => ({
+      payable_id: m.payableId || (m as any).payable_id || "",
+      payable_type: ((m.payableType as any) || "interest") as any,
+      client_id: m.clientId || (m as any).client_id || null,
+      full_name: m.shareholderName || (m as any).name || "Shareholder",
+      boid: (m as any).boid || null,
+      pan_or_citizenship: (m as any).pan_or_citizenship || null,
+      current_bank_name: (m as any).bankName || (m as any).bank_name || null,
+      current_bank_account_no: m.accountNumber || (m as any).bank_account_no || null,
+      rejection_reason: m.transactionDescription || m.category || "ConnectIPS / CBS rejection",
+      net_payable: m.systemAmount || m.excelAmount || 0,
+    }));
+    setRemediationItems(items);
+    setRemediationDialogOpen(true);
+  };
+
+  const openRemediationForLot = (lotRecords: ReconciliationResultRow[]) => {
+    const items: RejectedAccountItem[] = lotRecords
+      .filter((r) => r.result === "Rejected")
+      .map((r) => ({
+        payable_id: r.payable_id || r.id,
+        payable_type: ((r.payable_type as any) || "interest") as any,
+        client_id: r.client_id || null,
+        full_name: (r as any).client?.full_name || (r as any).full_name || "Shareholder",
+        boid: (r as any).client?.boid || (r as any).boid || null,
+        pan_or_citizenship: (r as any).client?.pan_or_citizenship || null,
+        current_bank_name: (r as any).bank_name || (r as any).client?.bank_name || null,
+        current_bank_account_no:
+          (r as any).bank_account_no || (r as any).client?.bank_account_no || null,
+        rejection_reason: r.notes || "Rejected payment record",
+        net_payable: r.expected_amount || r.actual_amount || 0,
+      }));
+    setRemediationItems(items);
+    setRemediationDialogOpen(true);
+  };
+
   const isUUID = (str: any): boolean =>
     typeof str === "string" &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
@@ -502,7 +558,14 @@ export function ReconciliationRoute() {
         client_id: clientId,
         company_id: companyId,
         fiscal_year: match.fiscalYear || null,
-        payable_type: match.payableType || (isBankStatement ? "interest" : "dividend"),
+        payable_type:
+          match.payableType ||
+          (report?.fileName?.toLowerCase().includes("debenture") ||
+          report?.fileName?.toLowerCase().includes("interest")
+            ? "interest"
+            : isBankStatement
+              ? "interest"
+              : "dividend"),
         payable_id: payableId,
         payment_id: paymentId,
         batch_id: batchId,
@@ -511,9 +574,22 @@ export function ReconciliationRoute() {
         difference: match.difference,
         result: match.status,
         notes:
-          `${contextPrefix ? `[${contextPrefix}] ` : ""}Category: ${match.category}${isBankStatement ? ` / Bank Transaction ${match.transactionDate ?? ""}` : ""}${match.matchSources ? ` / Sources: ${match.matchSources.join(", ")}` : ""}`.trim(),
+          `${contextPrefix ? `[${contextPrefix}] ` : ""}Category: ${match.category}${isBankStatement ? ` / Bank Transaction ${match.transactionDate ?? ""}` : ""}${match.matchSources ? ` / Sources: ${match.matchSources.join(", ")}` : ""}${match.transactionDescription ? ` / Remarks: ${match.transactionDescription}` : ""}`.trim(),
         matched_by: null,
         matched_at: null,
+        instruction_id:
+          (match as any).instructionId ||
+          (match as any).instruction_id ||
+          (match as any).referenceId ||
+          null,
+        connectips_ref:
+          (match as any).instructionId ||
+          (match as any).instruction_id ||
+          (match as any).referenceId ||
+          null,
+        bank_name: match.bankName || null,
+        bank_account_no: match.bankAccountNo || null,
+        lot_name: match.lotName || null,
       };
     });
   };
@@ -986,7 +1062,24 @@ export function ReconciliationRoute() {
                   <span>Txn Date: {match.transactionDate}</span>
                 </div>
               )}
+              {match.status === "Missing" &&
+                match.transactionDate &&
+                String(match.transactionDate) < "2026-01-01" && (
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] h-5 text-amber-700 dark:text-amber-300 border-amber-300/80 bg-amber-50 dark:bg-amber-950/40"
+                  >
+                    Prior FY (Historical)
+                  </Badge>
+                )}
             </div>
+
+            {match.transactionDescription && (
+              <div className="mt-1 text-[11px] text-muted-foreground/85 flex items-center gap-1.5 truncate">
+                <span className="font-medium text-foreground/70">Narration / Ref:</span>
+                <span className="font-mono truncate">{match.transactionDescription}</span>
+              </div>
+            )}
 
             {/* Financial comparison grid */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2.5 p-2 bg-muted/20 rounded-md border text-xs">
@@ -1390,13 +1483,32 @@ export function ReconciliationRoute() {
           )}
 
           {report?.sourceType === "bank_statement" && (
-            <div className="flex items-start gap-2.5 p-3.5 bg-blue-500/10 border border-blue-500/20 text-blue-800 dark:text-blue-300 rounded-xl text-xs mb-3">
+            <div className="flex items-start gap-2.5 p-3.5 bg-blue-500/10 border border-blue-500/20 text-blue-900 dark:text-blue-200 rounded-xl text-xs mb-3">
               <Info className="w-4 h-4 shrink-0 mt-0.5 text-blue-600 dark:text-blue-400" />
-              <div>
-                <strong>Bank Statement Workflow Tip:</strong> For aggregate debit entries (e.g.{" "}
-                <em>IPS DR</em> or bulk bank withdrawals) to reconcile automatically, ensure you
-                have first uploaded and applied the ConnectIPS settlement files (LOT reports) so the
-                corresponding payment batch records are registered in the system.
+              <div className="space-y-1.5">
+                <p className="font-semibold text-sm">
+                  Bank Statement Multi-Source Reconciliation Guide
+                </p>
+                <ul className="list-disc pl-4 space-y-1 text-muted-foreground dark:text-muted-foreground">
+                  <li>
+                    <strong className="text-foreground">Multi-Year Statements:</strong> Statements
+                    spanning prior fiscal years (2021–2025) will show as &ldquo;Missing&rdquo;
+                    because only the active fiscal year payables (e.g. FY 2082/83) are currently
+                    imported.
+                  </li>
+                  <li>
+                    <strong className="text-foreground">ConnectIPS Batch Withdrawals:</strong>{" "}
+                    Lump-sum payout debits (e.g. <em>IPS DR</em> or bulk transfers) represent the
+                    pool funding for ConnectIPS LOT settlement files (LOT 1, LOT 2, LOT 3). Ensure
+                    the LOT settlement files are uploaded and applied first to register the payment
+                    batches.
+                  </li>
+                  <li>
+                    <strong className="text-foreground">Bounced Returns & Credits:</strong> Failed
+                    payouts credited back into the bank account are automatically recognized and
+                    flagged as bounced returns.
+                  </li>
+                </ul>
               </div>
             </div>
           )}
@@ -1497,14 +1609,25 @@ export function ReconciliationRoute() {
                     Select Matched ({matchedOnlyMatches.length})
                   </Button>
                   {rejectedMatches.length > 0 && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 text-xs cursor-pointer text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20"
-                      onClick={selectOnlyRejected}
-                    >
-                      Select Rejected ({rejectedMatches.length})
-                    </Button>
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs cursor-pointer text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20"
+                        onClick={selectOnlyRejected}
+                      >
+                        Select Rejected ({rejectedMatches.length})
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs cursor-pointer text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-300 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800"
+                        onClick={openRemediationForMatches}
+                      >
+                        <CreditCard className="w-3.5 h-3.5 mr-1 text-amber-600" />
+                        Remediate Accounts ({rejectedMatches.length})
+                      </Button>
+                    </>
                   )}
                   {selectedMatchIds.size > 0 && (
                     <Button
@@ -2091,21 +2214,32 @@ export function ReconciliationRoute() {
                                 Matched ({lot.matchedCount})
                               </Button>
                               {lot.rejectedCount > 0 && (
-                                <Button
-                                  size="sm"
-                                  variant={
-                                    currentDetailTab === "rejected" ? "destructive" : "outline"
-                                  }
-                                  className="h-7 text-xs px-2.5 text-red-600"
-                                  onClick={() =>
-                                    setLotDetailTabs((prev) => ({
-                                      ...prev,
-                                      [lot.lotKey]: "rejected",
-                                    }))
-                                  }
-                                >
-                                  Rejected / Bounced ({lot.rejectedCount})
-                                </Button>
+                                <>
+                                  <Button
+                                    size="sm"
+                                    variant={
+                                      currentDetailTab === "rejected" ? "destructive" : "outline"
+                                    }
+                                    className="h-7 text-xs px-2.5 text-red-600"
+                                    onClick={() =>
+                                      setLotDetailTabs((prev) => ({
+                                        ...prev,
+                                        [lot.lotKey]: "rejected",
+                                      }))
+                                    }
+                                  >
+                                    Rejected / Bounced ({lot.rejectedCount})
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-xs px-2.5 text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-300 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800"
+                                    onClick={() => openRemediationForLot(lot.records)}
+                                  >
+                                    <CreditCard className="w-3 h-3 mr-1 text-amber-600" />
+                                    Remediate ({lot.rejectedCount})
+                                  </Button>
+                                </>
                               )}
                             </div>
                             <span className="text-xs text-muted-foreground">
@@ -2213,6 +2347,17 @@ export function ReconciliationRoute() {
           )}
         </CardContent>
       </Card>
+
+      <AccountRemediationDialog
+        open={remediationDialogOpen}
+        onOpenChange={setRemediationDialogOpen}
+        initialItems={remediationItems}
+        companyName={
+          reconCompanyId !== "all"
+            ? companiesList.find((c) => c.id === reconCompanyId)?.company_name
+            : "Selected Entity"
+        }
+      />
     </div>
   );
 }

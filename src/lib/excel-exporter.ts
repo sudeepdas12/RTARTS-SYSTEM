@@ -28,6 +28,8 @@ export interface ModernStatementRecord {
   grossAmount: number;
   taxAmount: number;
   netAmount: number;
+  paidAmount?: number;
+  remainingAmount?: number;
   status: string;
   paymentDate?: string | null;
   paymentRef?: string | null;
@@ -127,7 +129,7 @@ export const ExcelExporter = {
     const aoa: any[][] = [];
 
     // 1. Corporate Header
-    aoa.push(["RTA / RTS SYSTEM — REGISTRAR & TRANSFER AGENT OPERATIONS"]);
+    aoa.push(["RTA/RTS SYSTEM — RBB MERCHANT BANKING LIMITED"]);
     aoa.push([title.toUpperCase()]);
     aoa.push([
       `Official Entitlement Statement | Generated: ${new Date().toLocaleString("en-GB", {
@@ -196,6 +198,8 @@ export const ExcelExporter = {
       "Gross Amount (NPR)",
       "TDS Tax (NPR)",
       "Net Payable (NPR)",
+      "Paid Amount (NPR)",
+      "Remaining Due (NPR)",
       "Payment Status",
       "Payment Date",
       "Payment Reference",
@@ -211,6 +215,11 @@ export const ExcelExporter = {
     const latestHolding = activeRecord ? Number(activeRecord.kitta) : 0;
 
     records.forEach((r, idx) => {
+      const net = Number(r.netAmount || 0);
+      const paid =
+        r.paidAmount !== undefined ? Number(r.paidAmount) : r.status === "Paid" ? net : 0;
+      const rem =
+        r.remainingAmount !== undefined ? Number(r.remainingAmount) : Math.max(0, net - paid);
       aoa.push([
         idx + 1,
         r.fiscalYear,
@@ -220,7 +229,9 @@ export const ExcelExporter = {
         Number(r.kitta || 0),
         Number(r.grossAmount || 0),
         Number(r.taxAmount || 0),
-        Number(r.netAmount || 0),
+        net,
+        paid,
+        rem,
         r.status,
         r.paymentDate ? String(r.paymentDate).slice(0, 10) : "—",
         r.paymentRef || "—",
@@ -240,7 +251,10 @@ export const ExcelExporter = {
       summary.gross,
       summary.tax,
       summary.net,
+      summary.paid,
+      summary.pending,
       `${records.length} Record(s)`,
+      "",
       "",
       "",
       "",
@@ -248,7 +262,7 @@ export const ExcelExporter = {
 
     aoa.push([]);
     aoa.push([
-      "Verification Note: This document is an electronic statement generated from the RTARTS verified ledger pursuant to Nepal Companies Act & SEBON guidelines.",
+      "Verification Note: This document is an authentic electronic statement generated from the verified registry ledger. RTA/RTS Department, RBB Merchant Banking Limited.",
     ]);
 
     const ws = XLSX.utils.aoa_to_sheet(aoa);

@@ -35,7 +35,7 @@ describe("generateCompanyCode", () => {
 
 describe("CompanyService.autoRegisterCompany and findMatchingCompany", () => {
   let createdCompanyId: string | null = null;
-  const testName = "Mock Test Debenture 99.9% 2099.xlsx";
+  const testName = "Isolated Auto-Register Debenture 99.9% 2099.xlsx";
 
   beforeAll(async () => {
     const { supabase } = await import("./database");
@@ -46,7 +46,7 @@ describe("CompanyService.autoRegisterCompany and findMatchingCompany", () => {
     await (supabase as any)
       .from("companies")
       .delete()
-      .ilike("company_name", "%Mock Test Debenture 99.9%%");
+      .ilike("company_name", "%Isolated Auto-Register Debenture 99.9%%");
   });
 
   afterEach(async () => {
@@ -58,7 +58,7 @@ describe("CompanyService.autoRegisterCompany and findMatchingCompany", () => {
     await (supabase as any)
       .from("companies")
       .delete()
-      .ilike("company_name", "%Mock Test Debenture 99.9%%");
+      .ilike("company_name", "%Isolated Auto-Register Debenture 99.9%%");
   });
 
   it("automatically registers an unregistered company with accurate metadata", async () => {
@@ -74,7 +74,7 @@ describe("CompanyService.autoRegisterCompany and findMatchingCompany", () => {
     expect(comp.id).toBeDefined();
     createdCompanyId = comp.id;
 
-    expect(comp.company_code).toBe("MOCKD8.5");
+    expect(comp.company_code).toBe("ISOLATEDD8.5");
     expect(comp.company_type).toBe("Debenture");
     expect(comp.sector_type).toBe("Institution");
     expect(comp.debenture_rate).toBe(8.5);
@@ -87,10 +87,12 @@ describe("CompanyService.autoRegisterCompany and findMatchingCompany", () => {
     });
 
     expect(comp2.id).toBe(comp.id);
-    expect(comp2.company_code).toBe("MOCKD8.5");
+    expect(comp2.company_code).toBe("ISOLATEDD8.5");
 
     // Test findMatchingCompany
-    const matched = await CompanyService.findMatchingCompany("Mock Test Debenture 99.9%");
+    const matched = await CompanyService.findMatchingCompany(
+      "Isolated Auto-Register Debenture 99.9%",
+    );
     expect(matched).toBeDefined();
     expect(matched?.id).toBe(comp.id);
   });

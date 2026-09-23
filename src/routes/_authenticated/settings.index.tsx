@@ -26,7 +26,7 @@ import {
 } from "@/lib/services/tax-rules.service";
 import { useAuth } from "@/hooks/use-auth";
 import { toast } from "sonner";
-import { Loader2, Lock, Save, Send } from "lucide-react";
+import { Loader2, Lock, Save, Send, Database, HardDrive, ArrowRight } from "lucide-react";
 
 function TaxRulesEditor() {
   const qc = useQueryClient();
@@ -321,6 +321,35 @@ function SettingsRoute() {
                 />
               </div>
             </CardContent>
+          </Card>
+
+          <Card className="mt-6 border-primary/20 bg-muted/20">
+            <CardHeader className="pb-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Database className="h-4 w-4 text-primary" />
+                    Database Backup & Disaster Recovery
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Export immediate Excel/JSON snapshots or manage automated compressed physical
+                    backups on the host D: drive.
+                  </CardDescription>
+                </div>
+                <Button
+                  asChild
+                  size="sm"
+                  variant="default"
+                  className="gap-1.5 self-start sm:self-auto text-xs"
+                >
+                  <Link to="/backup">
+                    <HardDrive className="h-3.5 w-3.5 mr-1" />
+                    Open Backup Center
+                    <ArrowRight className="h-3.5 w-3.5 ml-1" />
+                  </Link>
+                </Button>
+              </div>
+            </CardHeader>
           </Card>
         </TabsContent>
 

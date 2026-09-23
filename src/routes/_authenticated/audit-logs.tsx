@@ -106,7 +106,14 @@ const DOMAIN_TABLE_MAP: Record<DomainCategory, string[]> = {
   SHAREHOLDERS: ["clients"],
   RECONCILIATION: ["reconciliation_results", "bank_statements", "bank_transactions"],
   PAYMENTS: ["payments", "payment_batches"],
-  SYSTEM: ["companies", "system_settings", "profiles", "fiscal_years"],
+  SYSTEM: [
+    "companies",
+    "system_settings",
+    "profiles",
+    "fiscal_years",
+    "user_roles",
+    "user_company_access",
+  ],
 };
 
 function getTableIcon(table: string) {
@@ -129,6 +136,9 @@ function getTableIcon(table: string) {
   }
   if (table === "companies") {
     return <Building2 className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />;
+  }
+  if (table.includes("user_roles") || table.includes("user_company_access")) {
+    return <ShieldCheck className="h-3.5 w-3.5 text-rose-600 dark:text-rose-400" />;
   }
   return <History className="h-3.5 w-3.5 text-muted-foreground" />;
 }

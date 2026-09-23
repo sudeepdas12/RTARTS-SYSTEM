@@ -13,6 +13,7 @@ interface ChunkPayload {
   companyIsin?: string;
   fiscalYear?: string;
   dividendRate?: number;
+  bonusRate?: number;
   tdsRate?: number;
   dividendType?: "Cash" | "Stock" | "Bonus" | "Right";
   sheetType?: string;
@@ -464,6 +465,7 @@ serve(async (req) => {
       companyIsin,
       fiscalYear,
       dividendRate,
+      bonusRate,
       tdsRate,
       dividendType,
       sheetType,
@@ -1058,11 +1060,52 @@ serve(async (req) => {
         row.remarks || row.REMARKS || row.Remarks || row["REMARK"] || row["remark"] || "";
       const instrumentRef = row.instrument_ref || row.instrument || row.INSTRUMENT || "";
 
+      const rawDueDate = String(
+        row.due_date ||
+          row.dueDate ||
+          row.DUE_DATE ||
+          row["DUE DATE"] ||
+          row.maturity_date ||
+          row.maturityDate ||
+          row.MATURITY_DATE ||
+          row["MATURITY DATE"] ||
+          row.coupon_date ||
+          row.couponDate ||
+          row.COUPON_DATE ||
+          row["COUPON DATE"] ||
+          row.payment_date ||
+          row.paymentDate ||
+          row.PAYMENT_DATE ||
+          row["PAYMENT DATE"] ||
+          row.value_date ||
+          row.valueDate ||
+          row.VALUE_DATE ||
+          row["VALUE DATE"] ||
+          row["INTEREST DATE"] ||
+          row["DUE DT"] ||
+          "",
+      ).trim();
+
+      let dueDate = new Date().toISOString().split("T")[0];
+      if (rawDueDate) {
+        if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(rawDueDate)) {
+          const parts = rawDueDate.split(/[-/]/);
+          dueDate = `${parts[0]}-${parts[1].padStart(2, "0")}-${parts[2].padStart(2, "0")}`;
+        } else if (/^\d{1,2}[-/]\d{1,2}[-/]\d{4}$/.test(rawDueDate)) {
+          const parts = rawDueDate.split(/[-/]/);
+          dueDate = `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
+        } else {
+          const parsed = new Date(rawDueDate);
+          if (!isNaN(parsed.getTime())) {
+            dueDate = parsed.toISOString().split("T")[0];
+          }
+        }
+      }
+
       // *** SMART ROW-LEVEL CATEGORIZATION ***
       const investorCategory = detectInvestorCategory(row, sheetType);
-      // Determine TDS rate: explicit sheet-level override → auto-detect from row data
-      const rowTdsRate =
-        tdsRate !== undefined ? tdsRate : getCategoryTdsRate(investorCategory, isDebenture);
+      // Determine TDS rate: use smart row-level categorization
+      const rowTdsRate = getCategoryTdsRate(investorCategory, isDebenture);
 
       // Auto-calculate: if gross is 0 but we have shares × rate, compute it
       let grossAmount = rawGross;
@@ -1094,6 +1137,7 @@ serve(async (req) => {
           net_payable: netPayable,
           shares_held: sharesHeld,
           dividend_rate: dividendRate ?? null,
+          bonus_rate: bonusRate ?? null,
           tds_rate: rowTdsRate,
           dividend_type: dividendType || "Cash",
           fiscal_year: fiscalYear ?? null,
@@ -1128,6 +1172,11 @@ serve(async (req) => {
         if (!grossAmount) grossAmount = netPayable || 0;
         if (!netPayable) netPayable = Math.round((grossAmount - taxAmount) * 100) / 100;
 
+        const rawDays = Number(
+          row.days_count || row.days || row.period || row.DAYS || row.PERIOD || 0,
+        );
+        const daysCount = rawDays > 0 ? rawDays : isDebenture ? 183 : null;
+
         payables.push({
           upload_id: uploadId,
           company_id: companyId,
@@ -1138,7 +1187,8 @@ serve(async (req) => {
           tax_amount: taxAmount,
           net_payable: netPayable,
           tds_rate: rowTdsRate,
-          due_date: new Date().toISOString().split("T")[0],
+          days_count: daysCount,
+          due_date: dueDate,
           fiscal_year: fiscalYear ?? null,
           bank_name: bankName || null,
           bank_account_no: bankAccountNo || null,
@@ -1170,7 +1220,12 @@ serve(async (req) => {
         p_payables: payables,
       });
 
-      if (!rpcErr && rpcResult && rpcResult.success !== false) {
+      if (
+        !rpcErr &&
+        rpcResult &&
+        rpcResult.success !== false &&
+        Number(rpcResult?.inserted ?? 0) > 0
+      ) {
         payablesInserted = Number(rpcResult?.inserted ?? 0);
         if (Array.isArray(rpcResult?.errors)) {
           for (const err of rpcResult.errors) {
@@ -1184,7 +1239,7 @@ serve(async (req) => {
         }
       } else {
         console.warn(
-          `${rpcName} RPC failed, falling back to direct schema fallback:`,
+          `${rpcName} RPC failed or inserted 0 rows, falling back to direct schema fallback:`,
           rpcErr?.message,
         );
         const payableResult = await insertRowsWithSchemaFallback(supabase, targetTable, payables);

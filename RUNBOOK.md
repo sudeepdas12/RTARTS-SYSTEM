@@ -568,6 +568,17 @@ npx supabase start
 
 > [!WARNING]
 > `npx supabase stop --no-backup` **deletes all local database data** and re-seeds from migrations. Use the plain `npx supabase stop` (which backs up) unless you intentionally want a clean slate.
+> Always run `npm run db:backup` before running updates or restarts.
+
+**Automated D: Drive Backup & Restore:**
+
+```powershell
+# Backup database directly to D:\BACKUP\RTARTS_DB (saved as compressed .zip)
+npm run db:backup
+
+# Restore database from latest D: drive backup anytime:
+npm run db:restore
+```
 
 After restart, verify all services are running:
 
@@ -790,32 +801,82 @@ npm run build
 
 ## 10. Backup, Disaster Recovery & Maintenance
 
-### Daily Database Backup Procedure
+### Universal Adaptive Backup Engine (`scripts/backup-db.mjs`)
 
-```powershell
-$TIMESTAMP = Get-Date -Format "yyyyMMdd_HHmmss"
-docker exec -t supabase_db_illokcvaflhzrpxlwhtj pg_dump -U postgres postgres `
-  --format=custom --file="/var/lib/postgresql/data/rtarts_backup_$TIMESTAMP.dump"
-docker cp supabase_db_illokcvaflhzrpxlwhtj:/var/lib/postgresql/data/rtarts_backup_$TIMESTAMP.dump ./backups/
+The system features an adaptive, cross-platform backup engine that works identically on **Windows servers, Linux servers, cloud VMs (Ubuntu/Debian/RHEL), macOS, and Docker containers**:
+
+```bash
+npm run db:backup
 ```
 
-### Disaster Recovery / Database Restoration
+#### Smart Storage Resolution Priority:
 
-```powershell
-docker cp ./backups/rtarts_backup_RECOVERY.dump supabase_db_illokcvaflhzrpxlwhtj:/tmp/recovery.dump
-docker exec -t supabase_db_illokcvaflhzrpxlwhtj pg_restore -U postgres -d postgres --clean --if-exists /tmp/recovery.dump
+1. **Explicit Setting**: If `BACKUP_DIR` environment variable is defined in `.env` or system environment, backups are written directly to that path (e.g. `BACKUP_DIR=/mnt/nas/backups` or `BACKUP_DIR=D:\BACKUP\RTARTS_DB`).
+2. **Dedicated Secondary Physical Drive**: On Windows systems, if drive `D:\` is detected, backups are automatically directed to `D:\BACKUP\RTARTS_DB` to isolate backups on secondary physical disk media.
+3. **Portable Project Storage (Universal Fallback)**: If no secondary drive exists (e.g. Linux cloud instances, single-disk Windows servers), backups are automatically routed to the project root's `./backups` directory without crashing.
+4. **User Home Fallback**: If the project directory is read-only, backups fall back to `~/rtarts_backups`.
+
+#### Features:
+
+- **Full Database Dump**: Backs up `public`, `auth`, and `storage` schemas directly from the container as superuser.
+- **High-Ratio Compression**: Compresses raw dumps with GZIP (reducing ~42 MB down to ~3.7 MB, >90% disk savings).
+- **Automated 30-Day Retention**: Automatically prunes backup archives older than 30 days during each execution.
+
+---
+
+### Disaster Recovery / Restoration (`scripts/restore-db.mjs`)
+
+```bash
+# Restore latest backup interactively:
+npm run db:restore
+
+# Or specify an exact backup archive to restore:
+node scripts/restore-db.mjs ./backups/rtarts_backup_20260921_073340.sql.gz
 ```
+
+#### Restoration Workflow:
+
+1. Automatically identifies the active PostgreSQL container.
+2. If no file is specified, locates the most recent `.sql.gz`, `.zip`, or `.sql` dump from the active backup directory.
+3. Requests explicit interactive safety confirmation before overwriting data.
+4. Decompresses the archive stream into PostgreSQL via `psql`.
+5. Automatically re-applies all Supabase API role permissions (`anon`, `authenticated`, `service_role`, `authenticator`) on schema `public`.
+
+---
+
+### Automated Nightly Scheduled Tasks
+
+#### Option A: Windows Server (Windows Task Scheduler)
+
+- Press `Win + R`, open `taskschd.msc`, click **Create Basic Task**.
+- Trigger: **Daily at 11:00 PM** (post-reconciliation).
+- Action: Start a program:
+  - Program: `npm.cmd` (or `node.exe`)
+  - Arguments: `run db:backup` (or `scripts/backup-db.mjs`)
+  - Start in: `C:\path\to\RTARTS System`
+
+#### Option B: Linux / Cloud Server (Crontab)
+
+```bash
+crontab -e
+# Add the following entry:
+0 23 * * * cd /var/www/rtarts && npm run db:backup >> ./backups/backup.log 2>&1
+```
+
+---
 
 ### Database Maintenance Routine (Monthly)
 
 ```sql
 REINDEX TABLE public.clients;
 REINDEX TABLE public.dividend_payables;
+REINDEX TABLE public.interest_payables;
 REINDEX TABLE public.payments;
 REINDEX TABLE public.upload_history;
 
 VACUUM ANALYZE public.clients;
 VACUUM ANALYZE public.dividend_payables;
+VACUUM ANALYZE public.interest_payables;
 VACUUM ANALYZE public.payments;
 VACUUM ANALYZE public.upload_history;
 ```

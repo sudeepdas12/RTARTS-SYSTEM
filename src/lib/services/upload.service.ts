@@ -81,7 +81,7 @@ async function reconcileStaleProcessingUploads(rows: UploadHistoryRow[]): Promis
         status: nextStatus,
         success_rows:
           linkedRows > 0
-            ? Math.max(Number(row.success_rows || 0), linkedRows)
+            ? Math.max(0, linkedRows - Number(row.error_rows || 0))
             : Number(row.success_rows || 0),
         error_message: nextError,
         completed_at: new Date().toISOString(),
@@ -120,6 +120,98 @@ export const UploadService = {
     return (refreshed || rows) as UploadHistoryRow[];
   },
 
+  async getUploadHistoryPaginated(
+    page = 1,
+    pageSize = 50,
+    options?: {
+      targetTable?: string;
+      status?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    },
+  ): Promise<{
+    data: UploadHistoryRow[];
+    total: number;
+    page: number;
+    pageSize: number;
+    totalPages: number;
+  }> {
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    let query = (supabase as any)
+      .from("upload_history")
+      .select("*", { count: "exact" })
+      .order("created_at", { ascending: false });
+
+    if (options?.targetTable && options.targetTable !== "all") {
+      query = query.eq("target_table", options.targetTable);
+    }
+    if (options?.status && options.status !== "all") {
+      query = query.eq("status", options.status);
+    }
+    if (options?.dateFrom) {
+      query = query.gte("created_at", `${options.dateFrom}T00:00:00.000Z`);
+    }
+    if (options?.dateTo) {
+      query = query.lte("created_at", `${options.dateTo}T23:59:59.999Z`);
+    }
+
+    query = query.range(from, to);
+
+    const { data, count, error } = await query;
+    throwIfError(error, "Failed to fetch paginated upload history");
+
+    const total = count || 0;
+    return {
+      data: (data || []) as UploadHistoryRow[],
+      total,
+      page,
+      pageSize,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    };
+  },
+
+  async findActiveUploadByHash(
+    fileHash: string,
+    targetTable?: string,
+  ): Promise<UploadHistoryRow | null> {
+    try {
+      let q = (supabase as any)
+        .from("upload_history")
+        .select("*")
+        .in("status", ["Completed", "Processing"]);
+
+      if (targetTable) {
+        q = q.eq("target_table", targetTable);
+      }
+      q = q.or(`file_hash.eq.${fileHash},file_hash.ilike.${fileHash}-%`);
+
+      const { data } = await q.order("created_at", { ascending: false }).limit(1).maybeSingle();
+      if (!data) return null;
+
+      // Self-healing check: verify if this record actually has active payables.
+      // If the user deleted the payables or company data previously, this upload is orphaned.
+      const linkedRows = await countRowsByUploadId(data.id, data.target_table || null);
+      if (linkedRows === 0) {
+        // Auto-heal by marking as RolledBack so the file is unblocked
+        await (supabase as any)
+          .from("upload_history")
+          .update({
+            status: "RolledBack",
+            completed_at: new Date().toISOString(),
+            error_message: "Auto-cleared: Underlying payable records were removed.",
+          })
+          .eq("id", data.id);
+        return null;
+      }
+
+      return data as UploadHistoryRow;
+    } catch {
+      return null;
+    }
+  },
+
   async createUploadRecord(upload: Record<string, any>): Promise<UploadHistoryRow> {
     const { data, error } = await (supabase as any)
       .from("upload_history")
@@ -127,8 +219,31 @@ export const UploadService = {
       .select()
       .single();
     if (error) {
+      if (error.code === "23505" || error.message?.includes("uq_upload_history_active_file_hash")) {
+        // Check if the conflicting active upload is actually orphaned (all its payables were deleted)
+        if (upload.file_hash) {
+          const conflicting = await this.findActiveUploadByHash(
+            upload.file_hash,
+            upload.target_table,
+          );
+          if (!conflicting) {
+            // Self-healing succeeded: the orphaned record was cleared, retry the insert once!
+            const retry = await (supabase as any)
+              .from("upload_history")
+              .insert(upload)
+              .select()
+              .single();
+            if (!retry.error && retry.data) {
+              return retry.data as UploadHistoryRow;
+            }
+          }
+        }
+        throw new Error(
+          `This file has already been uploaded and is active in the system. To re-upload it, please go to "Upload History" and roll back or delete the previous upload first.`,
+        );
+      }
       console.error("Failed to create upload_history record:", error.message);
-      throw new Error(`Failed to create upload record: ${error.message}`);
+      throw new Error(error.message || "Failed to create upload record");
     }
     return data as UploadHistoryRow;
   },

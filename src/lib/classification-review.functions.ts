@@ -369,8 +369,9 @@ export const adminFixMisclassifiedNaturalPersons = createServerFn({ method: "POS
     const { data: clients, error: fetchErr } = await supabaseAdmin
       .from("clients")
       .select("id, full_name, father_name, grandfather_name")
-      .or("payee_classification.eq.TAX_EXEMPT,holder_type.eq.Tax Exempt,holder_type.eq.Mutual Fund")
-      .or("father_name.neq.'',grandfather_name.neq.''");
+      .or(
+        "payee_classification.eq.TAX_EXEMPT,holder_type.eq.Tax Exempt,holder_type.eq.Mutual Fund",
+      );
 
     if (fetchErr) throw new Error(fetchErr.message);
 

@@ -1,6 +1,7 @@
 import * as XLSX from "xlsx";
 import { PdfGenerator } from "@/lib/pdf-generator";
 import { smartClassify } from "./smart-classifier";
+import { TaxRule, getDebentureDisplayRates } from "./tax-rules.service";
 
 export type DebentureParticular = "PUBLIC" | "INSTITUTION" | "MUTUAL FUND";
 
@@ -133,6 +134,7 @@ export const DebentureSummaryReportService = {
     overrideCouponRate?: number,
     overrideFaceValue = 1000,
     overrideDays?: number,
+    taxRules?: TaxRule[] | null,
   ): DebentureSummaryReport {
     const fv = overrideFaceValue || 1000;
 
@@ -171,8 +173,14 @@ export const DebentureSummaryReportService = {
         detectedCouponRate = parseFloat(nameMatch[1].replace(/\s+/, "."));
       }
     }
-    if (!detectedCouponRate && !isAll) {
+    if (!detectedCouponRate) {
       for (const p of payables) {
+        const cName = p.company?.company_name || p.company_name || "";
+        const nameMatch = cName.match(/(\d+(?:[.\s]\d+)?)\s*%/);
+        if (nameMatch) {
+          detectedCouponRate = parseFloat(nameMatch[1].replace(/\s+/, "."));
+          break;
+        }
         const refMatch = (p.instrument_ref || "").match(/(\d+(?:[.\s]\d+)?)\s*%/);
         if (refMatch) {
           detectedCouponRate = parseFloat(refMatch[1].replace(/\s+/, "."));
@@ -186,14 +194,17 @@ export const DebentureSummaryReportService = {
       }
     }
 
+    // Dynamically retrieve configured tax rates (adapts to government revisions)
+    const activeRates = getDebentureDisplayRates(taxRules);
+
     const categoryConfigs: Array<{
       key: DebentureParticular;
       label: string;
       taxRatePercent: number;
     }> = [
-      { key: "PUBLIC", label: "PUBLIC", taxRatePercent: 6 },
-      { key: "INSTITUTION", label: "INSTITUTION", taxRatePercent: 15 },
-      { key: "MUTUAL FUND", label: "MUTUAL FUND", taxRatePercent: 0 },
+      { key: "PUBLIC", label: "PUBLIC", taxRatePercent: activeRates.publicRatePct },
+      { key: "INSTITUTION", label: "INSTITUTION", taxRatePercent: activeRates.institutionRatePct },
+      { key: "MUTUAL FUND", label: "MUTUAL FUND", taxRatePercent: activeRates.exemptRatePct },
     ];
 
     const groups = new Map<
@@ -262,7 +273,10 @@ export const DebentureSummaryReportService = {
         gross = annualInt;
       }
       if (tax === 0 && gross > 0 && cat !== "MUTUAL FUND") {
-        const ratePct = cat === "INSTITUTION" ? 0.15 : 0.06;
+        const ratePct =
+          cat === "INSTITUTION"
+            ? activeRates.institutionRatePct / 100
+            : activeRates.publicRatePct / 100;
         tax = Math.round(gross * ratePct * 100) / 100;
       }
       if (net === 0 && gross > 0) {
@@ -353,7 +367,11 @@ export const DebentureSummaryReportService = {
     total.interestPerDay = Math.round(total.interestPerDay * 100) / 100;
     total.grossInterest = Math.round(total.grossInterest * 100) / 100;
     total.taxAmount = Math.round(total.taxAmount * 100) / 100;
-    total.netInterestPayable = Math.round(total.netInterestPayable * 100) / 100;
+    const effectiveDays =
+      overrideDays ||
+      (total.annualInterest > 0 && total.grossInterest > 0
+        ? Math.round(total.grossInterest / (total.annualInterest / 365))
+        : undefined);
 
     return {
       companyName,
@@ -361,7 +379,7 @@ export const DebentureSummaryReportService = {
       fiscalYear,
       couponRate: detectedCouponRate,
       faceValue: fv,
-      daysCount: overrideDays,
+      daysCount: effectiveDays,
       rows,
       total,
     };

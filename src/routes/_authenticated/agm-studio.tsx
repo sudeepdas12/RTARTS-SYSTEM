@@ -1445,7 +1445,7 @@ function AgmStudioPage() {
       "Closing Kitta (2080/81)",
       "Closing Carried Fraction",
       "Total Gross Cash Dividend (NPR)",
-      "Total Tax Withheld (5% TDS)",
+      "Total Tax Withheld (Statutory TDS)",
       "Net Cash Payable (NPR)",
       "Account Classification",
       "Audit & Statutory Status",

@@ -192,16 +192,14 @@ export const ReconciliationService = {
     const chunkSize = 200;
     let savedCount = 0;
     try {
-      // Lot/file deduplication: if notes have [File: ...] and same reconciliation_date, remove previous identical lot logs to prevent accumulation
+      // Lot/file deduplication: if notes have [File: ...], remove previous identical lot logs to prevent accumulation across sessions
       const firstNote = results[0]?.notes || "";
       const fileMatch = firstNote.match(/\[File:\s*([^\]|]+)/i);
-      const today = results[0]?.reconciliation_date || new Date().toISOString().slice(0, 10);
       if (fileMatch && fileMatch[1]) {
         const fileName = fileMatch[1].trim();
         await (supabase as any)
           .from("reconciliation_results")
           .delete()
-          .eq("reconciliation_date", today)
           .ilike("notes", `%[File: ${fileName}%`);
       }
 
@@ -340,7 +338,8 @@ export const ReconciliationService = {
 
           if (pList && pList.length > 0) {
             const pIds = pList.map((p: any) => p.id);
-            await (supabase as any)
+            // Only revert payments that are not already Completed/ExternallySettled
+            const { error: pErr } = await (supabase as any)
               .from("payments")
               .update({
                 status: "Pending",
@@ -349,8 +348,12 @@ export const ReconciliationService = {
                 remarks: null,
                 payment_reference: null,
               })
-              .in("id", pIds);
-            deletedPayments += pIds.length;
+              .in("id", pIds)
+              .neq("status", "Completed");
+
+            if (!pErr) {
+              deletedPayments += pIds.length;
+            }
           }
         }
       }
@@ -454,7 +457,8 @@ export const ReconciliationService = {
                 remarks: null,
                 payment_reference: null,
               })
-              .in("id", pIds);
+              .in("id", pIds)
+              .neq("status", "Completed");
 
             if (!pUpdErr) {
               deletedPayments += pIds.length;
@@ -517,10 +521,10 @@ export const ReconciliationService = {
       const t = String(type || "")
         .toLowerCase()
         .trim();
-      if (t === "dividend" || t === "dividend_payables") return "dividend";
-      if (t === "interest" || t === "interest_payables") return "interest";
-      if (t === "mutual_fund" || t === "mutual_fund_payables") return "mutual_fund";
-      return "dividend";
+      if (t.includes("interest")) return "interest";
+      if (t.includes("mutual_fund") || t.includes("mutual")) return "mutual_fund";
+      if (t.includes("dividend")) return "dividend";
+      return "interest";
     };
 
     // Helper to identify batch settlement debit records
@@ -603,30 +607,27 @@ export const ReconciliationService = {
       },
       {} as Record<string, number>,
     );
+    // Default to "interest" rather than "dividend" — RTARTS primarily handles debenture interest
     const dominantPayableType =
-      Object.entries(typeCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "dividend";
+      Object.entries(typeCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "interest";
 
-    // 3. Group by company to create clean reconciliation batches
-    const companyId = individualMatches.find((r) => r.company_id)?.company_id || null;
+    // 3. Group individual matches by company_id so each company gets its own batch
+    // This fixes the bug where all multi-company results were lumped into one batch
+    // using only the first company_id found.
+    const matchesByCompany = new Map<string, ReconciliationResultRow[]>();
+    for (const r of individualMatches) {
+      const cid = r.company_id || "__no_company__";
+      if (!matchesByCompany.has(cid)) matchesByCompany.set(cid, []);
+      matchesByCompany.get(cid)!.push(r);
+    }
     const todayStr = new Date().toISOString().split("T")[0];
 
-    const batchInfo = {
-      batch_name: `Reconciliation Auto-Batch ${todayStr}`,
-      company_id: companyId,
-      payable_type: dominantPayableType,
-      payment_method: paymentMethod,
-      total_records: individualMatches.length,
-      total_net: individualMatches.reduce(
-        (acc, r) => acc + Number(r.actual_amount || r.expected_amount || 0),
-        0,
-      ),
-      total_tax: 0,
-      cds_batch_ref: "RECON-APPLY",
-    };
+    // 4. Resolve payable IDs and group into per-company payloads
+    // Key: company_id (or "__no_company__" for unresolved) → items array
+    const itemsPayloadByCompany = new Map<string, any[]>();
 
-    // 4. Resolve payable IDs strictly without ambiguous fuzzy-matching
-    const itemsPayload: any[] = [];
     for (const r of individualMatches) {
+      const groupCid = r.company_id || "__no_company__";
       let payableId =
         r.payable_id ||
         (r.source_b_type !== "payment" && r.source_b_type !== "batch" ? r.source_b_id : null) ||
@@ -652,7 +653,7 @@ export const ReconciliationService = {
             .eq("client_id", r.client_id)
             .neq("payment_status", "Paid");
 
-          if (r.company_id || companyId) q = q.eq("company_id", r.company_id || companyId);
+          if (r.company_id) q = q.eq("company_id", r.company_id);
           if (r.fiscal_year) q = q.eq("fiscal_year", r.fiscal_year);
 
           const { data: foundRows } = await q.limit(10);
@@ -696,14 +697,19 @@ export const ReconciliationService = {
         errors.push(
           `Skipping unlinked record (${r.actual_amount ?? r.expected_amount ?? 0} NPR): no payable ID, payment ID, or client ID available`,
         );
-        continue;
       }
 
-      itemsPayload.push({
+      const lotSuffix = (r as any).lot_name ? `:::${(r as any).lot_name}` : "";
+      const groupKey = `${groupCid}${lotSuffix}`;
+
+      if (!itemsPayloadByCompany.has(groupKey)) {
+        itemsPayloadByCompany.set(groupKey, []);
+      }
+      itemsPayloadByCompany.get(groupKey)!.push({
         id: r.id,
         payable_id: payableId,
         payment_id: paymentId,
-        company_id: r.company_id || companyId,
+        company_id: r.company_id || null,
         client_id: r.client_id,
         payable_type: payableType,
         actual_amount: Number(r.actual_amount || r.expected_amount || 0),
@@ -711,18 +717,56 @@ export const ReconciliationService = {
         paid_amount: Number(r.actual_amount || r.expected_amount || 0),
         result: r.result,
         reconciliation_result: r.result,
-        bank_name: r.client?.bank_name || (r as any).bank_name || null,
-        bank_account_no: r.client?.bank_account_no || (r as any).bank_account_no || null,
+        bank_name: (r as any).bank_name || r.client?.bank_name || null,
+        bank_account_no: (r as any).bank_account_no || r.client?.bank_account_no || null,
         payment_reference: `RECON-${r.id ? String(r.id).slice(0, 8) : "AUTO"}`,
+        connectips_ref: (r as any).connectips_ref || (r as any).instruction_id || null,
       });
     }
 
-    if (itemsPayload.length > 0) {
-      // 5. Atomic Execution via SECURITY DEFINER Stored Procedure
+    // 5. Execute atomic RPC call per company and lot group
+    let totalItemsProcessed = 0;
+    for (const [groupKey, groupItems] of itemsPayloadByCompany.entries()) {
+      if (groupItems.length === 0) continue;
+      totalItemsProcessed += groupItems.length;
+
+      const [groupCid, lotName] = groupKey.split(":::");
+      const resolvedCompanyId = groupCid === "__no_company__" ? null : groupCid;
+      // Dominant type per this company group
+      const groupTypeCounts = groupItems.reduce((acc: Record<string, number>, item: any) => {
+        const t = normalizeType(item.payable_type);
+        acc[t] = (acc[t] || 0) + 1;
+        return acc;
+      }, {});
+      const groupDominantType =
+        Object.entries(groupTypeCounts).sort((a: any, b: any) => b[1] - a[1])[0]?.[0] ||
+        dominantPayableType;
+
+      const firstRef = groupItems.find((it: any) => it.connectips_ref)?.connectips_ref;
+      const detectedBatchRef = firstRef ? String(firstRef).slice(0, 11) : "RECON-APPLY";
+
+      const batchTitle = lotName
+        ? `${lotName} (${todayStr})`
+        : `Reconciliation Auto-Batch ${todayStr}${resolvedCompanyId ? ` [${resolvedCompanyId.slice(0, 8)}]` : ""}`;
+
+      const batchInfo = {
+        batch_name: batchTitle,
+        company_id: resolvedCompanyId,
+        payable_type: groupDominantType,
+        payment_method: paymentMethod,
+        total_records: groupItems.length,
+        total_net: groupItems.reduce(
+          (acc: number, item: any) => acc + Number(item.actual_amount || item.expected_amount || 0),
+          0,
+        ),
+        total_tax: 0,
+        cds_batch_ref: detectedBatchRef,
+      };
+
       const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc(
         "apply_reconciliation_batch",
         {
-          p_items: itemsPayload,
+          p_items: groupItems,
           p_batch_info: batchInfo,
         },
       );
@@ -751,7 +795,7 @@ export const ReconciliationService = {
       updated === 0 &&
       paymentsCreated === 0 &&
       alreadyPaid === 0 &&
-      itemsPayload.length === 0 &&
+      totalItemsProcessed === 0 &&
       batchesUpdated === 0 &&
       batchesAlreadyCompleted === 0
     ) {

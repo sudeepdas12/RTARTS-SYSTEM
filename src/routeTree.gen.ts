@@ -19,6 +19,7 @@ import { Route as AuthenticatedAnalyticsRouteImport } from './routes/_authentica
 import { Route as AuthenticatedApprovalsRouteImport } from './routes/_authenticated/approvals'
 import { Route as AuthenticatedAuditRouteImport } from './routes/_authenticated/audit'
 import { Route as AuthenticatedAuditLogsRouteImport } from './routes/_authenticated/audit-logs'
+import { Route as AuthenticatedBackupRouteImport } from './routes/_authenticated/backup'
 import { Route as AuthenticatedClassificationReviewRouteImport } from './routes/_authenticated/classification-review'
 import { Route as AuthenticatedClientsRouteImport } from './routes/_authenticated/clients'
 import { Route as AuthenticatedCompaniesRouteImport } from './routes/_authenticated/companies'
@@ -85,6 +86,11 @@ const AuthenticatedAuditRoute = AuthenticatedAuditRouteImport.update({
 const AuthenticatedAuditLogsRoute = AuthenticatedAuditLogsRouteImport.update({
   id: '/audit-logs',
   path: '/audit-logs',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedBackupRoute = AuthenticatedBackupRouteImport.update({
+  id: '/backup',
+  path: '/backup',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedClassificationReviewRoute =
@@ -189,6 +195,7 @@ export interface FileRoutesByFullPath {
   '/approvals': typeof AuthenticatedApprovalsRoute
   '/audit': typeof AuthenticatedAuditRoute
   '/audit-logs': typeof AuthenticatedAuditLogsRoute
+  '/backup': typeof AuthenticatedBackupRoute
   '/classification-review': typeof AuthenticatedClassificationReviewRoute
   '/clients': typeof AuthenticatedClientsRoute
   '/companies': typeof AuthenticatedCompaniesRoute
@@ -217,6 +224,7 @@ export interface FileRoutesByTo {
   '/approvals': typeof AuthenticatedApprovalsRoute
   '/audit': typeof AuthenticatedAuditRoute
   '/audit-logs': typeof AuthenticatedAuditLogsRoute
+  '/backup': typeof AuthenticatedBackupRoute
   '/classification-review': typeof AuthenticatedClassificationReviewRoute
   '/clients': typeof AuthenticatedClientsRoute
   '/companies': typeof AuthenticatedCompaniesRoute
@@ -247,6 +255,7 @@ export interface FileRoutesById {
   '/_authenticated/approvals': typeof AuthenticatedApprovalsRoute
   '/_authenticated/audit': typeof AuthenticatedAuditRoute
   '/_authenticated/audit-logs': typeof AuthenticatedAuditLogsRoute
+  '/_authenticated/backup': typeof AuthenticatedBackupRoute
   '/_authenticated/classification-review': typeof AuthenticatedClassificationReviewRoute
   '/_authenticated/clients': typeof AuthenticatedClientsRoute
   '/_authenticated/companies': typeof AuthenticatedCompaniesRoute
@@ -277,6 +286,7 @@ export interface FileRouteTypes {
     | '/approvals'
     | '/audit'
     | '/audit-logs'
+    | '/backup'
     | '/classification-review'
     | '/clients'
     | '/companies'
@@ -305,6 +315,7 @@ export interface FileRouteTypes {
     | '/approvals'
     | '/audit'
     | '/audit-logs'
+    | '/backup'
     | '/classification-review'
     | '/clients'
     | '/companies'
@@ -334,6 +345,7 @@ export interface FileRouteTypes {
     | '/_authenticated/approvals'
     | '/_authenticated/audit'
     | '/_authenticated/audit-logs'
+    | '/_authenticated/backup'
     | '/_authenticated/classification-review'
     | '/_authenticated/clients'
     | '/_authenticated/companies'
@@ -430,6 +442,13 @@ declare module '@tanstack/react-router' {
       path: '/audit-logs'
       fullPath: '/audit-logs'
       preLoaderRoute: typeof AuthenticatedAuditLogsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/backup': {
+      id: '/_authenticated/backup'
+      path: '/backup'
+      fullPath: '/backup'
+      preLoaderRoute: typeof AuthenticatedBackupRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/classification-review': {
@@ -561,6 +580,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedApprovalsRoute: typeof AuthenticatedApprovalsRoute
   AuthenticatedAuditRoute: typeof AuthenticatedAuditRoute
   AuthenticatedAuditLogsRoute: typeof AuthenticatedAuditLogsRoute
+  AuthenticatedBackupRoute: typeof AuthenticatedBackupRoute
   AuthenticatedClassificationReviewRoute: typeof AuthenticatedClassificationReviewRoute
   AuthenticatedClientsRoute: typeof AuthenticatedClientsRoute
   AuthenticatedCompaniesRoute: typeof AuthenticatedCompaniesRoute
@@ -587,6 +607,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedApprovalsRoute: AuthenticatedApprovalsRoute,
   AuthenticatedAuditRoute: AuthenticatedAuditRoute,
   AuthenticatedAuditLogsRoute: AuthenticatedAuditLogsRoute,
+  AuthenticatedBackupRoute: AuthenticatedBackupRoute,
   AuthenticatedClassificationReviewRoute:
     AuthenticatedClassificationReviewRoute,
   AuthenticatedClientsRoute: AuthenticatedClientsRoute,

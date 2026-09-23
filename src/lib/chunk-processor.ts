@@ -13,8 +13,9 @@ export interface ChunkProgress {
 export interface ChunkOptions {
   fiscalYear?: string;
   dividendRate?: number;
+  bonusRate?: number;
   tdsRate?: number; // Explicit TDS rate override (e.g. 0.15 for Institutions)
-  dividendType?: "Cash" | "Stock" | "Bonus" | "Right";
+  dividendType?: "Cash" | "Stock" | "Bonus" | "Right" | "Combined";
   companyId?: string; // Direct company UUID — bypasses name-based lookup entirely
   companyName?: string; // Detected company name from file
   companyIsin?: string; // Detected ISIN from file

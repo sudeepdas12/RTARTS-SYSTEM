@@ -118,6 +118,8 @@ export function investorCategoryToClassification(
     case "MUTUAL FUND":
     case "TAX_EXEMPT":
     case "TAX_EXEMPTED":
+    case "STATUTORY_FUND":
+    case "STATUTORY":
       return "TAX_EXEMPT";
     case "PUBLIC":
     case "PUBLIC_LEGAL_PERSON":
@@ -171,4 +173,54 @@ export async function updateTaxRule(
     .eq("id", id);
   throwIfError(error, "Failed to update tax rule");
   invalidateTaxRuleCache();
+}
+
+/**
+ * Dynamic display rate helpers for Debentures / Interest payables.
+ * Reads directly from active database tax rules, falling back to statutory standards
+ * (Public 6%, Institution 15%, Exempt 0%) if rules are loading or unconfigured.
+ */
+export function getDebentureDisplayRates(rules?: TaxRule[] | null) {
+  const pub = getTaxRateFromRules(rules, "INTEREST", "NATURAL_PERSON");
+  const inst = getTaxRateFromRules(rules, "INTEREST", "COMPANY_INSTITUTION");
+  const exempt = getTaxRateFromRules(rules, "INTEREST", "TAX_EXEMPT");
+
+  return {
+    publicRatePct: pub != null ? Math.round(pub * 10000) / 100 : 6,
+    institutionRatePct: inst != null ? Math.round(inst * 10000) / 100 : 15,
+    exemptRatePct: exempt != null ? Math.round(exempt * 10000) / 100 : 0,
+  };
+}
+
+/**
+ * Dynamic display rate helpers for Dividend payables.
+ * Reads directly from active database tax rules, falling back to statutory standards
+ * (Public 5%, Institution 5%, Exempt 0%).
+ */
+export function getDividendDisplayRates(rules?: TaxRule[] | null) {
+  const pub = getTaxRateFromRules(rules, "DIVIDEND", "NATURAL_PERSON");
+  const inst = getTaxRateFromRules(rules, "DIVIDEND", "COMPANY_INSTITUTION");
+  const exempt = getTaxRateFromRules(rules, "DIVIDEND", "TAX_EXEMPT");
+
+  return {
+    publicRatePct: pub != null ? Math.round(pub * 10000) / 100 : 5,
+    institutionRatePct: inst != null ? Math.round(inst * 10000) / 100 : 5,
+    exemptRatePct: exempt != null ? Math.round(exempt * 10000) / 100 : 0,
+  };
+}
+
+/**
+ * Dynamic display rate helpers for Mutual Fund distributions.
+ * (Natural Person 5%, Institution 15%, Exempt 0%).
+ */
+export function getMutualFundDisplayRates(rules?: TaxRule[] | null) {
+  const pub = getTaxRateFromRules(rules, "MUTUAL_FUND", "NATURAL_PERSON");
+  const inst = getTaxRateFromRules(rules, "MUTUAL_FUND", "COMPANY_INSTITUTION");
+  const exempt = getTaxRateFromRules(rules, "MUTUAL_FUND", "TAX_EXEMPT");
+
+  return {
+    publicRatePct: pub != null ? Math.round(pub * 10000) / 100 : 5,
+    institutionRatePct: inst != null ? Math.round(inst * 10000) / 100 : 15,
+    exemptRatePct: exempt != null ? Math.round(exempt * 10000) / 100 : 0,
+  };
 }

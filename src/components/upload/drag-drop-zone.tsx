@@ -59,7 +59,7 @@ export function DragDropZone({
         toast.error(`File ${file.name} exceeds 50MB limit`);
         continue;
       }
-      if (!validTypes.includes(file.type) && !file.name.match(/\.(xlsx|xls|csv)$/i)) {
+      if (!validTypes.includes(file.type) && !file.name.match(/\.(xlsx|xls|csv|xlsm|xlsb|tsv)$/i)) {
         toast.error(`File ${file.name} is not an Excel or CSV file`);
         continue;
       }
@@ -95,7 +95,7 @@ export function DragDropZone({
         ref={fileInputRef}
         multiple={multiple}
         className="hidden"
-        accept=".xlsx, .xls, .csv"
+        accept=".xlsx, .xls, .csv, .xlsm, .xlsb, .tsv"
         onChange={handleChange}
       />
 

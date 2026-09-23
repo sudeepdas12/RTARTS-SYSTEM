@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
@@ -10,6 +10,12 @@ import { ExcelParser, ParsedExcelData, DetectedSheetType } from "@/lib/excel-par
 import { ChunkProcessor, ChunkProgress } from "@/lib/chunk-processor";
 import { ImportService } from "@/lib/services/import.service";
 import { UploadService } from "@/lib/services/upload.service";
+import {
+  loadTaxRules,
+  getDividendDisplayRates,
+  getDebentureDisplayRates,
+  getMutualFundDisplayRates,
+} from "@/lib/services/tax-rules.service";
 import { ValidationEngine, ValidationError } from "@/lib/validation-engine";
 import { ValidationReport } from "@/components/upload/validation-report";
 import { Button } from "@/components/ui/button";
@@ -149,11 +155,13 @@ interface AllSheetsProgress {
 }
 
 function UploadRoute() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { hasAny, isAdmin } = useAuth();
   const canWrite = isAdmin || hasAny(["admin", "finance_operator"]);
 
   const [file, setFile] = useState<File | null>(null);
+  const [activeDuplicateUpload, setActiveDuplicateUpload] = useState<any>(null);
   const [parsedData, setParsedData] = useState<ParsedExcelData | null>(null);
   const [selectedSheetIndex, setSelectedSheetIndex] = useState(0);
   const [isParsing, setIsParsing] = useState(false);
@@ -180,25 +188,50 @@ function UploadRoute() {
   const [fiscalYear, setFiscalYear] = useState(() => {
     const now = new Date();
     const nepaliYear = now.getFullYear() + 56;
-    return `${nepaliYear}/${nepaliYear + 1}`;
+    const endYY = String(nepaliYear + 1).slice(-2); // short 2-digit end year
+    return `${nepaliYear}/${endYY}`;
   });
   const [dividendRate, setDividendRate] = useState("");
+  const [bonusRate, setBonusRate] = useState("");
   const [dividendType, setDividendType] = useState<
-    "Cash" | "Bonus" | "Right" | "Debenture" | "MutualFund"
+    "Cash" | "Bonus" | "Combined" | "Right" | "Debenture" | "MutualFund"
   >("Cash");
 
+  const { data: taxRules } = useQuery({
+    queryKey: ["tax-rules"],
+    queryFn: () => loadTaxRules(),
+    staleTime: 60_000,
+  });
+
+  const debRates = getDebentureDisplayRates(taxRules);
+  const divRates = getDividendDisplayRates(taxRules);
+  const mfRates = getMutualFundDisplayRates(taxRules);
+
   const handlePayableTypeChange = (
-    newType: "Cash" | "Bonus" | "Right" | "Debenture" | "MutualFund",
+    newType: "Cash" | "Bonus" | "Combined" | "Right" | "Debenture" | "MutualFund",
   ) => {
     setDividendType(newType);
     if (parsedData) {
-      const defaultRate = newType === "Debenture" ? 0.06 : newType === "MutualFund" ? 0.0 : 0.05;
+      const defaultRate =
+        newType === "Debenture"
+          ? debRates.publicRatePct / 100
+          : newType === "MutualFund"
+            ? mfRates.exemptRatePct / 100
+            : divRates.publicRatePct / 100;
       const newTds: Record<number, string> = {};
       parsedData.sheets.forEach((sheet, idx) => {
         let sheetTds = defaultRate;
-        if (sheet.sheetType === "INSTITUTION") sheetTds = 0.15;
-        else if (sheet.sheetType === "TAX_EXEMPTED") sheetTds = 0.0;
-        else if (sheet.sheetType === "PRIVATE") sheetTds = 0.06;
+        if (newType === "Debenture") {
+          if (sheet.sheetType === "INSTITUTION" || sheet.sheetType === "PRIVATE")
+            sheetTds = debRates.institutionRatePct / 100;
+          else if (sheet.sheetType === "TAX_EXEMPTED") sheetTds = debRates.exemptRatePct / 100;
+          else sheetTds = debRates.publicRatePct / 100;
+        } else if (newType === "MutualFund") {
+          sheetTds = mfRates.exemptRatePct / 100;
+        } else {
+          if (sheet.sheetType === "TAX_EXEMPTED") sheetTds = divRates.exemptRatePct / 100;
+          else sheetTds = divRates.publicRatePct / 100;
+        }
         newTds[idx] = String(Math.round(sheetTds * 100));
       });
       setSheetTdsRates(newTds);
@@ -378,10 +411,28 @@ function UploadRoute() {
     setValidationErrors([]);
     try {
       const data = await ExcelParser.parseFile(selectedFile);
+
+      if (!data.sheets || data.sheets.length === 0) {
+        setParsedData(null);
+        toast.error(
+          `No valid investor data sheets found in "${selectedFile.name}". Please ensure your sheet contains columns for BOID / Client ID / Folio, Shareholder Name, and Shares / Bonus details.`,
+          { duration: 8000 },
+        );
+        return;
+      }
+
       setParsedData(data);
       const firstDataSheetIndex = data.sheets.findIndex((s) => s.sheetType !== "SUMMARY");
       setSelectedSheetIndex(firstDataSheetIndex >= 0 ? firstDataSheetIndex : 0);
       const dataSheets = data.sheets.filter((s) => s.sheetType !== "SUMMARY");
+
+      if (dataSheets.length === 0) {
+        toast.warning(
+          `Only reference/summary sheets were found in "${selectedFile.name}". No individual shareholder data was detected.`,
+          { duration: 8000 },
+        );
+        return;
+      }
 
       if (data.detectedRate) {
         setDividendRate(String(data.detectedRate));
@@ -406,12 +457,36 @@ function UploadRoute() {
         );
       }
 
+      // Check if this file content has already been uploaded
+      try {
+        const hash = await computeFileHash(selectedFile);
+        const existing = await UploadService.findActiveUploadByHash(hash);
+        setActiveDuplicateUpload(existing);
+        if (existing) {
+          toast.warning(
+            `This exact file content is already active in the database (Upload ID: ${existing.id.slice(0, 8)}...). To re-upload, please roll it back in Upload History first.`,
+            {
+              duration: 9000,
+              action: {
+                label: "Upload History",
+                onClick: () => navigate({ to: "/upload-history" }),
+              },
+            },
+          );
+        } else {
+          setActiveDuplicateUpload(null);
+        }
+      } catch (hashErr) {
+        console.warn("Could not check duplicate hash:", hashErr);
+      }
+
       toast.success(
-        `File parsed: ${data.sheets.length} sheet(s) detected (${dataSheets.length} data sheet(s)).`,
+        `File parsed: ${data.sheets.length} sheet(s) detected (${dataSheets.length} data sheet(s)). Click "Import" to save records to the database.`,
+        { duration: 5000 },
       );
-    } catch (error) {
-      toast.error("Failed to parse file");
-      console.error(error);
+    } catch (error: any) {
+      toast.error(`Failed to parse file: ${error?.message || "File format or structure error"}`);
+      console.error("Excel parse error:", error);
     } finally {
       setIsParsing(false);
     }
@@ -471,9 +546,19 @@ function UploadRoute() {
   function buildOptions(sheetIdx: number, companyIdOverride?: string) {
     const sheetDivRate = sheetDividendRates[sheetIdx];
     const sheet = parsedData!.sheets[sheetIdx];
-    // Clamp TDS rate to 0–50% to prevent invalid values
+    // Only send an explicit sheet-level tdsRate for pure single-category sheets.
+    // For raw/mixed sheets (e.g. debentures with mixed investors), leave undefined so per-row statutory detection applies.
+    const sheetType = sheet.sheetType;
+    const isMixedSheet =
+      !sheetType ||
+      sheetType === "ORIGINAL" ||
+      sheetType === "SUMMARY" ||
+      sheetType === "UNKNOWN" ||
+      sheetType === "PUBLIC";
     const rawTds =
-      sheetTdsRates[sheetIdx] !== undefined ? Number(sheetTdsRates[sheetIdx]) : undefined;
+      !isMixedSheet && sheetTdsRates[sheetIdx] !== undefined
+        ? Number(sheetTdsRates[sheetIdx])
+        : undefined;
     const tdsRate = rawTds !== undefined ? Math.min(50, Math.max(0, rawTds)) / 100 : undefined;
 
     const effectiveFileType =
@@ -493,12 +578,13 @@ function UploadRoute() {
         : dividendRate
           ? Number(dividendRate)
           : undefined,
+      bonusRate: bonusRate ? Number(bonusRate) : undefined,
       tdsRate,
       dividendType:
         effectiveFileType !== "debenture" &&
         effectiveFileType !== "interest" &&
         dividendType !== "MutualFund"
-          ? (dividendType as "Cash" | "Bonus" | "Right")
+          ? (dividendType as "Cash" | "Bonus" | "Right" | "Combined")
           : undefined,
       // Direct company UUID (bypasses name-based lookup and avoids accidental company creation)
       companyId: activeCompanyId,
@@ -525,11 +611,21 @@ function UploadRoute() {
       toast.error("Unauthorized: You do not have permission to upload or import files.");
       return;
     }
-    if (!file || !parsedData || !parsedData.sheets[selectedSheetIndex]) return;
-
+    if (!file || !parsedData) {
+      toast.error("Please select an Excel file first.");
+      return;
+    }
     const sheet = parsedData.sheets[selectedSheetIndex];
+    if (!sheet) {
+      toast.error("No valid sheet selected for import. Please ensure a sheet is active.");
+      return;
+    }
     if (sheet.sheetType === "SUMMARY") {
       toast.warning("Summary sheet is reference-only and will not be imported.");
+      return;
+    }
+    if (!sheet.rowCount || sheet.rows.length === 0) {
+      toast.error(`Sheet "${sheet.sheetName}" contains 0 investor records.`);
       return;
     }
 
@@ -555,6 +651,7 @@ function UploadRoute() {
           : parsedData.fileType;
 
     // Ensure a target company is selected or auto-registered before importing
+    setIsImporting(true);
     let resolvedCompanyId = selectedCompanyId !== "auto" ? selectedCompanyId : undefined;
     if (!resolvedCompanyId) {
       const rawDetect = (
@@ -588,25 +685,38 @@ function UploadRoute() {
           });
         } catch (regErr: any) {
           toast.error(`Could not register company: ${regErr.message}`, { id: "comp-autoreg" });
+          setIsImporting(false);
           return;
         }
       }
     }
 
-    const fileHash = await computeFileHash(file);
+    let fileHash: string;
+    try {
+      fileHash = await computeFileHash(file);
+    } catch (hashErr: any) {
+      toast.error(`Could not read file: ${hashErr?.message || "File access error"}`);
+      setIsImporting(false);
+      return;
+    }
     setImportSummary(null);
 
-    const validationErrorsForImport = await ValidationEngine.validateBatch(
-      sheet.rows,
-      sheet.mapping,
-      fileHash,
-      effectiveFileType,
-      {
-        isRawInputFile: sheet.isRawInputFile,
-        isPreCalculated: sheet.isPreCalculated,
-        dividendRate: rate,
-      },
-    );
+    let validationErrorsForImport: ValidationError[] = [];
+    try {
+      validationErrorsForImport = await ValidationEngine.validateBatch(
+        sheet.rows,
+        sheet.mapping,
+        fileHash,
+        effectiveFileType,
+        {
+          isRawInputFile: sheet.isRawInputFile,
+          isPreCalculated: sheet.isPreCalculated,
+          dividendRate: rate,
+        },
+      );
+    } catch (valErr: any) {
+      console.warn("Pre-import validation check encountered non-fatal error:", valErr);
+    }
 
     // Severity gating: only *blocking* validation errors stop the import.
     const hardErrors = validationErrorsForImport.filter((e) => !SOFT_ERROR_TYPES.has(e.type));
@@ -652,17 +762,48 @@ function UploadRoute() {
     } catch (e: any) {
       const detail = e?.message || String(e);
       console.error("createUploadRecord failed:", detail);
-      toast.error(`Failed to create upload record: ${detail}`);
+      if (
+        detail.includes("already been uploaded") ||
+        detail.includes("uq_upload_history_active_file_hash")
+      ) {
+        toast.error(
+          "This file has already been uploaded and is active in the database. Go to 'Upload History' to roll back or delete the existing upload before re-uploading.",
+          {
+            duration: 9000,
+            action: {
+              label: "Upload History",
+              onClick: () => navigate({ to: "/upload-history" }),
+            },
+          },
+        );
+      } else {
+        toast.error(`Failed to create upload record: ${detail}`);
+      }
       setIsImporting(false);
       return;
     }
 
     setValidationErrors(hardErrors);
-    setIsImporting(true);
 
     // Filter out rows with hard errors
     const invalidRowIndices = new Set(hardErrors.map((e) => e.row - 1)); // row is 1-indexed
     const validRows = sheet.rows.filter((_, idx) => !invalidRowIndices.has(idx));
+
+    if (validRows.length === 0 && sheet.rows.length > 0) {
+      toast.error(
+        `Import blocked: All ${sheet.rowCount} rows have blocking validation errors. Please review the errors below.`,
+        { duration: 8000 },
+      );
+      try {
+        await UploadService.updateUploadStatus(uploadId, "Failed", {
+          error_message: `All ${sheet.rowCount} rows failed validation.`,
+        });
+      } catch (err) {
+        console.warn("Could not mark upload as Failed in background:", err);
+      }
+      setIsImporting(false);
+      return;
+    }
 
     // Log ALL validation errors to history
     if (validationErrorsForImport.length > 0) {
@@ -920,9 +1061,24 @@ function UploadRoute() {
         });
         uploadId = rec.id;
       } catch (recErr: any) {
-        toast.error(
-          `Failed to initialize upload record for "${sheet.sheetName}": ${recErr?.message || "Tracking error"}`,
-        );
+        const detail = recErr?.message || String(recErr);
+        if (
+          detail.includes("already been uploaded") ||
+          detail.includes("uq_upload_history_active_file_hash")
+        ) {
+          toast.error(
+            `"${sheet.sheetName}" was already uploaded and is active in the database. Go to Upload History to roll back before re-uploading.`,
+            {
+              duration: 9000,
+              action: {
+                label: "Upload History",
+                onClick: () => navigate({ to: "/upload-history" }),
+              },
+            },
+          );
+        } else {
+          toast.error(`Failed to initialize upload record for "${sheet.sheetName}": ${detail}`);
+        }
         overallProcessed += sheet.rowCount;
         overallErrors += sheet.rowCount;
         continue;
@@ -938,7 +1094,7 @@ function UploadRoute() {
         sheet.rows,
         sheet.mapping,
         `${fileHash}-${sheet.sheetName}`,
-        parsedData.fileType,
+        effectiveFileType,
         {
           isRawInputFile: sheet.isRawInputFile,
           isPreCalculated: sheet.isPreCalculated,
@@ -1079,6 +1235,7 @@ function UploadRoute() {
     setSheetTdsRates({});
     setSheetDividendRates({});
     setImportSummary(null);
+    setActiveDuplicateUpload(null);
   };
 
   const currentSheet = parsedData?.sheets[selectedSheetIndex];
@@ -1162,6 +1319,30 @@ function UploadRoute() {
 
       {parsedData && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          {activeDuplicateUpload && (
+            <Alert className="border-amber-500/50 bg-amber-500/10 text-amber-900 dark:text-amber-200">
+              <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+              <AlertDescription className="flex items-center justify-between flex-wrap gap-2 text-xs">
+                <div>
+                  <strong className="font-semibold">File already active in database:</strong> This
+                  exact file content was previously uploaded on{" "}
+                  <strong>{new Date(activeDuplicateUpload.created_at).toLocaleDateString()}</strong>{" "}
+                  ({activeDuplicateUpload.total_rows?.toLocaleString()} rows, Status:{" "}
+                  {activeDuplicateUpload.status}). Uploading it again will conflict with the active
+                  records.
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs border-amber-500/40 hover:bg-amber-500/20"
+                  onClick={() => navigate({ to: "/upload-history" })}
+                >
+                  Manage in Upload History
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* File Header & Actions */}
           <div className="flex items-center justify-between bg-card p-4 border rounded-lg flex-wrap gap-3">
             <div>
@@ -1205,15 +1386,24 @@ function UploadRoute() {
               <Button variant="outline" onClick={handleValidate} disabled={isValidating}>
                 {isValidating ? "Validating..." : "Validate Only"}
               </Button>
-              <Button variant="outline" onClick={handleImport} disabled={isImporting}>
+              <Button
+                variant={dataSheets.length <= 1 ? "default" : "outline"}
+                className={
+                  dataSheets.length <= 1
+                    ? "bg-primary text-primary-foreground font-semibold shadow-sm"
+                    : ""
+                }
+                onClick={handleImport}
+                disabled={isImporting || !currentSheet}
+              >
                 <Upload className="mr-1.5 h-4 w-4" />
-                {isImporting ? "Importing..." : `Import "${currentSheet?.sheetName}"`}
+                {isImporting ? "Importing..." : `Import "${currentSheet?.sheetName || "Sheet"}"`}
               </Button>
               {dataSheets.length > 1 && (
                 <Button
                   onClick={handleImportAllSheets}
                   disabled={isImporting}
-                  className="bg-primary"
+                  className="bg-primary text-primary-foreground font-semibold shadow-sm"
                 >
                   <Layers className="mr-1.5 h-4 w-4" />
                   {isImporting ? "Importing..." : `Import All ${dataSheets.length} Sheets`}
@@ -1401,12 +1591,18 @@ function UploadRoute() {
                       ? "Coupon / Interest Rate (%)"
                       : isMutualFund
                         ? "Fund Distribution Rate (%)"
-                        : "Dividend Rate (%)"}
+                        : "Cash Dividend Rate (%)"}
                   </Label>
                   <Input
                     type="number"
                     step="0.001"
-                    placeholder={isDebenture ? "e.g. 8.75" : "e.g. 5.631"}
+                    placeholder={
+                      isDebenture
+                        ? "e.g. 8.75"
+                        : isMutualFund
+                          ? "e.g. 5.631"
+                          : "e.g. 5.0 (or 0.526 for tax)"
+                    }
                     value={dividendRate}
                     onChange={(e) => setDividendRate(e.target.value)}
                   />
@@ -1415,9 +1611,24 @@ function UploadRoute() {
                       ? "Face value Rs. 1,000 assumed (e.g. 8.75% = Rs. 87.50/unit)"
                       : isMutualFund
                         ? "Distribution rate applied to fund units"
-                        : "Used to calculate gross if not in file"}
+                        : "Cash distribution percentage"}
                   </p>
                 </div>
+                {!isDebenture && !isMutualFund && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Bonus Share Rate (%)</Label>
+                    <Input
+                      type="number"
+                      step="0.001"
+                      placeholder="e.g. 10.0"
+                      value={bonusRate}
+                      onChange={(e) => setBonusRate(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Stock dividend ratio (e.g. 10% = 10 bonus per 100 shares)
+                    </p>
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <Label className="text-xs">Payable Type</Label>
                   <Select
@@ -1428,17 +1639,29 @@ function UploadRoute() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Cash">Cash Dividend (5% TDS)</SelectItem>
-                      <SelectItem value="Bonus">Bonus Share (Stock Dividend)</SelectItem>
+                      <SelectItem value="Combined">✨ Combined (Cash + Bonus)</SelectItem>
+                      <SelectItem value="Cash">
+                        Cash Dividend Only ({divRates.publicRatePct}% TDS)
+                      </SelectItem>
+                      <SelectItem value="Bonus">Bonus Share Only (Stock Dividend)</SelectItem>
                       <SelectItem value="Right">Right Share</SelectItem>
-                      <SelectItem value="Debenture">Debenture Interest (6% / 15% TDS)</SelectItem>
+                      <SelectItem value="Debenture">
+                        Debenture Interest ({debRates.publicRatePct}% /{" "}
+                        {debRates.institutionRatePct}% TDS)
+                      </SelectItem>
                       <SelectItem value="MutualFund">
-                        Mutual Fund Distribution (0% / 5% TDS)
+                        Mutual Fund Distribution ({mfRates.exemptRatePct}% / {mfRates.publicRatePct}
+                        % TDS)
                       </SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    Determines target payable table &amp; calculation rules
+                    Determines target payable table &amp; calculation rules.
+                    <span className="block mt-0.5 text-[11px] text-primary">
+                      ✨ If your Excel sheet already has pre-calculated columns, the system
+                      automatically reads both Cash and Bonus figures from the file. For raw
+                      shareholder lists, enter Cash Rate (%) and Bonus Rate (%) above.
+                    </span>
                   </p>
                 </div>
                 <div className="space-y-1.5">
@@ -1629,6 +1852,48 @@ function UploadRoute() {
                 </div>
               </CardContent>
             </Card>
+          )}
+
+          {/* Prominent Import Action Callout Banner */}
+          {currentSheet && (
+            <div className="bg-primary/10 border border-primary/20 rounded-lg p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-full bg-primary/20 text-primary">
+                  <Sparkles className="h-5 w-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-semibold">Data Preview Ready for Import</h4>
+                  <p className="text-xs text-muted-foreground">
+                    Sheet "<strong>{currentSheet.sheetName}</strong>" has{" "}
+                    <strong>{currentSheet.rowCount.toLocaleString()}</strong> records ready to
+                    upload.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  onClick={handleImport}
+                  disabled={isImporting}
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold shadow-md px-5"
+                >
+                  <Upload className="mr-2 h-4 w-4" />
+                  {isImporting
+                    ? "Importing to Database..."
+                    : `Import "${currentSheet.sheetName}" Now`}
+                </Button>
+                {dataSheets.length > 1 && (
+                  <Button
+                    onClick={handleImportAllSheets}
+                    disabled={isImporting}
+                    variant="outline"
+                    className="border-primary/40 font-semibold"
+                  >
+                    <Layers className="mr-1.5 h-4 w-4" />
+                    {isImporting ? "Importing All..." : `Import All ${dataSheets.length} Sheets`}
+                  </Button>
+                )}
+              </div>
+            </div>
           )}
 
           {validationErrors.length > 0 && <ValidationReport errors={validationErrors} />}

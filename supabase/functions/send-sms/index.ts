@@ -8,7 +8,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-send-token",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-send-token",
 };
 
 interface SmsPayload {
@@ -48,7 +49,8 @@ async function isAuthorized(req: Request): Promise<boolean> {
   const provided = req.headers.get("x-send-token") || "";
   if (sendToken && provided && provided.length === sendToken.length) {
     let diff = 0;
-    for (let i = 0; i < sendToken.length; i++) diff |= provided.charCodeAt(i) ^ sendToken.charCodeAt(i);
+    for (let i = 0; i < sendToken.length; i++)
+      diff |= provided.charCodeAt(i) ^ sendToken.charCodeAt(i);
     if (diff === 0) return true;
   }
 
@@ -57,7 +59,8 @@ async function isAuthorized(req: Request): Promise<boolean> {
   const token = authHeader.replace(/^Bearer\s+/i, "");
   if (token) {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const supabaseAnonKey =
+      Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (supabaseUrl && supabaseAnonKey) {
       try {
         const supabase = createClient(supabaseUrl, supabaseAnonKey);
@@ -78,7 +81,7 @@ async function isAuthorized(req: Request): Promise<boolean> {
   return false;
 }
 
-serve(async (req) => {
+serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }

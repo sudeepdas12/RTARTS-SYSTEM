@@ -64,6 +64,8 @@ export interface ColumnMapping {
   instrument_ref?: string;
   remarks?: string;
   residency?: string;
+  instruction_id?: string;
+  batch_id?: string;
 }
 
 export interface ParsedSheetData {
@@ -114,15 +116,67 @@ const COLUMN_ALIASES: Record<keyof ColumnMapping, string[]> = {
     "BO_ID",
     "BENEFICIARY_NO",
     "BENEFICIARY NO",
+    "BENEFICIARY NO.",
     "BENEFICIARY",
+    "BENEFICIARY ACC NO",
+    "BENEFICIARY ACCOUNT NO",
+    "BENEFICIARY ACCOUNT NUMBER",
+    "BENEFICIARY A/C",
+    "BENEFICIARY A/C NO",
     "CLIENT CODE",
     "CLIENT_CODE",
+    "CLIENTCODE",
+    "CLIENT NO",
+    "CLIENT_NO",
+    "CLIENT NO.",
+    "DP CLIENT ID",
+    "DP_CLIENT_ID",
+    "DPCLIENTID",
+    "DP-CLIENT-ID",
     "DMAT A/C",
     "DEMAT A/C",
+    "DEMAT AC",
+    "DEMAT ACCOUNT",
     "DEMAT_ACCOUNT",
     "DEMAT",
+    "DEMAT NO",
+    "DEMAT NO.",
+    "DEMAT_NO",
+    "DMAT",
+    "DMAT NO",
+    "DMAT NO.",
+    "DMAT_NO",
+    "DMAT AC",
+    "DMAT ACCOUNT",
+    "DMAT_ACCOUNT",
     "BOID NO",
     "BOID NO.",
+    "BOIDNO",
+    "FOLIO",
+    "FOLIO NO",
+    "FOLIO NO.",
+    "FOLIO_NO",
+    "FOLIONO",
+    "FOLIO NUMBER",
+    "SH NO",
+    "SH_NO",
+    "SH.NO",
+    "SH. NO.",
+    "SH HOLDER NO",
+    "SHAREHOLDER NO",
+    "SHARE HOLDER NO",
+    "SHAREHOLDER ID",
+    "HOLDER NO",
+    "HOLDER NO.",
+    "HOLDER_NO",
+    "HOLDER NUMBER",
+    "HOLDER ID",
+    "BOID / FOLIO",
+    "BOID/FOLIO",
+    "BOID/FOLIO NO",
+    "REG NO",
+    "REG_NO",
+    "REGISTRATION NO",
   ],
   full_name: [
     "NAME",
@@ -315,11 +369,71 @@ const COLUMN_ALIASES: Record<keyof ColumnMapping, string[]> = {
     "NO. OF SHARES",
     "NO OF SHARES",
     "NO_OF_SHARES",
+    "SHARE HELD",
+    "SHARES HELD",
+    "PREVIOUS KITTA",
+    "PREV KITTA",
+    "OLD KITTA",
+    "EXISTING KITTA",
+    "CURRENT BALANCE",
+    "CURRENT KITTA",
   ],
-  bonus_actual: ["ACTUAL_BONUS 7%", "ACTUAL_BONUS", "BONUS KITTA", "ACTUAL BONUS", "BONUS_KITTA"],
-  bonus_issued: ["ISSUED BONUS", "ISSUED_BONUS"],
-  bonus_fraction: ["REM FRACTION", "FRACTION", "REMAINING FRACTION", "REM_FRACTION"],
-  after_bonus_kitta: ["AFTER BONUS KITTA", "T.KITTA", "AFTER_BONUS_KITTA", "TOTAL AFTER BONUS"],
+  bonus_actual: [
+    "ACTUAL_BONUS 7%",
+    "ACTUAL_BONUS",
+    "BONUS KITTA",
+    "ACTUAL BONUS",
+    "BONUS_KITTA",
+    "BONUS SHARE",
+    "BONUS SHARES",
+    "BONUS_SHARE",
+    "BONUS_SHARES",
+    "BONUS",
+    "BONUS QTY",
+    "BONUS_QTY",
+    "BONUS UNITS",
+    "BONUS_UNITS",
+    "STOCK DIVIDEND",
+    "BONUS %",
+    "BONUS (KITTA)",
+    "BONUS SHARE (KITTA)",
+    "BONUS SHARES (KITTA)",
+  ],
+  bonus_issued: [
+    "ISSUED BONUS",
+    "ISSUED_BONUS",
+    "BONUS ISSUED",
+    "BONUS_ISSUED",
+    "BONUS APPROVED",
+    "BONUS_APPROVED",
+    "FINAL BONUS",
+    "BONUS DELIVERED",
+  ],
+  bonus_fraction: [
+    "REM FRACTION",
+    "FRACTION",
+    "REMAINING FRACTION",
+    "REM_FRACTION",
+    "FRACTION BONUS",
+    "FRACTIONAL SHARE",
+    "FRACTIONAL SHARES",
+    "FRACTION KITTA",
+    "FRACTION_KITTA",
+    "FRACTIONAL",
+  ],
+  after_bonus_kitta: [
+    "AFTER BONUS KITTA",
+    "T.KITTA",
+    "AFTER_BONUS_KITTA",
+    "TOTAL AFTER BONUS",
+    "NEW KITTA",
+    "TOTAL KITTA AFTER BONUS",
+    "NET KITTA",
+    "TOTAL BALANCE",
+    "CLOSING BALANCE",
+    "CLOSING KITTA",
+    "AFTER BONUS",
+  ],
   cash_dividend: [
     "INTEREST",
     "INTEREST @ 8.50%",
@@ -355,7 +469,17 @@ const COLUMN_ALIASES: Record<keyof ColumnMapping, string[]> = {
     "INTEREST @ 7%",
     "COUPON AMOUNT",
   ],
-  bon_tax: ["BON_TAX", "BONUS TAX", "BONUS_TAX"],
+  bon_tax: [
+    "BON_TAX",
+    "BONUS TAX",
+    "BONUS_TAX",
+    "TAX ON BONUS",
+    "BONUS TDS",
+    "TAX ON BONUS SHARE",
+    "BONUS SHARE TAX",
+    "BONUS TAX AMOUNT",
+    "TAX (BONUS)",
+  ],
   div_tax: [
     "TAX @ 6%",
     "TAX @6%",
@@ -513,6 +637,17 @@ const COLUMN_ALIASES: Record<keyof ColumnMapping, string[]> = {
     "RESIDENT TYPE",
     "NATIONALITY",
   ],
+  instruction_id: [
+    "INSTRUCTION ID",
+    "INSTRUCTION_ID",
+    "INSTRUCTIONID",
+    "INSTRUCTION NO",
+    "INSTRUCTION NO.",
+    "INSTRUCTION",
+    "TXN ID",
+    "TRANSACTION ID",
+  ],
+  batch_id: ["BATCH ID", "BATCH_ID", "BATCHID", "BATCH NO", "BATCH NO.", "BATCH"],
 };
 
 export const ExcelParser = {
@@ -665,7 +800,11 @@ export const ExcelParser = {
         sheetType = "LOCAL_UNVERIFIED";
       } else if (sheetNameUpper.includes("PRIVATE")) {
         sheetType = "PRIVATE";
-      } else if (sheetNameUpper.includes("REJECT") || sheetNameUpper.includes("PENDING")) {
+      } else if (
+        sheetNameUpper.includes("REJECT") ||
+        sheetNameUpper.includes("PENDING") ||
+        sheetNameUpper.includes("REMAINING")
+      ) {
         sheetType = "REJECT_PENDING";
       } else if (sheetNameUpper.includes("ORIGINAL")) {
         sheetType = "ORIGINAL";
@@ -673,10 +812,9 @@ export const ExcelParser = {
         sheetType = "SUMMARY";
       }
 
-      // Ignore Summary, Original, and Reject/Pending sheets entirely — they contain roll-up
-      // figures or non-final/raw data and must never be validated or imported.
-      if (sheetType === "SUMMARY" || sheetType === "ORIGINAL" || sheetType === "REJECT_PENDING")
-        continue;
+      // Ignore Summary and Original sheets entirely — they contain roll-up
+      // figures or raw shareholder register and must not be processed as payable/payout batches.
+      if (sheetType === "SUMMARY" || sheetType === "ORIGINAL") continue;
 
       let defaultTdsRate = 0.05;
       if (fileType === "debenture") {
@@ -929,10 +1067,31 @@ export const ExcelParser = {
       Object.keys(mapping).forEach((k) => delete mapping[k]);
       Object.assign(mapping, uniqueMapping);
 
+      // If client_id was mapped but boid was not, link boid to client_id
+      if (!Object.values(mapping).some((f) => f === "boid")) {
+        const clientCol = Object.entries(mapping).find(([, f]) => f === "client_id")?.[0];
+        if (clientCol) {
+          mapping[clientCol] = "boid";
+        }
+      }
+
       // Report-only / reference sheets (e.g. bank totals, VAT, cover tabs) have
-      // no BOID column and therefore no investor data. Skip them so they are
+      // no investor identity and no shareholder holdings. Skip them so they are
       // never shown for validation or sent to the import pipeline.
-      if (!Object.values(mapping).some((f) => f === "boid")) continue;
+      const hasInvestorIdentity = Object.values(mapping).some(
+        (f) => f === "boid" || f === "client_id",
+      );
+      const hasShareholderData =
+        Object.values(mapping).some((f) => f === "full_name") &&
+        Object.values(mapping).some(
+          (f) =>
+            f === "shares_held" ||
+            f === "bonus_actual" ||
+            f === "cash_dividend" ||
+            f === "net_payable",
+        );
+
+      if (!hasInvestorIdentity && !hasShareholderData) continue;
 
       // --- Build rows from array data (handles duplicate headers correctly) ---
       // Also add normalized field names so the import service can access data consistently
@@ -947,9 +1106,8 @@ export const ExcelParser = {
           continue;
 
         const row: Record<string, any> = {};
-        for (let j = 0; j < headers.length; j++) {
-          const header = headers[j];
-          if (!header) continue;
+        for (let j = 0; j < Math.max(headers.length, rowArr.length); j++) {
+          const header = headers[j] || `__EXTRA_COL_${j}`;
           let val = rowArr[j];
           // Handle formula cells that XLSX returns as objects like { f: 'A1+B1', v: 123 }
           if (val !== null && val !== undefined && typeof val === "object") {
@@ -961,7 +1119,9 @@ export const ExcelParser = {
               val = String(val);
             }
           }
-          row[header] = val;
+          if (val !== undefined && val !== null && String(val).trim() !== "") {
+            row[header] = val;
+          }
         }
 
         // Add normalized field names based on mapping (e.g., row.boid = row["BOID"])
@@ -1005,18 +1165,14 @@ export const ExcelParser = {
         });
         if (hasTotalMarker) return false;
 
-        // Skip rows that lack investor identity (BOID / Name / Client Code / Bank Account) and financial values
-        const hasInvestorData = Boolean(
-          r.boid ||
-          r.full_name ||
-          r.client_code ||
-          r.bank_account_no ||
-          r.pan ||
-          r.shares_held ||
-          r.cash_dividend ||
-          r.net_payable,
+        // A valid investor row MUST have at least one investor identifier (BOID, Name, or Client Code).
+        // Rows with only numbers but no identity are unlabeled footer/total rows and must be excluded.
+        const hasInvestorIdentity = Boolean(
+          (r.boid && String(r.boid).trim().length > 0) ||
+          (r.full_name && String(r.full_name).trim().length > 0) ||
+          (r.client_code && String(r.client_code).trim().length > 0),
         );
-        if (!hasInvestorData && meaningfulValues.length <= 1) return false;
+        if (!hasInvestorIdentity) return false;
 
         validRowCount++;
 

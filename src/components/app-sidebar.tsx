@@ -23,6 +23,7 @@ import {
   ShieldCheck,
   ListChecks,
   Landmark,
+  HardDrive,
 } from "lucide-react";
 import {
   Sidebar,
@@ -125,6 +126,12 @@ const sections: NavSection[] = [
         title: "Fiscal Years",
         url: "/settings/fiscal-years",
         icon: Calendar,
+        roles: ["admin", "supervisor"] as AppRole[],
+      },
+      {
+        title: "Backup & Recovery",
+        url: "/backup",
+        icon: HardDrive,
         roles: ["admin", "supervisor"] as AppRole[],
       },
       { title: "System Settings", url: "/settings", icon: Settings, roles: ["admin"] as AppRole[] },

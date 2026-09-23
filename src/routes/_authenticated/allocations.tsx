@@ -55,6 +55,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { exportToExcel } from "@/lib/xlsx-utils";
+import { loadTaxRules, getDividendDisplayRates } from "@/lib/services/tax-rules.service";
 import {
   IafGeneratorService,
   IafRecord,
@@ -96,6 +97,13 @@ function AllocationsPage() {
   const { hasAny } = useAuth();
   const canWrite = hasAny(["admin", "finance_operator"]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const { data: taxRules } = useQuery({
+    queryKey: ["tax-rules"],
+    queryFn: () => loadTaxRules(),
+    staleTime: 60_000,
+  });
+  const divRates = useMemo(() => getDividendDisplayRates(taxRules), [taxRules]);
 
   // ── Tab State ──
   const [activeTab, setActiveTab] = useState<
@@ -1338,7 +1346,9 @@ function AllocationsPage() {
                       <div className="text-lg font-bold mt-0.5 text-emerald-600">
                         NPR {bonusSummary.totalFractionalNetPayable.toLocaleString()}
                       </div>
-                      <span className="text-[11px] text-muted-foreground">5% TDS Deducted</span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {divRates.publicRatePct}% TDS Deducted
+                      </span>
                     </div>
                   </div>
 
@@ -1679,7 +1689,9 @@ function AllocationsPage() {
                       <div className="text-lg font-bold mt-0.5 text-emerald-600">
                         NPR {convSummary.totalFractionalNetPayable.toLocaleString()}
                       </div>
-                      <span className="text-[11px] text-muted-foreground">5% TDS Deducted</span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {divRates.publicRatePct}% TDS Deducted
+                      </span>
                     </div>
                   </div>
 

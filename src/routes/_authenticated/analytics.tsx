@@ -153,7 +153,7 @@ function AnalyticsPage() {
     const dividendGross = filteredSummary.reduce((s, r) => s + r.dividend_gross, 0);
     const interestGross = filteredSummary.reduce((s, r) => s + r.interest_gross, 0);
     const mutualFundGross = filteredSummary.reduce((s, r) => s + (r.mutual_fund_gross || 0), 0);
-    const totalPaid = filteredSummary.reduce((s, r) => s + r.total_paid, 0);
+    const totalPaid = filteredSummary.reduce((s, r) => s + (r.total_disbursed ?? r.total_paid), 0);
     const totalPending = filteredSummary.reduce((s, r) => s + r.total_pending, 0);
     const totalGross = dividendGross + interestGross + mutualFundGross;
     return {
@@ -194,7 +194,7 @@ function AnalyticsPage() {
         />
         <StatCard title="Mutual Fund" value={fmt(summaryStats.mutualFundGross)} icon={Layers} />
         <StatCard
-          title="Total Paid"
+          title="Total Disbursed"
           value={fmt(summaryStats.totalPaid)}
           icon={CheckCircle2}
           colorClass="text-emerald-600"
@@ -321,7 +321,7 @@ function AnalyticsPage() {
                   <TableHead className="text-right">Int. Gross</TableHead>
                   <TableHead className="text-right">MF Count</TableHead>
                   <TableHead className="text-right">MF Gross</TableHead>
-                  <TableHead className="text-right text-emerald-600">Paid</TableHead>
+                  <TableHead className="text-right text-emerald-600">Disbursed</TableHead>
                   <TableHead className="text-right text-amber-600">Pending</TableHead>
                   <TableHead className="pr-6 text-right">Actions</TableHead>
                 </TableRow>
@@ -382,7 +382,7 @@ function AnalyticsPage() {
                         {fmt(row.mutual_fund_gross)}
                       </TableCell>
                       <TableCell className="text-right tabular-nums text-sm font-bold text-emerald-600">
-                        {fmt(row.total_paid)}
+                        {fmt(row.total_disbursed ?? row.total_paid)}
                       </TableCell>
                       <TableCell className="text-right tabular-nums text-sm font-bold text-amber-600">
                         {fmt(row.total_pending)}

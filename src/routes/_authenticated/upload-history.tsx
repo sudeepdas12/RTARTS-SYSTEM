@@ -203,10 +203,12 @@ function UploadHistoryRoute() {
       rows = rows.filter((r) => r.target_table === typeFilter);
     }
     if (dateFrom) {
-      rows = rows.filter((r) => r.created_at >= `${dateFrom}T00:00:00`);
+      const fromMs = new Date(`${dateFrom}T00:00:00`).getTime();
+      rows = rows.filter((r) => new Date(r.created_at).getTime() >= fromMs);
     }
     if (dateTo) {
-      rows = rows.filter((r) => r.created_at <= `${dateTo}T23:59:59`);
+      const toMs = new Date(`${dateTo}T23:59:59.999`).getTime();
+      rows = rows.filter((r) => new Date(r.created_at).getTime() <= toMs);
     }
     return rows;
   }, [history, search, statusFilter, typeFilter, dateFrom, dateTo]);
@@ -521,7 +523,7 @@ function UploadHistoryRoute() {
                       {formatDate(record.created_at)}
                     </TableCell>
                     <TableCell className="pr-5">
-                      <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex justify-end gap-1 sm:opacity-80 group-hover:opacity-100 transition-opacity">
                         {/* Download errors */}
                         {record.error_rows > 0 && (
                           <Button

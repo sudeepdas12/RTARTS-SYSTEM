@@ -67,6 +67,8 @@ export interface ReconciliationMatch {
   transactionDescription?: string | null;
   sourceType?: "excel" | "bank_statement";
   matchSources?: string[]; // Track which sources matched: ['payable', 'payment', 'bank_statement']
+  instructionId?: string;
+  referenceId?: string;
 }
 
 export interface ComprehensiveReconciliationReport {
@@ -106,6 +108,7 @@ type PayableRow = {
   payment_status: string;
   payable_type: "dividend" | "interest" | "mutual_fund";
   fiscal_year?: string | null;
+  days_count?: number | null;
 };
 
 type PaymentRow = {
@@ -118,6 +121,8 @@ type PaymentRow = {
   payment_status: string | null;
   payable_type: string | null;
   payable_id: string | null;
+  paid_amount?: number | null;
+  connectips_ref?: string | null;
 };
 
 const normalizeString = (value: unknown): string => {
@@ -150,6 +155,19 @@ const getMappedValue = (
       return normalizeString(row[key]);
     }
   }
+  // Case-insensitive and punctuation-insensitive fallback lookup across row keys
+  const rowEntries = Object.entries(row);
+  for (const fbKey of fallbackKeys) {
+    const cleanFb = fbKey.toLowerCase().replace(/[^a-z0-9]/g, "");
+    for (const [rKey, rVal] of rowEntries) {
+      if (rVal !== undefined && rVal !== null && String(rVal).trim() !== "") {
+        const cleanR = rKey.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (cleanR === cleanFb) {
+          return normalizeString(rVal);
+        }
+      }
+    }
+  }
   return "";
 };
 
@@ -168,25 +186,42 @@ export const ReconciliationEngine = {
    */
   async analyzeParsedExcel(
     parsedData: ParsedExcelData,
-    options?: { companyId?: string | null },
+    options?: { companyId?: string | null; client?: any },
   ): Promise<ComprehensiveReconciliationReport> {
+    const db = options?.client || supabase;
     const filterByCompany = Boolean(options?.companyId && options.companyId !== "all");
     const companyId = filterByCompany ? options!.companyId! : null;
 
     const boids = parsedData.sheets
-      .flatMap((sheet) =>
-        sheet.sheetType === "SUMMARY"
-          ? []
-          : sheet.rows.map((row) =>
-              getMappedValue(row, sheet.mapping.boid, [
+      .flatMap((sheet) => {
+        if (sheet.sheetType === "SUMMARY") return [];
+        const boidCol = Object.entries(sheet.mapping).find(([_, f]) => f === "boid")?.[0];
+        return sheet.rows.flatMap((row) => {
+          const list: string[] = [];
+          const primaryBoid = normalizeString(
+            row.boid ||
+              (boidCol ? row[boidCol] : null) ||
+              getMappedValue(row, undefined, [
                 "BOID",
                 "BENEFICIARY ID",
                 "CLIENT ID",
                 "BENEFICIARY_ID",
                 "CLIENT_ID",
               ]),
-            ),
-      )
+          );
+          if (primaryBoid) list.push(primaryBoid);
+          // Also collect any alternate 16-digit BOID in row values (e.g. transfer/seller BOID)
+          for (const val of Object.values(row)) {
+            if (typeof val === "string") {
+              const cleaned = val.trim();
+              if (/^\d{16}$/.test(cleaned) && !list.includes(cleaned)) {
+                list.push(cleaned);
+              }
+            }
+          }
+          return list;
+        });
+      })
       .filter(Boolean);
 
     // Helper to fetch in safe chunks to avoid PostgREST URL length limits (max 100 UUIDs per GET URL)
@@ -195,7 +230,7 @@ export const ReconciliationEngine = {
       fetcher: (chunk: string[]) => PromiseLike<{ data: T[] | null; error?: any }> | any,
     ): Promise<T[]> => {
       if (!items || items.length === 0) return [];
-      const safeChunkSize = BULK_CHUNK_SIZE || 200;
+      const safeChunkSize = 200;
       const results: T[] = [];
       for (let i = 0; i < items.length; i += safeChunkSize) {
         const chunk = items.slice(i, i + safeChunkSize);
@@ -210,7 +245,7 @@ export const ReconciliationEngine = {
     const [clients, payables, paymentsResult, bankStatementsResult] = await Promise.all([
       // 1. Load clients in chunks
       fetchInChunks(boids, (chunk) =>
-        (supabase as any)
+        (db as any)
           .from("clients")
           .select("id,boid,full_name,bank_name,bank_account_no")
           .in("boid", chunk),
@@ -219,14 +254,14 @@ export const ReconciliationEngine = {
       // 2. Load all payables (dividend, interest, mutual_fund) in chunks
       (async () => {
         const clientsData = await fetchInChunks(boids, (chunk) =>
-          supabase.from("clients").select("id").in("boid", chunk),
+          db.from("clients").select("id").in("boid", chunk),
         );
         const clientIds = clientsData?.map((c: any) => c.id) || [];
         if (clientIds.length === 0) return [];
 
         const [divData, intData, mfData] = await Promise.all([
           fetchInChunks(clientIds, (chunk) => {
-            let q = supabase
+            let q = db
               .from("dividend_payables")
               .select(
                 "id,company_id,client_id,net_payable,gross_dividend,payment_status,fiscal_year",
@@ -236,17 +271,17 @@ export const ReconciliationEngine = {
             return q;
           }),
           fetchInChunks(clientIds, (chunk) => {
-            let q = supabase
+            let q = db
               .from("interest_payables")
               .select(
-                "id,company_id,client_id,net_payable,gross_interest,payment_status,fiscal_year",
+                "id,company_id,client_id,net_payable,gross_interest,payment_status,fiscal_year,days_count",
               )
               .in("client_id", chunk);
             if (companyId) q = q.eq("company_id", companyId);
             return q;
           }),
           fetchInChunks(clientIds, (chunk) => {
-            let q = (supabase as any)
+            let q = (db as any)
               .from("mutual_fund_payables")
               .select("id,company_id,client_id,net_payable,payment_status,fiscal_year")
               .in("client_id", chunk);
@@ -264,17 +299,17 @@ export const ReconciliationEngine = {
 
       // 3. Load payments
       (() => {
-        let q = (supabase as any)
+        let q = (db as any)
           .from("payments")
           .select(
-            "id,company_id,client_id,net_amount,bank_name,bank_account_no,payment_status,payable_type,payable_id",
+            "id,company_id,client_id,net_amount,paid_amount,connectips_ref,bank_name,bank_account_no,status,payable_type,payable_id",
           );
         if (companyId) q = q.eq("company_id", companyId);
         return q;
       })(),
 
       // 4. Load bank statements
-      (supabase as any)
+      (db as any)
         .from("bank_statements")
         .select(
           "id,bank_name,account_no,statement_date,file_name,total_transactions,total_credit,is_reconciled",
@@ -304,6 +339,7 @@ export const ReconciliationEngine = {
         payment_status: String(p.payment_status || ""),
         payable_type: p.payable_type,
         fiscal_year: p.fiscal_year || null,
+        days_count: p.days_count != null ? Number(p.days_count) : null,
       });
     });
 
@@ -317,6 +353,8 @@ export const ReconciliationEngine = {
         company_id: p.company_id,
         client_id: p.client_id,
         net_amount: Number(p.net_amount ?? 0),
+        paid_amount: Number(p.paid_amount ?? 0),
+        connectips_ref: p.connectips_ref || null,
         bank_name: p.bank_name,
         bank_account_no: p.bank_account_no,
         payment_status: p.payment_status,
@@ -327,9 +365,17 @@ export const ReconciliationEngine = {
 
     const paymentsByAmount = new Map<string, PaymentRow[]>();
     payments.forEach((p: any) => {
-      const key = buildAmountKey(Number(p.net_amount ?? 0));
+      const netAmt = Number(p.net_amount ?? 0);
+      const paidAmt = Number(p.paid_amount ?? 0);
+      const key = buildAmountKey(netAmt);
       if (!paymentsByAmount.has(key)) paymentsByAmount.set(key, []);
       paymentsByAmount.get(key)!.push(p);
+
+      if (paidAmt > 0 && Math.abs(paidAmt - netAmt) > 0.01) {
+        const paidKey = buildAmountKey(paidAmt);
+        if (!paymentsByAmount.has(paidKey)) paymentsByAmount.set(paidKey, []);
+        paymentsByAmount.get(paidKey)!.push(p);
+      }
     });
 
     // Reconciliation logic
@@ -361,62 +407,156 @@ export const ReconciliationEngine = {
     parsedData.sheets.forEach((sheet) => {
       if (sheet.sheetType === "SUMMARY") return;
 
+      const getColByField = (target: string): string | undefined =>
+        Object.entries(sheet.mapping || {}).find(([_, f]) => f === target)?.[0];
+
+      const boidCol = getColByField("boid");
+      const nameCol = getColByField("full_name");
+      const kittaCol = getColByField("shares_held");
+      const netPayableCol = getColByField("net_payable");
+      const bankNameCol = getColByField("bank_name");
+      const bankAccountCol = getColByField("bank_account_no");
+      const lotNameCol = getColByField("lot_name");
+      const instructionCol = getColByField("instruction_id");
+      const batchCol = getColByField("batch_id");
+      const pledgeCol = getColByField("pledge");
+      const statusCol = getColByField("status");
+
       let matchedInSheet = 0;
       let mismatchedInSheet = 0;
       let pledgedInSheet = 0;
 
       sheet.rows.forEach((row, idx) => {
-        const boid = getMappedValue(row, sheet.mapping.boid, [
+        const boid = getMappedValue(row, boidCol, [
           "BOID",
           "BENEFICIARY ID",
           "CLIENT ID",
           "BENEFICIARY_ID",
           "CLIENT_ID",
         ]);
-        const name = getMappedValue(row, sheet.mapping.full_name, [
-          "NAME",
-          "APPLICANT_NAME",
-          "SHAREHOLDER NAME",
-        ]);
+        const name = getMappedValue(row, nameCol, ["NAME", "APPLICANT_NAME", "SHAREHOLDER NAME"]);
         const kitta = parseNumber(
-          row[sheet.mapping.shares_held || "KITTA"] ??
+          (kittaCol ? row[kittaCol] : undefined) ??
             row["KITTA"] ??
             row["ALLOTED_QUANTITY"] ??
             row["TOTA KITTA"],
         );
-        const excelAmount = parseNumber(
-          row[sheet.mapping.net_payable || "NET"] ??
-            row["NET_DIV."] ??
-            row["NET INTEREST PAYABLE"] ??
-            row["ROUND UP DIV"] ??
-            row["ROUNDUP"] ??
-            row["NET"],
-        );
-        const bankName = getMappedValue(row, sheet.mapping.bank_name, ["BANK NAME", "BANK"]);
-        const bankAccountNo = getMappedValue(row, sheet.mapping.bank_account_no, [
+        const rawAmountVal =
+          getMappedValue(row, netPayableCol, [
+            "NET INTEREST PAYABLE",
+            "NET PAYABLE",
+            "NET_PAYABLE",
+            "NET AMOUNT",
+            "NET_AMOUNT",
+            "NET_DIV.",
+            "NET DIVIDEND",
+            "ACTUAL AMOUNT",
+            "PAID AMOUNT",
+            "TRANSACTION AMOUNT",
+            "ROUND UP DIV",
+            "ROUNDUP",
+            "NET",
+            "AMOUNT",
+            "AMT",
+            "CR_AMT",
+          ]) ||
+          (netPayableCol ? row[netPayableCol] : undefined) ||
+          row["NET"] ||
+          row["AMOUNT"] ||
+          row["Amount"];
+        const excelAmount = parseNumber(rawAmountVal);
+        const bankName = getMappedValue(row, bankNameCol, [
+          "BANK NAME",
+          "BANK",
+          "CREDITOR BANK",
+          "BANK_NAME",
+        ]);
+        const bankAccountNo = getMappedValue(row, bankAccountCol, [
           "BANK A/C NO.",
           "BANK A/C NO",
+          "BANK ACCOUNT",
+          "ACCOUNT NUMBER",
+          "ACCOUNT NO",
           "ACCOUNT_NUMBER",
+          "CREDITOR ACCOUNT",
+          "A/C NO",
+          "A/C NO.",
         ]);
-        const lotName = getMappedValue(row, sheet.mapping.lot_name, ["LOT"]);
+        const lotName = getMappedValue(row, lotNameCol, ["LOT", "BATCH"]);
+        const instructionId =
+          getMappedValue(row, instructionCol, [
+            "INSTRUCTION ID",
+            "INSTRUCTION_ID",
+            "INSTRUCTIONID",
+            "INSTRUCTION NO",
+            "INSTRUCTION NO.",
+            "INSTRUCTION",
+            "TXN ID",
+            "TRANSACTION ID",
+          ]) || undefined;
+        const batchIdVal =
+          getMappedValue(row, batchCol, [
+            "BATCH ID",
+            "BATCH_ID",
+            "BATCHID",
+            "BATCH NO",
+            "BATCH NO.",
+            "BATCH",
+          ]) || undefined;
 
-        const rawPledge = getMappedValue(row, sheet.mapping.pledge, [
-          "PLEDGE",
-          "REMARKS",
-        ]).toUpperCase();
+        const rawPledge = getMappedValue(row, pledgeCol, ["PLEDGE", "REMARKS"]).toUpperCase();
         const pledgeFlag = rawPledge.includes("PLEDGE") || rawPledge === "1";
-        const rawStatus = getMappedValue(row, sheet.mapping.status, [
+        const rawStatus = getMappedValue(row, statusCol, [
           "STATUS",
           "REMARKS 1",
+          "CREDIT STATUS",
+          "TRANSACTION STATUS",
         ]).toUpperCase();
 
-        const client = boid ? clientsByBoid.get(boid) : null;
+        let client = boid ? clientsByBoid.get(boid) : null;
+        // If not matched by primary BOID, check if any other field in the row has a matching BOID (e.g. trading transfer from previous holder)
+        if (!client) {
+          for (const val of Object.values(row)) {
+            if (typeof val === "string") {
+              const cleaned = val.trim();
+              if (cleaned.length === 16 && clientsByBoid.has(cleaned)) {
+                client = clientsByBoid.get(cleaned);
+                break;
+              }
+            }
+          }
+        }
         const clientId = client?.id || null;
 
         // 5-WAY MATCHING LOGIC
         let bestPayable: PayableRow | null = null;
         let bestPayment: PaymentRow | null = null;
         const matchSources: string[] = [];
+
+        // Helper to get effective comparison amount for a payable (supporting prorated debenture interest)
+        const getPayableAmounts = (
+          p: PayableRow,
+        ): { full: number; prorated: number | null; prorated182: number | null } => {
+          const full = Number(p.net_payable ?? 0);
+          if (p.payable_type === "interest") {
+            const days =
+              p.days_count && p.days_count > 0 && p.days_count < 365 ? p.days_count : 183;
+            const prorated = Number(((full / 365.0) * days).toFixed(2));
+            const prorated182 = Number(((full / 365.0) * 182).toFixed(2));
+            return { full, prorated, prorated182 };
+          }
+          return { full, prorated: null, prorated182: null };
+        };
+
+        const matchesPayableAmount = (p: PayableRow, amt: number): boolean => {
+          const { full, prorated, prorated182 } = getPayableAmounts(p);
+          if (Math.abs(full - amt) <= RECONCILIATION_TOLERANCE_NPR) return true;
+          if (prorated !== null && Math.abs(prorated - amt) <= RECONCILIATION_TOLERANCE_NPR)
+            return true;
+          if (prorated182 !== null && Math.abs(prorated182 - amt) <= RECONCILIATION_TOLERANCE_NPR)
+            return true;
+          return false;
+        };
 
         // SOURCE 1: Match against Payables
         if (clientId) {
@@ -425,8 +565,8 @@ export const ReconciliationEngine = {
           );
           if (candidatePayables.length > 0) {
             // Prioritize exact or within-tolerance amount matches (preferring Pending/unpaid over Paid)
-            const exactMatches = candidatePayables.filter(
-              (p) => Math.abs(p.net_payable - excelAmount) <= RECONCILIATION_TOLERANCE_NPR,
+            const exactMatches = candidatePayables.filter((p) =>
+              matchesPayableAmount(p, excelAmount),
             );
             if (exactMatches.length > 0) {
               bestPayable =
@@ -434,17 +574,46 @@ export const ReconciliationEngine = {
             } else {
               bestPayable = candidatePayables.reduce<PayableRow | null>((best, current) => {
                 if (!best) return current;
-                const currentDiff = Math.abs(current.net_payable - excelAmount);
-                const bestDiff = Math.abs(best.net_payable - excelAmount);
-                return currentDiff < bestDiff ? current : best;
+                const {
+                  full: curFull,
+                  prorated: curPro,
+                  prorated182: cur182,
+                } = getPayableAmounts(current);
+                const curDiff = Math.min(
+                  Math.abs(curFull - excelAmount),
+                  curPro !== null ? Math.abs(curPro - excelAmount) : Infinity,
+                  cur182 !== null ? Math.abs(cur182 - excelAmount) : Infinity,
+                );
+                const {
+                  full: bestFull,
+                  prorated: bestPro,
+                  prorated182: best182,
+                } = getPayableAmounts(best);
+                const bestDiff = Math.min(
+                  Math.abs(bestFull - excelAmount),
+                  bestPro !== null ? Math.abs(bestPro - excelAmount) : Infinity,
+                  best182 !== null ? Math.abs(best182 - excelAmount) : Infinity,
+                );
+                return curDiff < bestDiff ? current : best;
               }, null);
             }
           }
-
-          if (bestPayable) {
-            matchSources.push("payable");
-            usedPayableIds.add(bestPayable.id);
+        } else if (excelAmount > 0) {
+          // Fallback: match by exact amount across company payables when BOID is transferred/traded
+          const unassignedCandidates = payables.filter(
+            (p) =>
+              !usedPayableIds.has(p.id) &&
+              (!companyId || p.company_id === companyId) &&
+              matchesPayableAmount(p, excelAmount),
+          );
+          if (unassignedCandidates.length === 1) {
+            bestPayable = unassignedCandidates[0];
           }
+        }
+
+        if (bestPayable) {
+          matchSources.push("payable");
+          usedPayableIds.add(bestPayable.id);
         }
 
         // SOURCE 2: Match against Payments (strictly by payable linkage, client + amount, or verified amount fallback)
@@ -461,13 +630,16 @@ export const ReconciliationEngine = {
               ) || null;
           }
 
-          // 2b. Priority: Client payment matching exact or near amount
+          // 2b. Priority: Client payment matching exact or near amount (net_amount or paid_amount)
           if (!bestPayment) {
             bestPayment =
               clientPayments.find(
                 (p) =>
                   !usedPaymentIds.has(p.id) &&
-                  Math.abs(p.net_amount - excelAmount) <= RECONCILIATION_TOLERANCE_NPR,
+                  (Math.abs(p.net_amount - excelAmount) <= RECONCILIATION_TOLERANCE_NPR ||
+                    (Number(p.paid_amount || 0) > 0 &&
+                      Math.abs(Number(p.paid_amount) - excelAmount) <=
+                        RECONCILIATION_TOLERANCE_NPR)),
               ) || null;
           }
 
@@ -501,7 +673,30 @@ export const ReconciliationEngine = {
         }
 
         // Calculate amounts and differences
-        const systemAmount = bestPayable?.net_payable ?? bestPayment?.net_amount ?? 0;
+        let systemAmount = bestPayable?.net_payable ?? bestPayment?.net_amount ?? 0;
+        if (bestPayable) {
+          const { full, prorated, prorated182 } = getPayableAmounts(bestPayable);
+          const diffFull = Math.abs(full - excelAmount);
+          const diffPro = prorated !== null ? Math.abs(prorated - excelAmount) : Infinity;
+          const diff182 = prorated182 !== null ? Math.abs(prorated182 - excelAmount) : Infinity;
+          const minDiff = Math.min(diffFull, diffPro, diff182);
+
+          if (minDiff === diffPro && prorated !== null) {
+            systemAmount = prorated;
+          } else if (minDiff === diff182 && prorated182 !== null) {
+            systemAmount = prorated182;
+          } else {
+            systemAmount = full;
+          }
+        } else if (bestPayment) {
+          const pNet = Number(bestPayment.net_amount ?? 0);
+          const pPaid = Number(bestPayment.paid_amount ?? 0);
+          if (pPaid > 0 && Math.abs(pPaid - excelAmount) < Math.abs(pNet - excelAmount)) {
+            systemAmount = pPaid;
+          } else {
+            systemAmount = pNet;
+          }
+        }
         const difference = Number((systemAmount - excelAmount).toFixed(2));
         const absDiff = Math.abs(difference);
 
@@ -516,14 +711,28 @@ export const ReconciliationEngine = {
 
         // Determine status
         let status: ReconciliationMatch["status"] = "Missing";
+        const isRemainingOrRejectSheet =
+          sheet.sheetName.toUpperCase().includes("REMAINING") ||
+          sheet.sheetType === "REJECT_PENDING";
+        const isFailedStatus =
+          rawStatus.includes("REJECT") ||
+          rawStatus.includes("MERGER") ||
+          rawStatus.includes("NO BANK") ||
+          rawStatus.includes("FAILED");
+        const isPendingStatus =
+          rawStatus.includes("PENDING") ||
+          rawStatus === "11" ||
+          rawStatus === "12" ||
+          rawStatus === "14";
+
         if (pledgeFlag) {
           status = "Pledged";
           pledgedInSheet += 1;
           grandTotal.pledgedCount += 1;
-        } else if (rawStatus.includes("REJECT")) {
+        } else if (isFailedStatus) {
           status = "Rejected";
           grandTotal.rejectedCount += 1;
-        } else if (rawStatus.includes("PENDING")) {
+        } else if (isRemainingOrRejectSheet || isPendingStatus) {
           status = "Pending";
         } else if (matchSources.length === 0) {
           status = "Missing";
@@ -538,7 +747,7 @@ export const ReconciliationEngine = {
           if (matchSources.includes("payment")) summary.matchedFromPayment += 1;
           if (matchSources.includes("bank_statement")) summary.matchedFromBank += 1;
         } else {
-          status = difference > 0 ? "Over_Paid" : "Under_Paid";
+          status = difference > 0 ? "Under_Paid" : "Over_Paid";
           mismatchedInSheet += 1;
           grandTotal.discrepancyCount += 1;
         }
@@ -571,6 +780,8 @@ export const ReconciliationEngine = {
           paymentStatus: bestPayment?.payment_status ?? null,
           sourceType: "excel",
           matchSources: matchSources.length > 0 ? matchSources : undefined,
+          instructionId,
+          batchId: batchIdVal || null,
         });
       });
 
@@ -614,8 +825,9 @@ export const ReconciliationEngine = {
    */
   async analyzeBankStatement(
     transactions: BankTransaction[],
-    options?: { fileName?: string; companyId?: string | null },
+    options?: { fileName?: string; companyId?: string | null; client?: any },
   ): Promise<ComprehensiveReconciliationReport> {
+    const db = options?.client || supabase;
     const cleanAcct = (val: unknown): string =>
       String(val || "")
         .replace(/[^0-9A-Za-z]/g, "")
@@ -630,13 +842,14 @@ export const ReconciliationEngine = {
     const companyId = filterByCompany ? options!.companyId! : null;
 
     // Load data from DB in parallel with complete client joins and payment batches
+    // Load data from DB in parallel with complete client joins and payment batches
     // Filter by company_id when provided to prevent cross-company data leakage
     const [payments, payables, batchesResult] = await Promise.all([
       fetchAllRows<any>(async (from, to) => {
-        let q = (supabase as any)
+        let q = (db as any)
           .from("payments")
           .select(
-            "id,company_id,client_id,net_amount,gross_amount,bank_name,bank_account_no,status,payable_type,payable_id,payment_date,connectips_ref,clients(id,boid,full_name,company_id,bank_name,bank_account_no)",
+            "id,company_id,client_id,net_amount,paid_amount,gross_amount,bank_name,bank_account_no,status,payable_type,payable_id,payment_date,payment_reference,connectips_ref,clients(id,boid,full_name,company_id,bank_name,bank_account_no)",
           )
           .range(from, to);
         if (companyId) q = q.eq("company_id", companyId);
@@ -646,7 +859,7 @@ export const ReconciliationEngine = {
       (async () => {
         const [divRows, intRows, mfRows] = await Promise.all([
           fetchAllRows<any>(async (from, to) => {
-            let q = supabase
+            let q = (db as any)
               .from("dividend_payables")
               .select(
                 "id,company_id,client_id,net_payable,gross_dividend,payment_status,fiscal_year,bank_name,bank_account_no,clients(id,boid,full_name,bank_name,bank_account_no)",
@@ -656,17 +869,17 @@ export const ReconciliationEngine = {
             return await q;
           }),
           fetchAllRows<any>(async (from, to) => {
-            let q = supabase
+            let q = (db as any)
               .from("interest_payables")
               .select(
-                "id,company_id,client_id,net_payable,gross_interest,payment_status,fiscal_year,bank_name,bank_account_no,clients(id,boid,full_name,bank_name,bank_account_no)",
+                "id,company_id,client_id,net_payable,gross_interest,days_count,payment_status,fiscal_year,bank_name,bank_account_no,clients(id,boid,full_name,bank_name,bank_account_no)",
               )
               .range(from, to);
             if (companyId) q = q.eq("company_id", companyId);
             return await q;
           }),
           fetchAllRows<any>(async (from, to) => {
-            let q = (supabase as any)
+            let q = (db as any)
               .from("mutual_fund_payables")
               .select(
                 "id,company_id,client_id,net_payable,payment_status,fiscal_year,bank_name,bank_account_no,clients(id,boid,full_name,bank_name,bank_account_no)",
@@ -685,7 +898,7 @@ export const ReconciliationEngine = {
       })(),
 
       (() => {
-        let q = (supabase as any)
+        let q = (db as any)
           .from("payment_batches")
           .select(
             "id,company_id,batch_name,total_amount,total_tax,total_payments,payable_type,status,cds_batch_ref,created_at",
@@ -699,6 +912,30 @@ export const ReconciliationEngine = {
     const payablesList: any[] = Array.isArray(payables) ? payables : (payables as any)?.data || [];
     const batches = batchesResult.data || [];
 
+    // Helper to get effective comparison amount for a payable (supporting prorated debenture interest)
+    const getPayableAmounts = (
+      p: any,
+    ): { full: number; prorated: number | null; prorated182: number | null } => {
+      const full = Number(p.net_payable ?? 0);
+      if (p.payable_type === "interest") {
+        const days = p.days_count && p.days_count > 0 && p.days_count < 365 ? p.days_count : 183;
+        const prorated = Number(((full / 365.0) * days).toFixed(2));
+        const prorated182 = Number(((full / 365.0) * 182).toFixed(2));
+        return { full, prorated, prorated182 };
+      }
+      return { full, prorated: null, prorated182: null };
+    };
+
+    const matchesPayableAmount = (p: any, amt: number): boolean => {
+      const { full, prorated, prorated182 } = getPayableAmounts(p);
+      if (Math.abs(full - amt) <= RECONCILIATION_TOLERANCE_NPR) return true;
+      if (prorated !== null && Math.abs(prorated - amt) <= RECONCILIATION_TOLERANCE_NPR)
+        return true;
+      if (prorated182 !== null && Math.abs(prorated182 - amt) <= RECONCILIATION_TOLERANCE_NPR)
+        return true;
+      return false;
+    };
+
     // Build indexing maps for high-performance matching
     const paymentsByAcct = new Map<string, any[]>();
     const paymentsByName = new Map<string, any[]>();
@@ -708,7 +945,9 @@ export const ReconciliationEngine = {
     paymentsList.forEach((p: any) => {
       const acct = cleanAcct(p.bank_account_no || p.clients?.bank_account_no);
       const name = cleanName(p.clients?.full_name);
-      const amtKey = buildAmountKey(Number(p.net_amount ?? 0));
+      const netAmt = Number(p.net_amount ?? 0);
+      const paidAmt = Number(p.paid_amount ?? 0);
+      const amtKey = buildAmountKey(netAmt);
 
       if (acct) {
         if (!paymentsByAcct.has(acct)) paymentsByAcct.set(acct, []);
@@ -720,6 +959,12 @@ export const ReconciliationEngine = {
       }
       if (!paymentsByAmt.has(amtKey)) paymentsByAmt.set(amtKey, []);
       paymentsByAmt.get(amtKey)!.push(p);
+
+      if (paidAmt > 0 && Math.abs(paidAmt - netAmt) > 0.01) {
+        const paidKey = buildAmountKey(paidAmt);
+        if (!paymentsByAmt.has(paidKey)) paymentsByAmt.set(paidKey, []);
+        paymentsByAmt.get(paidKey)!.push(p);
+      }
 
       if (p.connectips_ref) {
         const ref = String(p.connectips_ref).trim().toUpperCase();
@@ -740,7 +985,8 @@ export const ReconciliationEngine = {
     payablesList.forEach((p: any) => {
       const acct = cleanAcct(p.bank_account_no || p.clients?.bank_account_no);
       const name = cleanName(p.clients?.full_name);
-      const amtKey = buildAmountKey(Number(p.net_payable ?? 0));
+      const { full, prorated, prorated182 } = getPayableAmounts(p);
+      const amtKey = buildAmountKey(full);
 
       if (acct) {
         if (!payablesByAcct.has(acct)) payablesByAcct.set(acct, []);
@@ -752,6 +998,17 @@ export const ReconciliationEngine = {
       }
       if (!payablesByAmt.has(amtKey)) payablesByAmt.set(amtKey, []);
       payablesByAmt.get(amtKey)!.push(p);
+
+      if (prorated !== null) {
+        const proratedKey = buildAmountKey(prorated);
+        if (!payablesByAmt.has(proratedKey)) payablesByAmt.set(proratedKey, []);
+        payablesByAmt.get(proratedKey)!.push(p);
+      }
+      if (prorated182 !== null) {
+        const prorated182Key = buildAmountKey(prorated182);
+        if (!payablesByAmt.has(prorated182Key)) payablesByAmt.set(prorated182Key, []);
+        payablesByAmt.get(prorated182Key)!.push(p);
+      }
     });
 
     const categories: CategorySummary[] = [];
@@ -781,6 +1038,65 @@ export const ReconciliationEngine = {
     const usedPaymentIds = new Set<string>();
     const usedPayableIds = new Set<string>();
     const usedBatchIds = new Set<string>();
+    const payableMatchedPeriods = new Map<string, Set<number>>();
+
+    // Helper to check if bank transaction date is compatible with payable fiscal year
+    const isDateCompatible = (
+      txnDate: string | undefined,
+      fy: string | null | undefined,
+    ): boolean => {
+      if (!txnDate || !fy) return true;
+      const dStr = String(txnDate).slice(0, 10);
+      // In Nepal, fiscal years start in mid-July (Shrawan):
+      // FY 2082/83 debenture interest payments occurred in calendar year 2026 (Jan 2026 for Poush, July 2026 for Asar)
+      if (fy === "2082/83" && dStr < "2026-01-01") return false;
+      if (fy === "2081/82" && (dStr < "2024-07-01" || dStr > "2025-07-15")) return false;
+      if (fy === "2080/81" && (dStr < "2023-07-01" || dStr > "2024-07-15")) return false;
+      return true;
+    };
+
+    const canUsePayable = (p: any, amt: number): boolean => {
+      if (usedPayableIds.has(p.id)) return false;
+      if (p.payable_type !== "interest") return true;
+      const { full, prorated, prorated182 } = getPayableAmounts(p);
+      const periods = payableMatchedPeriods.get(p.id) || new Set<number>();
+      if (Math.abs(full - amt) <= RECONCILIATION_TOLERANCE_NPR) {
+        return periods.size === 0;
+      }
+      if (prorated !== null && Math.abs(prorated - amt) <= RECONCILIATION_TOLERANCE_NPR) {
+        return !periods.has(183);
+      }
+      if (prorated182 !== null && Math.abs(prorated182 - amt) <= RECONCILIATION_TOLERANCE_NPR) {
+        return !periods.has(182);
+      }
+      return true;
+    };
+
+    const recordPayableUsage = (p: any, amt: number) => {
+      if (p.payable_type !== "interest") {
+        usedPayableIds.add(p.id);
+        return;
+      }
+      const { prorated, prorated182 } = getPayableAmounts(p);
+      if (!payableMatchedPeriods.has(p.id)) {
+        payableMatchedPeriods.set(p.id, new Set<number>());
+      }
+      const periods = payableMatchedPeriods.get(p.id)!;
+      if (prorated !== null && Math.abs(prorated - amt) <= RECONCILIATION_TOLERANCE_NPR) {
+        periods.add(183);
+      } else if (
+        prorated182 !== null &&
+        Math.abs(prorated182 - amt) <= RECONCILIATION_TOLERANCE_NPR
+      ) {
+        periods.add(182);
+      } else {
+        periods.add(182);
+        periods.add(183);
+      }
+      if (periods.has(182) && periods.has(183)) {
+        usedPayableIds.add(p.id);
+      }
+    };
 
     transactions.forEach((txn, idx) => {
       const amount = txn.credit > 0 ? txn.credit : Math.abs(txn.debit);
@@ -788,6 +1104,7 @@ export const ReconciliationEngine = {
       const txnName = cleanName(txn.beneficiaryName || txn.description);
       const amtKey = buildAmountKey(amount);
       const isBankReject =
+        txn.category === "REJECT_RETURN" ||
         txn.status === "RJCT" ||
         String(txn.status || "")
           .toLowerCase()
@@ -802,11 +1119,18 @@ export const ReconciliationEngine = {
       const matchSources: string[] = [];
 
       // PHASE 1: EXACT MATCHES (within RECONCILIATION_TOLERANCE_NPR)
-      // 1a. Match against Payments by ConnectIPS Reference or Instruction ID
+      // 1a. Match against Payments by ConnectIPS Reference or Instruction ID (MUST match amount within tolerance)
       const refToSearch = txn.instructionId || txn.referenceId;
       if (refToSearch) {
         const refPayments = paymentsByRef.get(String(refToSearch).trim().toUpperCase()) || [];
-        bestPayment = refPayments.find((p) => !usedPaymentIds.has(p.id)) || null;
+        bestPayment =
+          refPayments.find(
+            (p) =>
+              !usedPaymentIds.has(p.id) &&
+              (Math.abs(Number(p.net_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR ||
+                (Number(p.paid_amount || 0) > 0 &&
+                  Math.abs(Number(p.paid_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR)),
+          ) || null;
       }
       if (!bestPayment && txn.description) {
         // Extract 10-20 char alphanumeric reference pattern from description (e.g. 0201260720JRL7)
@@ -814,67 +1138,110 @@ export const ReconciliationEngine = {
         if (matchRef) {
           const candRef = matchRef[0].toUpperCase();
           const refPayments = paymentsByRef.get(candRef) || [];
-          bestPayment = refPayments.find((p) => !usedPaymentIds.has(p.id)) || null;
+          bestPayment =
+            refPayments.find(
+              (p) =>
+                !usedPaymentIds.has(p.id) &&
+                (Math.abs(Number(p.net_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR ||
+                  (Number(p.paid_amount || 0) > 0 &&
+                    Math.abs(Number(p.paid_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR)),
+            ) || null;
         }
       }
 
-      // 1b. Match against Payments by Account + Exact Amount
+      // 1b. Match against Payments by Account + Exact Amount (net_amount or paid_amount)
       if (!bestPayment && txnAcct) {
         const acctPayments = paymentsByAcct.get(txnAcct) || [];
         bestPayment =
           acctPayments.find(
             (p) =>
               !usedPaymentIds.has(p.id) &&
-              Math.abs(Number(p.net_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR,
+              (Math.abs(Number(p.net_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR ||
+                (Number(p.paid_amount || 0) > 0 &&
+                  Math.abs(Number(p.paid_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR)),
           ) || null;
       }
 
-      // 1c. Match against Payables by Account + Exact Amount
+      // 1c. Match against Payables by Account + Exact Amount (full or prorated) with Date Compatibility
       if (!bestPayment && txnAcct) {
         const acctPayables = payablesByAcct.get(txnAcct) || [];
         matchedPayable =
           acctPayables.find(
             (p) =>
-              !usedPayableIds.has(p.id) &&
-              Math.abs(Number(p.net_payable) - amount) <= RECONCILIATION_TOLERANCE_NPR,
+              canUsePayable(p, amount) &&
+              isDateCompatible(txn.date, p.fiscal_year) &&
+              matchesPayableAmount(p, amount),
           ) || null;
       }
 
-      // 1d. Match against Payments by Name + Exact Amount
+      // 1d. Match against Payments by Name + Exact Amount (net_amount or paid_amount)
       if (!bestPayment && !matchedPayable && txnName) {
         const namePayments = paymentsByName.get(txnName) || [];
         bestPayment =
           namePayments.find(
             (p) =>
               !usedPaymentIds.has(p.id) &&
-              Math.abs(Number(p.net_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR,
+              (Math.abs(Number(p.net_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR ||
+                (Number(p.paid_amount || 0) > 0 &&
+                  Math.abs(Number(p.paid_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR)),
           ) || null;
       }
 
-      // 1e. Match against Payables by Name + Exact Amount
+      // 1e. Match against Payables by Name + Exact Amount (full or prorated) with Date Compatibility
       if (!bestPayment && !matchedPayable && txnName) {
         const namePayables = payablesByName.get(txnName) || [];
         matchedPayable =
           namePayables.find(
             (p) =>
-              !usedPayableIds.has(p.id) &&
-              Math.abs(Number(p.net_payable) - amount) <= RECONCILIATION_TOLERANCE_NPR,
+              canUsePayable(p, amount) &&
+              isDateCompatible(txn.date, p.fiscal_year) &&
+              matchesPayableAmount(p, amount),
           ) || null;
       }
 
-      // 1f. Match against Payment Batches (for aggregate statement entries) by Exact Amount
+      // 1f. Match against Payment Batches (for aggregate statement entries) by Exact Amount or Batch Reference
       if (
         !bestPayment &&
         !matchedPayable &&
         (txn.category === "PAYOUT_DEBIT" ||
           txn.debit > 0 ||
           txn.description.toUpperCase().includes("BATCH") ||
-          txn.description.toUpperCase().includes("IPS DR"))
+          txn.description.toUpperCase().includes("IPS DR") ||
+          txn.batchId)
       ) {
         const batchMatch = batches.find((b: any) => {
           if (usedBatchIds.has(b.id)) return false;
           const bAmount = Number(b.total_amount || 0);
-          if (bAmount > 0 && Math.abs(bAmount - amount) <= RECONCILIATION_TOLERANCE_NPR)
+          const bNet = Number(b.total_net || 0);
+          if (
+            (bAmount > 0 && Math.abs(bAmount - amount) <= RECONCILIATION_TOLERANCE_NPR) ||
+            (bNet > 0 && Math.abs(bNet - amount) <= RECONCILIATION_TOLERANCE_NPR)
+          )
+            return true;
+          if (
+            txn.batchId &&
+            (String(b.cds_batch_ref || "")
+              .toUpperCase()
+              .includes(txn.batchId.toUpperCase()) ||
+              String(b.batch_name || "")
+                .toUpperCase()
+                .includes(txn.batchId.toUpperCase()))
+          )
+            return true;
+          if (
+            (txn.instructionId || txn.batchId) &&
+            b.cds_batch_ref &&
+            (String(b.cds_batch_ref)
+              .toUpperCase()
+              .includes(
+                String(txn.instructionId || txn.batchId)
+                  .toUpperCase()
+                  .slice(0, 11),
+              ) ||
+              String(txn.instructionId || txn.batchId)
+                .toUpperCase()
+                .includes(String(b.cds_batch_ref).toUpperCase().slice(0, 11)))
+          )
             return true;
           if (
             b.batch_name &&
@@ -890,35 +1257,62 @@ export const ReconciliationEngine = {
         }
       }
 
-      // 1g. Match against Payments by Exact Amount only (fallback for known amount)
+      // 1g. Match against Payments by Exact Amount only (fallback for known amount, strictly isolated by company)
       if (!bestPayment && !matchedPayable && !matchedBatch && amount > 0) {
         const amtPayments = paymentsByAmt.get(amtKey) || [];
-        bestPayment = amtPayments.find((p) => !usedPaymentIds.has(p.id)) || null;
+        bestPayment =
+          amtPayments.find(
+            (p) => !usedPaymentIds.has(p.id) && (!companyId || p.company_id === companyId),
+          ) || null;
       }
 
-      // 1h. Match against Payables by Exact Amount only
+      // 1h. Match against Payables by Exact Amount only (strictly isolated by company and fiscal year compatible)
       if (!bestPayment && !matchedPayable && !matchedBatch && amount > 0) {
         const amtPayables = payablesByAmt.get(amtKey) || [];
-        matchedPayable = amtPayables.find((p) => !usedPayableIds.has(p.id)) || null;
+        matchedPayable =
+          amtPayables.find(
+            (p) =>
+              canUsePayable(p, amount) &&
+              isDateCompatible(txn.date, p.fiscal_year) &&
+              (!companyId || p.company_id === companyId),
+          ) || null;
       }
 
       // PHASE 2: PARTIAL / DISCREPANCY MATCHES (Only if NO exact match was found anywhere)
       if (!bestPayment && !matchedPayable && !matchedBatch) {
         if (txnAcct) {
           const acctPayments = paymentsByAcct.get(txnAcct) || [];
-          bestPayment = acctPayments.find((p) => !usedPaymentIds.has(p.id)) || null;
+          bestPayment =
+            acctPayments.find(
+              (p) => !usedPaymentIds.has(p.id) && (!companyId || p.company_id === companyId),
+            ) || null;
         }
         if (!bestPayment && txnAcct) {
           const acctPayables = payablesByAcct.get(txnAcct) || [];
-          matchedPayable = acctPayables.find((p) => !usedPayableIds.has(p.id)) || null;
+          matchedPayable =
+            acctPayables.find(
+              (p) =>
+                canUsePayable(p, amount) &&
+                isDateCompatible(txn.date, p.fiscal_year) &&
+                (!companyId || p.company_id === companyId),
+            ) || null;
         }
         if (!bestPayment && !matchedPayable && txnName) {
           const namePayments = paymentsByName.get(txnName) || [];
-          bestPayment = namePayments.find((p) => !usedPaymentIds.has(p.id)) || null;
+          bestPayment =
+            namePayments.find(
+              (p) => !usedPaymentIds.has(p.id) && (!companyId || p.company_id === companyId),
+            ) || null;
         }
         if (!bestPayment && !matchedPayable && txnName) {
           const namePayables = payablesByName.get(txnName) || [];
-          matchedPayable = namePayables.find((p) => !usedPayableIds.has(p.id)) || null;
+          matchedPayable =
+            namePayables.find(
+              (p) =>
+                canUsePayable(p, amount) &&
+                isDateCompatible(txn.date, p.fiscal_year) &&
+                (!companyId || p.company_id === companyId),
+            ) || null;
         }
       }
 
@@ -936,7 +1330,7 @@ export const ReconciliationEngine = {
       }
       if (matchedPayable) {
         matchSources.push("payable");
-        usedPayableIds.add(matchedPayable.id);
+        recordPayableUsage(matchedPayable, amount);
       }
       if (matchedBatch) {
         matchSources.push("payment_batch");
@@ -946,9 +1340,27 @@ export const ReconciliationEngine = {
       const client = bestPayment?.clients || matchedPayable?.clients || null;
       let systemAmount = 0;
       if (matchedPayable) {
-        systemAmount = Number(matchedPayable.net_payable ?? 0);
+        const { full, prorated, prorated182 } = getPayableAmounts(matchedPayable);
+        const diffFull = Math.abs(full - amount);
+        const diffPro = prorated !== null ? Math.abs(prorated - amount) : Infinity;
+        const diff182 = prorated182 !== null ? Math.abs(prorated182 - amount) : Infinity;
+        const minDiff = Math.min(diffFull, diffPro, diff182);
+
+        if (minDiff === diffPro && prorated !== null) {
+          systemAmount = prorated;
+        } else if (minDiff === diff182 && prorated182 !== null) {
+          systemAmount = prorated182;
+        } else {
+          systemAmount = full;
+        }
       } else if (bestPayment) {
-        systemAmount = Number(bestPayment.net_amount ?? 0);
+        const pNet = Number(bestPayment.net_amount ?? 0);
+        const pPaid = Number(bestPayment.paid_amount ?? 0);
+        if (pPaid > 0 && Math.abs(pPaid - amount) < Math.abs(pNet - amount)) {
+          systemAmount = pPaid;
+        } else {
+          systemAmount = pNet;
+        }
       } else if (matchedBatch) {
         systemAmount = Number(matchedBatch.total_net || matchedBatch.total_amount || 0);
       }
@@ -960,7 +1372,7 @@ export const ReconciliationEngine = {
         status = "Rejected";
         grandTotal.rejectedCount += 1;
       } else if (matchSources.length > 0) {
-        if (Math.abs(difference) < 1.0) {
+        if (Math.abs(difference) <= RECONCILIATION_TOLERANCE_NPR) {
           status = "Matched";
           grandTotal.matchedRecords += 1;
           if (matchSources.includes("payment")) summary.matchedFromPayment += 1;
@@ -1070,6 +1482,8 @@ export const ReconciliationEngine = {
           : txn.description || null,
         sourceType: "bank_statement",
         matchSources: matchSources.length > 0 ? matchSources : undefined,
+        instructionId: txn.instructionId || undefined,
+        referenceId: txn.referenceId || undefined,
       });
     });
 

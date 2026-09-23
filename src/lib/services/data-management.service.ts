@@ -210,6 +210,55 @@ async function deleteViaRpc(
   return results;
 }
 
+/**
+ * Automatically marks upload_history records as RolledBack if all their
+ * underlying payables have been deleted, unblocking duplicate hash constraints.
+ */
+async function syncOrphanedUploadHistory(): Promise<number> {
+  try {
+    const { data: activeUploads } = await (supabase as any)
+      .from("upload_history")
+      .select("id, target_table")
+      .in("status", ["Completed", "Processing"]);
+
+    if (!activeUploads || activeUploads.length === 0) return 0;
+
+    let updatedCount = 0;
+    for (const upload of activeUploads) {
+      const [div, int, mf] = await Promise.all([
+        (supabase as any)
+          .from("dividend_payables")
+          .select("id", { count: "exact", head: true })
+          .eq("upload_id", upload.id),
+        (supabase as any)
+          .from("interest_payables")
+          .select("id", { count: "exact", head: true })
+          .eq("upload_id", upload.id),
+        (supabase as any)
+          .from("mutual_fund_payables")
+          .select("id", { count: "exact", head: true })
+          .eq("upload_id", upload.id),
+      ]);
+      const total = Number(div.count || 0) + Number(int.count || 0) + Number(mf.count || 0);
+      if (total === 0) {
+        await (supabase as any)
+          .from("upload_history")
+          .update({
+            status: "RolledBack",
+            completed_at: new Date().toISOString(),
+            error_message: "Underlying payables were removed via Data Management.",
+          })
+          .eq("id", upload.id);
+        updatedCount++;
+      }
+    }
+    return updatedCount;
+  } catch (err) {
+    console.warn("Could not sync orphaned upload history:", err);
+    return 0;
+  }
+}
+
 // ──────────────────────────────────────────────
 // Service
 // ──────────────────────────────────────────────
@@ -594,6 +643,7 @@ export const DataManagementService = {
       }
     }
 
+    await syncOrphanedUploadHistory();
     return results;
   },
 
@@ -605,6 +655,7 @@ export const DataManagementService = {
         p_delete_orphans: true,
       });
       if (!error && data?.success && Array.isArray(data.results)) {
+        await syncOrphanedUploadHistory();
         return data.results;
       }
     } catch {
@@ -624,7 +675,9 @@ export const DataManagementService = {
       table,
       filters: [{ field: "company_id", value: companyId }],
     }));
-    return deleteViaRpc(operations);
+    const results = await deleteViaRpc(operations);
+    await syncOrphanedUploadHistory();
+    return results;
   },
 
   async deleteByFiscalYear(fiscalYear: string): Promise<BulkDeleteResult[]> {
@@ -633,7 +686,9 @@ export const DataManagementService = {
       { table: "mutual_fund_payables", filters: [{ field: "fiscal_year", value: fiscalYear }] },
       { table: "interest_payables", filters: [{ field: "fiscal_year", value: fiscalYear }] },
     ];
-    return deleteViaRpc(operations);
+    const results = await deleteViaRpc(operations);
+    await syncOrphanedUploadHistory();
+    return results;
   },
 
   async customBulkDelete(options: {
@@ -754,6 +809,7 @@ export const DataManagementService = {
       }
     }
 
+    await syncOrphanedUploadHistory();
     return results;
   },
   // ── EXPORT ──────────────────────────────────
@@ -801,5 +857,115 @@ export const DataManagementService = {
       Error: r.error || "",
     }));
     downloadExcel(rows, fileName, "Delete Results");
+  },
+
+  async exportFullDatabaseBackup(): Promise<{
+    companiesCount: number;
+    clientsCount: number;
+    payablesCount: number;
+    paymentsCount: number;
+    reconciliationCount: number;
+  }> {
+    const [compRes, clientsRes, divRes, intRes, mfRes, batchRes, payRes, reconRes] =
+      await Promise.all([
+        supabase.from("companies").select("*"),
+        supabase.from("clients").select("*").limit(50000),
+        supabase.from("dividend_payables").select("*").limit(50000),
+        supabase.from("interest_payables").select("*").limit(50000),
+        (supabase as any).from("mutual_fund_payables").select("*").limit(50000),
+        (supabase as any).from("payment_batches").select("*"),
+        (supabase as any).from("payments").select("*").limit(50000),
+        (supabase as any).from("reconciliation_results").select("*").limit(50000),
+      ]);
+
+    const wb = XLSX.utils.book_new();
+    if (compRes.data?.length) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(compRes.data), "Companies");
+    }
+    if (clientsRes.data?.length) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(clientsRes.data), "Clients");
+    }
+    if (divRes.data?.length) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(divRes.data), "Dividend Payables");
+    }
+    if (intRes.data?.length) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(intRes.data), "Interest Payables");
+    }
+    if (mfRes.data?.length) {
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(mfRes.data),
+        "Mutual Fund Payables",
+      );
+    }
+    if (batchRes.data?.length) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(batchRes.data), "Payment Batches");
+    }
+    if (payRes.data?.length) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(payRes.data), "Payments");
+    }
+    if (reconRes.data?.length) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(reconRes.data), "Reconciliation");
+    }
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `RTARTS_Full_System_Backup_${dateStr}.xlsx`);
+
+    return {
+      companiesCount: compRes.data?.length || 0,
+      clientsCount: clientsRes.data?.length || 0,
+      payablesCount:
+        (divRes.data?.length || 0) + (intRes.data?.length || 0) + (mfRes.data?.length || 0),
+      paymentsCount: payRes.data?.length || 0,
+      reconciliationCount: reconRes.data?.length || 0,
+    };
+  },
+
+  async exportFullDatabaseJson(): Promise<void> {
+    const [compRes, clientsRes, divRes, intRes, mfRes, batchRes, payRes, reconRes] =
+      await Promise.all([
+        supabase.from("companies").select("*"),
+        supabase.from("clients").select("*").limit(50000),
+        supabase.from("dividend_payables").select("*").limit(50000),
+        supabase.from("interest_payables").select("*").limit(50000),
+        (supabase as any).from("mutual_fund_payables").select("*").limit(50000),
+        (supabase as any).from("payment_batches").select("*"),
+        (supabase as any).from("payments").select("*").limit(50000),
+        (supabase as any).from("reconciliation_results").select("*").limit(50000),
+      ]);
+
+    const backupObj = {
+      system: "RTARTS System",
+      version: "1.0",
+      exported_at: new Date().toISOString(),
+      metadata: {
+        companies: compRes.data?.length || 0,
+        clients: clientsRes.data?.length || 0,
+        dividend_payables: divRes.data?.length || 0,
+        interest_payables: intRes.data?.length || 0,
+        mutual_fund_payables: mfRes.data?.length || 0,
+        payment_batches: batchRes.data?.length || 0,
+        payments: payRes.data?.length || 0,
+        reconciliation_results: reconRes.data?.length || 0,
+      },
+      data: {
+        companies: compRes.data || [],
+        clients: clientsRes.data || [],
+        dividend_payables: divRes.data || [],
+        interest_payables: intRes.data || [],
+        mutual_fund_payables: mfRes.data || [],
+        payment_batches: batchRes.data || [],
+        payments: payRes.data || [],
+        reconciliation_results: reconRes.data || [],
+      },
+    };
+
+    const blob = new Blob([JSON.stringify(backupObj, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `RTARTS_Database_Backup_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   },
 };

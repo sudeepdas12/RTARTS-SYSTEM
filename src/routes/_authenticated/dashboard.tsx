@@ -221,7 +221,7 @@ function Dashboard() {
           fetchAllRows<Row>((from, to) => {
             let q = (supabase as any)
               .from("mutual_fund_payables")
-              .select("net_payable, payment_status")
+              .select("net_payable, payment_status, paid_amount")
               .range(from, to);
             if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
             if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
@@ -235,7 +235,16 @@ function Dashboard() {
             .reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
 
         const sumDisbursed = (rows: Row[] | null) =>
-          (rows ?? []).reduce((a, r) => a + Number(r.paid_amount ?? 0), 0);
+          (rows ?? []).reduce((a, r) => {
+            const net = Number(r.net_payable ?? 0);
+            const paid =
+              r.paid_amount != null
+                ? Number(r.paid_amount)
+                : String(r.payment_status || "").toLowerCase() === "paid"
+                  ? net
+                  : 0;
+            return a + paid;
+          }, 0);
 
         totalInterest = interestRows.reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
         totalDividend = dividendRows.reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
@@ -249,7 +258,8 @@ function Dashboard() {
         mutualFundPending = sum(mutualFundRows, "Pending");
         mutualFundPaid = sum(mutualFundRows, "Paid");
         mutualFundPartial = sum(mutualFundRows, "Partial");
-        totalDisbursed = sumDisbursed(interestRows) + sumDisbursed(dividendRows);
+        totalDisbursed =
+          sumDisbursed(interestRows) + sumDisbursed(dividendRows) + sumDisbursed(mutualFundRows);
       }
 
       let paymentsQ = (supabase as any)
@@ -359,8 +369,6 @@ function Dashboard() {
     throwOnError: false,
   });
 
-  const totalPending =
-    (data?.interestPending ?? 0) + (data?.dividendPending ?? 0) + (data?.mutualFundPending ?? 0);
   const totalPaid =
     (data?.interestPaid ?? 0) + (data?.dividendPaid ?? 0) + (data?.mutualFundPaid ?? 0);
   const totalPartial =
@@ -368,6 +376,7 @@ function Dashboard() {
   const totalAll =
     (data?.totalInterest ?? 0) + (data?.totalDividend ?? 0) + (data?.totalMutualFund ?? 0);
   const totalDisbursed = (data?.totalDisbursed ?? 0) > 0 ? (data?.totalDisbursed ?? 0) : totalPaid;
+  const totalPending = Math.max(0, totalAll - totalDisbursed);
   const disbursementProgress =
     totalAll > 0 ? Math.min(100, Math.round((totalDisbursed / totalAll) * 100)) : 0;
   const paymentProgress = totalAll > 0 ? Math.round((totalPaid / totalAll) * 100) : 0;

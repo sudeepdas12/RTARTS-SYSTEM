@@ -68,6 +68,11 @@ import { AgmDividendSummaryReportService } from "@/lib/services/dividend-summary
 import { DebentureSummaryReportService } from "@/lib/services/debenture-summary-report.service";
 import { IrdEtdsService } from "@/lib/services/ird-etds.service";
 import { IpfService } from "@/lib/services/ipf.service";
+import {
+  loadTaxRules,
+  getDebentureDisplayRates,
+  getDividendDisplayRates,
+} from "@/lib/services/tax-rules.service";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/reports")({ component: ReportsRoute });
@@ -140,6 +145,8 @@ const REPORT_COLUMNS: Record<ReportId, Array<{ header: string; dataKey: string }
     { header: "Gross (NPR)", dataKey: "gross_dividend" },
     { header: "Tax (NPR)", dataKey: "tax_amount" },
     { header: "Net (NPR)", dataKey: "net_payable" },
+    { header: "Paid (NPR)", dataKey: "paid_amount" },
+    { header: "Remaining (NPR)", dataKey: "remaining_amount" },
     { header: "Status", dataKey: "payment_status" },
   ],
   interest_register: [
@@ -152,6 +159,8 @@ const REPORT_COLUMNS: Record<ReportId, Array<{ header: string; dataKey: string }
     { header: "Gross (NPR)", dataKey: "gross_interest" },
     { header: "Tax (NPR)", dataKey: "tax_amount" },
     { header: "Net (NPR)", dataKey: "net_payable" },
+    { header: "Paid (NPR)", dataKey: "paid_amount" },
+    { header: "Remaining (NPR)", dataKey: "remaining_amount" },
     { header: "Status", dataKey: "payment_status" },
   ],
   mutual_fund_register: [
@@ -164,6 +173,8 @@ const REPORT_COLUMNS: Record<ReportId, Array<{ header: string; dataKey: string }
     { header: "Gross (NPR)", dataKey: "gross_dividend" },
     { header: "Tax (NPR)", dataKey: "tax_amount" },
     { header: "Net (NPR)", dataKey: "net_payable" },
+    { header: "Paid (NPR)", dataKey: "paid_amount" },
+    { header: "Remaining (NPR)", dataKey: "remaining_amount" },
     { header: "Status", dataKey: "payment_status" },
   ],
   tax_register: [
@@ -271,6 +282,8 @@ function RegisterViewerDialog({
     let gross = 0;
     let tax = 0;
     let net = 0;
+    let paid = 0;
+    let remaining = 0;
     for (const r of filteredRows as any[]) {
       gross += Number(
         r.gross_dividend ||
@@ -281,9 +294,20 @@ function RegisterViewerDialog({
           0,
       );
       tax += Number(r.tax_amount || 0);
-      net += Number(r.net_payable || r.total_amount || r.excel_amount || 0);
+      const netVal = Number(r.net_payable || r.total_amount || r.excel_amount || 0);
+      net += netVal;
+      paid += Number(
+        r.paid_amount != null ? r.paid_amount : r.payment_status === "Paid" ? netVal : 0,
+      );
+      remaining += Number(
+        r.remaining_amount != null
+          ? r.remaining_amount
+          : r.payment_status === "Paid"
+            ? 0
+            : Math.max(0, netVal - Number(r.paid_amount || 0)),
+      );
     }
-    return { count: filteredRows.length, gross, tax, net };
+    return { count: filteredRows.length, gross, tax, net, paid, remaining };
   }, [filteredRows]);
 
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
@@ -350,6 +374,8 @@ function RegisterViewerDialog({
         "gross_amount",
         "tax_amount",
         "net_payable",
+        "paid_amount",
+        "remaining_amount",
         "total_amount",
         "system_amount",
         "excel_amount",
@@ -357,8 +383,20 @@ function RegisterViewerDialog({
       ].includes(dataKey)
     ) {
       const nr = Number(val);
+      const isPaidCol = dataKey === "paid_amount";
+      const isRemCol = dataKey === "remaining_amount";
       return (
-        <span className="font-mono text-xs tabular-nums text-right block font-medium">
+        <span
+          className={`font-mono text-xs tabular-nums text-right block font-medium ${
+            isPaidCol
+              ? "text-emerald-600 font-bold"
+              : isRemCol
+                ? nr > 0
+                  ? "text-rose-600 font-bold"
+                  : "text-muted-foreground"
+                : ""
+          }`}
+        >
           {Number.isNaN(nr)
             ? String(val)
             : nr.toLocaleString("en-IN", {
@@ -436,7 +474,7 @@ function RegisterViewerDialog({
 
           {/* Quick Stats Summary Strip */}
           {!isLoading && data.length > 0 && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 pt-3">
               <div className="px-3 py-1.5 bg-background/80 border rounded text-xs flex justify-between items-center">
                 <span className="text-muted-foreground font-medium">Records:</span>
                 <span className="font-bold font-mono">{stats.count.toLocaleString()}</span>
@@ -468,9 +506,33 @@ function RegisterViewerDialog({
               {stats.net > 0 && (
                 <div className="px-3 py-1.5 bg-background/80 border rounded text-xs flex justify-between items-center">
                   <span className="text-muted-foreground font-medium">Net:</span>
-                  <span className="font-bold font-mono text-emerald-600">
+                  <span className="font-bold font-mono text-foreground">
                     NPR{" "}
                     {stats.net.toLocaleString("en-IN", {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
+              )}
+              {stats.paid > 0 && (
+                <div className="px-3 py-1.5 bg-background/80 border rounded text-xs flex justify-between items-center">
+                  <span className="text-muted-foreground font-medium">Disbursed:</span>
+                  <span className="font-bold font-mono text-emerald-600">
+                    NPR{" "}
+                    {stats.paid.toLocaleString("en-IN", {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
+              )}
+              {stats.remaining > 0 && (
+                <div className="px-3 py-1.5 bg-background/80 border rounded text-xs flex justify-between items-center">
+                  <span className="text-muted-foreground font-medium">Due:</span>
+                  <span className="font-bold font-mono text-rose-600">
+                    NPR{" "}
+                    {stats.remaining.toLocaleString("en-IN", {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
                     })}
@@ -667,6 +729,14 @@ function ReportsRoute() {
     () => companies.find((c) => c.id === companyId),
     [companies, companyId],
   );
+
+  const { data: taxRules } = useQuery({
+    queryKey: ["tax-rules"],
+    queryFn: () => loadTaxRules(),
+    staleTime: 60_000,
+  });
+
+  const debDisplayRates = useMemo(() => getDebentureDisplayRates(taxRules), [taxRules]);
   const filters: ReportFilters = useMemo(
     () => ({ companyId: companyId === "all" ? undefined : companyId }),
     [companyId],
@@ -709,7 +779,7 @@ function ReportsRoute() {
 
   // 3. Debenture Summary
   const debentureSummaryQuery = useQuery({
-    queryKey: ["debenture-interest-summary-report", companyId],
+    queryKey: ["debenture-interest-summary-report", companyId, taxRules],
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
     queryFn: async () => {
@@ -717,7 +787,7 @@ function ReportsRoute() {
         let q = (supabase as any)
           .from("interest_payables")
           .select(
-            "id, company_id, shares_held, gross_interest, tax_amount, net_payable, payee_classification, payee_segment, instrument_ref, lot_name, due_date, fiscal_year, tds_rate",
+            "id, company_id, shares_held, gross_interest, tax_amount, net_payable, payee_classification, payee_segment, instrument_ref, lot_name, due_date, fiscal_year, tds_rate, interest_rate_value, days_count, company:companies(id, company_name, company_code)",
           )
           .range(from, to);
         if (companyId && companyId !== "all") {
@@ -730,6 +800,11 @@ function ReportsRoute() {
         selectedCompany?.company_name ||
           (companyId === "all" ? "All Debentures" : "Selected Company"),
         selectedCompany?.company_code || "",
+        "",
+        undefined,
+        1000,
+        undefined,
+        taxRules,
       );
     },
   });
@@ -757,6 +832,15 @@ function ReportsRoute() {
       ),
     [mfSummary],
   );
+
+  const hasAgmData = Boolean(agmSummary && agmSummary.rows && agmSummary.rows.length > 0);
+  const hasDebentureData = Boolean(
+    debentureSummary && debentureSummary.rows && debentureSummary.rows.length > 0,
+  );
+  const hasMfData = Boolean(mfSummary && mfSummary.length > 0);
+  const isSummariesLoading =
+    agmSummaryQuery.isLoading || debentureSummaryQuery.isLoading || mfSummaryQuery.isLoading;
+  const hasAnySummaryData = hasAgmData || hasDebentureData || hasMfData;
 
   // 5. IRD Annex-10 e-TDS Query
   const irdEtdsQuery = useQuery({
@@ -1161,12 +1245,6 @@ function ReportsRoute() {
                 </table>
               </CardContent>
             </Card>
-          ) : !agmSummaryQuery.isLoading && (!agmSummary || agmSummary.rows.length === 0) ? (
-            <Card className="border-dashed border-muted-foreground/30 bg-muted/10">
-              <CardContent className="py-6 text-center text-xs text-muted-foreground">
-                No AGM distribution records found for the selected company.
-              </CardContent>
-            </Card>
           ) : null}
 
           {/* Debenture Summary Preview */}
@@ -1193,10 +1271,24 @@ function ReportsRoute() {
                       {debentureSummary.companyCode || "All"}{" "}
                       {debentureSummary.fiscalYear ? `— FY ${debentureSummary.fiscalYear}` : ""}
                     </Badge>
+                    {debentureSummary.daysCount && (
+                      <Badge
+                        variant="secondary"
+                        className="font-sans text-[10px] ml-1 bg-primary/10 text-primary"
+                      >
+                        {debentureSummary.daysCount} Days &bull;{" "}
+                        {debentureSummary.daysCount >= 360
+                          ? "Annual"
+                          : debentureSummary.daysCount >= 180
+                            ? "Semi-Annual (6M)"
+                            : "Quarterly"}
+                      </Badge>
+                    )}
                   </CardTitle>
                   <p className="text-xs text-muted-foreground">
-                    Public (6% TDS), Institution (15% TDS), and Mutual Fund (0% TDS) debenture
-                    coupon calculation.
+                    Public ({debDisplayRates.publicRatePct}% TDS), Institution (
+                    {debDisplayRates.institutionRatePct}% TDS), and Mutual Fund (
+                    {debDisplayRates.exemptRatePct}% TDS) debenture coupon calculation.
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -1235,14 +1327,14 @@ function ReportsRoute() {
                       </th>
                       <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
                         {debentureSummary.couponRate > 0
-                          ? `INT. @ ${debentureSummary.couponRate}%`
-                          : "ANNUAL INT."}
+                          ? `ANNUAL INT. (${debentureSummary.couponRate}%)`
+                          : "ANNUAL INT. (12M)"}
                       </th>
                       <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
                         INT. PER DAY
                       </th>
                       <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
-                        GROSS INTEREST
+                        GROSS INTEREST (COUPON)
                       </th>
                       <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
                         TAX
@@ -1312,13 +1404,6 @@ function ReportsRoute() {
                     </tr>
                   </tfoot>
                 </table>
-              </CardContent>
-            </Card>
-          ) : !debentureSummaryQuery.isLoading &&
-            (!debentureSummary || debentureSummary.rows.length === 0) ? (
-            <Card className="border-dashed border-muted-foreground/30 bg-muted/10">
-              <CardContent className="py-6 text-center text-xs text-muted-foreground">
-                No debenture interest records found for the selected company.
               </CardContent>
             </Card>
           ) : null}
@@ -1466,13 +1551,21 @@ function ReportsRoute() {
                 </table>
               </CardContent>
             </Card>
-          ) : !mfSummaryQuery.isLoading && mfSummary.length === 0 ? (
+          ) : null}
+
+          {!isSummariesLoading && !hasAnySummaryData && (
             <Card className="border-dashed border-muted-foreground/30 bg-muted/10">
-              <CardContent className="py-6 text-center text-xs text-muted-foreground">
-                No mutual fund distribution records found for the selected company.
+              <CardContent className="py-12 text-center text-xs text-muted-foreground space-y-1">
+                <p className="font-semibold text-sm text-foreground">
+                  No Distribution Records Found
+                </p>
+                <p>
+                  No AGM equity dividends, debenture coupons, or mutual fund returns are currently
+                  registered for this selection.
+                </p>
               </CardContent>
             </Card>
-          ) : null}
+          )}
         </TabsContent>
 
         {/* ─── TAB 2: AGM EQUITIES & BONUS ─── */}
@@ -1601,9 +1694,29 @@ function ReportsRoute() {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle>Debenture Interest Distribution Summary</CardTitle>
+                  <CardTitle className="flex items-center gap-2">
+                    Debenture Interest Distribution Summary
+                    {debentureSummary.daysCount && (
+                      <Badge
+                        variant="outline"
+                        className="font-sans text-xs bg-primary/10 text-primary"
+                      >
+                        {debentureSummary.daysCount} Days &bull;{" "}
+                        {debentureSummary.daysCount >= 360
+                          ? "Annual (12 Months)"
+                          : debentureSummary.daysCount >= 180
+                            ? "Semi-Annual (6 Months)"
+                            : "Quarterly"}
+                      </Badge>
+                    )}
+                  </CardTitle>
                   <CardDescription>
                     Pumori banking & CDS format for Public, Institution, and Mutual Fund debentures.
+                    Displays both Full Annual (12M) baseline interest and the actual Coupon Period (
+                    {debentureSummary.daysCount
+                      ? `${debentureSummary.daysCount} Days`
+                      : "6 Months / Semi-Annual"}
+                    ) disbursed.
                   </CardDescription>
                 </div>
                 <div className="flex gap-2">
@@ -1630,9 +1743,9 @@ function ReportsRoute() {
                       <TableHead>Category</TableHead>
                       <TableHead className="text-right">Kitta</TableHead>
                       <TableHead className="text-right">Principal Amount</TableHead>
-                      <TableHead className="text-right">Annual Interest</TableHead>
+                      <TableHead className="text-right">Annual Interest (12M)</TableHead>
                       <TableHead className="text-right">Int. Per Day</TableHead>
-                      <TableHead className="text-right">Gross Interest</TableHead>
+                      <TableHead className="text-right">Gross Interest (Coupon)</TableHead>
                       <TableHead className="text-right">Tax Withheld</TableHead>
                       <TableHead className="text-right">Net Payable</TableHead>
                     </TableRow>

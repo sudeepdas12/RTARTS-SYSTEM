@@ -118,6 +118,8 @@ export interface DividendRegisterRow {
   gross_dividend: number;
   tax_amount: number;
   net_payable: number;
+  paid_amount?: number;
+  remaining_amount?: number;
   payment_status: string;
   payment_date: string | null;
   payment_reference: string | null;
@@ -136,6 +138,8 @@ export interface InterestRegisterRow {
   gross_interest: number;
   tax_amount: number;
   net_payable: number;
+  paid_amount?: number;
+  remaining_amount?: number;
   payment_status: string;
   due_date: string | null;
   payment_date: string | null;
@@ -248,7 +252,7 @@ export const ReportService = {
         let query = (supabase as any)
           .from("dividend_payables")
           .select(
-            "id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, payment_status, payment_date, payment_reference, fiscal_year, payee_classification, bank_name, bank_account_no, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
+            "id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, paid_amount, remaining_amount, payment_status, payment_date, payment_reference, fiscal_year, payee_classification, bank_name, bank_account_no, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
           )
           .order("created_at", { ascending: false })
           .range(from, to);
@@ -264,25 +268,42 @@ export const ReportService = {
         return query;
       });
 
-      return (data || []).map((row: any) => ({
-        id: row.id,
-        boid: row.client?.boid ?? null,
-        full_name: row.client?.full_name ?? "Unknown",
-        company_name: row.company?.company_name ?? "Unknown",
-        shares_held: nr(row.shares_held),
-        dividend_rate: nr(row.dividend_rate),
-        dividend_type: row.dividend_type ?? "Cash",
-        gross_dividend: nr(row.gross_dividend),
-        tax_amount: nr(row.tax_amount),
-        net_payable: nr(row.net_payable),
-        payment_status: row.payment_status ?? "Pending",
-        payment_date: row.payment_date ?? null,
-        payment_reference: row.payment_reference ?? null,
-        fiscal_year: row.fiscal_year ?? null,
-        bank_name: row.bank_name || row.client?.bank_name || null,
-        bank_account_no: row.bank_account_no || row.client?.bank_account_no || null,
-        pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
-      }));
+      return (data || []).map((row: any) => {
+        const netVal = nr(row.net_payable);
+        const paidVal =
+          row.paid_amount != null
+            ? nr(row.paid_amount)
+            : row.payment_status === "Paid"
+              ? netVal
+              : 0;
+        const remVal =
+          row.remaining_amount != null
+            ? nr(row.remaining_amount)
+            : row.payment_status === "Paid"
+              ? 0
+              : Math.max(0, netVal - paidVal);
+        return {
+          id: row.id,
+          boid: row.client?.boid ?? null,
+          full_name: row.client?.full_name ?? "Unknown",
+          company_name: row.company?.company_name ?? "Unknown",
+          shares_held: nr(row.shares_held),
+          dividend_rate: nr(row.dividend_rate),
+          dividend_type: row.dividend_type ?? "Cash",
+          gross_dividend: nr(row.gross_dividend),
+          tax_amount: nr(row.tax_amount),
+          net_payable: netVal,
+          paid_amount: paidVal,
+          remaining_amount: remVal,
+          payment_status: row.payment_status ?? "Pending",
+          payment_date: row.payment_date ?? null,
+          payment_reference: row.payment_reference ?? null,
+          fiscal_year: row.fiscal_year ?? null,
+          bank_name: row.bank_name || row.client?.bank_name || null,
+          bank_account_no: row.bank_account_no || row.client?.bank_account_no || null,
+          pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
+        };
+      });
     } catch (err) {
       console.error("getDividendRegister error:", err);
       throw err;
@@ -296,7 +317,7 @@ export const ReportService = {
         let query = (supabase as any)
           .from("mutual_fund_payables")
           .select(
-            "id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, payment_status, payment_date, payment_reference, fiscal_year, payee_classification, bank_name, bank_account_no, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
+            "id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, paid_amount, remaining_amount, payment_status, payment_date, payment_reference, fiscal_year, payee_classification, bank_name, bank_account_no, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
           )
           .order("created_at", { ascending: false })
           .range(from, to);
@@ -312,25 +333,42 @@ export const ReportService = {
         return query;
       });
 
-      return (data || []).map((row: any) => ({
-        id: row.id,
-        boid: row.client?.boid ?? null,
-        full_name: row.client?.full_name ?? "Unknown",
-        company_name: row.company?.company_name ?? "Unknown",
-        shares_held: nr(row.shares_held),
-        dividend_rate: nr(row.dividend_rate),
-        dividend_type: row.dividend_type ?? "Distribution",
-        gross_dividend: nr(row.gross_dividend),
-        tax_amount: nr(row.tax_amount),
-        net_payable: nr(row.net_payable),
-        payment_status: row.payment_status ?? "Pending",
-        payment_date: row.payment_date ?? null,
-        payment_reference: row.payment_reference ?? null,
-        fiscal_year: row.fiscal_year ?? null,
-        bank_name: row.bank_name || row.client?.bank_name || null,
-        bank_account_no: row.bank_account_no || row.client?.bank_account_no || null,
-        pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
-      }));
+      return (data || []).map((row: any) => {
+        const netVal = nr(row.net_payable);
+        const paidVal =
+          row.paid_amount != null
+            ? nr(row.paid_amount)
+            : row.payment_status === "Paid"
+              ? netVal
+              : 0;
+        const remVal =
+          row.remaining_amount != null
+            ? nr(row.remaining_amount)
+            : row.payment_status === "Paid"
+              ? 0
+              : Math.max(0, netVal - paidVal);
+        return {
+          id: row.id,
+          boid: row.client?.boid ?? null,
+          full_name: row.client?.full_name ?? "Unknown",
+          company_name: row.company?.company_name ?? "Unknown",
+          shares_held: nr(row.shares_held),
+          dividend_rate: nr(row.dividend_rate),
+          dividend_type: row.dividend_type ?? "Distribution",
+          gross_dividend: nr(row.gross_dividend),
+          tax_amount: nr(row.tax_amount),
+          net_payable: netVal,
+          paid_amount: paidVal,
+          remaining_amount: remVal,
+          payment_status: row.payment_status ?? "Pending",
+          payment_date: row.payment_date ?? null,
+          payment_reference: row.payment_reference ?? null,
+          fiscal_year: row.fiscal_year ?? null,
+          bank_name: row.bank_name || row.client?.bank_name || null,
+          bank_account_no: row.bank_account_no || row.client?.bank_account_no || null,
+          pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
+        };
+      });
     } catch (err) {
       console.error("getMutualFundRegister error:", err);
       throw err;
@@ -344,7 +382,7 @@ export const ReportService = {
         let query = (supabase as any)
           .from("interest_payables")
           .select(
-            "id, instrument_ref, gross_interest, tax_amount, net_payable, payment_status, due_date, payment_date, payment_reference, fiscal_year, payee_classification, bank_name, bank_account_no, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
+            "id, instrument_ref, gross_interest, tax_amount, net_payable, paid_amount, remaining_amount, payment_status, due_date, payment_date, payment_reference, fiscal_year, payee_classification, bank_name, bank_account_no, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
           )
           .order("due_date", { ascending: false })
           .range(from, to);
@@ -360,24 +398,41 @@ export const ReportService = {
         return query;
       });
 
-      return (data || []).map((row: any) => ({
-        id: row.id,
-        boid: row.client?.boid ?? null,
-        full_name: row.client?.full_name ?? "Unknown",
-        company_name: row.company?.company_name ?? "Unknown",
-        instrument_ref: row.instrument_ref ?? null,
-        gross_interest: nr(row.gross_interest),
-        tax_amount: nr(row.tax_amount),
-        net_payable: nr(row.net_payable),
-        payment_status: row.payment_status ?? "Pending",
-        due_date: row.due_date ?? null,
-        payment_date: row.payment_date ?? null,
-        payment_reference: row.payment_reference ?? null,
-        fiscal_year: row.fiscal_year ?? null,
-        bank_name: row.bank_name || row.client?.bank_name || null,
-        bank_account_no: row.bank_account_no || row.client?.bank_account_no || null,
-        pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
-      }));
+      return (data || []).map((row: any) => {
+        const netVal = nr(row.net_payable);
+        const paidVal =
+          row.paid_amount != null
+            ? nr(row.paid_amount)
+            : row.payment_status === "Paid"
+              ? netVal
+              : 0;
+        const remVal =
+          row.remaining_amount != null
+            ? nr(row.remaining_amount)
+            : row.payment_status === "Paid"
+              ? 0
+              : Math.max(0, netVal - paidVal);
+        return {
+          id: row.id,
+          boid: row.client?.boid ?? null,
+          full_name: row.client?.full_name ?? "Unknown",
+          company_name: row.company?.company_name ?? "Unknown",
+          instrument_ref: row.instrument_ref ?? null,
+          gross_interest: nr(row.gross_interest),
+          tax_amount: nr(row.tax_amount),
+          net_payable: netVal,
+          paid_amount: paidVal,
+          remaining_amount: remVal,
+          payment_status: row.payment_status ?? "Pending",
+          due_date: row.due_date ?? null,
+          payment_date: row.payment_date ?? null,
+          payment_reference: row.payment_reference ?? null,
+          fiscal_year: row.fiscal_year ?? null,
+          bank_name: row.bank_name || row.client?.bank_name || null,
+          bank_account_no: row.bank_account_no || row.client?.bank_account_no || null,
+          pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
+        };
+      });
     } catch (err) {
       console.error("getInterestRegister error:", err);
       throw err;

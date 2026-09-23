@@ -3,6 +3,8 @@
   "description": "RBB Merchant Banking Limited - RTS / RTARTS Management System",
   "version": "1.0.0",
   "private": true,
+  "license": "UNLICENSED",
+  "author": "RBB Merchant Banking Limited",
   "sideEffects": false,
   "type": "module",
   "scripts": {
@@ -17,7 +19,10 @@
     "test:run": "vitest run",
     "test:ui": "vitest --ui",
     "test:e2e": "playwright test",
-    "check:edge": "deno check supabase/functions/process-import-chunk/index.ts",
+    "db:backup": "node ./scripts/backup-db.mjs",
+    "db:restore": "node ./scripts/restore-db.mjs",
+    "db:backup:ps": "powershell -ExecutionPolicy Bypass -File ./scripts/backup-db.ps1",
+    "db:restore:ps": "powershell -ExecutionPolicy Bypass -File ./scripts/restore-db.ps1",
     "prepare": "husky"
   },
   "dependencies": {
@@ -66,6 +71,7 @@
     "jspdf-autotable": "^5.0.8",
     "lucide-react": "^0.575.0",
     "nepali-date-converter": "^3.4.0",
+    "pg": "^8.23.0",
     "react": "^19.2.0",
     "react-day-picker": "^9.14.0",
     "react-dom": "^19.2.0",

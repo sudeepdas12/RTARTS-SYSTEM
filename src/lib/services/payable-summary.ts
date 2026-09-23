@@ -152,8 +152,25 @@ export function getPayeeTaxRate(
   customTaxRate?: number | null,
   isMutualFund = false,
 ): number {
-  if (customTaxRate !== undefined && customTaxRate !== null) return Number(customTaxRate) || 0;
   const sanitized = (category || "UNKNOWN").toUpperCase();
+
+  // Statutory rule: Mutual Funds and Tax-Exempt entities are ALWAYS 0% TDS
+  if (sanitized === "MUTUAL_FUND" || sanitized === "TAX_EXEMPT") {
+    return 0;
+  }
+
+  // Statutory rule for debentures: Institutions are ALWAYS 15% TDS
+  if (
+    isDebenture &&
+    (sanitized === "INSTITUTION" || sanitized === "COMPANY_INSTITUTION" || sanitized === "FOREIGN")
+  ) {
+    return 0.15;
+  }
+
+  // If a custom rate was explicitly specified and not an exempt/institutional debenture entity
+  if (customTaxRate !== undefined && customTaxRate !== null) {
+    return Number(customTaxRate) || 0;
+  }
 
   switch (sanitized) {
     case "PROMOTER":

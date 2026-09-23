@@ -66,13 +66,50 @@ const normalizeDate = (raw: string | number | undefined | null | Date): string =
       return formatDateParts(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
     }
   }
+  // Handle named months e.g. "15-Aug-2024", "15-AUG-24", "15 Aug 2024"
+  const MONTH_MAP: Record<string, string> = {
+    jan: "01",
+    feb: "02",
+    mar: "03",
+    apr: "04",
+    may: "05",
+    jun: "06",
+    jul: "07",
+    aug: "08",
+    sep: "09",
+    oct: "10",
+    nov: "11",
+    dec: "12",
+  };
+  const monMatch = str.match(/^(\d{1,2})[-/\s]([A-Za-z]{3,9})[-/\s](\d{2,4})$/);
+  if (monMatch) {
+    const d = monMatch[1].padStart(2, "0");
+    const mStr = monMatch[2].slice(0, 3).toLowerCase();
+    const m = MONTH_MAP[mStr];
+    let y = monMatch[3];
+    if (y.length === 2) y = `20${y}`;
+    if (m) return `${y}-${m}-${d}`;
+  }
+
   if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(str)) {
     const parts = str.split(/[-/]/);
     return `${parts[0]}-${parts[1].padStart(2, "0")}-${parts[2].padStart(2, "0")}`;
   }
   if (/^\d{1,2}[-/]\d{1,2}[-/]\d{4}$/.test(str)) {
     const parts = str.split(/[-/]/);
-    return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
+    const n1 = parseInt(parts[0], 10);
+    const n2 = parseInt(parts[1], 10);
+    const y = parts[2];
+    if (n1 > 12 && n2 <= 12) {
+      // Unambiguously DD/MM/YYYY
+      return `${y}-${String(n2).padStart(2, "0")}-${String(n1).padStart(2, "0")}`;
+    } else if (n2 > 12 && n1 <= 12) {
+      // Unambiguously MM/DD/YYYY
+      return `${y}-${String(n1).padStart(2, "0")}-${String(n2).padStart(2, "0")}`;
+    } else {
+      // Default to DD/MM/YYYY (standard in Nepal banking / NCHL / ConnectIPS)
+      return `${y}-${String(n2).padStart(2, "0")}-${String(n1).padStart(2, "0")}`;
+    }
   }
   const parsed = new Date(str);
   if (!Number.isNaN(parsed.getTime())) {
@@ -219,6 +256,19 @@ export const BankParser = {
       batchId: findColumnIndexByPriority(headerRow, [
         ["batch id", "batchid", "batch.sessionid", "batch"],
       ]),
+      reason: findColumnIndexByPriority(headerRow, [
+        [
+          "return reason",
+          "returnreason",
+          "rejection reason",
+          "rejectionreason",
+          "reason",
+          "error message",
+          "errormessage",
+          "reject remarks",
+          "status remarks",
+        ],
+      ]),
     };
 
     const transactions: BankTransaction[] = [];
@@ -249,10 +299,19 @@ export const BankParser = {
         indices.instructionId >= 0
           ? String(columns[indices.instructionId] || "").trim()
           : undefined;
-      const desc =
+      const rawReason = indices.reason >= 0 ? String(columns[indices.reason] || "").trim() : "";
+      let desc =
         indices.description >= 0
           ? columns[indices.description]
           : beneficiaryName || columns.slice(1, 4).join(" ");
+      if (
+        rawReason &&
+        !String(desc || "")
+          .toUpperCase()
+          .includes(rawReason.toUpperCase())
+      ) {
+        desc = desc ? `${desc} [Reason: ${rawReason}]` : `[Reason: ${rawReason}]`;
+      }
 
       const upperDesc = String(desc || "").toUpperCase();
       const isCircular = upperDesc.includes("NRB CIRCULAR");
@@ -398,6 +457,23 @@ export const BankParser = {
         }
       }
 
+      // If sheet contains a BOID or Shareholder Registry column, it is a payee list / ConnectIPS lot file, not an account statement.
+      const rawHeaderStrings = rows[headerRowIndex].map((h: any) => cleanPattern(String(h)));
+      const isShareholderLotSheet = rawHeaderStrings.some(
+        (c) =>
+          c === "boid" ||
+          c === "beneficiaryid" ||
+          c === "clientid" ||
+          c === "kitta" ||
+          c === "sharesheld",
+      );
+      if (isShareholderLotSheet) {
+        console.info(
+          `[BankParser] Skipping sheet "${sheetName}": detected shareholder/BOID registry column. File should be processed by ExcelParser.`,
+        );
+        continue;
+      }
+
       const headerRow = rows[headerRowIndex].map((h: any) => String(h).trim().toLowerCase());
       const indices = {
         amount: findColumnIndexByPriority(headerRow, [
@@ -470,6 +546,19 @@ export const BankParser = {
           ],
         ]),
         batchId: findColumnIndexByPriority(headerRow, [["batch id", "batchid", "batch.sessionid"]]),
+        reason: findColumnIndexByPriority(headerRow, [
+          [
+            "return reason",
+            "returnreason",
+            "rejection reason",
+            "rejectionreason",
+            "reason",
+            "error message",
+            "errormessage",
+            "reject remarks",
+            "status remarks",
+          ],
+        ]),
       };
 
       for (let i = headerRowIndex + 1; i < rows.length; i++) {
@@ -491,10 +580,17 @@ export const BankParser = {
           continue;
         }
 
-        const rawDesc =
+        const rawReason =
+          indices.reason >= 0 && row[indices.reason]
+            ? String(row[indices.reason] || "").trim()
+            : "";
+        let rawDesc =
           indices.description >= 0 && row[indices.description]
             ? String(row[indices.description] || "").trim()
             : "";
+        if (rawReason && !rawDesc.toUpperCase().includes(rawReason.toUpperCase())) {
+          rawDesc = rawDesc ? `${rawDesc} [Reason: ${rawReason}]` : `[Reason: ${rawReason}]`;
+        }
         const withdrawVal = indices.debit >= 0 ? Math.abs(normalizeAmount(row[indices.debit])) : 0;
         const depositVal =
           indices.credit >= 0
@@ -542,27 +638,62 @@ export const BankParser = {
           rowStatus.includes("REJECT") ||
           rowStatus.includes("FAIL") ||
           upperDesc.includes("INCORRECT A/C") ||
+          upperDesc.includes("INCORRECT ACCOUNT") ||
           upperDesc.includes("REJECT") ||
           upperDesc.includes("RETURN") ||
           upperDesc.includes("BOUNCE") ||
-          upperDesc.includes("RJCT");
+          upperDesc.includes("RJCT") ||
+          upperDesc.includes("SUTRA REV") ||
+          upperDesc.includes("REV(") ||
+          upperDesc.includes("REVERSAL") ||
+          upperDesc.includes("LATE RTN");
+
+        // Detect ConnectIPS returned deposits (e.g. 16868722 0201260721JWX461... deposit)
+        const isConnectIpsReturn =
+          depositVal > 0 &&
+          withdrawVal === 0 &&
+          (isReject ||
+            upperDesc.includes("REV") ||
+            upperDesc.includes("RTN") ||
+            /\b0201\d{6}[A-Z0-9]+\s+0201\d{6}/i.test(rawDesc));
+
+        const isIssuerFundingOrBatch =
+          upperDesc.includes("TRF FROM") ||
+          upperDesc.includes("TRF TO") ||
+          upperDesc.includes("NET INTEREST AMOUNT") ||
+          upperDesc.includes("NET INT ") ||
+          upperDesc.includes("INTEREST SHRAWAN") ||
+          upperDesc.includes("INTEREST ASAR") ||
+          upperDesc.includes("DIVIDEND REVERSAL") ||
+          upperDesc.includes("RECTIFIED") ||
+          (depositVal > 10000000 && !rawDesc.includes("0201"));
 
         if (isCircular) {
           category = "NRB_CIRCULAR";
-        } else if (isReject) {
+        } else if (
+          isReject ||
+          isConnectIpsReturn ||
+          (depositVal > 0 &&
+            withdrawVal === 0 &&
+            rawDesc.includes("0201") &&
+            !isIssuerFundingOrBatch)
+        ) {
           category = "REJECT_RETURN";
           autoStatus = "RJCT";
+        } else if (isIssuerFundingOrBatch && depositVal > 0) {
+          category = "FUNDING_DEPOSIT";
         } else if (
-          isSettlementReport ||
-          upperDesc.includes("INTEREST") ||
-          upperDesc.includes("DEBENTURE") ||
-          upperDesc.includes("DIVIDEND") ||
-          upperDesc.includes("MUTUAL FUND") ||
-          upperDesc.includes("IPS DR") ||
-          upperDesc.includes("CHQ") ||
-          upperDesc.includes("REINSURANCE") ||
-          upperDesc.includes("KOSH") ||
-          upperDesc.includes("FUND")
+          (isSettlementReport ||
+            upperDesc.includes("INTEREST") ||
+            upperDesc.includes("DEBENTURE") ||
+            upperDesc.includes("DIVIDEND") ||
+            upperDesc.includes("MUTUAL FUND") ||
+            upperDesc.includes("IPS DR") ||
+            upperDesc.includes("CHQ") ||
+            upperDesc.includes("REINSURANCE") ||
+            upperDesc.includes("KOSH") ||
+            upperDesc.includes("FUND")) &&
+          withdrawVal > 0
         ) {
           category = "PAYOUT_DEBIT";
           autoStatus = "ACSC";
@@ -608,24 +739,62 @@ export const BankParser = {
         let extractedName =
           indices.creditorName >= 0 ? String(row[indices.creditorName] || "").trim() : "";
         if (!extractedName) {
-          if (upperDesc.includes("NEPAL REINSURANCE"))
-            extractedName = "NEPAL REINSURANCE COMPANY LTD";
-          else if (upperDesc.includes("CONTRIBUTION FUND"))
+          if (
+            upperDesc.includes("NEPAL REINSURANCE") ||
+            upperDesc.includes("NEPAL RE INSURANCE") ||
+            upperDesc.includes("0129218139") ||
+            upperDesc.includes("0079175657")
+          )
+            extractedName = "NEPAL RE INSURANCE COMPANY LIMITED";
+          else if (
+            upperDesc.includes("CONTRIBUTION FUND") ||
+            upperDesc.includes("CITIZEN INVESTMENT")
+          )
             extractedName = "CITIZEN INVESTMENT TRUST (CONTRIBUTION FUND)";
           else if (upperDesc.includes("SAINIK KALYANKARI"))
             extractedName = "SAINIK KALYANKARI KOSH";
           else if (upperDesc.includes("LAXMI SUNRISE CAPITAL"))
             extractedName = "LAXMI SUNRISE CAPITAL LTD";
+          else if (upperDesc.includes("SOCIAL SECURITY FUND") || upperDesc.includes("SSF"))
+            extractedName = "SOCIAL SECURITY FUND";
+          else if (upperDesc.includes("NEA RETIREMENT FUND"))
+            extractedName = "NEA RETIREMENT FUND MGMT SECT";
+          else if (upperDesc.includes("NIC ASIA BALANCED"))
+            extractedName = "NIC ASIA BALANCED FUND";
+          else if (upperDesc.includes("HIMALAYAN LIFE"))
+            extractedName = "HIMALAYAN LIFE INSURANCE LIMITED";
+          else if (upperDesc.includes("CITIZEN LIFE"))
+            extractedName = "CITIZEN LIFE INSURANCE CO.LTD";
         }
 
         const status =
           indices.status >= 0 && row[indices.status]
             ? String(row[indices.status]).trim()
             : autoStatus;
-        const instructionId =
+
+        // Extract ConnectIPS instruction ID or reference ID from description if not in dedicated column
+        let instructionId =
           indices.instructionId >= 0 ? String(row[indices.instructionId] || "").trim() : undefined;
-        const batchId =
-          indices.batchId >= 0 ? String(row[indices.batchId] || "").trim() : undefined;
+        if (!instructionId && rawDesc) {
+          const cipsMatch =
+            rawDesc.match(/\b(0201\d{6}[A-Za-z0-9]{3,20})\b/) ||
+            rawDesc.match(/\b([0-9]{4,}[A-Za-z0-9]{8,24})\b/);
+          if (cipsMatch) {
+            instructionId = cipsMatch[1];
+          }
+        }
+
+        // Extract ConnectIPS batch ID from description or instruction ID
+        let batchId = indices.batchId >= 0 ? String(row[indices.batchId] || "").trim() : undefined;
+        if (!batchId && rawDesc) {
+          const batchMatch =
+            rawDesc.match(/BATCH\s*(?:ID)?\s*([0-9A-Za-z_-]+)/i) ||
+            rawDesc.match(/\b(0201\d{6}[A-Za-z]{3})\b/);
+          if (batchMatch) {
+            batchId = batchMatch[1];
+          }
+        }
+
         const description =
           rawDesc ||
           extractedName ||

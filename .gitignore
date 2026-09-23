@@ -76,3 +76,11 @@ samples/
 test-results/
 playwright-report/
 
+# Database dumps and local backup storage
+backups/
+*.sql.gz
+*.sql.zip
+
+# Scratch debug / test scripts
+scratch/
+

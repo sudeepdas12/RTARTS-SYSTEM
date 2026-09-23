@@ -50,6 +50,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ShareholderStatementDialog } from "@/components/shareholder-statement-dialog";
 import {
+  AccountRemediationDialog,
+  type RejectedAccountItem,
+} from "@/components/account-remediation-dialog";
+import {
   Download,
   Plus,
   CheckCircle2,
@@ -70,6 +74,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   RotateCcw,
+  Edit3,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -111,10 +116,22 @@ function PaymentsRoute() {
   const [fromDate, setFromDate] = useState<string>("");
   const [toDate, setToDate] = useState<string>("");
   const [isDisbursing, setIsDisbursing] = useState(false);
+  const [installmentTag, setInstallmentTag] = useState<string>("FULL");
+
+  // Edit Batch Dialog State (for Draft batches)
+  const [editBatchOpen, setEditBatchOpen] = useState(false);
+  const [editBatchName, setEditBatchName] = useState("");
+  const [editFiscalYear, setEditFiscalYear] = useState("");
+  const [editPayableType, setEditPayableType] = useState<string>("dividend");
+  const [editPaymentMethod, setEditPaymentMethod] = useState<PaymentMethod>("ConnectIPS");
+  const [editCdsBatchRef, setEditCdsBatchRef] = useState("");
+  const [editRegistrar, setEditRegistrar] = useState("");
 
   // Active top tab (Batches vs Individual Shareholder Search)
   const [paymentsActiveTab, setPaymentsActiveTab] = useState<"batches" | "shareholders">("batches");
   const [selectedStatementBoid, setSelectedStatementBoid] = useState<string | null>(null);
+  const [remediationDialogOpen, setRemediationDialogOpen] = useState(false);
+  const [remediationItems, setRemediationItems] = useState<RejectedAccountItem[]>([]);
 
   // SMS Broadcast State
   const [broadcastOpen, setBroadcastOpen] = useState<boolean>(false);
@@ -194,9 +211,9 @@ function PaymentsRoute() {
     queryFn: async () => {
       const { data } = await supabase
         .from("companies")
-        .select("id, company_name, company_code")
+        .select("id, company_name, company_code, company_type, fiscal_year")
         .order("company_name");
-      return data || [];
+      return (data || []) as any[];
     },
   });
 
@@ -246,17 +263,62 @@ function PaymentsRoute() {
           toDate: toDate || undefined,
         },
       ),
-    enabled: createOpen || !!activeBatchId,
+    enabled: createOpen,
   });
+
+  // Dedicated query for payables specifically matching the active batch
+  const { data: activeBatchPayables = [], isLoading: isActiveBatchPayablesLoading } = useQuery({
+    queryKey: [
+      "active-batch-payables",
+      activeBatchId,
+      activeBatchData?.company_id,
+      activeBatchData?.payable_type,
+      activeBatchData?.fiscal_year,
+    ],
+    queryFn: async () => {
+      if (!activeBatchId || !activeBatchData) return [];
+      return PaymentService.getPayablesForPayment(
+        activeBatchData.company_id || undefined,
+        activeBatchData.payable_type || undefined,
+        {
+          fiscalYear: activeBatchData.fiscal_year || undefined,
+        },
+      );
+    },
+    enabled: !!activeBatchId && !!activeBatchData,
+  });
+
+  const existingLineItemPayableIds = useMemo(() => {
+    return new Set((lineItems || []).map((li) => li.payable_id).filter(Boolean));
+  }, [lineItems]);
+
+  const unbatchedPayablesForActiveBatch = useMemo(() => {
+    return activeBatchPayables.filter((p) => !existingLineItemPayableIds.has(p.id));
+  }, [activeBatchPayables, existingLineItemPayableIds]);
 
   const { mutate: createBatch, isPending } = useMutation({
     mutationFn: async () => {
       if (!canWrite) throw new Error("You do not have permission to create payment batches.");
       if (!batchName.trim()) throw new Error("Batch name is required");
 
+      if (availablePayables.length === 0) {
+        const proceed = confirm(
+          "No pending payables match the selected company, type, and fiscal year. Are you sure you want to create an empty payment batch?",
+        );
+        if (!proceed) throw new Error("Batch creation cancelled: no payables selected.");
+      }
+
       const items = availablePayables.map((payable) => {
-        const origGross = Number(payable.gross_dividend ?? payable.gross_interest ?? 0);
-        const origNet = Number(payable.net_payable ?? 0);
+        const origGross = Number(
+          payable.gross_dividend ??
+            payable.gross_interest ??
+            payable.gross_amount ??
+            payable.gross ??
+            0,
+        );
+        const origNet = Number(
+          payable.net_payable ?? payable.net_interest ?? payable.net_amount ?? 0,
+        );
         const origTax = Number(payable.tax_amount ?? origGross - origNet);
         const isPartial = payable.payment_status === "Partial";
         const rem = payable.remaining_amount != null ? Number(payable.remaining_amount) : origNet;
@@ -293,8 +355,23 @@ function PaymentsRoute() {
           connectips_ref: null,
           rtgs_ref: null,
           cheque_no: null,
-          status: "Pending",
-          remarks: null,
+          status: "Pending" as const,
+          remarks:
+            installmentTag !== "FULL"
+              ? `[${
+                  installmentTag === "SEMI_1"
+                    ? "Installment 1 (Poush)"
+                    : installmentTag === "SEMI_2"
+                      ? "Installment 2 (Asar)"
+                      : installmentTag === "INTERIM"
+                        ? "Interim Dividend"
+                        : installmentTag === "FINAL"
+                          ? "Final Dividend"
+                          : "Remediated"
+                }] ${batchName.trim()}`
+              : payable.installment_leg
+                ? `[${payable.installment_leg}] ${batchName.trim()}`
+                : null,
         };
       });
 
@@ -337,11 +414,31 @@ function PaymentsRoute() {
     onError: (err: any) => toast.error(`Failed to create batch: ${err?.message || err}`),
   });
 
-  const { mutate: addPayablesToBatch } = useMutation({
+  const { mutate: addPayablesToBatch, isPending: isAddingPayables } = useMutation({
     mutationFn: async (batchId: string) => {
-      const items = availablePayables.map((payable) => {
-        const origGross = Number(payable.gross_dividend ?? payable.gross_interest ?? 0);
-        const origNet = Number(payable.net_payable ?? 0);
+      if (!canWrite) throw new Error("You do not have permission to modify payment batches.");
+      if (!activeBatchData) throw new Error("Batch details are not loaded.");
+      if (activeBatchData.status !== "Draft") {
+        throw new Error("Cannot add payables to a batch that is not in Draft status.");
+      }
+
+      if (unbatchedPayablesForActiveBatch.length === 0) {
+        throw new Error(
+          `No unbatched pending payables found for this batch's company, payable type (${activeBatchData.payable_type || "All"}), and fiscal year (${activeBatchData.fiscal_year || "All"}).`,
+        );
+      }
+
+      const items = unbatchedPayablesForActiveBatch.map((payable) => {
+        const origGross = Number(
+          payable.gross_dividend ??
+            payable.gross_interest ??
+            payable.gross_amount ??
+            payable.gross ??
+            0,
+        );
+        const origNet = Number(
+          payable.net_payable ?? payable.net_interest ?? payable.net_amount ?? 0,
+        );
         const origTax = Number(payable.tax_amount ?? origGross - origNet);
         const isPartial = payable.payment_status === "Partial";
         const rem = payable.remaining_amount != null ? Number(payable.remaining_amount) : origNet;
@@ -359,9 +456,9 @@ function PaymentsRoute() {
         }
 
         return {
-          company_id: payable.company_id,
+          company_id: payable.company_id || activeBatchData.company_id,
           client_id: payable.client_id,
-          payable_type: payable.payable_type || "dividend",
+          payable_type: payable.payable_type || activeBatchData.payable_type || "interest",
           payable_id: payable.id,
           gross_amount: grossAmount,
           tax_amount: taxAmount,
@@ -376,22 +473,49 @@ function PaymentsRoute() {
           connectips_ref: null,
           rtgs_ref: null,
           cheque_no: null,
-          status: "Pending",
+          status: "Pending" as const,
           remarks: null,
         };
       });
 
       const success = await PaymentService.addLineItems(batchId, items);
-      if (!success) throw new Error("Failed to add line items");
+      if (!success) throw new Error("Failed to add line items to database");
+      return items.length;
     },
-    onSuccess: () => {
-      toast.success("Payables added to batch.");
+    onSuccess: (count) => {
+      toast.success(`Successfully added ${count} payables to batch.`);
       qc.invalidateQueries({ queryKey: ["payments"] });
-      qc.invalidateQueries({ queryKey: ["payment-batch"] });
-      qc.invalidateQueries({ queryKey: ["payment-line-items"] });
+      qc.invalidateQueries({ queryKey: ["payment-batch", activeBatchId] });
+      qc.invalidateQueries({ queryKey: ["payment-line-items", activeBatchId] });
+      qc.invalidateQueries({ queryKey: ["active-batch-payables", activeBatchId] });
       qc.invalidateQueries({ queryKey: ["payables-for-payment"] });
     },
-    onError: () => toast.error("Failed to add payables to batch."),
+    onError: (err: any) => toast.error(`Failed to add payables: ${err?.message || err}`),
+  });
+
+  const { mutate: updateBatchSettings, isPending: isUpdatingBatch } = useMutation({
+    mutationFn: async () => {
+      if (!canWrite) throw new Error("You do not have permission to modify payment batches.");
+      if (!activeBatchId) throw new Error("No active batch selected.");
+      if (!editBatchName.trim()) throw new Error("Batch name is required.");
+
+      return PaymentService.updateBatch(activeBatchId, {
+        batch_name: editBatchName.trim(),
+        fiscal_year: editFiscalYear || undefined,
+        payable_type: editPayableType || undefined,
+        payment_method: editPaymentMethod,
+        cds_batch_ref: editCdsBatchRef.trim() || null,
+        registrar: editRegistrar.trim() || null,
+      });
+    },
+    onSuccess: () => {
+      toast.success("Batch settings updated successfully.");
+      setEditBatchOpen(false);
+      qc.invalidateQueries({ queryKey: ["payments"] });
+      qc.invalidateQueries({ queryKey: ["payment-batch", activeBatchId] });
+      qc.invalidateQueries({ queryKey: ["active-batch-payables", activeBatchId] });
+    },
+    onError: (err: any) => toast.error(`Failed to update batch settings: ${err?.message || err}`),
   });
 
   const { mutate: updateBatchStatus } = useMutation({
@@ -841,7 +965,27 @@ function PaymentsRoute() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Company</Label>
-                    <Select value={selectedCompany} onValueChange={setSelectedCompany}>
+                    <Select
+                      value={selectedCompany}
+                      onValueChange={(val) => {
+                        setSelectedCompany(val);
+                        if (val !== "all") {
+                          const comp = companies.find((c: any) => c.id === val);
+                          if (comp) {
+                            if (comp.fiscal_year) {
+                              setFiscalYear(comp.fiscal_year);
+                            }
+                            if (comp.company_type === "Debenture") {
+                              setSelectedPayableType("interest");
+                            } else if (comp.company_type === "Mutual Fund") {
+                              setSelectedPayableType("mutual_fund");
+                            } else {
+                              setSelectedPayableType("dividend");
+                            }
+                          }
+                        }
+                      }}
+                    >
                       <SelectTrigger>
                         <SelectValue placeholder="All companies" />
                       </SelectTrigger>
@@ -972,6 +1116,45 @@ function PaymentsRoute() {
                     </Select>
                   </div>
                 </div>
+
+                <div className="space-y-2">
+                  <Label>Installment / Payout Leg Tag</Label>
+                  <Select
+                    value={installmentTag}
+                    onValueChange={(v) => {
+                      setInstallmentTag(v);
+                      const comp = companies.find((c: any) => c.id === selectedCompany);
+                      const code =
+                        comp?.company_code || comp?.company_name?.slice(0, 8) || "PAYMENT";
+                      const tagLabels: Record<string, string> = {
+                        FULL: "Full Annual Payout",
+                        SEMI_1: "Semi-Annual Installment 1 (Poush End)",
+                        SEMI_2: "Semi-Annual Installment 2 (Asar End)",
+                        INTERIM: "Interim Dividend Distribution",
+                        FINAL: "Final Dividend Distribution",
+                        REMEDIATION: "Remediated Accounts Payout",
+                      };
+                      if (v !== "FULL") {
+                        setBatchName(`${code} — ${tagLabels[v] || v} — ${fiscalYear || "FY"}`);
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="FULL">Full Settlement / Annual Payout</SelectItem>
+                      <SelectItem value="SEMI_1">Semi-Annual Installment 1 (Poush End)</SelectItem>
+                      <SelectItem value="SEMI_2">Semi-Annual Installment 2 (Asar End)</SelectItem>
+                      <SelectItem value="INTERIM">Interim Dividend Distribution</SelectItem>
+                      <SelectItem value="FINAL">Final Dividend Distribution</SelectItem>
+                      <SelectItem value="REMEDIATION">
+                        Remediated Accounts Payout (Corrected Bank Accounts)
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
                 <div className="rounded-md border bg-muted/20 p-3 text-sm">
                   <div className="flex items-center justify-between font-medium mb-1">
                     <span>Available Payables</span>
@@ -1593,16 +1776,49 @@ function PaymentsRoute() {
                           {p.status}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 text-xs text-primary hover:bg-primary/10 cursor-pointer"
-                          onClick={() => setSelectedStatementBoid(p.client?.boid || p.boid)}
-                        >
-                          <FileText className="w-3.5 h-3.5 mr-1" />
-                          Statement
-                        </Button>
+                      <TableCell className="text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1">
+                          {(p.status === "Failed" ||
+                            p.status === "Pending" ||
+                            p.status === "Rejected") && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs text-amber-700 hover:text-amber-800 hover:bg-amber-50 dark:hover:bg-amber-950/20 cursor-pointer"
+                              title="Remediate Bank Details & Re-queue Payout"
+                              onClick={() => {
+                                setRemediationItems([
+                                  {
+                                    payable_id: p.payable_id || p.id,
+                                    payable_type: (p.payable_type as any) || "interest",
+                                    client_id: p.client_id || p.client?.id || null,
+                                    full_name: p.client?.full_name || p.full_name || "Shareholder",
+                                    boid: p.client?.boid || p.boid || null,
+                                    pan_or_citizenship: p.client?.pan_or_citizenship || null,
+                                    current_bank_name: p.bank_name || p.client?.bank_name || null,
+                                    current_bank_account_no:
+                                      p.bank_account_no || p.client?.bank_account_no || null,
+                                    rejection_reason: p.remarks || "Payment failed / rejected",
+                                    net_payable: Number(p.net_amount || p.amount || 0),
+                                  },
+                                ]);
+                                setRemediationDialogOpen(true);
+                              }}
+                            >
+                              <CreditCard className="w-3.5 h-3.5 mr-1 text-amber-600" />
+                              Remediate
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs text-primary hover:bg-primary/10 cursor-pointer"
+                            onClick={() => setSelectedStatementBoid(p.client?.boid || p.boid)}
+                          >
+                            <FileText className="w-3.5 h-3.5 mr-1" />
+                            Statement
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))
@@ -1686,7 +1902,7 @@ function PaymentsRoute() {
           </DialogHeader>
           {activeBatchData && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-3 border-b pb-3">
                 <div>
                   <p className="text-xs text-muted-foreground">Batch Name</p>
                   <p className="text-sm font-medium">{activeBatchData.batch_name}</p>
@@ -1695,6 +1911,20 @@ function PaymentsRoute() {
                       Ref: {activeBatchData.cds_batch_ref}
                     </p>
                   )}
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Company</p>
+                  <p className="text-sm font-medium">
+                    {activeBatchData.companies?.company_code ||
+                      activeBatchData.companies?.company_name ||
+                      "All"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Payable Type / FY</p>
+                  <p className="text-sm font-medium capitalize">
+                    {activeBatchData.payable_type || "All"} ({activeBatchData.fiscal_year || "All"})
+                  </p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Payment Method</p>
@@ -1708,7 +1938,7 @@ function PaymentsRoute() {
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Total Amount</p>
-                  <p className="text-sm font-medium">
+                  <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
                     NPR{" "}
                     {(activeBatchData.total_amount || 0).toLocaleString("en-IN", {
                       minimumFractionDigits: 2,
@@ -1723,12 +1953,41 @@ function PaymentsRoute() {
                     size="sm"
                     variant="outline"
                     onClick={() => {
-                      if (activeBatchId && confirm("Add all matching payables to this batch?")) {
+                      setEditBatchName(activeBatchData.batch_name || "");
+                      setEditFiscalYear(activeBatchData.fiscal_year || "");
+                      setEditPayableType(activeBatchData.payable_type || "dividend");
+                      setEditPaymentMethod(
+                        (activeBatchData.payment_method as PaymentMethod) || "ConnectIPS",
+                      );
+                      setEditCdsBatchRef(activeBatchData.cds_batch_ref || "");
+                      setEditRegistrar(activeBatchData.registrar || "");
+                      setEditBatchOpen(true);
+                    }}
+                  >
+                    <Edit3 className="w-4 h-4 mr-1.5 text-sky-600" />
+                    Edit Batch
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={isAddingPayables || unbatchedPayablesForActiveBatch.length === 0}
+                    onClick={() => {
+                      if (
+                        activeBatchId &&
+                        confirm(
+                          `Add all ${unbatchedPayablesForActiveBatch.length} matching pending payables to this batch?`,
+                        )
+                      ) {
                         addPayablesToBatch(activeBatchId);
                       }
                     }}
                   >
-                    Add Payables ({availablePayables.length} available)
+                    {isAddingPayables ? (
+                      <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4 mr-1.5 text-emerald-600" />
+                    )}
+                    Add Payables ({unbatchedPayablesForActiveBatch.length} available)
                   </Button>
                   <Button
                     size="sm"
@@ -2053,6 +2312,106 @@ function PaymentsRoute() {
         </DialogContent>
       </Dialog>
 
+      {/* Edit Draft Batch Dialog */}
+      <Dialog open={editBatchOpen} onOpenChange={setEditBatchOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Batch Settings</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-3">
+            <div className="space-y-2">
+              <Label>Batch Name</Label>
+              <Input
+                value={editBatchName}
+                onChange={(e) => setEditBatchName(e.target.value)}
+                placeholder="Batch name"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Payable Type</Label>
+                <Select value={editPayableType} onValueChange={setEditPayableType}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="dividend">Dividend</SelectItem>
+                    <SelectItem value="interest">Interest</SelectItem>
+                    <SelectItem value="mutual_fund">Mutual Fund</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Fiscal Year</Label>
+                <Select value={editFiscalYear} onValueChange={setEditFiscalYear}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Fiscal Year" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-60 overflow-y-auto">
+                    {fiscalYears.map((fy) => (
+                      <SelectItem key={fy} value={fy}>
+                        {fy}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Payment Method</Label>
+              <Select
+                value={editPaymentMethod}
+                onValueChange={(v) => setEditPaymentMethod(v as PaymentMethod)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(["NEFT", "RTGS", "ConnectIPS", "Cheque", "Cash"] as PaymentMethod[]).map(
+                    (m) => (
+                      <SelectItem key={m} value={m}>
+                        {m}
+                      </SelectItem>
+                    ),
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>CDS Batch Ref</Label>
+                <Input
+                  value={editCdsBatchRef}
+                  onChange={(e) => setEditCdsBatchRef(e.target.value)}
+                  placeholder="Optional"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Registrar</Label>
+                <Input
+                  value={editRegistrar}
+                  onChange={(e) => setEditRegistrar(e.target.value)}
+                  placeholder="Optional"
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setEditBatchOpen(false)}>
+              Cancel
+            </Button>
+            <Button disabled={isUpdatingBatch} onClick={() => updateBatchSettings()}>
+              {isUpdatingBatch ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <CheckCircle2 className="w-4 h-4 mr-2" />
+              )}
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Reversal Confirmation Dialog */}
       <Dialog
         open={!!reverseDialogOpen}
@@ -2301,6 +2660,18 @@ function PaymentsRoute() {
         onOpenChange={(open) => {
           if (!open) setSelectedStatementBoid(null);
         }}
+      />
+
+      {/* Account Remediation Dialog */}
+      <AccountRemediationDialog
+        open={remediationDialogOpen}
+        onOpenChange={setRemediationDialogOpen}
+        initialItems={remediationItems}
+        companyName={
+          selectedCompany !== "all"
+            ? companies.find((c) => c.id === selectedCompany)?.company_name
+            : "Selected Company"
+        }
       />
     </div>
   );

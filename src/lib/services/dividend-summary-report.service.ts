@@ -2,6 +2,7 @@ import * as XLSX from "xlsx";
 import { supabase, fetchAllRows } from "./database";
 import { PdfGenerator } from "@/lib/pdf-generator";
 import { smartClassify } from "./smart-classifier";
+import { TaxRule, getDividendDisplayRates } from "./tax-rules.service";
 
 export interface AgmDividendSummaryRow {
   sn: number;
@@ -120,7 +121,11 @@ export const AgmDividendSummaryReportService = {
     overrideBonusRate?: number,
     overrideDividendRate?: number,
     overrideFaceValue?: number,
+    taxRules?: TaxRule[] | null,
   ): AgmDividendSummaryReport {
+    const divDisplayRates = getDividendDisplayRates(taxRules);
+    const statutoryTaxRate = divDisplayRates.publicRatePct / 100;
+
     if (!payables.length) {
       return {
         companyName,
@@ -242,7 +247,7 @@ export const AgmDividendSummaryReportService = {
         particular !== "MUTUAL FUND" &&
         particular !== "TAX EXEMPTED"
       ) {
-        divTax = Math.round((gross * 0.05 + Number.EPSILON) * 100) / 100;
+        divTax = Math.round((gross * statutoryTaxRate + Number.EPSILON) * 100) / 100;
       }
       let bonusTax = Number(p.bonus_tax || 0);
       if (
@@ -251,7 +256,8 @@ export const AgmDividendSummaryReportService = {
         particular !== "MUTUAL FUND" &&
         particular !== "TAX EXEMPTED"
       ) {
-        bonusTax = Math.round((actualB * faceValue * 0.05 + Number.EPSILON) * 100) / 100;
+        bonusTax =
+          Math.round((actualB * faceValue * statutoryTaxRate + Number.EPSILON) * 100) / 100;
       }
       let net = Number(p.net_payable || gross - divTax);
       if (net === 0 && gross > 0) {

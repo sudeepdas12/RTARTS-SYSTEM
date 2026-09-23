@@ -32,6 +32,16 @@ import { ExcelExporter } from "@/lib/excel-exporter";
 import { format } from "date-fns";
 import { toast } from "sonner";
 
+function escapeHtml(str: any): string {
+  if (str == null) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 interface ShareholderStatementDialogProps {
   boid?: string | null;
   clientId?: string | null;
@@ -47,14 +57,26 @@ export function ShareholderStatementDialog({
 }: ShareholderStatementDialogProps) {
   const [selectedCompany, setSelectedCompany] = useState<string>("all");
 
+  const isUuid = (val?: string | null) =>
+    Boolean(
+      val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim()),
+    );
+
   const { data: clientInfo, isLoading: isClientLoading } = useQuery({
     queryKey: ["shareholder-info", boid, clientId],
     queryFn: async () => {
       if (!boid && !clientId) return null;
       let q = supabase.from("clients").select("*, company:companies(company_name, company_code)");
-      if (boid) q = q.eq("boid", boid);
-      else if (clientId) q = q.eq("id", clientId);
-      const { data, error } = await q.maybeSingle();
+      if (boid) {
+        if (isUuid(boid)) {
+          q = q.eq("id", boid.trim());
+        } else {
+          q = q.eq("boid", boid.trim());
+        }
+      } else if (clientId) {
+        q = q.eq("id", clientId.trim());
+      }
+      const { data, error } = await q.limit(1).maybeSingle();
       if (error) return null;
       return data;
     },
@@ -123,6 +145,8 @@ export function ShareholderStatementDialog({
         grossAmount: number;
         taxAmount: number;
         netAmount: number;
+        paidAmount: number;
+        remainingAmount: number;
         status: string;
         paymentDate: string | null;
         paymentRef: string | null;
@@ -136,6 +160,38 @@ export function ShareholderStatementDialog({
           Number(r.shares_held || r.kitta || 0) ||
           Math.round(Number(r.gross_interest || 0) / (1000 * 0.085 * (183 / 365))) ||
           0;
+        let displayStatus =
+          r.payment_status || (linkedPay?.status === "Completed" ? "Paid" : "Pending");
+        if (displayStatus === "Pending" && linkedPay?.status === "Reversed") {
+          displayStatus = "RTS Payable (Reversed)";
+        } else if (displayStatus === "Pending" && linkedPay?.status === "Failed") {
+          displayStatus = "Failed";
+        }
+
+        const netAmt = Number(r.net_payable || 0);
+        let paidAmt = Number(
+          r.paid_amount != null
+            ? r.paid_amount
+            : displayStatus === "Paid"
+              ? netAmt
+              : linkedPay?.status === "Completed"
+                ? Number(linkedPay.amount) || netAmt
+                : 0,
+        );
+        let remAmt = Number(
+          r.remaining_amount != null
+            ? r.remaining_amount
+            : displayStatus === "Paid"
+              ? 0
+              : Math.max(0, netAmt - paidAmt),
+        );
+        if (displayStatus === "Paid") {
+          paidAmt = netAmt;
+          remAmt = 0;
+        } else if (displayStatus === "Pending" && paidAmt === 0) {
+          remAmt = netAmt;
+        }
+
         records.push({
           id: r.id,
           type: "Debenture Interest",
@@ -146,26 +202,74 @@ export function ShareholderStatementDialog({
           kitta: derivedKitta,
           grossAmount: Number(r.gross_interest || 0),
           taxAmount: Number(r.tax_amount || 0),
-          netAmount: Number(r.net_payable || 0),
-          status: r.payment_status || (linkedPay ? "Paid" : "Pending"),
+          netAmount: netAmt,
+          paidAmount: paidAmt,
+          remainingAmount: remAmt,
+          status: displayStatus,
           paymentDate: r.payment_date || linkedPay?.payment_date || null,
           paymentRef:
             r.payment_reference ||
             linkedPay?.payment_reference ||
             linkedPay?.connectips_ref ||
-            (r.payment_status === "Paid" ? "RECON-AUTO" : null),
+            (displayStatus === "Paid" ? "RECON-AUTO" : null),
           bankDetails: r.bank_account_no ? `${r.bank_name || ""} (${r.bank_account_no})` : null,
-          remarks: r.remarks || null,
+          remarks: [r.remarks, linkedPay?.reversal_reason].filter(Boolean).join(" • ") || null,
         });
       }
 
       for (const r of dividendRows || []) {
         const linkedPay = paymentMap.get(r.id);
-        const hasBonus = Number(r.bonus_issued || r.bonus_actual || 0) > 0;
-        let divType: string = r.dividend_type || (hasBonus ? "Bonus Share" : "Cash Dividend");
-        if (divType === "Stock Dividend" && !hasBonus) {
+        const bonusQty = Number(r.bonus_issued || r.bonus_actual || 0);
+        const hasBonus = bonusQty > 0;
+        const grossCash = Number(r.gross_dividend || 0);
+
+        let divType: string = r.dividend_type || "Cash Dividend";
+        if (hasBonus && grossCash > 0) {
+          divType = "Bonus & Cash Dividend";
+        } else if (hasBonus) {
+          divType = "Bonus Share";
+        } else if (divType === "Stock Dividend" && !hasBonus) {
           divType = "Cash Dividend";
         }
+
+        let displayStatus =
+          r.payment_status || (linkedPay?.status === "Completed" ? "Paid" : "Pending");
+        if (displayStatus === "Pending" && linkedPay?.status === "Reversed") {
+          displayStatus = "RTS Payable (Reversed)";
+        } else if (displayStatus === "Pending" && linkedPay?.status === "Failed") {
+          displayStatus = "Failed";
+        }
+
+        const netAmt = Number(r.net_payable || 0);
+        let paidAmt = Number(
+          r.paid_amount != null
+            ? r.paid_amount
+            : displayStatus === "Paid"
+              ? netAmt
+              : linkedPay?.status === "Completed"
+                ? Number(linkedPay.amount) || netAmt
+                : 0,
+        );
+        let remAmt = Number(
+          r.remaining_amount != null
+            ? r.remaining_amount
+            : displayStatus === "Paid"
+              ? 0
+              : Math.max(0, netAmt - paidAmt),
+        );
+        if (displayStatus === "Paid") {
+          paidAmt = netAmt;
+          remAmt = 0;
+        } else if (displayStatus === "Pending" && paidAmt === 0) {
+          remAmt = netAmt;
+        }
+
+        const bonusNote = hasBonus
+          ? `Bonus Allotted: ${bonusQty.toLocaleString()} Kitta${r.bonus_rate ? ` (${r.bonus_rate}%)` : ""}`
+          : null;
+        const combinedRemarks =
+          [r.remarks, bonusNote, linkedPay?.reversal_reason].filter(Boolean).join(" • ") || null;
+
         records.push({
           id: r.id,
           type: divType,
@@ -174,10 +278,12 @@ export function ShareholderStatementDialog({
           companyName: r.company?.company_name || "Equities",
           fiscalYear: r.fiscal_year || "2081/82",
           kitta: Number(r.shares_held || r.after_bonus_kitta || 0),
-          grossAmount: Number(r.gross_dividend || 0),
+          grossAmount: grossCash,
           taxAmount: Number(r.tax_amount || 0),
-          netAmount: Number(r.net_payable || 0),
-          status: r.payment_status || (linkedPay ? "Paid" : "Pending"),
+          netAmount: netAmt,
+          paidAmount: paidAmt,
+          remainingAmount: remAmt,
+          status: displayStatus,
           paymentDate: r.payment_date || linkedPay?.payment_date || null,
           paymentRef:
             r.payment_reference ||
@@ -185,12 +291,18 @@ export function ShareholderStatementDialog({
             linkedPay?.connectips_ref ||
             null,
           bankDetails: r.bank_account_no ? `${r.bank_name || ""} (${r.bank_account_no})` : null,
-          remarks: r.remarks || null,
+          remarks: combinedRemarks,
         });
       }
 
       for (const r of mutualFundRows || []) {
         const linkedPay = paymentMap.get(r.id);
+        const netAmt = Number(r.net_payable || 0);
+        const isPaid =
+          r.payment_status === "Paid" || (!r.payment_status && linkedPay?.status === "Completed");
+        const paidAmt = isPaid ? netAmt : 0;
+        const remAmt = isPaid ? 0 : netAmt;
+
         records.push({
           id: r.id,
           type: "Mutual Fund",
@@ -201,7 +313,9 @@ export function ShareholderStatementDialog({
           kitta: Number(r.shares_held || 0),
           grossAmount: Number(r.gross_dividend || 0),
           taxAmount: Number(r.tax_amount || 0),
-          netAmount: Number(r.net_payable || 0),
+          netAmount: netAmt,
+          paidAmount: paidAmt,
+          remainingAmount: remAmt,
           status: r.payment_status || (linkedPay ? "Paid" : "Pending"),
           paymentDate: r.payment_date || linkedPay?.payment_date || null,
           paymentRef:
@@ -219,7 +333,7 @@ export function ShareholderStatementDialog({
         try {
           const { data: agmSnaps } = await (supabase as any)
             .from("agm_yearly_snapshots")
-            .select("*")
+            .select("*, company:companies(company_name, company_code)")
             .eq("boid", resolvedBoid)
             .order("fiscal_year", { ascending: false });
 
@@ -232,8 +346,7 @@ export function ShareholderStatementDialog({
 
           for (const s of agmSnaps || []) {
             const snapGross = Number(s.gross_cash_dividend || 0);
-            const snapTax =
-              Number(s.cash_tax_withheld || 0) + Number(s.bonus_tax_withheld || 0);
+            const snapTax = Number(s.cash_tax_withheld || 0) + Number(s.bonus_tax_withheld || 0);
             const snapNet = Number(s.net_cash_payable || 0);
             const snapBonus = Number(s.issued_whole_bonus || 0);
             const snapKitta = Number(s.base_kitta || s.post_event_kitta || 0);
@@ -264,13 +377,18 @@ export function ShareholderStatementDialog({
               status = "Settled";
             }
 
-            const companyObj = Array.isArray((clientInfo as any)?.company)
-              ? (clientInfo as any).company[0]
-              : (clientInfo as any)?.company;
-            const compName = companyObj?.company_name || "NLG Insurance";
-            const compCode = companyObj?.company_code || "NLG";
-            const compId =
-              (clientInfo as any)?.company_id || "48453aaa-2980-45a1-a47f-b7adcf3d086b";
+            const companyObj = s.company || null;
+            const compName =
+              companyObj?.company_name ||
+              (clientInfo as any)?.company?.company_name ||
+              "Historical Company";
+            const compCode =
+              companyObj?.company_code || (clientInfo as any)?.company?.company_code || "HIST";
+            const compId = s.company_id || (clientInfo as any)?.company_id || null;
+
+            const isSettled = snapNet === 0 || s.payment_status === "Paid";
+            const paidAmt = isSettled ? snapNet : 0;
+            const remAmt = isSettled ? 0 : snapNet;
 
             records.push({
               id: s.id,
@@ -283,6 +401,8 @@ export function ShareholderStatementDialog({
               grossAmount: snapGross,
               taxAmount: snapTax,
               netAmount: snapNet,
+              paidAmount: paidAmt,
+              remainingAmount: remAmt,
               status: status,
               paymentDate: null,
               paymentRef: s.event_name || null,
@@ -339,12 +459,14 @@ export function ShareholderStatementDialog({
       gross += r.grossAmount;
       tax += r.taxAmount;
       net += r.netAmount;
-      const statusLower = (r.status || "").toLowerCase();
-      if (statusLower === "paid" || statusLower === "completed" || statusLower === "settled") {
-        paid += r.netAmount;
-      } else {
-        pending += r.netAmount;
-      }
+      paid += Number(r.paidAmount != null ? r.paidAmount : r.status === "Paid" ? r.netAmount : 0);
+      pending += Number(
+        r.remainingAmount != null
+          ? r.remainingAmount
+          : r.status === "Paid"
+            ? 0
+            : Math.max(0, r.netAmount - (r.paidAmount || 0)),
+      );
     }
     return { gross, tax, net, paid, pending };
   }, [filteredRecords]);
@@ -365,7 +487,8 @@ export function ShareholderStatementDialog({
         name: clientInfo?.full_name || "Shareholder",
         fatherName: clientInfo?.father_name || undefined,
         boid: resolvedBoid || "—",
-        pan: clientInfo?.pan_no || clientInfo?.citizenship_no || clientInfo?.pan_or_citizenship || "—",
+        pan:
+          clientInfo?.pan_no || clientInfo?.citizenship_no || clientInfo?.pan_or_citizenship || "—",
         holderType: clientInfo?.holder_type || "Natural Person - Public",
         bankName: clientInfo?.bank_name || "—",
         bankAccountNo: clientInfo?.bank_account_no || "—",
@@ -397,23 +520,25 @@ export function ShareholderStatementDialog({
         (r, i) => `
       <tr>
         <td style="text-align: center; font-family: monospace;">${i + 1}</td>
-        <td style="font-weight: 600; font-family: monospace;">${r.fiscalYear}</td>
+        <td style="font-weight: 600; font-family: monospace;">${escapeHtml(r.fiscalYear)}</td>
         <td>
-          <div style="font-weight: 700; color: #0f2744;">${r.companyName}</div>
-          ${r.companyCode ? `<div style="font-size: 8.5px; color: #64748b; font-family: monospace;">${r.companyCode}</div>` : ""}
+          <div style="font-weight: 700; color: #0f2744;">${escapeHtml(r.companyName)}</div>
+          ${r.companyCode ? `<div style="font-size: 8.5px; color: #64748b; font-family: monospace;">${escapeHtml(r.companyCode)}</div>` : ""}
         </td>
         <td>
-          <span class="badge badge-type">${r.type}</span>
-          ${r.remarks ? `<div style="font-size: 8px; color: #64748b; margin-top: 2px; max-width: 140px; word-break: break-word;">${r.remarks}</div>` : ""}
+          <span class="badge badge-type">${escapeHtml(r.type)}</span>
+          ${r.remarks ? `<div style="font-size: 8px; color: #64748b; margin-top: 2px; max-width: 140px; word-break: break-word;">${escapeHtml(r.remarks)}</div>` : ""}
         </td>
         <td style="text-align: right; font-weight: 600; font-family: monospace;">${r.kitta > 0 ? r.kitta.toLocaleString() : "—"}</td>
         <td style="text-align: right; font-family: monospace;">${r.grossAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
         <td style="text-align: right; color: #d97706; font-family: monospace;">${r.taxAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
         <td style="text-align: right; font-weight: 700; font-family: monospace; color: #0f172a;">${r.netAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-        <td><span class="badge ${r.status === "Paid" ? "badge-paid" : r.status === "Partial" ? "badge-partial" : "badge-pending"}">${r.status}</span></td>
+        <td style="text-align: right; font-weight: 700; font-family: monospace; color: #059669;">${r.paidAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+        <td style="text-align: right; font-weight: 700; font-family: monospace; color: ${r.remainingAmount > 0 ? "#e11d48" : "#64748b"};">${r.remainingAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+        <td><span class="badge ${r.status === "Paid" ? "badge-paid" : r.status === "Partial" ? "badge-partial" : "badge-pending"}">${escapeHtml(r.status)}</span></td>
         <td style="font-size: 9px; color: #475569;">
           ${r.paymentDate ? `<div>${format(new Date(r.paymentDate), "dd MMM yyyy")}</div>` : ""}
-          ${r.paymentRef ? `<div style="font-family: monospace; font-size: 8px; color: #64748b;">${r.paymentRef}</div>` : ""}
+          ${r.paymentRef ? `<div style="font-family: monospace; font-size: 8px; color: #64748b;">${escapeHtml(r.paymentRef)}</div>` : ""}
           ${!r.paymentDate && !r.paymentRef ? "—" : ""}
         </td>
       </tr>
@@ -604,51 +729,53 @@ export function ShareholderStatementDialog({
           }
           .sig-box {
             text-align: center;
-            width: 150px;
-            border-top: 1px solid #334155;
-            padding-top: 4px;
-            font-size: 9px;
+            width: 180px;
+            border-top: 1.5px solid #1e293b;
+            padding-top: 5px;
+            font-size: 9.5px;
             font-weight: 700;
-            color: #1e293b;
-            margin-top: 40px;
+            color: #0f172a;
+            margin-top: 36px;
+            line-height: 1.4;
           }
         </style>
       </head>
       <body>
         <div class="doc-header">
           <div>
-            <div class="brand-title">RTA / RTS System — Registrar & Transfer Agent</div>
+            <div class="brand-title">RTA/RTS System</div>
             <div class="brand-subtitle">Shareholder Payout & Distribution Statement</div>
             <div class="brand-nepali">लाभांश तथा ब्याज भुक्तानी विवरण — एकीकृत लगानीकर्ता खाता</div>
             ${selectedCompany !== "all" ? `<div style="font-size: 9px; color: #0284c7; font-weight: 600; margin-top: 2px;">Filtered Entity: ${selectedCompany}</div>` : ""}
           </div>
           <div class="meta-stamp">
-            <strong>CONFIDENTIAL & VERIFIED</strong>
-            <div>Generated: ${dateStr}</div>
-            <div>Total Transactions: ${filteredRecords.length}</div>
+            <strong style="color: #0f2744; font-size: 9px; letter-spacing: 0.5px;">RBB MERCHANT BANKING LIMITED</strong>
+            <div style="font-size: 8.5px; color: #475569;">RTA/RTS Department · Central Office</div>
+            <div style="font-size: 8.5px; color: #64748b;">Generated: ${dateStr}</div>
+            <div style="font-size: 8.5px; color: #64748b;">Total Records: ${filteredRecords.length}</div>
           </div>
         </div>
 
         <div class="shareholder-card">
           <div class="info-col">
             <label>Shareholder Name</label>
-            <span>${clientInfo?.full_name || "—"}</span>
-            ${clientInfo?.father_name ? `<div style="font-size: 8.5px; color: #64748b;">s/o ${clientInfo.father_name}</div>` : ""}
+            <span>${escapeHtml(clientInfo?.full_name || "—")}</span>
+            ${clientInfo?.father_name ? `<div style="font-size: 8.5px; color: #64748b;">s/o ${escapeHtml(clientInfo.father_name)}</div>` : ""}
           </div>
           <div class="info-col">
             <label>BOID (16-Digit Demat)</label>
-            <span class="boid">${resolvedBoid || "—"}</span>
-            <div style="font-size: 8.5px; color: #64748b;">${clientInfo?.holder_type || "Natural Person - Public"}</div>
+            <span class="boid">${escapeHtml(resolvedBoid || "—")}</span>
+            <div style="font-size: 8.5px; color: #64748b;">${escapeHtml(clientInfo?.holder_type || "Natural Person - Public")}</div>
           </div>
           <div class="info-col">
             <label>PAN / Citizenship</label>
-            <span>${clientInfo?.pan_no || clientInfo?.citizenship_no || clientInfo?.pan_or_citizenship || "—"}</span>
-            ${clientInfo?.phone ? `<div style="font-size: 8.5px; color: #64748b;">Ph: ${clientInfo.phone}</div>` : ""}
+            <span>${escapeHtml(clientInfo?.pan_no || clientInfo?.citizenship_no || clientInfo?.pan_or_citizenship || "—")}</span>
+            ${clientInfo?.phone ? `<div style="font-size: 8.5px; color: #64748b;">Ph: ${escapeHtml(clientInfo.phone)}</div>` : ""}
           </div>
           <div class="info-col">
             <label>Registered Bank Account</label>
-            <span style="font-size: 10px;">${clientInfo?.bank_name || "—"}</span>
-            <div style="font-size: 9px; font-family: monospace; color: #475569;">${clientInfo?.bank_account_no || "—"}</div>
+            <span style="font-size: 10px;">${escapeHtml(clientInfo?.bank_name || "—")}</span>
+            <div style="font-size: 9px; font-family: monospace; color: #475569;">${escapeHtml(clientInfo?.bank_account_no || "—")}</div>
           </div>
         </div>
 
@@ -682,6 +809,8 @@ export function ShareholderStatementDialog({
               <th style="text-align: right;">Gross (NPR)</th>
               <th style="text-align: right;">TDS (NPR)</th>
               <th style="text-align: right;">Net (NPR)</th>
+              <th style="text-align: right;">Paid (NPR)</th>
+              <th style="text-align: right;">Due (NPR)</th>
               <th style="width: 55px;">Status</th>
               <th>Payment Ref / Date</th>
             </tr>
@@ -696,19 +825,22 @@ export function ShareholderStatementDialog({
               <td style="text-align: right; font-family: monospace;">${totals.gross.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
               <td style="text-align: right; font-family: monospace; color: #d97706;">${totals.tax.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
               <td style="text-align: right; font-family: monospace; color: #0f172a;">${totals.net.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+              <td style="text-align: right; font-family: monospace; color: #059669;">${totals.paid.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+              <td style="text-align: right; font-family: monospace; color: #e11d48;">${totals.pending.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
               <td colspan="2" style="font-size: 8.5px; color: #64748b;">${filteredRecords.length} total entries</td>
             </tr>
           </tfoot>
         </table>
 
         <div class="disclaimer-block">
-          <div>
-            <div>• This document is an authentic electronic record issued pursuant to the Nepal Companies Act & SEBON Directives.</div>
-            <div>• For discrepancies in Demat or Bank accounts, please contact the Share Registrar desk with valid documentation.</div>
+          <div style="max-width: 65%;">
+            <div style="margin-bottom: 3px;">• This statement is a verified system-generated record of historical entitlement earnings, TDS deductions, and payment settlements maintained in the registry.</div>
+            <div>• For queries regarding Demat (BOID) linkage, payment credit, or bank account updates, please contact the RTA/RTS Department, RBB Merchant Banking Limited.</div>
           </div>
           <div class="sig-box">
             Authorized Signatory<br>
-            <span style="font-weight: normal; font-size: 8px; color: #64748b;">RTA / RTS Operations Department</span>
+            <span style="font-weight: 600; font-size: 8.5px; color: #334155;">RTA/RTS Department</span><br>
+            <span style="font-weight: 700; font-size: 8.5px; color: #0f2744;">RBB Merchant Banking Limited</span>
           </div>
         </div>
       </body>
@@ -739,7 +871,7 @@ export function ShareholderStatementDialog({
           <div>
             <DialogTitle className="text-lg font-bold flex items-center gap-2">
               <User className="w-5 h-5 text-primary print:hidden" />
-              Shareholder Payout & Distribution Statement (लाभांश / ब्याज विवरण)
+              RTA/RTS System — Shareholder Payout & Distribution Statement
             </DialogTitle>
             <DialogDescription className="text-xs">
               Complete historical transaction ledger across all fiscal years and schemes.
@@ -890,6 +1022,8 @@ export function ShareholderStatementDialog({
                 <TableHead className="text-right">Gross (NPR)</TableHead>
                 <TableHead className="text-right">TDS (NPR)</TableHead>
                 <TableHead className="text-right">Net Payable</TableHead>
+                <TableHead className="text-right">Paid (NPR)</TableHead>
+                <TableHead className="text-right">Remaining (NPR)</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Payment Ref / Date</TableHead>
               </TableRow>
@@ -897,13 +1031,19 @@ export function ShareholderStatementDialog({
             <TableBody>
               {isStatementLoading ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-8 text-xs text-muted-foreground">
+                  <TableCell
+                    colSpan={11}
+                    className="text-center py-8 text-xs text-muted-foreground"
+                  >
                     Loading historical statement...
                   </TableCell>
                 </TableRow>
               ) : filteredRecords.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-8 text-xs text-muted-foreground">
+                  <TableCell
+                    colSpan={11}
+                    className="text-center py-8 text-xs text-muted-foreground"
+                  >
                     No distribution or payment records found for this shareholder.
                   </TableCell>
                 </TableRow>
@@ -944,16 +1084,34 @@ export function ShareholderStatementDialog({
                     <TableCell className="text-right font-mono font-bold text-foreground">
                       {r.netAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                     </TableCell>
+                    <TableCell className="text-right font-mono font-bold text-emerald-600">
+                      {r.paidAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    </TableCell>
+                    <TableCell
+                      className={`text-right font-mono font-bold ${
+                        r.remainingAmount > 0 ? "text-rose-600" : "text-muted-foreground"
+                      }`}
+                    >
+                      {r.remainingAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    </TableCell>
                     <TableCell>
                       <Badge
                         variant={
                           r.status === "Paid"
                             ? "default"
-                            : r.status === "Rejected"
+                            : r.status.toLowerCase().includes("reject") ||
+                                r.status.toLowerCase().includes("reversed") ||
+                                r.status.toLowerCase().includes("failed")
                               ? "destructive"
                               : "secondary"
                         }
-                        className="text-[10px]"
+                        className={
+                          r.status === "Paid"
+                            ? "bg-emerald-600 hover:bg-emerald-700 text-white text-[10px]"
+                            : r.status === "Partial"
+                              ? "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 border-amber-300 text-[10px]"
+                              : "text-[10px]"
+                        }
                       >
                         {r.status}
                       </Badge>
@@ -979,7 +1137,8 @@ export function ShareholderStatementDialog({
               <TableFooter>
                 <TableRow className="bg-muted/60 font-semibold text-xs border-t-2">
                   <TableCell colSpan={2} className="uppercase tracking-wider font-bold">
-                    Grand Total ({filteredRecords.length} record{filteredRecords.length !== 1 ? "s" : ""})
+                    Grand Total ({filteredRecords.length} record
+                    {filteredRecords.length !== 1 ? "s" : ""})
                   </TableCell>
                   <TableCell
                     className="text-right font-mono font-bold text-primary"
@@ -997,6 +1156,12 @@ export function ShareholderStatementDialog({
                   <TableCell className="text-right font-mono font-bold text-foreground">
                     {totals.net.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </TableCell>
+                  <TableCell className="text-right font-mono font-bold text-emerald-600">
+                    {totals.paid.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </TableCell>
+                  <TableCell className="text-right font-mono font-bold text-rose-600">
+                    {totals.pending.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </TableCell>
                   <TableCell colSpan={2} className="text-right text-[11px] text-muted-foreground">
                     Settled: NPR {totals.paid.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </TableCell>
@@ -1004,6 +1169,28 @@ export function ShareholderStatementDialog({
               </TableFooter>
             )}
           </Table>
+        </div>
+
+        <div className="mt-3 p-3 bg-muted/20 border rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-muted-foreground print:hidden">
+          <div className="space-y-1 max-w-xl">
+            <p>
+              • This statement is a verified system-generated record of historical entitlement
+              earnings, TDS deductions, and payment settlements maintained in the registry.
+            </p>
+            <p>
+              • For any queries regarding Demat (BOID) linkage, unclaimed entitlements, or bank
+              account updates, please contact the RTA/RTS Department, RBB Merchant Banking Limited.
+            </p>
+          </div>
+          <div className="text-right sm:border-l sm:pl-4 shrink-0">
+            <span className="text-[10px] uppercase tracking-wider text-foreground font-bold block">
+              Authorized Record
+            </span>
+            <span className="text-[11px] text-primary font-semibold block">RTA/RTS Department</span>
+            <span className="text-[11px] text-foreground font-bold block">
+              RBB Merchant Banking Limited
+            </span>
+          </div>
         </div>
       </DialogContent>
     </Dialog>

@@ -279,8 +279,9 @@ export const ImportService = {
     options?: {
       fiscalYear?: string;
       dividendRate?: number;
+      bonusRate?: number;
       tdsRate?: number; // Per-sheet TDS rate (0, 0.05, 0.06, 0.15, etc.) — used as fallback when no row-level category
-      dividendType?: "Cash" | "Stock" | "Bonus" | "Right";
+      dividendType?: "Cash" | "Stock" | "Bonus" | "Right" | "Combined";
       companyId?: string; // Direct company UUID — bypasses name-based lookup
       companyName?: string;
       companyIsin?: string;
@@ -315,8 +316,17 @@ export const ImportService = {
           row["DP ID"] ||
           row["DPID"] ||
           row["BO ID"] ||
+          row["DMAT"] ||
+          row["DEMAT"] ||
+          row["DEMAT NO"] ||
+          row["DMAT NO"] ||
+          row["FOLIO"] ||
+          row["FOLIO NO"] ||
+          row["SH NO"] ||
+          row["HOLDER NO"] ||
           row.client_code ||
           row.ClientCode ||
+          row.folio ||
           "",
       ).trim();
       if (boid) return true; // has a BOID — keep it
@@ -352,6 +362,7 @@ export const ImportService = {
           companyIsin: options?.companyIsin,
           fiscalYear: options?.fiscalYear,
           dividendRate: options?.dividendRate,
+          bonusRate: options?.bonusRate,
           tdsRate: options?.tdsRate,
           dividendType: options?.dividendType,
           sheetType: options?.sheetType,
@@ -550,7 +561,7 @@ export const ImportService = {
 
     // Collect unique BOIDs and their row data
     const boidMap = new Map<string, any>();
-    const rowErrors: Record<string, any>[] = [];
+    let rowErrors: Record<string, any>[] = [];
     for (const row of chunkData) {
       const boid = String(
         row.boid ||
@@ -1414,21 +1425,43 @@ export const ImportService = {
         }
       }
 
+      const categoryTds = getCategoryTdsRate(
+        investorCategory,
+        isDebenture,
+        targetTable === "mutual_fund_payables",
+        taxRules,
+      );
       const rowTdsRate =
-        options?.tdsRate !== undefined
-          ? options.tdsRate
-          : getCategoryTdsRate(
-              investorCategory,
-              isDebenture,
-              targetTable === "mutual_fund_payables",
-              taxRules,
-            );
+        investorCategory !== "UNKNOWN" || options?.tdsRate === undefined
+          ? categoryTds
+          : options.tdsRate;
 
       let grossAmount = rawGross;
       let taxAmount = rawTax;
       let netPayable = rawNet;
 
       if (targetTable === "dividend_payables" || targetTable === "mutual_fund_payables") {
+        let rowActualBonus = Number(row.bonus_actual || 0);
+        let rowIssuedBonus = Number(row.bonus_issued || 0);
+        let rowBonusFraction = Number(row.bonus_fraction || 0);
+        let rowAfterBonusKitta = Number(row.after_bonus_kitta || 0);
+        let rowBonusTax = Number(row.bon_tax || 0);
+
+        if (!rowActualBonus && sharesHeld > 0 && options?.bonusRate) {
+          rowActualBonus = Math.round(((sharesHeld * options.bonusRate) / 100) * 10000) / 10000;
+          rowIssuedBonus = Math.floor(rowActualBonus);
+          rowBonusFraction = Math.round((rowActualBonus - rowIssuedBonus) * 10000) / 10000;
+          rowAfterBonusKitta = sharesHeld + rowIssuedBonus;
+          if (
+            rowTdsRate > 0 &&
+            !rowBonusTax &&
+            investorCategory !== "MUTUAL_FUND" &&
+            investorCategory !== "TAX_EXEMPT"
+          ) {
+            rowBonusTax = Math.round(rowIssuedBonus * 100 * rowTdsRate * 100) / 100;
+          }
+        }
+
         if (!options?.isPreCalculated) {
           if (!grossAmount && sharesHeld && options?.dividendRate) {
             const faceVal = targetTable === "mutual_fund_payables" ? 10 : 100;
@@ -1438,11 +1471,13 @@ export const ImportService = {
           if (!taxAmount && grossAmount && rowTdsRate > 0) {
             taxAmount = Math.round(grossAmount * rowTdsRate * 100) / 100;
           }
+          const totalTaxToDeduct = taxAmount + rowBonusTax;
           if (!netPayable && grossAmount) {
-            netPayable = Math.round((grossAmount - taxAmount) * 100) / 100;
+            netPayable = Math.max(0, Math.round((grossAmount - totalTaxToDeduct) * 100) / 100);
           }
           if (!grossAmount) grossAmount = netPayable || 0;
-          if (!netPayable) netPayable = Math.round((grossAmount - taxAmount) * 100) / 100;
+          if (!netPayable)
+            netPayable = Math.max(0, Math.round((grossAmount - totalTaxToDeduct) * 100) / 100);
         }
 
         const totals =
@@ -1460,9 +1495,14 @@ export const ImportService = {
                 category: investorCategory,
                 isDebenture: false,
                 isMutualFund: targetTable === "mutual_fund_payables",
-                customTaxRate: options?.tdsRate,
+                customTaxRate: investorCategory === "UNKNOWN" ? options?.tdsRate : undefined,
               });
-        if (totals.grossAmount <= 0 && totals.netPayable <= 0 && (!sharesHeld || sharesHeld <= 0)) {
+        if (
+          totals.grossAmount <= 0 &&
+          totals.netPayable <= 0 &&
+          (!sharesHeld || sharesHeld <= 0) &&
+          !rowIssuedBonus
+        ) {
           continue;
         }
 
@@ -1471,18 +1511,23 @@ export const ImportService = {
           company_id: companyId,
           client_id: clientId,
           gross_dividend: totals.grossAmount,
-          tax_amount: totals.taxAmount,
-          net_payable: totals.netPayable,
+          tax_amount: totals.taxAmount + rowBonusTax,
+          net_payable: Math.max(
+            0,
+            totals.netPayable - (rowBonusTax > 0 && !options?.isPreCalculated ? rowBonusTax : 0),
+          ),
           shares_held: sharesHeld,
           dividend_rate: options?.dividendRate ?? null,
+          bonus_rate: options?.bonusRate ?? null,
           tds_rate: totals.taxRate,
-          dividend_type: options?.dividendType || "Cash",
+          dividend_type:
+            (options?.dividendType === "Combined" ? "Cash" : options?.dividendType) || "Cash",
           fiscal_year: options?.fiscalYear ?? null,
-          bonus_actual: Number(row.bonus_actual || 0) || null,
-          bonus_issued: Number(row.bonus_issued || 0) || null,
-          bonus_fraction: Number(row.bonus_fraction || 0) || null,
-          after_bonus_kitta: Number(row.after_bonus_kitta || 0) || null,
-          bonus_tax: Number(row.bon_tax || 0) || null,
+          bonus_actual: rowActualBonus || null,
+          bonus_issued: rowIssuedBonus || null,
+          bonus_fraction: rowBonusFraction || null,
+          after_bonus_kitta: rowAfterBonusKitta || null,
+          bonus_tax: rowBonusTax || null,
           bank_name: bankName || null,
           bank_account_no: bankAccountNo || null,
           bank_branch: bankBranch || null,
@@ -1524,7 +1569,7 @@ export const ImportService = {
                 taxAmount,
                 category: investorCategory,
                 isDebenture: true,
-                customTaxRate: options?.tdsRate,
+                customTaxRate: investorCategory === "UNKNOWN" ? options?.tdsRate : undefined,
               });
         if (totals.grossAmount <= 0 && totals.netPayable <= 0 && (!sharesHeld || sharesHeld <= 0)) {
           continue;
@@ -1626,6 +1671,10 @@ export const ImportService = {
             `Running direct insert fallback for ${payablesToInsert.length} ${targetTable} rows...`,
           );
           payablesInserted = await insertRowsWithSchemaFallback(targetTable, payablesToInsert);
+          // If direct fallback succeeded in inserting the rows, clear the RPC errors that triggered the fallback
+          if (payablesInserted === payablesToInsert.length) {
+            rowErrors = rowErrors.filter((e) => e.error_type !== "payable_rpc");
+          }
         } catch (fallbackEx: any) {
           console.error("Direct payable insert fallback failed:", fallbackEx);
           throw new Error("Payable insert failed: " + (fallbackEx?.message || String(fallbackEx)));

@@ -12,6 +12,7 @@ export interface InterestCalculationParams {
   taxCategory?:
     | "PUBLIC"
     | "PRIVATE"
+    | "TAX_EXEMPT"
     | "MUTUAL_FUND"
     | "INSTITUTION"
     | "TAX_EXEMPTED"
@@ -87,7 +88,11 @@ export const InterestCalculator = {
     // TDS rate logic
     let tdsRate = params.taxRate !== undefined ? normalizeTaxRate(params.taxRate) : 0.06;
 
-    if (params.taxCategory === "TAX_EXEMPTED" || params.taxCategory === "MUTUAL_FUND") {
+    if (
+      params.taxCategory === "TAX_EXEMPT" ||
+      params.taxCategory === "TAX_EXEMPTED" ||
+      params.taxCategory === "MUTUAL_FUND"
+    ) {
       tdsRate = 0.0; // Tax Exempted / Mutual Fund
     } else if (params.taxCategory === "INSTITUTION" || params.taxCategory === "FOREIGN_INVESTOR") {
       tdsRate = 0.15; // Legal Person / Foreign Investor (15%)

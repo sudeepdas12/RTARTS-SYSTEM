@@ -7,6 +7,7 @@ export interface DividendCalculationParams {
   taxCategory?:
     | "PUBLIC"
     | "INSTITUTION"
+    | "TAX_EXEMPT"
     | "TAX_EXEMPTED"
     | "MUTUAL_FUND"
     | "PROMOTER"
@@ -49,8 +50,12 @@ export const DividendCalculator = {
 
     // Determine TDS Rate by Category
     let appliedTdsRate = 0.05; // Default 5% for Public, Institution, Promoter, Local, Employee
-    if (params.taxCategory === "TAX_EXEMPTED" || params.taxCategory === "MUTUAL_FUND") {
-      appliedTdsRate = 0.0; // 0% for Mutual Fund (Tax Exempted)
+    if (
+      params.taxCategory === "TAX_EXEMPT" ||
+      params.taxCategory === "TAX_EXEMPTED" ||
+      params.taxCategory === "MUTUAL_FUND"
+    ) {
+      appliedTdsRate = 0.0; // 0% for Mutual Fund / Tax Exempt
     } else if (params.taxCategory === "FOREIGN" || params.taxCategory === "FOREIGN_INVESTOR") {
       appliedTdsRate = 0.05;
     } else if (params.taxCategory === "CUSTOM" && params.customTaxRate !== undefined) {

@@ -500,6 +500,7 @@ export const ConnectIPSService = {
               .update({
                 status: "Failed",
                 remarks: `Disbursement returned: ${reason}`,
+                reversal_reason: reason,
                 updated_at: new Date().toISOString(),
               })
               .eq("id", lineItemId)

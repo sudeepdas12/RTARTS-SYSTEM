@@ -244,10 +244,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
     lotName.includes("EMPLOYEE") ||
     dbSegment === "EMPLOYEE";
 
-  // =========================================================================
-  // TIER 0: Direct Payee Classification Argument (When passed explicitly)
-  // =========================================================================
-  if (dbClassification && dbClassification !== "UNCLASSIFIED" && !input.lot_name) {
+  if (dbClassification && dbClassification !== "UNCLASSIFIED") {
     if (dbClassification === "COMPANY_INSTITUTION") {
       return {
         payee_classification: "COMPANY_INSTITUTION",
@@ -259,15 +256,30 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
         rule_matched: "Explicit Payee Classification (Legal Person)",
       };
     }
-    if (dbClassification === "TAX_EXEMPT") {
+    if (dbClassification === "TAX_EXEMPT" || dbClassification === "MUTUAL_FUND") {
+      const isMF =
+        dbClassification === "MUTUAL_FUND" ||
+        /MUTUAL/i.test(explicitType) ||
+        MUTUAL_FUND_SCHEMES_REGEX.test(nameUpper);
       return {
         payee_classification: "TAX_EXEMPT",
-        payee_category: "TAX_EXEMPT",
+        payee_category: isMF ? "MUTUAL_FUND" : "TAX_EXEMPT",
         payee_segment: null,
-        holder_type: "Tax Exempt",
+        holder_type: isMF ? "Mutual Fund" : "Tax Exempt",
         tds_rate_dividend: 0.0,
         tds_rate_debenture: 0.0,
         rule_matched: "Explicit Payee Classification (Tax Exempt)",
+      };
+    }
+    if (dbClassification === "FOREIGN" || dbClassification === "FOREIGN_INVESTOR") {
+      return {
+        payee_classification: "COMPANY_INSTITUTION",
+        payee_category: "FOREIGN",
+        payee_segment: null,
+        holder_type: "Foreign",
+        tds_rate_dividend: 0.05,
+        tds_rate_debenture: 0.15,
+        rule_matched: "Explicit Payee Classification (Foreign)",
       };
     }
     if (dbClassification === "NATURAL_PERSON" || dbClassification === "PUBLIC_LEGAL_PERSON") {

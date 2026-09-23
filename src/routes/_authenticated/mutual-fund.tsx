@@ -88,6 +88,8 @@ interface Payable {
   gross_dividend: number | null;
   tax_amount: number | null;
   net_payable: number | null;
+  paid_amount?: number | null;
+  remaining_amount?: number | null;
   payment_status: PaymentStatus;
   payment_date: string | null;
   payment_reference: string | null;
@@ -152,6 +154,8 @@ const emptyForm = {
   gross_dividend: "",
   tax_amount: "",
   net_payable: "",
+  paid_amount: "",
+  remaining_amount: "",
   payment_status: "Pending" as PaymentStatus,
   payment_date: "",
   payment_reference: "",
@@ -328,7 +332,18 @@ function MutualFundPage() {
 
   // Server-side totals for KPI cards (using fetchAllRows to support datasets > 1,000 records)
   const {
-    data: totals = { count: 0, paidCount: 0, pendingCount: 0, units: 0, gross: 0, tax: 0, net: 0 },
+    data: totals = {
+      count: 0,
+      paidCount: 0,
+      partialCount: 0,
+      pendingCount: 0,
+      units: 0,
+      gross: 0,
+      tax: 0,
+      net: 0,
+      disbursed: 0,
+      remaining: 0,
+    },
   } = useQuery({
     queryKey: [
       "mutual_fund_payables_totals",
@@ -344,7 +359,7 @@ function MutualFundPage() {
         let q = (supabase as any)
           .from("mutual_fund_payables")
           .select(
-            "payment_status, shares_held, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, lot_name, created_at, payment_date",
+            "payment_status, shares_held, gross_dividend, tax_amount, net_payable, paid_amount, remaining_amount, payee_classification, payee_segment, lot_name, created_at, payment_date",
           )
           .range(from, to);
         if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
@@ -379,11 +394,14 @@ function MutualFundPage() {
           acc: {
             count: number;
             paidCount: number;
+            partialCount: number;
             pendingCount: number;
             units: number;
             gross: number;
             tax: number;
             net: number;
+            disbursed: number;
+            remaining: number;
           },
           p: {
             payment_status: string;
@@ -391,17 +409,44 @@ function MutualFundPage() {
             gross_dividend: number | null;
             tax_amount: number | null;
             net_payable: number | null;
+            paid_amount?: number | null;
+            remaining_amount?: number | null;
           },
-        ) => ({
-          count: acc.count + 1,
-          paidCount: acc.paidCount + (p.payment_status === "Paid" ? 1 : 0),
-          pendingCount: acc.pendingCount + (p.payment_status === "Pending" ? 1 : 0),
-          units: acc.units + Number(p.shares_held ?? 0),
-          gross: acc.gross + Number(p.gross_dividend ?? 0),
-          tax: acc.tax + Number(p.tax_amount ?? 0),
-          net: acc.net + Number(p.net_payable ?? 0),
-        }),
-        { count: 0, paidCount: 0, pendingCount: 0, units: 0, gross: 0, tax: 0, net: 0 },
+        ) => {
+          const net = Number(p.net_payable ?? 0);
+          const paid =
+            p.paid_amount != null ? Number(p.paid_amount) : p.payment_status === "Paid" ? net : 0;
+          const rem =
+            p.remaining_amount != null
+              ? Number(p.remaining_amount)
+              : p.payment_status === "Paid"
+                ? 0
+                : Math.max(0, net - paid);
+          return {
+            count: acc.count + 1,
+            paidCount: acc.paidCount + (p.payment_status === "Paid" ? 1 : 0),
+            partialCount: acc.partialCount + (p.payment_status === "Partial" ? 1 : 0),
+            pendingCount: acc.pendingCount + (p.payment_status === "Pending" ? 1 : 0),
+            units: acc.units + Number(p.shares_held ?? 0),
+            gross: acc.gross + Number(p.gross_dividend ?? 0),
+            tax: acc.tax + Number(p.tax_amount ?? 0),
+            net: acc.net + net,
+            disbursed: acc.disbursed + paid,
+            remaining: acc.remaining + rem,
+          };
+        },
+        {
+          count: 0,
+          paidCount: 0,
+          partialCount: 0,
+          pendingCount: 0,
+          units: 0,
+          gross: 0,
+          tax: 0,
+          net: 0,
+          disbursed: 0,
+          remaining: 0,
+        },
       );
     },
     staleTime: 60_000,
@@ -598,6 +643,19 @@ function MutualFundPage() {
         );
       }
 
+      const paidAmount =
+        form.paid_amount !== ""
+          ? Number(form.paid_amount)
+          : form.payment_status === "Paid"
+            ? net
+            : 0;
+      const remainingAmount =
+        form.remaining_amount !== ""
+          ? Number(form.remaining_amount)
+          : form.payment_status === "Paid"
+            ? 0
+            : Math.max(0, net - paidAmount);
+
       const payload = {
         company_id: form.company_id,
         client_id: form.client_id,
@@ -607,6 +665,8 @@ function MutualFundPage() {
         gross_dividend: gross,
         tax_amount: tax,
         net_payable: net,
+        paid_amount: paidAmount,
+        remaining_amount: remainingAmount,
         payment_status: form.payment_status || "Pending",
         payment_date: form.payment_date || null,
         payment_reference: form.payment_reference || null,
@@ -704,6 +764,8 @@ function MutualFundPage() {
           payment_status: "Paid",
           payment_date: payDate || new Date().toISOString().slice(0, 10),
           payment_reference: payRef || null,
+          paid_amount: payOpen.net_payable,
+          remaining_amount: 0,
         })
         .eq("id", payOpen.id);
       if (error) throw error;
@@ -757,6 +819,8 @@ function MutualFundPage() {
       gross_dividend: p.gross_dividend?.toString() ?? "",
       tax_amount: p.tax_amount?.toString() ?? "",
       net_payable: p.net_payable?.toString() ?? "",
+      paid_amount: p.paid_amount?.toString() ?? "",
+      remaining_amount: p.remaining_amount?.toString() ?? "",
       payment_status: p.payment_status,
       payment_date: p.payment_date ?? "",
       payment_reference: p.payment_reference ?? "",
@@ -777,6 +841,15 @@ function MutualFundPage() {
       rows.map((p) => {
         const cl = p.client ?? null;
         const c = p.company ?? null;
+        const netVal = Number(p.net_payable ?? 0);
+        const paidVal =
+          p.paid_amount != null ? Number(p.paid_amount) : p.payment_status === "Paid" ? netVal : 0;
+        const remVal =
+          p.remaining_amount != null
+            ? Number(p.remaining_amount)
+            : p.payment_status === "Paid"
+              ? 0
+              : Math.max(0, netVal - paidVal);
         return {
           company_code: c?.company_code ?? "",
           company_name: c?.company_name ?? "",
@@ -794,6 +867,8 @@ function MutualFundPage() {
           gross_dividend: p.gross_dividend,
           tax_amount: p.tax_amount,
           net_payable: p.net_payable,
+          paid_amount: paidVal,
+          remaining_amount: remVal,
           payment_status: p.payment_status,
           payment_date: p.payment_date,
           payment_reference: p.payment_reference,
@@ -1399,9 +1474,20 @@ function MutualFundPage() {
               <div className="text-xl font-bold font-mono tracking-tight mt-1">
                 {(totals.units ?? 0).toLocaleString()}
               </div>
-              <div className="text-[11px] text-muted-foreground mt-0.5">
-                {(totals.count ?? 0).toLocaleString()} records ·{" "}
+              <div className="text-[11px] text-muted-foreground mt-0.5 flex flex-wrap items-center gap-1">
+                <span>{(totals.count ?? 0).toLocaleString()} records</span>
+                <span>·</span>
                 <span className="text-emerald-600 font-medium">{totals.paidCount ?? 0} Paid</span>
+                {(totals.partialCount ?? 0) > 0 && (
+                  <>
+                    <span>·</span>
+                    <span className="text-amber-600 font-medium">
+                      {totals.partialCount} Partial
+                    </span>
+                  </>
+                )}
+                <span>·</span>
+                <span>{totals.pendingCount ?? 0} Pending</span>
               </div>
             </div>
             <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary shrink-0">
@@ -1450,11 +1536,17 @@ function MutualFundPage() {
               <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                 Net Payable
               </div>
-              <div className="text-xl font-bold font-mono tracking-tight mt-1 text-emerald-600 dark:text-emerald-400">
+              <div className="text-xl font-bold font-mono tracking-tight mt-1 text-foreground">
                 NPR {fmt(totals.net)}
               </div>
-              <div className="text-[11px] text-muted-foreground mt-0.5">
-                {totals.pendingCount ?? 0} Pending transfer
+              <div className="text-[11px] mt-0.5 flex flex-wrap items-center gap-1.5 font-mono">
+                <span className="text-emerald-600 font-medium">
+                  Disbursed: NPR {fmt(totals.disbursed ?? 0)}
+                </span>
+                <span className="text-muted-foreground font-sans">·</span>
+                <span className="text-rose-600 font-medium">
+                  Due: NPR {fmt(totals.remaining ?? 0)}
+                </span>
               </div>
             </div>
             <div className="h-10 w-10 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-600 shrink-0">
@@ -1852,6 +1944,8 @@ function MutualFundPage() {
                   <TableHead className="text-right font-semibold">Gross</TableHead>
                   <TableHead className="text-right font-semibold">Tax</TableHead>
                   <TableHead className="text-right font-semibold">Net</TableHead>
+                  <TableHead className="text-right font-semibold">Paid</TableHead>
+                  <TableHead className="text-right font-semibold">Remaining</TableHead>
                   <TableHead className="font-semibold">Bank Details</TableHead>
                   <TableHead className="font-semibold">Status</TableHead>
                   <TableHead className="font-semibold">Fiscal Year</TableHead>
@@ -1861,138 +1955,168 @@ function MutualFundPage() {
               <TableBody>
                 {pageItems.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="py-12 text-center text-muted-foreground">
+                    <TableCell colSpan={14} className="py-12 text-center text-muted-foreground">
                       No mutual fund payables.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  pageItems.map((payable) => (
-                    <TableRow key={payable.id} className="hover:bg-muted/30 transition-colors">
-                      <TableCell>
-                        <span className="font-mono text-xs font-semibold text-muted-foreground mr-1">
-                          {payable.company?.company_code ?? "—"}
-                        </span>
-                        <span className="text-xs">{payable.company?.company_name}</span>
-                      </TableCell>
-                      <TableCell>
-                        <div className="font-medium text-xs text-foreground">
-                          {payable.client?.full_name ?? "—"}
-                        </div>
-                        {payable.client?.father_name && (
-                          <div className="text-[10px] text-muted-foreground">
-                            s/o {payable.client.father_name}
+                  pageItems.map((payable) => {
+                    const netVal = Number(payable.net_payable ?? 0);
+                    const paidVal =
+                      payable.paid_amount != null
+                        ? Number(payable.paid_amount)
+                        : payable.payment_status === "Paid"
+                          ? netVal
+                          : 0;
+                    const remVal =
+                      payable.remaining_amount != null
+                        ? Number(payable.remaining_amount)
+                        : payable.payment_status === "Paid"
+                          ? 0
+                          : Math.max(0, netVal - paidVal);
+                    return (
+                      <TableRow key={payable.id} className="hover:bg-muted/30 transition-colors">
+                        <TableCell>
+                          <span className="font-mono text-xs font-semibold text-muted-foreground mr-1">
+                            {payable.company?.company_code ?? "—"}
+                          </span>
+                          <span className="text-xs">{payable.company?.company_name}</span>
+                        </TableCell>
+                        <TableCell>
+                          <div className="font-medium text-xs text-foreground">
+                            {payable.client?.full_name ?? "—"}
                           </div>
-                        )}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {payable.client?.boid ? (
-                          <button
-                            type="button"
-                            className="font-semibold text-primary hover:underline cursor-pointer"
-                            onClick={() => setSelectedStatementBoid(payable.client!.boid)}
-                            title="Click to view full statement"
-                          >
-                            {payable.client.boid}
-                          </button>
-                        ) : (
-                          "—"
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right font-mono font-semibold text-primary">
-                        {payable.shares_held || payable.after_bonus_kitta || payable.client?.kitta
-                          ? (
-                              payable.shares_held ||
-                              payable.after_bonus_kitta ||
-                              payable.client?.kitta
-                            )?.toLocaleString()
-                          : "—"}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs">
-                        {payable.dividend_rate ? `${payable.dividend_rate}%` : "—"}
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {fmt(payable.gross_dividend)}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-amber-600">
-                        {fmt(payable.tax_amount)}
-                      </TableCell>
-                      <TableCell className="text-right font-mono font-bold text-foreground">
-                        {fmt(payable.net_payable)}
-                      </TableCell>
-                      <TableCell>
-                        <div className="text-[11px] font-medium max-w-[140px] truncate">
-                          {payable.bank_name || payable.client?.bank_name || "—"}
-                        </div>
-                        {(payable.bank_account_no || payable.client?.bank_account_no) && (
-                          <div className="font-mono text-[10px] text-muted-foreground">
-                            {payable.bank_account_no || payable.client?.bank_account_no}
+                          {payable.client?.father_name && (
+                            <div className="text-[10px] text-muted-foreground">
+                              s/o {payable.client.father_name}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {payable.client?.boid ? (
+                            <button
+                              type="button"
+                              className="font-semibold text-primary hover:underline cursor-pointer"
+                              onClick={() => setSelectedStatementBoid(payable.client!.boid)}
+                              title="Click to view full statement"
+                            >
+                              {payable.client.boid}
+                            </button>
+                          ) : (
+                            "—"
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-semibold text-primary">
+                          {payable.shares_held || payable.after_bonus_kitta || payable.client?.kitta
+                            ? (
+                                payable.shares_held ||
+                                payable.after_bonus_kitta ||
+                                payable.client?.kitta
+                              )?.toLocaleString()
+                            : "—"}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs">
+                          {payable.dividend_rate ? `${payable.dividend_rate}%` : "—"}
+                        </TableCell>
+                        <TableCell className="text-right font-mono">
+                          {fmt(payable.gross_dividend)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-amber-600">
+                          {fmt(payable.tax_amount)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-bold text-foreground">
+                          {fmt(payable.net_payable)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-bold text-emerald-600">
+                          {fmt(paidVal)}
+                        </TableCell>
+                        <TableCell
+                          className={`text-right font-mono font-bold ${
+                            remVal > 0 ? "text-rose-600" : "text-muted-foreground"
+                          }`}
+                        >
+                          {fmt(remVal)}
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-[11px] font-medium max-w-[140px] truncate">
+                            {payable.bank_name || payable.client?.bank_name || "—"}
                           </div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            payable.payment_status === "Paid"
-                              ? "default"
-                              : payable.payment_status === "Partial"
-                                ? "secondary"
+                          {(payable.bank_account_no || payable.client?.bank_account_no) && (
+                            <div className="font-mono text-[10px] text-muted-foreground">
+                              {payable.bank_account_no || payable.client?.bank_account_no}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              payable.payment_status === "Paid"
+                                ? "default"
                                 : (payable as any).remarks?.includes("Rejected")
                                   ? "destructive"
                                   : "outline"
-                          }
-                        >
-                          {payable.payment_status}
-                        </Badge>
-                        {(payable as any).remarks && (
-                          <span
-                            className={`block text-[10px] max-w-[140px] truncate mt-0.5 ${(payable as any).remarks.includes("Rejected") ? "text-destructive font-medium" : "text-muted-foreground"}`}
-                            title={(payable as any).remarks}
+                            }
+                            className={
+                              payable.payment_status === "Paid"
+                                ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                                : payable.payment_status === "Partial"
+                                  ? "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 border-amber-300"
+                                  : ""
+                            }
                           >
-                            {(payable as any).remarks}
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-xs font-mono">
-                        {payable.fiscal_year ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {canWrite && (
-                          <div className="flex justify-end gap-1">
-                            {payable.payment_status !== "Paid" && (
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                onClick={() => setPayOpen(payable)}
-                                title="Mark paid"
-                                className="hover:bg-emerald-50"
-                              >
-                                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                              </Button>
-                            )}
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              onClick={() => startEdit(payable)}
-                              className="hover:bg-blue-50"
+                            {payable.payment_status}
+                          </Badge>
+                          {(payable as any).remarks && (
+                            <span
+                              className={`block text-[10px] max-w-[140px] truncate mt-0.5 ${(payable as any).remarks.includes("Rejected") ? "text-destructive font-medium" : "text-muted-foreground"}`}
+                              title={(payable as any).remarks}
                             >
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                            {canDelete && (
+                              {(payable as any).remarks}
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-xs font-mono">
+                          {payable.fiscal_year ?? "—"}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {canWrite && (
+                            <div className="flex justify-end gap-1">
+                              {payable.payment_status !== "Paid" && (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={() => setPayOpen(payable)}
+                                  title="Mark paid"
+                                  className="hover:bg-emerald-50"
+                                >
+                                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                                </Button>
+                              )}
                               <Button
                                 size="icon"
                                 variant="ghost"
-                                onClick={() => del.mutate(payable.id)}
-                                className="hover:bg-red-50"
-                                title="Delete Payable (Admin Only)"
+                                onClick={() => startEdit(payable)}
+                                className="hover:bg-blue-50"
                               >
-                                <Trash2 className="h-4 w-4 text-destructive" />
+                                <Pencil className="h-4 w-4" />
                               </Button>
-                            )}
-                          </div>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))
+                              {canDelete && (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={() => del.mutate(payable.id)}
+                                  className="hover:bg-red-50"
+                                  title="Delete Payable (Admin Only)"
+                                >
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              )}
+                            </div>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
                 )}
               </TableBody>
             </Table>

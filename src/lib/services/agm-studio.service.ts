@@ -6822,7 +6822,7 @@ export const AgmStudioService = {
           "Carried New Fraction",
           "Total Kitta After Bonus",
           "Gross Cash Dividend (NPR)",
-          "Statutory Tax (5% TDS)",
+          "Statutory Tax (TDS)",
           "Net Cash Payable (NPR)",
           "Conversion & Audit Status",
         ]
@@ -6842,7 +6842,7 @@ export const AgmStudioService = {
           "Carried New Fraction",
           "Total Kitta After Bonus",
           "Gross Cash Dividend (NPR)",
-          "Statutory Tax (5% TDS)",
+          "Statutory Tax (TDS)",
           "Net Cash Payable (NPR)",
           "Audit Verification Status",
         ];

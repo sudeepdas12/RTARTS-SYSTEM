@@ -132,7 +132,7 @@ export const PaymentService = {
     try {
       const { data, error } = await (supabase as any)
         .from("payment_batches")
-        .select("*")
+        .select("*, companies(*)")
         .eq("id", batchId)
         .single();
 
@@ -501,6 +501,35 @@ export const PaymentService = {
     return true;
   },
 
+  async updateBatch(
+    batchId: string,
+    updates: {
+      batch_name?: string;
+      fiscal_year?: string;
+      payable_type?: string;
+      payment_method?: string;
+      company_id?: string;
+      cds_batch_ref?: string | null;
+      registrar?: string | null;
+    },
+  ): Promise<PaymentBatch> {
+    const { data, error } = await (supabase as any)
+      .from("payment_batches")
+      .update({
+        ...updates,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", batchId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Failed to update batch:", error.message);
+      throw new Error(`Failed to update batch: ${error.message}`);
+    }
+    return data as PaymentBatch;
+  },
+
   async updatePaymentStatus(
     paymentId: string,
     status: string,
@@ -797,8 +826,14 @@ export const PaymentService = {
             // High-precision proration with exact statutory paisa balancing
             const interestItems = interestData.map((p: any) => {
               const annualGross = Number(p.gross_interest ?? 0);
+              const annualTax = Number(p.tax_amount ?? 0);
               const gross = (annualGross / 365) * days;
-              const rate = getPayeeTaxRate(p.payee_classification, true, null, false);
+              // Respect the explicitly uploaded/stored tax rate instead of blindly enforcing statutory
+              // This is critical because some payees might have tax exemption certificates
+              const rate =
+                annualGross > 0
+                  ? annualTax / annualGross
+                  : getPayeeTaxRate(p.payee_classification, true, null, false);
               const tax = gross * rate;
               const net = gross - tax;
               return {
@@ -853,14 +888,33 @@ export const PaymentService = {
             }
 
             interestItems.forEach((r: any) => {
-              const net = r._floorNetPaisa / 100;
-              const tax = r._floorTaxPaisa / 100;
-              const gross = Math.round((net + tax) * 100) / 100;
+              let net = r._floorNetPaisa / 100;
+              let tax = r._floorTaxPaisa / 100;
+              let gross = Math.round((net + tax) * 100) / 100;
+
+              const isPartial = r.payment_status === "Partial";
+              const rem =
+                r.remaining_amount != null
+                  ? Number(r.remaining_amount)
+                  : Number(r.net_payable ?? 0);
+              if (isPartial && rem > 0 && rem < net) {
+                net = rem;
+                const ratio = net / (r._floorNetPaisa / 100 || 1);
+                gross = Math.round(gross * ratio * 100) / 100;
+                tax = Number((gross - net).toFixed(2));
+                gross = Number((net + tax).toFixed(2));
+              }
+
               payables.push({
                 ...r,
                 gross_interest: gross,
                 tax_amount: tax,
                 net_payable: net,
+                installment_leg: isPartial
+                  ? "2nd Installment (Asar End)"
+                  : days === 183
+                    ? "1st Installment (Poush End)"
+                    : "Full Settlement",
               });
             });
           } else {
@@ -890,6 +944,7 @@ export const PaymentService = {
                 tax_amount: tax,
                 net_payable: net,
                 period_days: 365,
+                installment_leg: isPartial ? "2nd Installment (Asar End)" : "Full Settlement",
               });
             }
           }
@@ -913,7 +968,36 @@ export const PaymentService = {
         const { data: mfData, error: mfError } = await mfQuery;
         if (mfError) console.warn("Failed to fetch mutual fund payables:", mfError.message);
         if (mfData) {
-          payables.push(...mfData.map((p: any) => ({ ...p, payable_type: "mutual_fund" })));
+          payables.push(
+            ...mfData.map((p: any) => {
+              const origGross = Number(p.gross_dividend ?? 0);
+              const origTax = Number(p.tax_amount ?? 0);
+              const origNet = Number(p.net_payable ?? origGross - origTax);
+              const isPartial = p.payment_status === "Partial";
+              const rem = p.remaining_amount != null ? Number(p.remaining_amount) : origNet;
+
+              let gross = origGross;
+              let tax = origTax;
+              let net = origNet;
+
+              if (isPartial && rem > 0 && rem < origNet && origNet > 0) {
+                net = rem;
+                const ratio = net / origNet;
+                gross = Math.round(origGross * ratio * 100) / 100;
+                tax = Number((gross - net).toFixed(2));
+                gross = Number((net + tax).toFixed(2));
+              }
+
+              return {
+                ...p,
+                payable_type: "mutual_fund",
+                gross_dividend: gross,
+                tax_amount: tax,
+                net_payable: net,
+                installment_leg: isPartial ? "2nd Installment" : "Full Settlement",
+              };
+            }),
+          );
         }
       }
 

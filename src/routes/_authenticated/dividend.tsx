@@ -86,6 +86,8 @@ interface Payable {
   payment_status: PaymentStatus;
   payment_date: string | null;
   payment_reference: string | null;
+  paid_amount?: number | null;
+  remaining_amount?: number | null;
   fiscal_year: string | null;
   dividend_type?: string | null;
   bonus_actual?: number | null;
@@ -416,11 +418,14 @@ function DividendPage() {
     data: totals = {
       count: 0,
       paidCount: 0,
+      partialCount: 0,
       pendingCount: 0,
       gross: 0,
       tax: 0,
       bonusTax: 0,
       net: 0,
+      disbursed: 0,
+      remaining: 0,
       totalShares: 0,
       bonusIssued: 0,
     },
@@ -440,7 +445,7 @@ function DividendPage() {
         let q = (supabase as any)
           .from("dividend_payables")
           .select(
-            "payment_status, gross_dividend, tax_amount, bonus_tax, net_payable, shares_held, bonus_issued, payee_classification, payee_segment, lot_name, created_at, payment_date",
+            "payment_status, gross_dividend, tax_amount, bonus_tax, net_payable, paid_amount, remaining_amount, shares_held, bonus_issued, payee_classification, payee_segment, lot_name, created_at, payment_date",
           )
           .range(from, to);
         if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
@@ -454,7 +459,7 @@ function DividendPage() {
             q = q.or("payee_segment.eq.PROMOTER,lot_name.ilike.%PROMOT%");
           } else if (classFilter === "LOCAL") {
             q = q.or("payee_segment.eq.LOCAL,lot_name.ilike.%LOCAL%");
-          } else if (classFilter === "TAX_EXEMPT") {
+          } else if (classFilter === "TAX_EXEMPT" || classFilter === "MUTUAL_FUND") {
             q = q.or(
               "payee_classification.eq.TAX_EXEMPT,lot_name.ilike.%MUTUAL%,lot_name.ilike.%EXEMPT%",
             );
@@ -472,25 +477,42 @@ function DividendPage() {
       });
 
       return (data || []).reduce(
-        (a, p) => ({
-          count: a.count + 1,
-          paidCount: a.paidCount + (p.payment_status === "Paid" ? 1 : 0),
-          pendingCount: a.pendingCount + (p.payment_status === "Pending" ? 1 : 0),
-          gross: a.gross + Number(p.gross_dividend ?? 0),
-          tax: a.tax + Number(p.tax_amount ?? 0),
-          bonusTax: a.bonusTax + Number(p.bonus_tax ?? 0),
-          net: a.net + Number(p.net_payable ?? 0),
-          totalShares: a.totalShares + Number(p.shares_held ?? 0),
-          bonusIssued: a.bonusIssued + Number(p.bonus_issued ?? 0),
-        }),
+        (a, p) => {
+          const net = Number(p.net_payable ?? 0);
+          const paid =
+            p.paid_amount != null ? Number(p.paid_amount) : p.payment_status === "Paid" ? net : 0;
+          const rem =
+            p.remaining_amount != null
+              ? Number(p.remaining_amount)
+              : p.payment_status === "Paid"
+                ? 0
+                : Math.max(0, net - paid);
+          return {
+            count: a.count + 1,
+            paidCount: a.paidCount + (p.payment_status === "Paid" ? 1 : 0),
+            partialCount: a.partialCount + (p.payment_status === "Partial" ? 1 : 0),
+            pendingCount: a.pendingCount + (p.payment_status === "Pending" ? 1 : 0),
+            gross: a.gross + Number(p.gross_dividend ?? 0),
+            tax: a.tax + Number(p.tax_amount ?? 0),
+            bonusTax: a.bonusTax + Number(p.bonus_tax ?? 0),
+            net: a.net + net,
+            disbursed: a.disbursed + paid,
+            remaining: a.remaining + rem,
+            totalShares: a.totalShares + Number(p.shares_held ?? 0),
+            bonusIssued: a.bonusIssued + Number(p.bonus_issued ?? 0),
+          };
+        },
         {
           count: 0,
           paidCount: 0,
+          partialCount: 0,
           pendingCount: 0,
           gross: 0,
           tax: 0,
           bonusTax: 0,
           net: 0,
+          disbursed: 0,
+          remaining: 0,
           totalShares: 0,
           bonusIssued: 0,
         },
@@ -725,6 +747,22 @@ function DividendPage() {
         payment_date: form.payment_date || null,
         payment_reference: form.payment_reference || null,
         fiscal_year: form.fiscal_year || null,
+        paid_amount:
+          form.payment_status === "Paid"
+            ? net
+            : form.payment_status === "Pending"
+              ? 0
+              : editing
+                ? (editing.paid_amount ?? 0)
+                : 0,
+        remaining_amount:
+          form.payment_status === "Paid"
+            ? 0
+            : form.payment_status === "Pending"
+              ? net
+              : editing
+                ? (editing.remaining_amount ?? net)
+                : net,
         dividend_type: form.dividend_type || "Cash",
         bonus_actual: form.bonus_actual ? Number(form.bonus_actual) : null,
         bonus_issued: form.bonus_issued ? Number(form.bonus_issued) : null,
@@ -816,6 +854,8 @@ function DividendPage() {
           payment_status: "Paid",
           payment_date: payDate || new Date().toISOString().slice(0, 10),
           payment_reference: payRef || null,
+          paid_amount: payOpen.net_payable ?? 0,
+          remaining_amount: 0,
         })
         .eq("id", payOpen.id);
       if (error) throw error;
@@ -914,6 +954,14 @@ function DividendPage() {
           after_bonus_kitta: p.after_bonus_kitta,
           bonus_tax: p.bonus_tax,
           net_payable: p.net_payable,
+          paid_amount:
+            p.paid_amount != null ? p.paid_amount : p.payment_status === "Paid" ? p.net_payable : 0,
+          remaining_amount:
+            p.remaining_amount != null
+              ? p.remaining_amount
+              : p.payment_status === "Paid"
+                ? 0
+                : p.net_payable,
           payment_status: p.payment_status,
           payment_date: p.payment_date,
           payment_reference: p.payment_reference,
@@ -1491,7 +1539,7 @@ function DividendPage() {
                   <SelectContent>
                     <SelectItem value="PUBLIC">Natural Person — Public (5%)</SelectItem>
                     <SelectItem value="INSTITUTION">Legal Person / Company (5%)</SelectItem>
-                    <SelectItem value="TAX_EXEMPTED">Mutual Fund / Tax Exempt (0%)</SelectItem>
+                    <SelectItem value="TAX_EXEMPT">Mutual Fund / Tax Exempt (0%)</SelectItem>
                     <SelectItem value="CUSTOM">Custom Rate</SelectItem>
                   </SelectContent>
                 </Select>
@@ -1593,8 +1641,19 @@ function DividendPage() {
               <div className="text-xl font-bold font-mono tracking-tight mt-1">
                 {(totals.totalShares ?? 0).toLocaleString()}
               </div>
-              <div className="text-[11px] text-muted-foreground mt-0.5">
-                {(totals.count ?? 0).toLocaleString()} records
+              <div className="text-[11px] text-muted-foreground mt-0.5 flex flex-wrap items-center gap-1">
+                <span>{(totals.count ?? 0).toLocaleString()} records ·</span>
+                <span className="text-emerald-600 font-medium">{totals.paidCount ?? 0} Paid</span>
+                {Boolean(totals.partialCount) && (
+                  <>
+                    <span>·</span>
+                    <span className="text-amber-600 font-medium">
+                      {totals.partialCount} Partial
+                    </span>
+                  </>
+                )}
+                <span>·</span>
+                <span>{totals.pendingCount ?? 0} Pending</span>
               </div>
             </div>
             <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary shrink-0">
@@ -1661,11 +1720,17 @@ function DividendPage() {
               <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                 Net Cash Payable
               </div>
-              <div className="text-xl font-bold font-mono tracking-tight mt-1 text-emerald-600 dark:text-emerald-400">
+              <div className="text-xl font-bold font-mono tracking-tight mt-1 text-foreground">
                 NPR {fmt(totals.net)}
               </div>
-              <div className="text-[11px] text-muted-foreground mt-0.5">
-                {totals.pendingCount ?? 0} Pending transfer
+              <div className="text-[11px] mt-0.5 flex flex-wrap items-center gap-1.5 font-mono">
+                <span className="text-emerald-600 font-medium">
+                  Disbursed: NPR {fmt(totals.disbursed ?? 0)}
+                </span>
+                <span className="text-muted-foreground font-sans">·</span>
+                <span className="text-rose-600 font-medium">
+                  Due: NPR {fmt(totals.remaining ?? 0)}
+                </span>
               </div>
             </div>
             <div className="h-10 w-10 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-600 shrink-0">
@@ -2122,7 +2187,7 @@ function DividendPage() {
                   <SelectItem value="all">All Categories</SelectItem>
                   <SelectItem value="PUBLIC">Public</SelectItem>
                   <SelectItem value="INSTITUTION">Institution (Legal Person)</SelectItem>
-                  <SelectItem value="MUTUAL_FUND">Mutual Fund (Tax Exempt)</SelectItem>
+                  <SelectItem value="TAX_EXEMPT">Tax Exempt / Mutual Fund (0%)</SelectItem>
                   <SelectItem value="PROMOTER">Promoter</SelectItem>
                   <SelectItem value="LOCAL">Local Affected</SelectItem>
                   <SelectItem value="EMPLOYEE">Employee / Staff Quota</SelectItem>
@@ -2221,6 +2286,8 @@ function DividendPage() {
                   <TableHead className="text-right font-semibold">Gross</TableHead>
                   <TableHead className="text-right font-semibold">Tax</TableHead>
                   <TableHead className="text-right font-semibold">Net</TableHead>
+                  <TableHead className="text-right font-semibold">Paid</TableHead>
+                  <TableHead className="text-right font-semibold">Remaining</TableHead>
                   <TableHead className="font-semibold">Bank Details</TableHead>
                   <TableHead className="font-semibold">FY</TableHead>
                   <TableHead className="font-semibold">Status</TableHead>
@@ -2230,13 +2297,13 @@ function DividendPage() {
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={13} className="py-12 text-center text-muted-foreground">
+                    <TableCell colSpan={15} className="py-12 text-center text-muted-foreground">
                       Loading…
                     </TableCell>
                   </TableRow>
                 ) : pageItems.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={13} className="py-12 text-center text-muted-foreground">
+                    <TableCell colSpan={15} className="py-12 text-center text-muted-foreground">
                       No dividend payables.
                     </TableCell>
                   </TableRow>
@@ -2244,6 +2311,19 @@ function DividendPage() {
                   pageItems.map((p) => {
                     const c = p.company ?? null;
                     const cl = p.client ?? null;
+                    const netVal = Number(p.net_payable ?? 0);
+                    const paidVal =
+                      p.paid_amount != null
+                        ? Number(p.paid_amount)
+                        : p.payment_status === "Paid"
+                          ? netVal
+                          : 0;
+                    const remVal =
+                      p.remaining_amount != null
+                        ? Number(p.remaining_amount)
+                        : p.payment_status === "Paid"
+                          ? 0
+                          : Math.max(0, netVal - paidVal);
                     return (
                       <TableRow key={p.id} className="hover:bg-muted/30 transition-colors">
                         <TableCell>
@@ -2304,6 +2384,16 @@ function DividendPage() {
                         <TableCell className="text-right font-mono font-bold text-foreground">
                           {fmt(p.net_payable)}
                         </TableCell>
+                        <TableCell className="text-right font-mono font-bold text-emerald-600">
+                          {fmt(paidVal)}
+                        </TableCell>
+                        <TableCell
+                          className={`text-right font-mono font-bold ${
+                            remVal > 0 ? "text-rose-600" : "text-muted-foreground"
+                          }`}
+                        >
+                          {fmt(remVal)}
+                        </TableCell>
                         <TableCell>
                           <div className="text-[11px] font-medium max-w-[140px] truncate">
                             {p.bank_name || cl?.bank_name || "—"}
@@ -2320,11 +2410,16 @@ function DividendPage() {
                             variant={
                               p.payment_status === "Paid"
                                 ? "default"
+                                : (p as any).remarks?.includes("Rejected")
+                                  ? "destructive"
+                                  : "outline"
+                            }
+                            className={
+                              p.payment_status === "Paid"
+                                ? "bg-emerald-600 hover:bg-emerald-700 text-white"
                                 : p.payment_status === "Partial"
-                                  ? "secondary"
-                                  : (p as any).remarks?.includes("Rejected")
-                                    ? "destructive"
-                                    : "outline"
+                                  ? "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 border-amber-300"
+                                  : ""
                             }
                           >
                             {p.payment_status}
