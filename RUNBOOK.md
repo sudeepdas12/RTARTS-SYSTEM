@@ -8,6 +8,7 @@ _Comprehensive Standard Operating Procedures (SOP), Technical Architecture, Oper
 ## Table of Contents
 
 1. [System Architecture & Technical Anatomy](#1-system-architecture--technical-anatomy)
+   - [Infrastructure & Production Hosting Sizing](#infrastructure--production-hosting-sizing)
 2. [Codebase & Directory Topology](#2-codebase--directory-topology)
 3. [Configuration, Secrets & Environment Matrix](#3-configuration-secrets--environment-matrix)
 4. [Database Architecture & Data Dictionary](#4-database-architecture--data-dictionary)
@@ -94,7 +95,52 @@ graph TB
 - **Backend / Database**: Supabase PostgreSQL 15, PostgREST, GoTrue Auth, Realtime WebSocket pub/sub.
 - **Server Runtime**: Nitro server engine with SSR and client hydration.
 - **Edge Functions**: Deno TypeScript runtime executing parallel chunk ingestion with zero cold-start footprint.
-- **Testing & Quality Assurance**: Vitest test runner (26 test files, 224 unit/precision/live tests), Playwright E2E browser test suite (6 tests), ESLint v9, Prettier.
+- **Testing & Quality Assurance**: Vitest test runner (31 test files, 256 unit/precision/live tests), Playwright E2E browser test suite (6 tests), ESLint v9, Prettier.
+
+### Infrastructure & Production Hosting Sizing
+
+The following specifications define the hardware, operating system, and network topology required for on-premise datacenter or cloud deployment at RBB Merchant Banking Limited:
+
+#### 1. Hardware Sizing Matrix
+
+| Component             | Minimum Specification (Staging / UAT) | Recommended Production (Daily Operations)                                                                | High-Concurrency Enterprise (Peak AGM Season)    |
+| :-------------------- | :------------------------------------ | :------------------------------------------------------------------------------------------------------- | :----------------------------------------------- |
+| **Target Scale**      | Up to 15,000 shareholders             | **100,000+ shareholders, 20–50+ client companies**                                                       | 500,000+ shareholders, multi-institution batches |
+| **CPU / Processor**   | 4 vCPUs / 4 Cores (2.5 GHz+)          | **8 vCPUs / 8 Cores (3.0 GHz+ Xeon/EPYC)**                                                               | 16 vCPUs (3.2 GHz+)                              |
+| **RAM (Memory)**      | 8 GB RAM                              | **16 GB RAM (ECC Recommended)**<br>• 8 GB allocated to PostgreSQL<br>• 4–6 GB allocated to Node.js/Nitro | 32 GB – 64 GB RAM                                |
+| **Storage (Primary)** | 80 GB SSD                             | **150 GB – 250 GB NVMe SSD (RAID 1/10)**                                                                 | 500 GB+ Enterprise NVMe SSD                      |
+| **Storage (Backup)**  | 100 GB Secondary Storage              | **250 GB+ Mounted Volume / NAS / SAN**                                                                   | 1 TB+ Dedicated Enterprise Backup Pool           |
+| **Network Interface** | 100 Mbps NIC                          | **1 Gbps Low-Latency NIC**                                                                               | 10 Gbps Redundant Bonded NICs                    |
+
+#### 2. Operating System & Software Prerequisites
+
+- **Host Operating System (64-bit)**:
+  - **Linux (Recommended)**: Ubuntu Server 22.04 LTS / 24.04 LTS, Red Hat Enterprise Linux (RHEL 9), or Rocky Linux 9.
+  - **Windows Server**: Windows Server 2022 / 2025 Standard (with Docker Engine / WSL2).
+- **Core Runtimes & Container Engines**:
+  - **Node.js**: v20.x LTS or v22.x LTS.
+  - **Docker Engine & Docker Compose**: v2.20+ (runs the Supabase PostgreSQL 15, GoTrue, PostgREST, and Realtime containers).
+  - **PostgreSQL**: PostgreSQL 15.x with `pgcrypto`, `uuid-ossp`, `pg_stat_statements`, `pg_cron` extensions.
+  - **Reverse Proxy**: Nginx or Caddy with TLS 1.3 / SSL certificate, HTTPS redirection, and WebSocket reverse-proxying.
+
+#### 3. Network, Firewall & Port Matrix
+
+| Port         | Protocol    | Direction     | Source                | Service / Destination   | Purpose                                          |
+| :----------- | :---------- | :------------ | :-------------------- | :---------------------- | :----------------------------------------------- |
+| **443**      | TCP (HTTPS) | Inbound       | Bank Intranet / VPN   | Reverse Proxy (Nginx)   | Secure user access & dashboard interface         |
+| **80**       | TCP (HTTP)  | Inbound       | Bank Intranet / VPN   | Reverse Proxy (Nginx)   | Automated permanent HTTP -> HTTPS redirect       |
+| **5432**     | TCP         | Internal Only | App Server / DB Admin | PostgreSQL Engine       | Database transaction processing (Block from WAN) |
+| **7443**     | TCP         | Outbound      | App Server            | NCHL ConnectIPS Gateway | Direct batch disbursement transmission           |
+| **25 / 587** | TCP         | Outbound      | App Server            | Bank SMTP Server        | Shareholder notice and alert dispatch            |
+
+#### 4. Data Sizing & Storage Growth Planning
+
+| Data Classification                                                 | Storage Growth Estimate                | Retention & Archival Strategy                                    |
+| :------------------------------------------------------------------ | :------------------------------------- | :--------------------------------------------------------------- |
+| **Shareholder Registry (`clients`)**                                | ~15 MB per 10,000 shareholder profiles | Active persistent storage with composite B-Tree indexes.         |
+| **Entitlement Payables (`interest_payables`, `dividend_payables`)** | ~40 MB per 10,000 payable records      | Partitioned and indexed by `fiscal_year` and `company_id`.       |
+| **Audit Compliance Trail (`audit_logs`)**                           | ~50 MB – 100 MB per fiscal year        | Immutable write-only regulatory trail (SEBON 5-year retention).  |
+| **Daily Database Backups (`.sql.gz`)**                              | ~15 MB – 50 MB per compressed snapshot | Automated via `scripts/backup-db.mjs` (30-day rolling rotation). |
 
 ---
 

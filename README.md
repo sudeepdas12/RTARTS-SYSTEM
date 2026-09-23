@@ -293,6 +293,20 @@ The application implements granular Role-Based Access Control via PostgreSQL Row
 
 ---
 
+## Production Hosting & Infrastructure Requirements
+
+The RTARTS System is designed for high-throughput deployment on bank on-premise infrastructure or private cloud environments. Complete infrastructure sizing, network topologies, and firewall rules are maintained in **[RUNBOOK.md](RUNBOOK.md#infrastructure--production-hosting-sizing)**:
+
+- **Recommended Production Specification (Standard Institutional Deployment)**:
+  - **Target Scale**: 100,000+ shareholders across 20–50+ client companies.
+  - **CPU**: 8 vCPUs / 8 Cores (3.0 GHz+ Intel Xeon / AMD EPYC).
+  - **RAM**: 16 GB ECC RAM (8 GB dedicated to PostgreSQL 15, 4–6 GB dedicated to Node.js/Nitro).
+  - **Storage**: 150 GB – 250 GB NVMe SSD (RAID 1/10) with 250 GB+ secondary backup volume.
+  - **Host OS**: Ubuntu Server 22.04/24.04 LTS, Red Hat Enterprise Linux (RHEL 9), or Windows Server 2022/2025.
+  - **Network & Ports**: Port 443 (Inbound HTTPS), Port 80 (Redirect), Port 5432 (Internal DB), Port 7443 (Outbound NCHL ConnectIPS).
+
+---
+
 ## Documentation & Runbooks
 
 - **[RUNBOOK.md](RUNBOOK.md)**: Master operations runbook covering standard operating procedures (SOP), step-by-step operational playbooks, calculation formulas, incident recovery guides, and disaster recovery commands.
