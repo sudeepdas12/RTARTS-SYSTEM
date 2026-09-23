@@ -1667,37 +1667,39 @@ function InterestPage() {
 
       {/* ─── Debenture Interest Distribution Summary Card (Pumori / CDS Format) ─── */}
       <Card className="mb-6 border-primary/20 shadow-xs overflow-hidden">
-        <CardHeader className="py-3.5 px-4 bg-muted/40 border-b flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="h-7 w-7 rounded-md bg-primary/10 flex items-center justify-center text-primary shrink-0">
-                <BarChart3 className="h-4 w-4" />
-              </div>
-              <CardTitle className="text-sm font-semibold tracking-tight text-foreground">
-                Debenture Interest Distribution Summary (Pumori / CDS Format)
-              </CardTitle>
-              <Badge variant="outline" className="font-mono text-[11px] bg-background">
-                {debentureSummaryReport?.companyCode || "All"}{" "}
-                {debentureSummaryReport?.fiscalYear
-                  ? `— FY ${debentureSummaryReport.fiscalYear}`
-                  : ""}
-              </Badge>
+        <CardHeader className="py-3.5 px-4 bg-muted/40 border-b flex flex-col md:flex-row md:items-center justify-between gap-3 space-y-0">
+          <div className="flex items-start gap-3">
+            <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary shrink-0 mt-0.5">
+              <BarChart3 className="h-4 w-4" />
             </div>
-            <p className="text-xs text-muted-foreground pl-9">
-              Holder-wise debenture capital &amp; coupon breakdown (Public{" "}
-              <span className="font-medium text-foreground">
-                {debentureDisplayRates.publicRatePct}% TDS
-              </span>
-              , Institution{" "}
-              <span className="font-medium text-foreground">
-                {debentureDisplayRates.institutionRatePct}% TDS
-              </span>
-              , Tax Exempted{" "}
-              <span className="font-medium text-foreground">
-                {debentureDisplayRates.exemptRatePct}% TDS
-              </span>
-              )
-            </p>
+            <div className="space-y-0.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <CardTitle className="text-sm font-semibold tracking-tight text-foreground">
+                  Debenture Interest Distribution Summary (Pumori / CDS Format)
+                </CardTitle>
+                <Badge variant="outline" className="font-mono text-[11px] bg-background">
+                  {debentureSummaryReport?.companyCode || "All"}{" "}
+                  {debentureSummaryReport?.fiscalYear
+                    ? `— FY ${debentureSummaryReport.fiscalYear}`
+                    : ""}
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground leading-normal">
+                Holder-wise debenture capital &amp; coupon breakdown (Public{" "}
+                <span className="font-medium text-foreground">
+                  {debentureDisplayRates.publicRatePct}% TDS
+                </span>
+                , Institution{" "}
+                <span className="font-medium text-foreground">
+                  {debentureDisplayRates.institutionRatePct}% TDS
+                </span>
+                , Tax Exempted{" "}
+                <span className="font-medium text-foreground">
+                  {debentureDisplayRates.exemptRatePct}% TDS
+                </span>
+                )
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
             <Button
@@ -1980,7 +1982,25 @@ function InterestPage() {
         )}
       </Card>
 
-      <Card className="border-border/60 shadow-sm">
+      <Card className="border-border/60 shadow-sm overflow-hidden">
+        <CardHeader className="py-3 px-4 bg-muted/20 border-b flex flex-row items-center justify-between space-y-0">
+          <div className="flex items-center gap-2">
+            <Receipt className="h-4 w-4 text-primary" />
+            <CardTitle className="text-sm font-semibold tracking-tight">
+              Debenture Payables &amp; Disbursements
+            </CardTitle>
+            <Badge variant="outline" className="font-mono text-[11px] bg-background">
+              {pageResult.count.toLocaleString()} Records
+            </Badge>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Showing <span className="font-semibold text-foreground">{pageItems.length}</span> of{" "}
+            <span className="font-semibold text-foreground">
+              {pageResult.count.toLocaleString()}
+            </span>{" "}
+            payables
+          </div>
+        </CardHeader>
         <CardContent className="p-4">
           <div className="mb-4 flex flex-col gap-3">
             <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-5">
@@ -2131,13 +2151,6 @@ function InterestPage() {
                     <X className="h-3.5 w-3.5 mr-1" /> Reset Filters
                   </Button>
                 )}
-              </div>
-              <div className="text-xs text-muted-foreground">
-                Showing <span className="font-semibold text-foreground">{pageItems.length}</span> of{" "}
-                <span className="font-semibold text-foreground">
-                  {pageResult.count.toLocaleString()}
-                </span>{" "}
-                payables
               </div>
             </div>
           </div>

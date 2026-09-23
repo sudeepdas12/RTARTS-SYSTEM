@@ -1741,26 +1741,27 @@ function DividendPage() {
       </div>
 
       {/* ─── AGM Dividend & Bonus Distribution Summary Report ─────────────────── */}
-      {/* ─── AGM Dividend & Bonus Distribution Summary Report ─────────────────── */}
       <Card className="mb-6 border-primary/20 shadow-xs overflow-hidden">
-        <CardHeader className="py-3.5 px-4 bg-muted/40 border-b flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="h-7 w-7 rounded-md bg-primary/10 flex items-center justify-center text-primary shrink-0">
-                <BarChart3 className="h-4 w-4" />
-              </div>
-              <CardTitle className="text-sm font-semibold tracking-tight text-foreground">
-                AGM Cash &amp; Bonus Dividend Distribution Summary
-              </CardTitle>
-              <Badge variant="outline" className="font-mono text-[11px] bg-background">
-                {agmSummaryReport?.companyCode || "All"}{" "}
-                {agmSummaryReport?.fiscalYear ? `— FY ${agmSummaryReport.fiscalYear}` : ""}
-              </Badge>
+        <CardHeader className="py-3.5 px-4 bg-muted/40 border-b flex flex-col md:flex-row md:items-center justify-between gap-3 space-y-0">
+          <div className="flex items-start gap-3">
+            <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary shrink-0 mt-0.5">
+              <BarChart3 className="h-4 w-4" />
             </div>
-            <p className="text-xs text-muted-foreground pl-9">
-              Company-wise capital &amp; payable breakdown by shareholder category (Promoter,
-              Public, Local, etc.)
-            </p>
+            <div className="space-y-0.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <CardTitle className="text-sm font-semibold tracking-tight text-foreground">
+                  AGM Cash &amp; Bonus Dividend Distribution Summary
+                </CardTitle>
+                <Badge variant="outline" className="font-mono text-[11px] bg-background">
+                  {agmSummaryReport?.companyCode || "All"}{" "}
+                  {agmSummaryReport?.fiscalYear ? `— FY ${agmSummaryReport.fiscalYear}` : ""}
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground leading-normal">
+                Company-wise capital &amp; payable breakdown by shareholder category (Promoter,
+                Public, Local, etc.)
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
             <Button
@@ -2148,7 +2149,25 @@ function DividendPage() {
         )}
       </Card>
 
-      <Card className="border-border/60 shadow-sm">
+      <Card className="border-border/60 shadow-sm overflow-hidden">
+        <CardHeader className="py-3 px-4 bg-muted/20 border-b flex flex-row items-center justify-between space-y-0">
+          <div className="flex items-center gap-2">
+            <Receipt className="h-4 w-4 text-primary" />
+            <CardTitle className="text-sm font-semibold tracking-tight">
+              Dividend Payables &amp; Disbursements
+            </CardTitle>
+            <Badge variant="outline" className="font-mono text-[11px] bg-background">
+              {pageResult.count.toLocaleString()} Records
+            </Badge>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Showing <span className="font-semibold text-foreground">{pageItems.length}</span> of{" "}
+            <span className="font-semibold text-foreground">
+              {pageResult.count.toLocaleString()}
+            </span>{" "}
+            payables
+          </div>
+        </CardHeader>
         <CardContent className="p-4">
           <div className="mb-4 flex flex-col gap-3">
             <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-6">
@@ -2294,47 +2313,57 @@ function DividendPage() {
                   </Button>
                 )}
               </div>
-              <div className="text-xs text-muted-foreground">
-                Showing <span className="font-semibold text-foreground">{pageItems.length}</span> of{" "}
-                <span className="font-semibold text-foreground">
-                  {pageResult.count.toLocaleString()}
-                </span>{" "}
-                payables
-              </div>
             </div>
           </div>
 
-          <div className="rounded-md border bg-card">
+          <div className="rounded-md border bg-card overflow-hidden">
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/50 hover:bg-muted/50">
-                  <TableHead className="font-semibold">Company</TableHead>
-                  <TableHead className="font-semibold">Client</TableHead>
-                  <TableHead className="font-semibold">BOID</TableHead>
-                  <TableHead className="font-semibold">Type</TableHead>
-                  <TableHead className="text-right font-semibold">Holding (Kitta)</TableHead>
-                  <TableHead className="text-right font-semibold">Rate %</TableHead>
-                  <TableHead className="text-right font-semibold">Gross</TableHead>
-                  <TableHead className="text-right font-semibold">Tax</TableHead>
-                  <TableHead className="text-right font-semibold">Net</TableHead>
-                  <TableHead className="text-right font-semibold">Paid</TableHead>
-                  <TableHead className="text-right font-semibold">Remaining</TableHead>
-                  <TableHead className="font-semibold">Bank Details</TableHead>
-                  <TableHead className="font-semibold">FY</TableHead>
-                  <TableHead className="font-semibold">Status</TableHead>
-                  <TableHead className="text-right font-semibold">Actions</TableHead>
+                  <TableHead className="font-semibold whitespace-nowrap min-w-[130px]">
+                    Company &amp; Type
+                  </TableHead>
+                  <TableHead className="font-semibold whitespace-nowrap min-w-[170px]">
+                    Shareholder &amp; BOID
+                  </TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">
+                    Kitta
+                  </TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">
+                    Rate %
+                  </TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">
+                    Gross (NPR)
+                  </TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">Tax</TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">
+                    Net Payable
+                  </TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">Paid</TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">
+                    Remaining
+                  </TableHead>
+                  <TableHead className="font-semibold whitespace-nowrap min-w-[140px]">
+                    Bank Account
+                  </TableHead>
+                  <TableHead className="font-semibold whitespace-nowrap min-w-[110px]">
+                    Status &amp; FY
+                  </TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap w-20">
+                    Actions
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={15} className="py-12 text-center text-muted-foreground">
+                    <TableCell colSpan={12} className="py-12 text-center text-muted-foreground">
                       Loading…
                     </TableCell>
                   </TableRow>
                 ) : pageItems.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={15} className="py-12 text-center text-muted-foreground">
+                    <TableCell colSpan={12} className="py-12 text-center text-muted-foreground">
                       No dividend payables.
                     </TableCell>
                   </TableRow>
@@ -2357,114 +2386,160 @@ function DividendPage() {
                           : Math.max(0, netVal - paidVal);
                     return (
                       <TableRow key={p.id} className="hover:bg-muted/30 transition-colors">
-                        <TableCell>
-                          {c ? (
-                            <span>
-                              <span className="font-mono text-xs text-muted-foreground">
-                                {c.company_code}
-                              </span>{" "}
-                              {c.company_name}
+                        {/* 1. Company & Type */}
+                        <TableCell className="whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-mono text-[11px] font-bold px-1.5 py-0.5 rounded bg-muted/80 text-foreground border border-border/50">
+                              {c?.company_code || "DIV"}
                             </span>
-                          ) : (
-                            "—"
-                          )}
+                            <Badge variant="outline" className="text-[10px] font-medium py-0 h-4">
+                              {p.dividend_type || "Cash"}
+                            </Badge>
+                          </div>
+                          <div
+                            className="text-[11px] text-muted-foreground truncate max-w-[150px] mt-0.5"
+                            title={c?.company_name || undefined}
+                          >
+                            {c?.company_name || "—"}
+                          </div>
                         </TableCell>
-                        <TableCell>
-                          <div className="font-medium text-xs text-foreground">
+
+                        {/* 2. Shareholder & BOID */}
+                        <TableCell className="min-w-[170px] max-w-[230px]">
+                          <div
+                            className="font-medium text-xs text-foreground truncate"
+                            title={cl?.full_name ?? undefined}
+                          >
                             {cl?.full_name ?? "—"}
                           </div>
-                          {cl?.father_name && (
-                            <div className="text-[10px] text-muted-foreground">
-                              s/o {cl.father_name}
-                            </div>
-                          )}
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            {cl?.boid ? (
+                              <button
+                                type="button"
+                                className="font-mono text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+                                onClick={() => setSelectedStatementBoid(cl.boid)}
+                                title="Click to view full statement"
+                              >
+                                {cl.boid}
+                              </button>
+                            ) : (
+                              <span className="font-mono text-[11px] text-muted-foreground">—</span>
+                            )}
+                            {cl?.father_name && (
+                              <span
+                                className="text-[10px] text-muted-foreground truncate"
+                                title={`s/o ${cl.father_name}`}
+                              >
+                                · s/o {cl.father_name}
+                              </span>
+                            )}
+                          </div>
                         </TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {cl?.boid ? (
-                            <button
-                              type="button"
-                              className="font-semibold text-primary hover:underline cursor-pointer"
-                              onClick={() => setSelectedStatementBoid(cl.boid)}
-                              title="Click to view full statement"
-                            >
-                              {cl.boid}
-                            </button>
-                          ) : (
-                            "—"
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="text-[10px]">
-                            {p.dividend_type || "Cash"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right font-mono font-semibold text-primary">
+
+                        {/* 3. Holding (Kitta) */}
+                        <TableCell className="text-right font-mono font-semibold text-primary whitespace-nowrap text-xs">
                           {p.shares_held || p.after_bonus_kitta || cl?.kitta
                             ? (p.shares_held || p.after_bonus_kitta || cl?.kitta)?.toLocaleString()
                             : "—"}
                         </TableCell>
-                        <TableCell className="text-right font-mono text-xs">
+
+                        {/* 4. Rate % */}
+                        <TableCell className="text-right font-mono whitespace-nowrap text-xs">
                           {p.dividend_rate ? `${p.dividend_rate}%` : "—"}
                         </TableCell>
-                        <TableCell className="text-right font-mono">
+
+                        {/* 5. Gross Dividend */}
+                        <TableCell className="text-right font-mono whitespace-nowrap text-xs">
                           {fmt(p.gross_dividend)}
                         </TableCell>
-                        <TableCell className="text-right font-mono text-amber-600">
+
+                        {/* 6. Tax Amount */}
+                        <TableCell className="text-right font-mono text-amber-600 whitespace-nowrap text-xs">
                           {fmt(p.tax_amount)}
                         </TableCell>
-                        <TableCell className="text-right font-mono font-bold text-foreground">
+
+                        {/* 7. Net Payable */}
+                        <TableCell className="text-right font-mono font-bold text-foreground whitespace-nowrap text-xs">
                           {fmt(p.net_payable)}
                         </TableCell>
-                        <TableCell className="text-right font-mono font-bold text-emerald-600">
+
+                        {/* 8. Paid Amount */}
+                        <TableCell className="text-right font-mono font-semibold text-emerald-600 whitespace-nowrap text-xs">
                           {fmt(paidVal)}
                         </TableCell>
+
+                        {/* 9. Remaining Amount */}
                         <TableCell
-                          className={`text-right font-mono font-bold ${
+                          className={`text-right font-mono font-semibold whitespace-nowrap text-xs ${
                             remVal > 0 ? "text-rose-600" : "text-muted-foreground"
                           }`}
                         >
                           {fmt(remVal)}
                         </TableCell>
-                        <TableCell>
-                          <div className="text-[11px] font-medium max-w-[140px] truncate">
-                            {p.bank_name || cl?.bank_name || "—"}
-                          </div>
-                          {(p.bank_account_no || cl?.bank_account_no) && (
-                            <div className="font-mono text-[10px] text-muted-foreground">
-                              {p.bank_account_no || cl?.bank_account_no}
-                            </div>
+
+                        {/* 10. Bank Details */}
+                        <TableCell className="min-w-[140px] max-w-[190px]">
+                          {p.bank_name || cl?.bank_name ? (
+                            <>
+                              <div
+                                className="text-[11px] font-medium truncate"
+                                title={p.bank_name || cl?.bank_name || undefined}
+                              >
+                                {p.bank_name || cl?.bank_name}
+                              </div>
+                              {(p.bank_account_no || cl?.bank_account_no) && (
+                                <div
+                                  className="font-mono text-[10px] text-muted-foreground truncate"
+                                  title={p.bank_account_no || cl?.bank_account_no || undefined}
+                                >
+                                  {p.bank_account_no || cl?.bank_account_no}
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">—</span>
                           )}
                         </TableCell>
-                        <TableCell className="text-xs font-mono">{p.fiscal_year ?? "—"}</TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={
-                              p.payment_status === "Paid"
-                                ? "default"
-                                : (p as any).remarks?.includes("Rejected")
-                                  ? "destructive"
-                                  : "outline"
-                            }
-                            className={
-                              p.payment_status === "Paid"
-                                ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                                : p.payment_status === "Partial"
-                                  ? "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 border-amber-300"
-                                  : ""
-                            }
-                          >
-                            {p.payment_status}
-                          </Badge>
+
+                        {/* 11. Status & FY */}
+                        <TableCell className="whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <Badge
+                              variant={
+                                p.payment_status === "Paid"
+                                  ? "default"
+                                  : (p as any).remarks?.includes("Rejected")
+                                    ? "destructive"
+                                    : "outline"
+                              }
+                              className={
+                                p.payment_status === "Paid"
+                                  ? "bg-emerald-600 hover:bg-emerald-700 text-white text-[10px]"
+                                  : p.payment_status === "Partial"
+                                    ? "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 border-amber-300 text-[10px]"
+                                    : "text-[10px]"
+                              }
+                            >
+                              {p.payment_status}
+                            </Badge>
+                            {p.fiscal_year && (
+                              <span className="font-mono text-[10px] text-muted-foreground font-medium">
+                                {p.fiscal_year}
+                              </span>
+                            )}
+                          </div>
                           {(p as any).remarks && (
-                            <span
-                              className={`block text-[10px] max-w-[160px] truncate mt-0.5 ${(p as any).remarks.includes("Rejected") ? "text-destructive font-medium" : "text-muted-foreground"}`}
+                            <div
+                              className={`text-[10px] max-w-[150px] truncate mt-0.5 ${(p as any).remarks.includes("Rejected") ? "text-destructive font-medium" : "text-muted-foreground"}`}
                               title={(p as any).remarks}
                             >
                               {(p as any).remarks}
-                            </span>
+                            </div>
                           )}
                         </TableCell>
-                        <TableCell className="text-right">
+
+                        {/* 12. Actions */}
+                        <TableCell className="text-right whitespace-nowrap">
                           {canWrite && (
                             <div className="flex justify-end gap-1">
                               {p.payment_status !== "Paid" && (
@@ -2476,18 +2551,19 @@ function DividendPage() {
                                     setPayRef(p.payment_reference ?? "");
                                   }}
                                   title="Mark paid"
-                                  className="hover:bg-emerald-50"
+                                  className="h-7 w-7 hover:bg-emerald-50"
                                 >
-                                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
                                 </Button>
                               )}
                               <Button
                                 size="icon"
                                 variant="ghost"
                                 onClick={() => startEdit(p)}
-                                className="hover:bg-blue-50"
+                                className="h-7 w-7 hover:bg-blue-50"
+                                title="Edit payable"
                               >
-                                <Pencil className="h-4 w-4" />
+                                <Pencil className="h-3.5 w-3.5" />
                               </Button>
                               {canDelete && (
                                 <Button
@@ -2496,10 +2572,10 @@ function DividendPage() {
                                   onClick={() => {
                                     if (confirm("Delete this payable?")) del.mutate(p.id);
                                   }}
-                                  className="hover:bg-red-50"
+                                  className="h-7 w-7 hover:bg-red-50"
                                   title="Delete Payable (Admin Only)"
                                 >
-                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
                                 </Button>
                               )}
                             </div>

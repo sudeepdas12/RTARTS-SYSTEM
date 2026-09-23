@@ -1559,25 +1559,29 @@ function MutualFundPage() {
       {/* ─── Mutual Fund Distribution Summary Card ─────────────────────────── */}
       {/* ─── Mutual Fund Distribution Summary Card ─────────────────────────── */}
       <Card className="mb-6 border-primary/20 shadow-xs overflow-hidden">
-        <CardHeader className="py-3.5 px-4 bg-muted/40 border-b flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="h-7 w-7 rounded-md bg-primary/10 flex items-center justify-center text-primary shrink-0">
-                <BarChart3 className="h-4 w-4" />
-              </div>
-              <CardTitle className="text-sm font-semibold tracking-tight text-foreground">
-                Mutual Fund Distribution Summary (CDS Format)
-              </CardTitle>
-              <Badge variant="outline" className="font-mono text-[11px] bg-background">
-                {companyFilter === "all"
-                  ? "All Schemes"
-                  : companies.find((c) => c.id === companyFilter)?.company_code || "Selected"}{" "}
-                {fyFilter !== "all" ? `— FY ${fyFilter}` : ""}
-              </Badge>
+        <CardHeader className="py-3.5 px-4 bg-muted/40 border-b flex flex-col md:flex-row md:items-center justify-between gap-3 space-y-0">
+          <div className="flex items-start gap-3">
+            <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary shrink-0 mt-0.5">
+              <BarChart3 className="h-4 w-4" />
             </div>
-            <p className="text-xs text-muted-foreground pl-9">
-              Scheme-wise unitholder category breakdown (Public 5%, Institution 15%, Tax Exempt 0%)
-            </p>
+            <div className="space-y-0.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <CardTitle className="text-sm font-semibold tracking-tight text-foreground">
+                  Mutual Fund Distribution Summary (CDS Format)
+                </CardTitle>
+                <Badge variant="outline" className="font-mono text-[11px] bg-background">
+                  {companyFilter === "all"
+                    ? "All Schemes"
+                    : companies.find((c) => c.id === companyFilter)?.company_code ||
+                      "Selected"}{" "}
+                  {fyFilter !== "all" ? `— FY ${fyFilter}` : ""}
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground leading-normal">
+                Scheme-wise unitholder category breakdown (Public 5%, Institution 15%, Tax Exempt
+                0%)
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
             <Button
@@ -1827,7 +1831,25 @@ function MutualFundPage() {
         </CardContent>
       </Card>
 
-      <Card className="border-border/60 shadow-sm">
+      <Card className="border-border/60 shadow-sm overflow-hidden">
+        <CardHeader className="py-3 px-4 bg-muted/20 border-b flex flex-row items-center justify-between space-y-0">
+          <div className="flex items-center gap-2">
+            <Receipt className="h-4 w-4 text-primary" />
+            <CardTitle className="text-sm font-semibold tracking-tight">
+              Mutual Fund Payables &amp; Distribution
+            </CardTitle>
+            <Badge variant="outline" className="font-mono text-[11px] bg-background">
+              {pageResult.count.toLocaleString()} Records
+            </Badge>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Showing <span className="font-semibold text-foreground">{pageItems.length}</span> of{" "}
+            <span className="font-semibold text-foreground">
+              {pageResult.count.toLocaleString()}
+            </span>{" "}
+            payables
+          </div>
+        </CardHeader>
         <CardContent className="p-4">
           <div className="mb-4 flex flex-col gap-3">
             <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-5">
@@ -1908,8 +1930,9 @@ function MutualFundPage() {
                       setFromDateFilter(e.target.value);
                       setPage(1);
                     }}
-                    className="bg-transparent text-xs outline-none"
+                    className="w-[125px] shrink-0 bg-transparent text-xs outline-none font-mono"
                   />
+                  <span className="text-muted-foreground/40 font-light">|</span>
                   <span className="text-[11px] text-muted-foreground font-medium ml-1">To:</span>
                   <input
                     type="date"
@@ -1918,7 +1941,7 @@ function MutualFundPage() {
                       setToDateFilter(e.target.value);
                       setPage(1);
                     }}
-                    className="bg-transparent text-xs outline-none"
+                    className="w-[125px] shrink-0 bg-transparent text-xs outline-none font-mono"
                   />
                 </div>
                 {(fromDateFilter ||
@@ -1947,47 +1970,58 @@ function MutualFundPage() {
                   </Button>
                 )}
               </div>
-              <div className="text-xs text-muted-foreground">
-                Showing <span className="font-semibold text-foreground">{pageItems.length}</span> of{" "}
-                <span className="font-semibold text-foreground">
-                  {pageResult.count.toLocaleString()}
-                </span>{" "}
-                payables
-              </div>
             </div>
           </div>
 
-          <div className="rounded-md border bg-card">
+          <div className="rounded-md border bg-card overflow-hidden">
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/50 hover:bg-muted/50">
-                  <TableHead className="font-semibold">Company / Scheme</TableHead>
-                  <TableHead className="font-semibold">Client</TableHead>
-                  <TableHead className="font-semibold">BOID</TableHead>
-                  <TableHead className="text-right font-semibold">
-                    Holding (Units / Kitta)
+                  <TableHead className="font-semibold whitespace-nowrap min-w-[130px]">
+                    Scheme / Fund
                   </TableHead>
-                  <TableHead className="text-right font-semibold">Rate %</TableHead>
-                  <TableHead className="text-right font-semibold">Gross</TableHead>
-                  <TableHead className="text-right font-semibold">Tax</TableHead>
-                  <TableHead className="text-right font-semibold">Net</TableHead>
-                  <TableHead className="text-right font-semibold">Paid</TableHead>
-                  <TableHead className="text-right font-semibold">Remaining</TableHead>
-                  <TableHead className="font-semibold">Bank Details</TableHead>
-                  <TableHead className="font-semibold">Status</TableHead>
-                  <TableHead className="font-semibold">Fiscal Year</TableHead>
-                  <TableHead className="text-right font-semibold">Actions</TableHead>
+                  <TableHead className="font-semibold whitespace-nowrap min-w-[170px]">
+                    Unitholder &amp; BOID
+                  </TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">
+                    Units
+                  </TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">
+                    Rate %
+                  </TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">
+                    Gross (NPR)
+                  </TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">Tax</TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">
+                    Net Distribution
+                  </TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">Paid</TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap">
+                    Remaining
+                  </TableHead>
+                  <TableHead className="font-semibold whitespace-nowrap min-w-[140px]">
+                    Bank Account
+                  </TableHead>
+                  <TableHead className="font-semibold whitespace-nowrap min-w-[110px]">
+                    Status &amp; FY
+                  </TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap w-20">
+                    Actions
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {pageItems.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={14} className="py-12 text-center text-muted-foreground">
+                    <TableCell colSpan={12} className="py-12 text-center text-muted-foreground">
                       No mutual fund payables.
                     </TableCell>
                   </TableRow>
                 ) : (
                   pageItems.map((payable) => {
+                    const c = payable.company ?? null;
+                    const cl = payable.client ?? null;
                     const netVal = Number(payable.net_payable ?? 0);
                     const paidVal =
                       payable.paid_amount != null
@@ -2003,109 +2037,163 @@ function MutualFundPage() {
                           : Math.max(0, netVal - paidVal);
                     return (
                       <TableRow key={payable.id} className="hover:bg-muted/30 transition-colors">
-                        <TableCell>
-                          <span className="font-mono text-xs font-semibold text-muted-foreground mr-1">
-                            {payable.company?.company_code ?? "—"}
-                          </span>
-                          <span className="text-xs">{payable.company?.company_name}</span>
-                        </TableCell>
-                        <TableCell>
-                          <div className="font-medium text-xs text-foreground">
-                            {payable.client?.full_name ?? "—"}
+                        {/* 1. Scheme / Fund */}
+                        <TableCell className="whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-mono text-[11px] font-bold px-1.5 py-0.5 rounded bg-muted/80 text-foreground border border-border/50">
+                              {c?.company_code || "MF"}
+                            </span>
                           </div>
-                          {payable.client?.father_name && (
-                            <div className="text-[10px] text-muted-foreground">
-                              s/o {payable.client.father_name}
-                            </div>
-                          )}
+                          <div
+                            className="text-[11px] text-muted-foreground truncate max-w-[150px] mt-0.5"
+                            title={c?.company_name || undefined}
+                          >
+                            {c?.company_name || "—"}
+                          </div>
                         </TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {payable.client?.boid ? (
-                            <button
-                              type="button"
-                              className="font-semibold text-primary hover:underline cursor-pointer"
-                              onClick={() => setSelectedStatementBoid(payable.client!.boid)}
-                              title="Click to view full statement"
-                            >
-                              {payable.client.boid}
-                            </button>
-                          ) : (
-                            "—"
-                          )}
+
+                        {/* 2. Unitholder & BOID */}
+                        <TableCell className="min-w-[170px] max-w-[230px]">
+                          <div
+                            className="font-medium text-xs text-foreground truncate"
+                            title={cl?.full_name ?? undefined}
+                          >
+                            {cl?.full_name ?? "—"}
+                          </div>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            {cl?.boid ? (
+                              <button
+                                type="button"
+                                className="font-mono text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+                                onClick={() => setSelectedStatementBoid(cl.boid)}
+                                title="Click to view full statement"
+                              >
+                                {cl.boid}
+                              </button>
+                            ) : (
+                              <span className="font-mono text-[11px] text-muted-foreground">—</span>
+                            )}
+                            {cl?.father_name && (
+                              <span
+                                className="text-[10px] text-muted-foreground truncate"
+                                title={`s/o ${cl.father_name}`}
+                              >
+                                · s/o {cl.father_name}
+                              </span>
+                            )}
+                          </div>
                         </TableCell>
-                        <TableCell className="text-right font-mono font-semibold text-primary">
-                          {payable.shares_held || payable.after_bonus_kitta || payable.client?.kitta
+
+                        {/* 3. Units Held */}
+                        <TableCell className="text-right font-mono font-semibold text-primary whitespace-nowrap text-xs">
+                          {payable.shares_held || payable.after_bonus_kitta || cl?.kitta
                             ? (
                                 payable.shares_held ||
                                 payable.after_bonus_kitta ||
-                                payable.client?.kitta
+                                cl?.kitta
                               )?.toLocaleString()
                             : "—"}
                         </TableCell>
-                        <TableCell className="text-right font-mono text-xs">
+
+                        {/* 4. Rate % */}
+                        <TableCell className="text-right font-mono whitespace-nowrap text-xs">
                           {payable.dividend_rate ? `${payable.dividend_rate}%` : "—"}
                         </TableCell>
-                        <TableCell className="text-right font-mono">
+
+                        {/* 5. Gross Distribution */}
+                        <TableCell className="text-right font-mono whitespace-nowrap text-xs">
                           {fmt(payable.gross_dividend)}
                         </TableCell>
-                        <TableCell className="text-right font-mono text-amber-600">
+
+                        {/* 6. Tax Amount */}
+                        <TableCell className="text-right font-mono text-amber-600 whitespace-nowrap text-xs">
                           {fmt(payable.tax_amount)}
                         </TableCell>
-                        <TableCell className="text-right font-mono font-bold text-foreground">
+
+                        {/* 7. Net Distribution */}
+                        <TableCell className="text-right font-mono font-bold text-foreground whitespace-nowrap text-xs">
                           {fmt(payable.net_payable)}
                         </TableCell>
-                        <TableCell className="text-right font-mono font-bold text-emerald-600">
+
+                        {/* 8. Paid Amount */}
+                        <TableCell className="text-right font-mono font-semibold text-emerald-600 whitespace-nowrap text-xs">
                           {fmt(paidVal)}
                         </TableCell>
+
+                        {/* 9. Remaining Amount */}
                         <TableCell
-                          className={`text-right font-mono font-bold ${
+                          className={`text-right font-mono font-semibold whitespace-nowrap text-xs ${
                             remVal > 0 ? "text-rose-600" : "text-muted-foreground"
                           }`}
                         >
                           {fmt(remVal)}
                         </TableCell>
-                        <TableCell>
-                          <div className="text-[11px] font-medium max-w-[140px] truncate">
-                            {payable.bank_name || payable.client?.bank_name || "—"}
-                          </div>
-                          {(payable.bank_account_no || payable.client?.bank_account_no) && (
-                            <div className="font-mono text-[10px] text-muted-foreground">
-                              {payable.bank_account_no || payable.client?.bank_account_no}
-                            </div>
+
+                        {/* 10. Bank Details */}
+                        <TableCell className="min-w-[140px] max-w-[190px]">
+                          {payable.bank_name || cl?.bank_name ? (
+                            <>
+                              <div
+                                className="text-[11px] font-medium truncate"
+                                title={payable.bank_name || cl?.bank_name || undefined}
+                              >
+                                {payable.bank_name || cl?.bank_name}
+                              </div>
+                              {(payable.bank_account_no || cl?.bank_account_no) && (
+                                <div
+                                  className="font-mono text-[10px] text-muted-foreground truncate"
+                                  title={
+                                    payable.bank_account_no || cl?.bank_account_no || undefined
+                                  }
+                                >
+                                  {payable.bank_account_no || cl?.bank_account_no}
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">—</span>
                           )}
                         </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={
-                              payable.payment_status === "Paid"
-                                ? "default"
-                                : (payable as any).remarks?.includes("Rejected")
-                                  ? "destructive"
-                                  : "outline"
-                            }
-                            className={
-                              payable.payment_status === "Paid"
-                                ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                                : payable.payment_status === "Partial"
-                                  ? "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 border-amber-300"
-                                  : ""
-                            }
-                          >
-                            {payable.payment_status}
-                          </Badge>
+
+                        {/* 11. Status & FY */}
+                        <TableCell className="whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <Badge
+                              variant={
+                                payable.payment_status === "Paid"
+                                  ? "default"
+                                  : (payable as any).remarks?.includes("Rejected")
+                                    ? "destructive"
+                                    : "outline"
+                              }
+                              className={
+                                payable.payment_status === "Paid"
+                                  ? "bg-emerald-600 hover:bg-emerald-700 text-white text-[10px]"
+                                  : payable.payment_status === "Partial"
+                                    ? "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 border-amber-300 text-[10px]"
+                                    : "text-[10px]"
+                              }
+                            >
+                              {payable.payment_status}
+                            </Badge>
+                            {payable.fiscal_year && (
+                              <span className="font-mono text-[10px] text-muted-foreground font-medium">
+                                {payable.fiscal_year}
+                              </span>
+                            )}
+                          </div>
                           {(payable as any).remarks && (
-                            <span
-                              className={`block text-[10px] max-w-[140px] truncate mt-0.5 ${(payable as any).remarks.includes("Rejected") ? "text-destructive font-medium" : "text-muted-foreground"}`}
+                            <div
+                              className={`text-[10px] max-w-[150px] truncate mt-0.5 ${(payable as any).remarks.includes("Rejected") ? "text-destructive font-medium" : "text-muted-foreground"}`}
                               title={(payable as any).remarks}
                             >
                               {(payable as any).remarks}
-                            </span>
+                            </div>
                           )}
                         </TableCell>
-                        <TableCell className="text-xs font-mono">
-                          {payable.fiscal_year ?? "—"}
-                        </TableCell>
-                        <TableCell className="text-right">
+
+                        {/* 12. Actions */}
+                        <TableCell className="text-right whitespace-nowrap">
                           {canWrite && (
                             <div className="flex justify-end gap-1">
                               {payable.payment_status !== "Paid" && (
@@ -2114,28 +2202,29 @@ function MutualFundPage() {
                                   variant="ghost"
                                   onClick={() => setPayOpen(payable)}
                                   title="Mark paid"
-                                  className="hover:bg-emerald-50"
+                                  className="h-7 w-7 hover:bg-emerald-50"
                                 >
-                                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
                                 </Button>
                               )}
                               <Button
                                 size="icon"
                                 variant="ghost"
                                 onClick={() => startEdit(payable)}
-                                className="hover:bg-blue-50"
+                                className="h-7 w-7 hover:bg-blue-50"
+                                title="Edit payable"
                               >
-                                <Pencil className="h-4 w-4" />
+                                <Pencil className="h-3.5 w-3.5" />
                               </Button>
                               {canDelete && (
                                 <Button
                                   size="icon"
                                   variant="ghost"
                                   onClick={() => del.mutate(payable.id)}
-                                  className="hover:bg-red-50"
+                                  className="h-7 w-7 hover:bg-red-50"
                                   title="Delete Payable (Admin Only)"
                                 >
-                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
                                 </Button>
                               )}
                             </div>
