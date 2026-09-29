@@ -416,13 +416,23 @@ function ClientsPage() {
           { p_company_id: companyFilter === "all" ? null : companyFilter },
         );
         if (!rpcErr && rpcStats) {
+          let needsReview = Number(rpcStats.needs_review ?? -1);
+          if (needsReview < 0) {
+            let q = (supabase as any)
+              .from("clients")
+              .select("id", { count: "exact", head: true })
+              .eq("needs_review", true);
+            if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
+            const { count } = await q;
+            needsReview = count || 0;
+          }
           return {
             total: Number(rpcStats.total || 0),
             verified: Number(rpcStats.verified || 0),
             pending: Number(rpcStats.pending || 0),
             natural: Number(rpcStats.natural || 0),
             institutions: Number(rpcStats.institutions || 0),
-            needsReview: Number(rpcStats.needs_review || 0),
+            needsReview: Math.max(0, needsReview),
           };
         }
       } catch {
