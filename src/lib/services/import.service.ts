@@ -13,6 +13,7 @@ import {
   loadTaxRules,
   type TaxRule,
 } from "./tax-rules.service";
+import { normalizeNID } from "@/lib/validation-engine";
 
 const EDGE_CHUNK_TIMEOUT_MS = 60000;
 
@@ -1010,7 +1011,7 @@ export const ImportService = {
           pan_no: panNo || clientMeta.pan_no || undefined,
           citizenship_no: citizenshipNo || clientMeta.citizenship_no || undefined,
           pan_or_citizenship: panNo || citizenshipNo || undefined,
-          nid_number: nidNumber || clientMeta.nid_number || undefined,
+          nid_number: normalizeNID(nidNumber) || clientMeta.nid_number || undefined,
           date_of_birth: dob || undefined,
           gender: gender || undefined,
           occupation: occupation || undefined,
@@ -1052,7 +1053,7 @@ export const ImportService = {
           pan_no: panNo || null,
           citizenship_no: citizenshipNo || null,
           pan_or_citizenship: panOrCitizenship || null,
-          nid_number: nidNumber || null,
+          nid_number: normalizeNID(nidNumber) || null,
           date_of_birth: dob || null,
           gender: gender || null,
           occupation: occupation || null,

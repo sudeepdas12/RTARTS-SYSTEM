@@ -57,6 +57,7 @@ import {
   CheckCircle2,
   Loader2,
   FileText,
+  AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { exportToExcel, importFromExcel } from "@/lib/xlsx-utils";
@@ -272,6 +273,8 @@ interface Client {
   residency: Residency | null;
   verification_status: Verification;
   status: Status;
+  needs_review?: boolean;
+  data_quality_notes?: string | null;
   created_at: string;
   company?: { company_name: string; company_code: string } | null;
 }
@@ -367,6 +370,7 @@ function ClientsPage() {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [verFilter, setVerFilter] = useState("all");
+  const [reviewFilter, setReviewFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
 
@@ -393,31 +397,41 @@ function ClientsPage() {
     },
   });
 
-  const { data: stats = { total: 0, verified: 0, pending: 0, natural: 0, institutions: 0 } } =
-    useQuery({
-      queryKey: ["clients-stats", companyFilter],
-      queryFn: async () => {
-        // 1. First attempt dedicated server-side aggregation RPC for instant response
-        try {
-          const { data: rpcStats, error: rpcErr } = await (supabase as any).rpc(
-            "get_company_client_stats",
-            { p_company_id: companyFilter === "all" ? null : companyFilter },
-          );
-          if (!rpcErr && rpcStats) {
-            return {
-              total: Number(rpcStats.total || 0),
-              verified: Number(rpcStats.verified || 0),
-              pending: Number(rpcStats.pending || 0),
-              natural: Number(rpcStats.natural || 0),
-              institutions: Number(rpcStats.institutions || 0),
-            };
-          }
-        } catch {
-          // Fall back to direct queries below
+  const {
+    data: stats = {
+      total: 0,
+      verified: 0,
+      pending: 0,
+      natural: 0,
+      institutions: 0,
+      needsReview: 0,
+    },
+  } = useQuery({
+    queryKey: ["clients-stats", companyFilter],
+    queryFn: async () => {
+      // 1. First attempt dedicated server-side aggregation RPC for instant response
+      try {
+        const { data: rpcStats, error: rpcErr } = await (supabase as any).rpc(
+          "get_company_client_stats",
+          { p_company_id: companyFilter === "all" ? null : companyFilter },
+        );
+        if (!rpcErr && rpcStats) {
+          return {
+            total: Number(rpcStats.total || 0),
+            verified: Number(rpcStats.verified || 0),
+            pending: Number(rpcStats.pending || 0),
+            natural: Number(rpcStats.natural || 0),
+            institutions: Number(rpcStats.institutions || 0),
+            needsReview: Number(rpcStats.needs_review || 0),
+          };
         }
+      } catch {
+        // Fall back to direct queries below
+      }
 
-        if (companyFilter === "all") {
-          const [totalRes, verifiedRes, pendingRes, naturalRes, instRes] = await Promise.all([
+      if (companyFilter === "all") {
+        const [totalRes, verifiedRes, pendingRes, naturalRes, instRes, reviewRes] =
+          await Promise.all([
             (supabase as any).from("clients").select("id", { count: "exact", head: true }),
             (supabase as any)
               .from("clients")
@@ -435,19 +449,25 @@ function ClientsPage() {
               .from("clients")
               .select("id", { count: "exact", head: true })
               .in("payee_classification", ["COMPANY_INSTITUTION", "PUBLIC_LEGAL_PERSON"]),
+            (supabase as any)
+              .from("clients")
+              .select("id", { count: "exact", head: true })
+              .eq("needs_review", true),
           ]);
 
-          return {
-            total: totalRes.count || 0,
-            verified: verifiedRes.count || 0,
-            pending: pendingRes.count || 0,
-            natural: naturalRes.count || 0,
-            institutions: instRes.count || 0,
-          };
-        }
+        return {
+          total: totalRes.count || 0,
+          verified: verifiedRes.count || 0,
+          pending: pendingRes.count || 0,
+          natural: naturalRes.count || 0,
+          institutions: instRes.count || 0,
+          needsReview: reviewRes.count || 0,
+        };
+      }
 
-        // Company selected: Query via get_clients_paginated with p_limit = 1
-        const [totalRes, verifiedRes, pendingRes, naturalRes, instRes] = await Promise.all([
+      // Company selected: Query via get_clients_paginated with p_limit = 1
+      const [totalRes, verifiedRes, pendingRes, naturalRes, instRes, reviewRes] = await Promise.all(
+        [
           (supabase as any).rpc("get_clients_paginated", {
             p_company_id: companyFilter,
             p_limit: 1,
@@ -477,28 +497,34 @@ function ClientsPage() {
             p_limit: 1,
             p_offset: 0,
           }),
-        ]);
+          (supabase as any)
+            .from("clients")
+            .select("id", { count: "exact", head: true })
+            .eq("company_id", companyFilter)
+            .eq("needs_review", true),
+        ],
+      );
 
-        return {
-          total:
-            totalRes.data && totalRes.data.length > 0 ? Number(totalRes.data[0].total_count) : 0,
-          verified:
-            verifiedRes.data && verifiedRes.data.length > 0
-              ? Number(verifiedRes.data[0].total_count)
-              : 0,
-          pending:
-            pendingRes.data && pendingRes.data.length > 0
-              ? Number(pendingRes.data[0].total_count)
-              : 0,
-          natural:
-            naturalRes.data && naturalRes.data.length > 0
-              ? Number(naturalRes.data[0].total_count)
-              : 0,
-          institutions:
-            instRes.data && instRes.data.length > 0 ? Number(instRes.data[0].total_count) : 0,
-        };
-      },
-    });
+      return {
+        total: totalRes.data && totalRes.data.length > 0 ? Number(totalRes.data[0].total_count) : 0,
+        verified:
+          verifiedRes.data && verifiedRes.data.length > 0
+            ? Number(verifiedRes.data[0].total_count)
+            : 0,
+        pending:
+          pendingRes.data && pendingRes.data.length > 0
+            ? Number(pendingRes.data[0].total_count)
+            : 0,
+        natural:
+          naturalRes.data && naturalRes.data.length > 0
+            ? Number(naturalRes.data[0].total_count)
+            : 0,
+        institutions:
+          instRes.data && instRes.data.length > 0 ? Number(instRes.data[0].total_count) : 0,
+        needsReview: reviewRes.count || 0,
+      };
+    },
+  });
 
   const { data: pageData = { rows: [], count: 0 }, isLoading } = useQuery({
     queryKey: [
@@ -510,6 +536,7 @@ function ClientsPage() {
       categoryFilter,
       statusFilter,
       verFilter,
+      reviewFilter,
     ],
     queryFn: async () => {
       // Pass the unified categoryFilter key to get_clients_paginated (which handles full multi-label matching)
@@ -522,6 +549,7 @@ function ClientsPage() {
         p_search: debouncedSearch || "",
         p_limit: pageSize,
         p_offset: (page - 1) * pageSize,
+        p_needs_review: reviewFilter,
       });
 
       if (error) {
@@ -532,6 +560,8 @@ function ClientsPage() {
           .range((page - 1) * pageSize, page * pageSize - 1);
 
         if (companyFilter !== "all") query = query.eq("company_id", companyFilter);
+        if (reviewFilter === "true") query = query.eq("needs_review", true);
+        if (reviewFilter === "false") query = query.eq("needs_review", false);
         if (categoryFilter !== "all") {
           if (categoryFilter === "INSTITUTION") {
             query = query.or(
@@ -687,6 +717,10 @@ function ClientsPage() {
         residency: form.residency,
         verification_status: form.verification_status,
         status: form.status,
+        needs_review: form.bank_account_no.trim() ? false : Boolean(editing?.needs_review),
+        data_quality_notes: form.bank_account_no.trim()
+          ? null
+          : (editing?.data_quality_notes ?? null),
       };
       if (editing) {
         const { error } = await supabase
@@ -979,7 +1013,7 @@ function ClientsPage() {
       />
 
       {/* KPI Stats Strip */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         {[
           {
             label: "Total Shareholders",
@@ -987,6 +1021,12 @@ function ClientsPage() {
             icon: Users,
             color: "text-primary",
             bg: "bg-primary/10",
+            active: reviewFilter === "all" && categoryFilter === "all",
+            onClick: () => {
+              setReviewFilter("all");
+              setCategoryFilter("all");
+              setPage(1);
+            },
           },
           {
             label: "KYC Verified",
@@ -996,11 +1036,26 @@ function ClientsPage() {
             bg: "bg-emerald-50 dark:bg-emerald-950/30",
           },
           {
+            label: "Needs Review",
+            value: stats.needsReview,
+            icon: AlertTriangle,
+            color: "text-amber-600",
+            bg:
+              reviewFilter === "true"
+                ? "bg-amber-100 ring-2 ring-amber-400 dark:bg-amber-950/60"
+                : "bg-amber-50 dark:bg-amber-950/30",
+            active: reviewFilter === "true",
+            onClick: () => {
+              setReviewFilter(reviewFilter === "true" ? "all" : "true");
+              setPage(1);
+            },
+          },
+          {
             label: "Pending Review",
             value: stats.pending,
             icon: Clock,
-            color: "text-amber-600",
-            bg: "bg-amber-50 dark:bg-amber-950/30",
+            color: "text-blue-600",
+            bg: "bg-blue-50 dark:bg-blue-950/30",
           },
           {
             label: "Natural Persons",
@@ -1010,7 +1065,11 @@ function ClientsPage() {
             bg: "bg-violet-50 dark:bg-violet-950/30",
           },
         ].map((s) => (
-          <Card key={s.label} className="glass-card">
+          <Card
+            key={s.label}
+            className={`glass-card ${s.onClick ? "cursor-pointer hover:border-primary/50 transition-all" : ""} ${s.active ? "border-amber-400 dark:border-amber-600" : ""}`}
+            onClick={s.onClick}
+          >
             <CardContent className="flex items-center gap-3 p-4">
               <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${s.bg}`}>
                 <s.icon className={`h-5 w-5 ${s.color}`} />
@@ -1102,6 +1161,23 @@ function ClientsPage() {
                     {c.company_code} — {c.company_name}
                   </SelectItem>
                 ))}
+              </SelectContent>
+            </Select>
+
+            <Select
+              value={reviewFilter}
+              onValueChange={(v) => {
+                setReviewFilter(v);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger className="w-44 h-9">
+                <SelectValue placeholder="Data Quality" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Records</SelectItem>
+                <SelectItem value="true">⚠️ Needs Review ({stats.needsReview})</SelectItem>
+                <SelectItem value="false">✓ Clean Records</SelectItem>
               </SelectContent>
             </Select>
 
@@ -1200,8 +1276,23 @@ function ClientsPage() {
                     onClick={() => openEdit(c)}
                   >
                     <TableCell>
-                      <div className="font-medium text-sm text-foreground">{c.full_name}</div>
-                      <div className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted-foreground">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-medium text-sm text-foreground">{c.full_name}</span>
+                        {c.needs_review && (
+                          <Badge
+                            variant="outline"
+                            className="bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-700 text-[10px] gap-1 px-1.5 py-0 font-medium shrink-0"
+                            title={
+                              c.data_quality_notes
+                                ? `Issues: ${c.data_quality_notes.replace(/_/g, " ")}`
+                                : "Needs Review"
+                            }
+                          >
+                            <AlertTriangle className="h-2.5 w-2.5" /> Needs Review
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted-foreground mt-0.5">
                         {c.father_name && <span>s/o {c.father_name}</span>}
                         {c.phone && <span>• {c.phone}</span>}
                         {c.email && (
@@ -1243,10 +1334,14 @@ function ClientsPage() {
                     </TableCell>
                     <TableCell>
                       <div className="text-xs font-medium">{c.bank_name ?? "—"}</div>
-                      {c.bank_account_no && (
+                      {c.bank_account_no ? (
                         <div className="font-mono text-[10px] text-muted-foreground">
                           {c.bank_account_no}
                         </div>
+                      ) : (
+                        <span className="inline-flex items-center text-[10px] text-amber-600 dark:text-amber-400 font-medium">
+                          ⚠️ No Bank Account
+                        </span>
                       )}
                     </TableCell>
                     <TableCell>{verificationBadge(c.verification_status)}</TableCell>
@@ -1364,6 +1459,24 @@ function ClientsPage() {
           </SheetHeader>
 
           <div className="flex-1 overflow-y-auto px-6 pb-6 space-y-4">
+            {editing?.needs_review && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/40 p-3 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2.5 mt-4">
+                <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-semibold text-amber-900 dark:text-amber-100">
+                    Flagged for Data Quality Review
+                  </div>
+                  <div className="mt-0.5 text-muted-foreground leading-relaxed">
+                    {editing.data_quality_notes
+                      ? `Issue: ${editing.data_quality_notes.replace(/;/g, ",").replace(/_/g, " ")}.`
+                      : "This record was flagged during upload or audit due to missing bank or identity details."}{" "}
+                    Entering the bank account number or correcting identity details and clicking
+                    Save will clear this review flag.
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Identity */}
             <SectionLabel icon={User}>Identity & Demographics</SectionLabel>
             <div className="grid gap-3 sm:grid-cols-3">

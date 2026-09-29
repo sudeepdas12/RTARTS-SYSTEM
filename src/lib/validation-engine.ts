@@ -340,7 +340,22 @@ const isValidPAN = (value: string): boolean => {
 
 const isValidNID = (value: string): boolean => {
   // Nepal National ID (Rastriya Parichayapatra): exactly 11 numeric digits
-  return /^[0-9]{11}$/.test(value.trim());
+  // Old-format NIDs issued before 2021 reform are 10 digits — normalizeNID pads them
+  const trimmed = value.trim();
+  return /^[0-9]{11}$/.test(trimmed) || /^[0-9]{10}$/.test(trimmed);
+};
+
+/**
+ * Normalize a Nepal NID to 11 digits.
+ * Old-format NIDs from before the 2021 digital ID system are 10 numeric digits.
+ * They are valid — just need a leading zero to reach the 11-digit standard.
+ */
+export const normalizeNID = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  const trimmed = value.trim().replace(/\s+/g, "");
+  if (/^[0-9]{10}$/.test(trimmed)) return trimmed.padStart(11, "0");
+  if (/^[0-9]{11}$/.test(trimmed)) return trimmed;
+  return trimmed; // not numeric / other format — return as-is
 };
 
 const isValidCitizenship = (value: string): boolean => {
@@ -764,7 +779,9 @@ export const ValidationEngine = {
       const panNo = normalizeString(
         get("pan_no") || get("pan") || (pan && /^[0-9]{9}$/.test(pan) ? pan : ""),
       );
-      const nidNo = normalizeString(get("nid_number") || get("nid"));
+      const rawNid = normalizeString(get("nid_number") || get("nid"));
+      // Auto-normalize: 10-digit numeric NID → pad to 11 (pre-2021 legacy format)
+      const nidNo = rawNid ? (normalizeNID(rawNid) ?? rawNid) : rawNid;
 
       if (panNo && !isValidPAN(panNo)) {
         errors.push({
@@ -780,7 +797,7 @@ export const ValidationEngine = {
           row: rowNum,
           field: "nid_number",
           type: "invalid_nid",
-          message: `NID "${nidNo}" notice (expected 11 numeric digits).`,
+          message: `NID "${nidNo}" format notice (expected 10 or 11 numeric digits; non-numeric characters found).`,
           rawData,
         });
       }
