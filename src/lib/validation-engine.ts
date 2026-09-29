@@ -235,7 +235,7 @@ async function hasActiveRowsForUpload(
   const tables =
     targetTable && PAYABLE_TABLES.includes(targetTable as any) ? [targetTable] : PAYABLE_TABLES;
 
-  for (const table of tables) {
+  const probeTable = async (table: string) => {
     const { count, error } = await (supabase as any)
       .from(table)
       .select("id", { count: "exact", head: true })
@@ -249,18 +249,18 @@ async function hasActiveRowsForUpload(
       throw new Error(`Duplicate-check row probe failed for ${table}: ${error.message}`);
     }
 
-    if ((count || 0) > 0) {
-      return true;
-    }
-  }
+    return (count || 0) > 0;
+  };
 
-  return false;
+  const results = await Promise.all(tables.map(probeTable));
+  return results.some(Boolean);
 }
 
 async function hasActiveDuplicateFileHash(fileHash: string): Promise<boolean> {
-  const timeoutPromise = new Promise<boolean>((_, reject) =>
-    setTimeout(() => reject(new Error("Duplicate file hash check timed out")), 5000),
-  );
+  let timer: any;
+  const timeoutPromise = new Promise<boolean>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("Duplicate file hash check timed out")), 5000);
+  });
 
   const checkPromise = (async () => {
     const { data, error } = await (supabase as any)
@@ -274,16 +274,21 @@ async function hasActiveDuplicateFileHash(fileHash: string): Promise<boolean> {
       throw new Error(`Failed to check duplicate file hash: ${error.message}`);
     }
 
-    for (const upload of data || []) {
-      if (await hasActiveRowsForUpload(upload.id, upload.target_table)) {
-        return true;
-      }
-    }
+    if (!data || data.length === 0) return false;
 
-    return false;
+    // Check all matching uploads in parallel
+    const checks = data.map((upload: any) =>
+      hasActiveRowsForUpload(upload.id, upload.target_table),
+    );
+    const results = await Promise.all(checks);
+    return results.some(Boolean);
   })();
 
-  return Promise.race([checkPromise, timeoutPromise]);
+  try {
+    return await Promise.race([checkPromise, timeoutPromise]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 const normalizeString = (value: unknown): string => {
@@ -421,16 +426,38 @@ export const ValidationEngine = {
     const existingClientCodes = new Set<string>();
     const existingPans = new Set<string>();
 
+    // Helper to safely execute a query with a strict timeout and fallback
+    const safeQuery = async <T>(promise: Promise<T>, fallback: T, ms = 4500): Promise<T> => {
+      let timer: any;
+      const timeoutPromise = new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), ms);
+      });
+      return Promise.race([
+        promise
+          .then((res) => {
+            clearTimeout(timer);
+            return res;
+          })
+          .catch((err) => {
+            clearTimeout(timer);
+            console.warn("Validation query fallback triggered:", err);
+            return fallback;
+          }),
+        timeoutPromise,
+      ]);
+    };
+
     // Check a sample of up to 100 BOIDs safely without causing '414 URI Too Long' or network stalls
     if (uniqueBoids.length > 0) {
       try {
         const sampleBoids = uniqueBoids.slice(0, 100);
-        const { data: clients } = await supabase
-          .from("clients")
-          .select("boid")
-          .in("boid", sampleBoids);
+        const { data: clients } = await safeQuery(
+          supabase.from("clients").select("boid").in("boid", sampleBoids),
+          { data: [] } as any,
+          4000,
+        );
 
-        clients?.forEach((c) => {
+        clients?.forEach((c: any) => {
           if (c.boid) existingBoids.add(c.boid);
         });
       } catch (err) {
@@ -438,35 +465,28 @@ export const ValidationEngine = {
       }
     }
 
-    // Parallel fetch with fail-safe fallbacks
+    // Parallel fetch with fail-safe fallbacks and per-query timeouts
     const [companiesRes, fyRes, rulesRes] = await Promise.all([
-      supabase
-        .from("companies")
-        .select("isin, coupon_rate, dividend_rate, id, company_type, fiscal_year")
-        .then((r) => r)
-        .catch((err) => {
-          console.warn("Could not load companies for validation:", err);
-          return { data: [] };
-        }),
-      supabase
-        .from("fiscal_years")
-        .select("fiscal_year")
-        .eq("is_active", true)
-        .maybeSingle()
-        .then((r) => r)
-        .catch((err) => {
-          console.warn("Could not load active fiscal year:", err);
-          return { data: null };
-        }),
-      (supabase as any)
-        .from("payable_tax_rules")
-        .select("payable_category, payee_classification, tax_rate, is_active")
-        .eq("is_active", true)
-        .then((r: any) => r)
-        .catch((err: any) => {
-          console.warn("Could not load payable tax rules:", err);
-          return { data: [] };
-        }),
+      safeQuery(
+        supabase
+          .from("companies")
+          .select("isin, coupon_rate, dividend_rate, id, company_type, fiscal_year"),
+        { data: [] } as any,
+        4500,
+      ),
+      safeQuery(
+        supabase.from("fiscal_years").select("fiscal_year").eq("is_active", true).maybeSingle(),
+        { data: null } as any,
+        4500,
+      ),
+      safeQuery(
+        (supabase as any)
+          .from("payable_tax_rules")
+          .select("payable_category, payee_classification, tax_rate, is_active")
+          .eq("is_active", true),
+        { data: [] } as any,
+        4500,
+      ),
     ]);
 
     const companies = companiesRes.data || [];

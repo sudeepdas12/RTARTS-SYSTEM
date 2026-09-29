@@ -534,7 +534,8 @@ function UploadRoute() {
     try {
       const sheet = parsedData.sheets[selectedSheetIndex];
       if (sheet.sheetType === "SUMMARY") {
-        toast.warning("Summary sheet is reference-only and cannot be validated.");
+        setValidationErrors([]);
+        toast.info("Summary sheet is reference-only and cannot be validated.");
         return;
       }
       const fileHash = cachedFileHash || (await computeFileHash(file));
@@ -1554,7 +1555,10 @@ function UploadRoute() {
               {parsedData.sheets.length > 1 && (
                 <Select
                   value={selectedSheetIndex.toString()}
-                  onValueChange={(v) => setSelectedSheetIndex(parseInt(v))}
+                  onValueChange={(v) => {
+                    setSelectedSheetIndex(parseInt(v));
+                    setValidationErrors([]);
+                  }}
                 >
                   <SelectTrigger className="w-52">
                     <SelectValue />
