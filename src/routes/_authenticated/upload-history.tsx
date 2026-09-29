@@ -223,7 +223,8 @@ function UploadHistoryRoute() {
     const failed = filtered.filter((r) => r.status === "Failed").length;
     const processing = filtered.filter((r) => r.status === "Processing").length;
     const totalRows = filtered.reduce((s, r) => s + (r.success_rows || 0), 0);
-    return { total, completed, failed, processing, totalRows };
+    const totalErrors = filtered.reduce((s, r) => s + (r.error_rows || 0), 0);
+    return { total, completed, failed, processing, totalRows, totalErrors };
   }, [filtered]);
 
   // ── Mutations ─────────────────────────────────────────────────────────────
@@ -311,11 +312,20 @@ function UploadHistoryRoute() {
       </div>
 
       {/* Summary stat row */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
         {[
           { label: "Total Uploads", value: stats.total, color: "" },
-          { label: "Completed", value: stats.completed, color: "text-emerald-600" },
-          { label: "Failed", value: stats.failed, color: "text-red-600" },
+          { label: "Completed Files", value: stats.completed, color: "text-emerald-600" },
+          {
+            label: "Failed Files",
+            value: stats.failed,
+            color: stats.failed > 0 ? "text-red-600" : "text-muted-foreground",
+          },
+          {
+            label: "Error Rows Flagged",
+            value: stats.totalErrors.toLocaleString(),
+            color: stats.totalErrors > 0 ? "text-amber-600 font-bold" : "text-muted-foreground",
+          },
           {
             label: "Rows Imported",
             value: stats.totalRows.toLocaleString(),
