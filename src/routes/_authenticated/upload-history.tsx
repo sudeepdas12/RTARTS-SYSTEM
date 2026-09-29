@@ -219,12 +219,17 @@ function UploadHistoryRoute() {
   // ── Summary stats ─────────────────────────────────────────────────────────
   const stats = useMemo(() => {
     const total = filtered.length;
-    const completed = filtered.filter((r) => r.status === "Completed").length;
-    const failed = filtered.filter((r) => r.status === "Failed").length;
-    const processing = filtered.filter((r) => r.status === "Processing").length;
-    const totalRows = filtered.reduce((s, r) => s + (r.success_rows || 0), 0);
-    const totalErrors = filtered.reduce((s, r) => s + (r.error_rows || 0), 0);
-    return { total, completed, failed, processing, totalRows, totalErrors };
+    // RolledBack uploads had their payables removed from the database during rollback,
+    // so they MUST NOT be added to active live Rows or active Errors!
+    const activeUploads = filtered.filter((r) => r.status !== "RolledBack");
+    const completed = activeUploads.filter((r) => r.status === "Completed").length;
+    const failed = activeUploads.filter((r) => r.status === "Failed").length;
+    const processing = activeUploads.filter((r) => r.status === "Processing").length;
+    const rolledBack = filtered.filter((r) => r.status === "RolledBack").length;
+
+    const totalRows = activeUploads.reduce((s, r) => s + (r.success_rows || 0), 0);
+    const totalErrors = activeUploads.reduce((s, r) => s + (r.error_rows || 0), 0);
+    return { total, completed, failed, processing, rolledBack, totalRows, totalErrors };
   }, [filtered]);
 
   // ── Mutations ─────────────────────────────────────────────────────────────
@@ -312,17 +317,18 @@ function UploadHistoryRoute() {
       </div>
 
       {/* Summary stat row */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
         {[
           { label: "Total Uploads", value: stats.total, color: "" },
-          { label: "Completed", value: stats.completed, color: "text-emerald-600" },
+          { label: "Active Completed", value: stats.completed, color: "text-emerald-600" },
+          { label: "Rolled Back", value: stats.rolledBack, color: "text-muted-foreground" },
           {
             label: "Failed / Error Rows",
             value: stats.totalErrors.toLocaleString(),
             color: stats.totalErrors > 0 ? "text-red-600 font-bold" : "text-muted-foreground",
           },
           {
-            label: "Rows Imported",
+            label: "Active Rows in System",
             value: stats.totalRows.toLocaleString(),
             color: "text-primary",
           },
