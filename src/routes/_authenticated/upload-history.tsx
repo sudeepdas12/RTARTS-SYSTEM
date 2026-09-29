@@ -312,19 +312,14 @@ function UploadHistoryRoute() {
       </div>
 
       {/* Summary stat row */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {[
           { label: "Total Uploads", value: stats.total, color: "" },
-          { label: "Completed Files", value: stats.completed, color: "text-emerald-600" },
+          { label: "Completed", value: stats.completed, color: "text-emerald-600" },
           {
-            label: "Failed Files",
-            value: stats.failed,
-            color: stats.failed > 0 ? "text-red-600" : "text-muted-foreground",
-          },
-          {
-            label: "Error Rows Flagged",
+            label: "Failed / Error Rows",
             value: stats.totalErrors.toLocaleString(),
-            color: stats.totalErrors > 0 ? "text-amber-600 font-bold" : "text-muted-foreground",
+            color: stats.totalErrors > 0 ? "text-red-600 font-bold" : "text-muted-foreground",
           },
           {
             label: "Rows Imported",
