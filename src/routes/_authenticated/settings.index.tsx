@@ -26,7 +26,18 @@ import {
 } from "@/lib/services/tax-rules.service";
 import { useAuth } from "@/hooks/use-auth";
 import { toast } from "sonner";
-import { Loader2, Lock, Save, Send, Database, HardDrive, ArrowRight } from "lucide-react";
+import {
+  Loader2,
+  Lock,
+  Save,
+  Send,
+  Database,
+  HardDrive,
+  ArrowRight,
+  Eye,
+  EyeOff,
+  CheckCircle2,
+} from "lucide-react";
 
 function TaxRulesEditor() {
   const qc = useQueryClient();
@@ -165,6 +176,7 @@ function SettingsRoute() {
   const [form, setForm] = useState<Partial<SystemSettings>>({});
   const [testEmail, setTestEmail] = useState("");
   const [testPhone, setTestPhone] = useState("");
+  const [showSmtpPass, setShowSmtpPass] = useState(false);
 
   const merged: SystemSettings = { ...(settings || ({} as SystemSettings)), ...form };
 
@@ -176,18 +188,18 @@ function SettingsRoute() {
       if (!isAdmin)
         throw new Error("Unauthorized: Only administrators can modify system settings.");
       const payload: SystemSettings = { ...(settings || ({} as SystemSettings)), ...form };
-      // Preserve existing masked secrets if the user didn't type a replacement
-      if (!form.connectips_token && settings?.connectips_token) {
-        payload.connectips_token = settings.connectips_token;
+      // Omit masked placeholder values so the backend preserves existing stored credentials
+      if (!form.connectips_token || form.connectips_token === "••••••••••••") {
+        delete (payload as any).connectips_token;
       }
-      if (!form.connectips_cert_pass && settings?.connectips_cert_pass) {
-        payload.connectips_cert_pass = settings.connectips_cert_pass;
+      if (!form.connectips_cert_pass || form.connectips_cert_pass === "••••••••••••") {
+        delete (payload as any).connectips_cert_pass;
       }
-      if (!form.smtp_pass && settings?.smtp_pass) {
-        payload.smtp_pass = settings.smtp_pass;
+      if (!form.smtp_pass || form.smtp_pass === "••••••••••••") {
+        delete (payload as any).smtp_pass;
       }
-      if (!form.sms_api_key && settings?.sms_api_key) {
-        payload.sms_api_key = settings.sms_api_key;
+      if (!form.sms_api_key || form.sms_api_key === "••••••••••••") {
+        delete (payload as any).sms_api_key;
       }
       return SettingsService.saveSettings(payload);
     },
@@ -632,21 +644,44 @@ function SettingsRoute() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>SMTP Password / App Password</Label>
-                <Input
-                  type="password"
-                  autoComplete="new-password"
-                  placeholder={
-                    settings?.smtp_pass_configured
-                      ? "•••••••••••• (Configured — enter new to change)"
-                      : "Enter SMTP password"
-                  }
-                  value={form.smtp_pass ?? ""}
-                  onChange={(e) => update("smtp_pass", e.target.value)}
-                />
+                <div className="flex items-center justify-between">
+                  <Label>SMTP Password / App Password</Label>
+                  {settings?.smtp_pass_configured && (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">
+                      <CheckCircle2 className="h-3 w-3" /> Saved &amp; Active
+                    </span>
+                  )}
+                </div>
+                <div className="relative">
+                  <Input
+                    type={showSmtpPass ? "text" : "password"}
+                    autoComplete="new-password"
+                    placeholder={
+                      settings?.smtp_pass_configured ? "••••••••••••" : "Enter SMTP password"
+                    }
+                    value={form.smtp_pass ?? (settings?.smtp_pass_configured ? "••••••••••••" : "")}
+                    onChange={(e) => update("smtp_pass", e.target.value)}
+                    onFocus={() => {
+                      if (form.smtp_pass === undefined && settings?.smtp_pass_configured) {
+                        update("smtp_pass", "");
+                      }
+                    }}
+                    className="pr-10"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="absolute right-0 top-0 h-full px-3 hover:bg-transparent text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowSmtpPass(!showSmtpPass)}
+                    tabIndex={-1}
+                  >
+                    {showSmtpPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </Button>
+                </div>
                 <p className="text-xs text-muted-foreground">
                   {settings?.smtp_pass_configured
-                    ? "Password is configured and stored securely. Leave blank to keep the existing password."
+                    ? "Password is saved and active in the database. Click into the box if you want to change it."
                     : "Stored securely and never displayed in plaintext."}
                 </p>
               </div>
