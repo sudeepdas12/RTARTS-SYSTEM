@@ -138,4 +138,35 @@ describe("IrdEtdsService — Nepal Tax Compliance & Annex-10 Formatting", () => 
       /Report invariant violation/,
     );
   });
+
+  it("exports Annex-10 JSON schema payload without crashing", () => {
+    const validSummary: IrdAnnex10Summary = {
+      companyName: "RBB Debenture Issuer",
+      companyPan: "600987654",
+      fiscalYear: "2082/83",
+      payableType: "INTEREST",
+      totalWithholdees: 1,
+      panWithholdees: 1,
+      unregisteredWithholdees: 0,
+      totalGrossAmount: 8500,
+      totalTdsAmount: 510,
+      totalNetAmount: 7990,
+      rows: [
+        {
+          sn: 1,
+          withholdeePan: "123456789",
+          withholdeeName: "Ram Sharma",
+          boid: "1301010000000001",
+          paymentType: "INTEREST",
+          paymentDate: "2026-07-15",
+          grossAmount: 8500,
+          tdsRate: 6,
+          tdsAmount: 510,
+          netPayable: 7990,
+        },
+      ],
+    };
+
+    expect(() => IrdEtdsService.exportAnnex10Json(validSummary)).not.toThrow();
+  });
 });

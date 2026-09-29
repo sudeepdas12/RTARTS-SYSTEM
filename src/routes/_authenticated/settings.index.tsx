@@ -164,6 +164,7 @@ function SettingsRoute() {
 
   const [form, setForm] = useState<Partial<SystemSettings>>({});
   const [testEmail, setTestEmail] = useState("");
+  const [testPhone, setTestPhone] = useState("");
 
   const merged: SystemSettings = { ...(settings || ({} as SystemSettings)), ...form };
 
@@ -185,6 +186,9 @@ function SettingsRoute() {
       if (!form.smtp_pass && settings?.smtp_pass) {
         payload.smtp_pass = settings.smtp_pass;
       }
+      if (!form.sms_api_key && settings?.sms_api_key) {
+        payload.sms_api_key = settings.sms_api_key;
+      }
       return SettingsService.saveSettings(payload);
     },
     onSuccess: () => {
@@ -198,10 +202,19 @@ function SettingsRoute() {
   const { mutate: sendTest, isPending: sendingTest } = useMutation({
     mutationFn: () => {
       if (!isAdmin) throw new Error("Unauthorized: Only administrators can test email settings.");
-      return SettingsService.sendTestEmail(testEmail.trim());
+      return SettingsService.sendTestEmail(testEmail.trim(), merged);
     },
-    onSuccess: () => toast.success("Test email sent successfully."),
+    onSuccess: (res) => toast.success(res?.message || "Test email sent successfully."),
     onError: (err) => toast.error(`Failed to send test email: ${(err as Error).message}`),
+  });
+
+  const { mutate: sendSms, isPending: sendingSms } = useMutation({
+    mutationFn: () => {
+      if (!isAdmin) throw new Error("Unauthorized: Only administrators can test SMS settings.");
+      return SettingsService.sendTestSms(testPhone.trim(), merged);
+    },
+    onSuccess: (res) => toast.success(res?.message || "Test SMS sent successfully."),
+    onError: (err) => toast.error(`Failed to send test SMS: ${(err as Error).message}`),
   });
 
   if (!authLoading && !isAdmin) {
@@ -291,12 +304,13 @@ function SettingsRoute() {
       </div>
 
       <Tabs defaultValue="general" className="w-full">
-        <TabsList className="grid w-full grid-cols-5 max-w-[820px]">
+        <TabsList className="grid w-full grid-cols-6 max-w-[960px]">
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="tax-rules">Tax Rules (TDS)</TabsTrigger>
           <TabsTrigger value="banking-gateway">Banking (ConnectIPS)</TabsTrigger>
           <TabsTrigger value="workflow">Workflow</TabsTrigger>
-          <TabsTrigger value="notifications">Notifications</TabsTrigger>
+          <TabsTrigger value="email">Email</TabsTrigger>
+          <TabsTrigger value="sms">SMS</TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="mt-6">
@@ -573,12 +587,13 @@ function SettingsRoute() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="notifications" className="mt-6">
+        <TabsContent value="email" className="mt-6">
           <Card>
             <CardHeader>
-              <CardTitle>Email (SMTP) Configuration</CardTitle>
+              <CardTitle>Email Configuration</CardTitle>
               <CardDescription>
-                Configure outgoing email settings for notifications and reports.
+                Configure outgoing SMTP email settings for system notifications, shareholder
+                statements, and reports.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5 max-w-md">
@@ -596,7 +611,7 @@ function SettingsRoute() {
                   <Input
                     type="number"
                     value={merged.smtp_port || 587}
-                    onChange={(e) => update("smtp_port", parseInt(e.target.value))}
+                    onChange={(e) => update("smtp_port", parseInt(e.target.value) || 587)}
                   />
                 </div>
               </div>
@@ -622,46 +637,208 @@ function SettingsRoute() {
                   type="password"
                   autoComplete="new-password"
                   placeholder={
-                    settings?.smtp_pass
+                    settings?.smtp_pass_configured
                       ? "•••••••••••• (Configured — enter new to change)"
                       : "Enter SMTP password"
                   }
-                  value={form.smtp_pass ?? (settings?.smtp_pass ? "••••••••••••" : "")}
+                  value={form.smtp_pass ?? ""}
                   onChange={(e) => update("smtp_pass", e.target.value)}
-                  onFocus={(e) => {
-                    if (form.smtp_pass === undefined && settings?.smtp_pass) {
-                      update("smtp_pass", "");
-                    }
-                  }}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Stored securely and never displayed in plaintext. Leave blank to keep the existing
-                  password.
+                  {settings?.smtp_pass_configured
+                    ? "Password is configured and stored securely. Leave blank to keep the existing password."
+                    : "Stored securely and never displayed in plaintext."}
                 </p>
               </div>
-              <div className="pt-2 mt-2 border-t space-y-3">
-                <div className="space-y-2">
-                  <Label>Send Test Email To</Label>
+
+              <div className="flex items-center gap-3 pt-2">
+                <Button
+                  type="button"
+                  onClick={() => saveSettings()}
+                  disabled={isPending}
+                  className="hover-lift"
+                >
+                  {isPending ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Save className="w-4 h-4 mr-2" />
+                  )}
+                  Save Email Settings
+                </Button>
+              </div>
+
+              <div className="pt-4 mt-2 border-t space-y-3">
+                <div className="space-y-1">
+                  <Label>Send Test Email</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Verify outgoing email connection and delivery before saving or with current
+                    settings.
+                  </p>
+                </div>
+                <div className="flex gap-2">
                   <Input
                     type="email"
                     placeholder="recipient@example.com"
                     value={testEmail}
                     onChange={(e) => setTestEmail(e.target.value)}
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => sendTest()}
+                    disabled={!testEmail.trim() || sendingTest}
+                  >
+                    {sendingTest ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Send className="w-4 h-4 mr-2" />
+                    )}
+                    Send Test Email
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="sms" className="mt-6">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>SMS Gateway Configuration</CardTitle>
+                  <CardDescription>
+                    Configure outgoing SMS gateway credentials (Sparrow SMS, Aakash SMS, SMS To
+                    Nepal, or Custom Webhook) for dispatching shareholder payment alerts and AGM
+                    notices.
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-muted-foreground">Gateway Active:</span>
+                  <Switch
+                    checked={Boolean(merged.sms_enabled)}
+                    onCheckedChange={(v) => update("sms_enabled", v)}
                   />
                 </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-6 max-w-2xl">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>SMS Provider</Label>
+                  <select
+                    value={merged.sms_provider || "sparrow"}
+                    onChange={(e) => {
+                      const provider = e.target.value as
+                        "sparrow" | "aakash" | "smstonepal" | "custom";
+                      update("sms_provider", provider);
+                      if (provider === "sparrow") {
+                        update("sms_gateway_url", "https://api.sparrowsms.com/v2/sms/");
+                      } else if (provider === "aakash") {
+                        update("sms_gateway_url", "https://sms.aakashsms.com/v3/sms/");
+                      } else if (provider === "smstonepal") {
+                        update("sms_gateway_url", "https://smstonepal.com/api/v1/sms/");
+                      }
+                    }}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
+                  >
+                    <option value="sparrow">Sparrow SMS (api.sparrowsms.com)</option>
+                    <option value="aakash">Aakash SMS (sms.aakashsms.com)</option>
+                    <option value="smstonepal">SMS To Nepal (smstonepal.com)</option>
+                    <option value="custom">Custom HTTP Webhook / Gateway</option>
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Approved Sender ID</Label>
+                  <Input
+                    placeholder="e.g., RBBMBL or SpwSMS"
+                    value={merged.sms_sender_id || ""}
+                    onChange={(e) => update("sms_sender_id", e.target.value)}
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Sender identity registered with Nepal telecom operators (NTC/Ncell).
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Gateway Endpoint URL</Label>
+                <Input
+                  placeholder="https://api.sparrowsms.com/v2/sms/"
+                  value={merged.sms_gateway_url || ""}
+                  onChange={(e) => update("sms_gateway_url", e.target.value)}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>API Key / Authentication Token</Label>
+                <Input
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder={
+                    settings?.sms_api_key_configured
+                      ? "•••••••••••• (Configured — enter new to change)"
+                      : "Enter SMS gateway API key or token"
+                  }
+                  value={form.sms_api_key ?? ""}
+                  onChange={(e) => update("sms_api_key", e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {settings?.sms_api_key_configured
+                    ? "API key is configured and stored securely. Leave blank to keep existing key."
+                    : "Stored securely in system settings. Never displayed in plaintext."}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
                 <Button
                   type="button"
-                  variant="outline"
-                  onClick={() => sendTest()}
-                  disabled={!testEmail.trim() || sendingTest}
+                  onClick={() => saveSettings()}
+                  disabled={isPending}
+                  className="hover-lift"
                 >
-                  {sendingTest ? (
+                  {isPending ? (
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                   ) : (
-                    <Send className="w-4 h-4 mr-2" />
+                    <Save className="w-4 h-4 mr-2" />
                   )}
-                  Send Test Email
+                  Save SMS Settings
                 </Button>
+              </div>
+
+              <div className="pt-4 mt-2 border-t space-y-3">
+                <div className="space-y-1">
+                  <Label>Send Test SMS</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Verify outgoing SMS delivery to a 10-digit Nepali mobile number (98XXXXXXXX /
+                    97XXXXXXXX).
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    type="tel"
+                    placeholder="98XXXXXXXX"
+                    value={testPhone}
+                    onChange={(e) => setTestPhone(e.target.value)}
+                    className="max-w-xs"
+                    maxLength={10}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => sendSms()}
+                    disabled={!testPhone.trim() || sendingSms}
+                  >
+                    {sendingSms ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Send className="w-4 h-4 mr-2" />
+                    )}
+                    Send Test SMS
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>

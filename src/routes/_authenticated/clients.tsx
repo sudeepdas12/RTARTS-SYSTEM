@@ -61,6 +61,7 @@ import {
 import { toast } from "sonner";
 import { exportToExcel, importFromExcel } from "@/lib/xlsx-utils";
 import { ShareholderStatementDialog } from "@/components/shareholder-statement-dialog";
+import { normalizeBoid } from "@/lib/validation-engine";
 
 export const Route = createFileRoute("/_authenticated/clients")({
   component: ClientsPage,
@@ -651,6 +652,10 @@ function ClientsPage() {
       const panNo = form.pan_no.trim() || null;
       const citizenshipNo = form.citizenship_no.trim() || null;
       const kittaVal = form.kitta !== "" ? Number(form.kitta) : 0;
+      const cleanBoid = normalizeBoid(form.boid);
+      if (cleanBoid && cleanBoid.length > 20) {
+        throw new Error("BOID or folio identifier cannot exceed 20 characters.");
+      }
       const payload = {
         client_code: form.client_code.trim(),
         client_id: form.client_id.trim() || null,
@@ -661,7 +666,7 @@ function ClientsPage() {
         date_of_birth: form.date_of_birth.trim() || null,
         gender: form.gender.trim() || null,
         occupation: form.occupation.trim() || null,
-        boid: form.boid.trim() || null,
+        boid: cleanBoid,
         kitta: kittaVal,
         holder_type: form.holder_type,
         payee_classification: form.payee_classification,
@@ -1373,10 +1378,23 @@ function ClientsPage() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label>BOID (16 Digits)</Label>
+                <div className="flex items-center justify-between">
+                  <Label>BOID (16 Digits)</Label>
+                  {form.boid && form.boid.length > 0 && form.boid.length < 16 && (
+                    <span className="text-[10px] text-amber-600 font-mono">
+                      {form.boid.length}/16 (will auto-pad)
+                    </span>
+                  )}
+                  {form.boid && form.boid.length === 16 && (
+                    <span className="text-[10px] text-emerald-600 font-mono">✓ 16 digits</span>
+                  )}
+                </div>
                 <Input
                   value={form.boid}
-                  onChange={(e) => setF("boid", e.target.value)}
+                  onChange={(e) => {
+                    const clean = e.target.value.replace(/[^0-9A-Za-z]/g, "").slice(0, 16);
+                    setF("boid", clean);
+                  }}
                   placeholder="13010200..."
                   maxLength={16}
                   className="font-mono"

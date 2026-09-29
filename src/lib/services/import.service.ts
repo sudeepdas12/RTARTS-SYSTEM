@@ -49,16 +49,23 @@ export interface ClientRecordMeta {
   citizenship_no?: string | null;
 }
 
-async function fetchClientInfoByBoids(boids: string[]): Promise<Map<string, ClientRecordMeta>> {
+async function fetchClientInfoByBoids(
+  boids: string[],
+  companyId?: string,
+): Promise<Map<string, ClientRecordMeta>> {
   const map = new Map<string, ClientRecordMeta>();
   for (let i = 0; i < boids.length; i += CLIENT_LOOKUP_BATCH) {
     const part = boids.slice(i, i + CLIENT_LOOKUP_BATCH);
-    const { data } = await (supabase as any)
+    let q = (supabase as any)
       .from("clients")
       .select(
         "id, boid, client_code, holder_type, payee_classification, payee_segment, nid_number, pan_no, citizenship_no",
       )
       .in("boid", part);
+    if (companyId) {
+      q = q.eq("company_id", companyId);
+    }
+    const { data } = await q;
     for (const c of data || []) {
       if (c?.boid) map.set(String(c.boid), c);
     }
@@ -66,8 +73,11 @@ async function fetchClientInfoByBoids(boids: string[]): Promise<Map<string, Clie
   return map;
 }
 
-async function fetchClientIdsByBoids(boids: string[]): Promise<Map<string, string>> {
-  const infoMap = await fetchClientInfoByBoids(boids);
+async function fetchClientIdsByBoids(
+  boids: string[],
+  companyId?: string,
+): Promise<Map<string, string>> {
+  const infoMap = await fetchClientInfoByBoids(boids, companyId);
   const idMap = new Map<string, string>();
   for (const [boid, info] of infoMap) {
     idMap.set(boid, info.id);
@@ -295,6 +305,7 @@ export const ImportService = {
       userId?: string;
       isPreCalculated?: boolean;
       isRawInputFile?: boolean;
+      daysCount?: number;
     },
     sharedContext?: {
       companyId?: string;
@@ -308,7 +319,7 @@ export const ImportService = {
     // be skipped rather than counted as import errors.
     chunkData = chunkData.filter((row) => {
       if (!row || typeof row !== "object") return false;
-      const boid = String(
+      let boid = String(
         row.boid ||
           row.BOID ||
           row["BENEFICIARY ID"] ||
@@ -329,6 +340,13 @@ export const ImportService = {
           row.folio ||
           "",
       ).trim();
+
+      if (boid && /^\d+$/.test(boid) && boid.length < 16) {
+        boid = boid.padStart(16, "0");
+        // normalize in row
+        row.boid = boid;
+      }
+
       if (boid) return true; // has a BOID — keep it
       // No BOID: treat as a footer/summary row if a "TOTAL"/"SUMMARY" marker is present
       const allValues = Object.values(row).filter((v) => v !== null && v !== undefined);
@@ -372,6 +390,7 @@ export const ImportService = {
           sheetName: options?.sheetName,
           totalRows: options?.totalRows,
           userId: options?.userId,
+          daysCount: options?.daysCount,
         },
       });
 
@@ -563,7 +582,7 @@ export const ImportService = {
     const boidMap = new Map<string, any>();
     let rowErrors: Record<string, any>[] = [];
     for (const row of chunkData) {
-      const boid = String(
+      let boid = String(
         row.boid ||
           row.BOID ||
           row["BENEFICIARY ID"] ||
@@ -575,6 +594,11 @@ export const ImportService = {
           row.ClientCode ||
           "",
       ).trim();
+
+      if (boid && /^\d+$/.test(boid) && boid.length < 16) {
+        boid = boid.padStart(16, "0");
+      }
+
       // Accept BOID lengths 6–20 (CDS IDs can be 8 or 16 digits; older records may be shorter)
       if (boid && boid.length >= 6 && boid.length <= 20) {
         if (!boidMap.has(boid)) {
@@ -600,7 +624,7 @@ export const ImportService = {
     const missingBoids = uniqueBoids.filter((boid) => !sharedContext?.clientIdCache?.has(boid));
     const existingClientMap =
       missingBoids.length > 0
-        ? await fetchClientInfoByBoids(missingBoids)
+        ? await fetchClientInfoByBoids(missingBoids, companyId)
         : new Map<string, ClientRecordMeta>();
 
     if (sharedContext && !sharedContext.clientInfoCache) {
@@ -1089,7 +1113,7 @@ export const ImportService = {
           try {
             const { error: insErr } = await (supabase as any)
               .from("clients")
-              .upsert(clientRec, { onConflict: "boid" });
+              .upsert(clientRec, { onConflict: "company_id,boid" });
             if (!insErr) {
               clientsInserted++;
             } else {
@@ -1130,7 +1154,7 @@ export const ImportService = {
               };
               const { error: insErr2 } = await (supabase as any)
                 .from("clients")
-                .upsert(baseClient, { onConflict: "boid" });
+                .upsert(baseClient, { onConflict: "company_id,boid" });
               if (!insErr2) clientsInserted++;
             }
           } catch (cEx) {
@@ -1141,7 +1165,7 @@ export const ImportService = {
 
       // CRITICAL: Re-fetch actual client IDs and metadata from the database.
       const newBoids = newClientRecords.map((c) => c.boid);
-      const actualClientInfo = await fetchClientInfoByBoids(newBoids);
+      const actualClientInfo = await fetchClientInfoByBoids(newBoids, companyId);
       for (const [boid, info] of actualClientInfo) {
         resolvedClientIds.set(boid, info.id);
         sharedContext?.clientIdCache?.set(boid, info.id);
@@ -1384,7 +1408,14 @@ export const ImportService = {
       if (rawDueDate) {
         let parsedDateStr = "";
         const cleanDate = rawDueDate.trim();
-        if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(cleanDate)) {
+        if (/^\d{5}$/.test(cleanDate)) {
+          const serial = Number(cleanDate);
+          if (serial >= 20000 && serial <= 70000) {
+            const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+            const d = new Date(excelEpoch.getTime() + serial * 86400000);
+            parsedDateStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+          }
+        } else if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(cleanDate)) {
           const parts = cleanDate.split(/[-/]/);
           parsedDateStr = `${parts[0]}-${parts[1].padStart(2, "0")}-${parts[2].padStart(2, "0")}`;
         } else if (/^\d{1,2}[-/]\d{1,2}[-/]\d{4}$/.test(cleanDate)) {
@@ -1532,7 +1563,7 @@ export const ImportService = {
           bank_account_no: bankAccountNo || null,
           bank_branch: bankBranch || null,
           lot_name: lotName || null,
-          remarks: remarks || null,
+          remarks: remarks || lotName || null,
           payment_status: status === "SUCCESS" ? "Paid" : "Pending",
           payee_classification: payableClassification(investorCategory),
           payee_segment: payableSegment(investorCategory),
@@ -1540,10 +1571,27 @@ export const ImportService = {
             investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
         });
       } else if (targetTable === "interest_payables") {
+        const effectiveDays = options?.daysCount || (row.days_count ? Number(row.days_count) : 183);
+        const divisor =
+          options?.dayCountConvention === "30_360" || options?.dayCountConvention === "30/360"
+            ? 360
+            : 365;
         if (!options?.isPreCalculated) {
           if (!grossAmount && sharesHeld && options?.dividendRate) {
-            // Debenture face value is NPR 1,000; dividendRate is the annual coupon percentage
-            grossAmount = Math.round(sharesHeld * 1000 * (options.dividendRate / 100) * 100) / 100;
+            // Debenture face value is NPR 1,000; coupon rate is annualized percentage
+            if (effectiveDays > 0 && effectiveDays < divisor) {
+              grossAmount =
+                Math.round(
+                  sharesHeld *
+                    1000 *
+                    (options.dividendRate / 100) *
+                    (effectiveDays / divisor) *
+                    100,
+                ) / 100;
+            } else {
+              grossAmount =
+                Math.round(sharesHeld * 1000 * (options.dividendRate / 100) * 100) / 100;
+            }
           }
           if (!taxAmount && grossAmount && rowTdsRate > 0) {
             taxAmount = Math.round(grossAmount * rowTdsRate * 100) / 100;
@@ -1581,6 +1629,7 @@ export const ImportService = {
           client_id: clientId,
           shares_held: sharesHeld || null,
           kitta: sharesHeld || null,
+          days_count: effectiveDays,
           gross_interest: totals.grossAmount,
           tax_amount: totals.taxAmount,
           net_payable: totals.netPayable,
@@ -1592,7 +1641,7 @@ export const ImportService = {
           bank_branch: bankBranch || null,
           lot_name: lotName || null,
           instrument_ref: instrumentRef || null,
-          remarks: remarks || null,
+          remarks: remarks || lotName || null,
           payment_status: status === "SUCCESS" ? "Paid" : "Pending",
           payee_classification: payableClassification(investorCategory),
           payee_segment: payableSegment(investorCategory),

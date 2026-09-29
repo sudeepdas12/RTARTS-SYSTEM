@@ -1,4 +1,4 @@
-﻿-- ============================================================================
+-- ============================================================================
 -- Migration: 20261188000000_harden_payment_batch_completion_and_revert.sql
 -- Description:
 -- 1. In complete_payment_batch_atomic:
@@ -12,7 +12,7 @@
 
 -- 1. Harden complete_payment_batch_atomic
 CREATE OR REPLACE FUNCTION public.complete_payment_batch_atomic(p_batch_id uuid, p_user_id uuid DEFAULT NULL::uuid)
- RETURNS json
+ RETURNS jsonb
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO 'public'

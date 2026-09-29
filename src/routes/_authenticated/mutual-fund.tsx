@@ -64,6 +64,7 @@ import { exportToExcel, importFromExcel } from "@/lib/xlsx-utils";
 import { SummaryReportService } from "@/lib/services/summary-report.service";
 import { STANDARD_PERIODS, type PeriodPreset } from "@/lib/services/period-calculator";
 import { ShareholderStatementDialog } from "@/components/shareholder-statement-dialog";
+import { normalizeBoid } from "@/lib/validation-engine";
 import {
   getTaxRateFromRules,
   investorCategoryToClassification,
@@ -683,7 +684,7 @@ function MutualFundPage() {
 
       if (editing && editing.client_id) {
         const clientPayload: Record<string, unknown> = {};
-        if (form.client_boid !== undefined) clientPayload.boid = form.client_boid || null;
+        if (form.client_boid !== undefined) clientPayload.boid = normalizeBoid(form.client_boid);
         if (form.client_full_name !== undefined)
           clientPayload.full_name = form.client_full_name || null;
         if (form.client_father_name !== undefined)
@@ -1051,10 +1052,32 @@ function MutualFundPage() {
                         </div>
                         <div className="grid gap-3 md:grid-cols-2">
                           <div className="space-y-1.5">
-                            <Label>BOID</Label>
+                            <div className="flex items-center justify-between">
+                              <Label>BOID (16 Digits)</Label>
+                              {form.client_boid &&
+                                form.client_boid.length > 0 &&
+                                form.client_boid.length < 16 && (
+                                  <span className="text-[10px] text-amber-600 font-mono">
+                                    {form.client_boid.length}/16 (will auto-pad)
+                                  </span>
+                                )}
+                              {form.client_boid && form.client_boid.length === 16 && (
+                                <span className="text-[10px] text-emerald-600 font-mono">
+                                  ✓ 16 digits
+                                </span>
+                              )}
+                            </div>
                             <Input
                               value={form.client_boid}
-                              onChange={(e) => setForm({ ...form, client_boid: e.target.value })}
+                              onChange={(e) => {
+                                const clean = e.target.value
+                                  .replace(/[^0-9A-Za-z]/g, "")
+                                  .slice(0, 16);
+                                setForm({ ...form, client_boid: clean });
+                              }}
+                              placeholder="13010200..."
+                              maxLength={16}
+                              className="font-mono"
                             />
                           </div>
                           <div className="space-y-1.5">
@@ -1557,24 +1580,29 @@ function MutualFundPage() {
       </div>
 
       {/* ─── Mutual Fund Distribution Summary Card ─────────────────────────── */}
-      {/* ─── Mutual Fund Distribution Summary Card ─────────────────────────── */}
       <Card className="mb-6 border-primary/20 shadow-xs overflow-hidden">
-        <CardHeader className="py-3.5 px-4 bg-muted/40 border-b flex flex-col md:flex-row md:items-center justify-between gap-3 space-y-0">
-          <div className="flex items-start gap-3">
-            <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary shrink-0 mt-0.5">
-              <BarChart3 className="h-4 w-4" />
+        <CardHeader className="p-4 sm:p-5 bg-card border-b flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-start gap-3.5">
+            <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center text-primary shrink-0 mt-0.5">
+              <BarChart3 className="h-5 w-5" />
             </div>
-            <div className="space-y-0.5">
+            <div className="space-y-1">
               <div className="flex flex-wrap items-center gap-2">
-                <CardTitle className="text-sm font-semibold tracking-tight text-foreground">
-                  Mutual Fund Distribution Summary (CDS Format)
+                <CardTitle className="text-base font-semibold tracking-tight text-foreground">
+                  Mutual Fund Distribution Summary
                 </CardTitle>
-                <Badge variant="outline" className="font-mono text-[11px] bg-background">
+                <Badge
+                  variant="outline"
+                  className="font-mono text-[11px] bg-muted/50 border-border"
+                >
                   {companyFilter === "all"
                     ? "All Schemes"
                     : companies.find((c) => c.id === companyFilter)?.company_code ||
                       "Selected"}{" "}
-                  {fyFilter !== "all" ? `— FY ${fyFilter}` : ""}
+                  {fyFilter !== "all" ? `• FY ${fyFilter}` : ""}
+                </Badge>
+                <Badge variant="secondary" className="text-[10px] uppercase font-semibold">
+                  CDS Format
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground leading-normal">
@@ -1583,11 +1611,11 @@ function MutualFundPage() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
+          <div className="flex flex-wrap items-center gap-2 shrink-0 self-start lg:self-center">
             <Button
               variant="outline"
               size="sm"
-              className="h-8 text-xs font-medium shadow-2xs hover:bg-emerald-50 hover:text-emerald-700 dark:hover:bg-emerald-950/40"
+              className="h-8.5 text-xs font-medium shadow-xs hover:bg-emerald-50 hover:text-emerald-700 dark:hover:bg-emerald-950/40"
               onClick={() =>
                 SummaryReportService.exportMutualFundSummaryToExcel(
                   mfSummary.data ?? [],
@@ -1602,7 +1630,7 @@ function MutualFundPage() {
             <Button
               variant="outline"
               size="sm"
-              className="h-8 text-xs font-medium shadow-2xs hover:bg-rose-50 hover:text-rose-700 dark:hover:bg-rose-950/40"
+              className="h-8.5 text-xs font-medium shadow-xs hover:bg-rose-50 hover:text-rose-700 dark:hover:bg-rose-950/40"
               onClick={() =>
                 SummaryReportService.exportMutualFundSummaryToPdf(
                   mfSummary.data ?? [],
@@ -1620,10 +1648,10 @@ function MutualFundPage() {
         </CardHeader>
 
         {/* ─── Dedicated Toolbar / Filter Ribbon ─── */}
-        <div className="px-4 py-2.5 bg-muted/15 border-b flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex flex-wrap items-center gap-2.5">
+        <div className="p-3.5 sm:px-4 bg-muted/20 border-b flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-1.5">
-              <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
                 Scheme:
               </span>
               <Select
@@ -1977,36 +2005,40 @@ function MutualFundPage() {
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/50 hover:bg-muted/50">
-                  <TableHead className="font-semibold whitespace-nowrap min-w-[130px]">
+                  <TableHead className="font-semibold whitespace-nowrap w-[11%] min-w-[105px]">
                     Scheme / Fund
                   </TableHead>
-                  <TableHead className="font-semibold whitespace-nowrap min-w-[170px]">
+                  <TableHead className="font-semibold whitespace-nowrap w-[18%] min-w-[155px]">
                     Unitholder &amp; BOID
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap">
+                  <TableHead className="text-right font-semibold whitespace-nowrap w-[6%] min-w-[55px]">
                     Units
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap">
+                  <TableHead className="text-right font-semibold whitespace-nowrap w-[5%] min-w-[50px]">
                     Rate %
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap">
+                  <TableHead className="text-right font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
                     Gross (NPR)
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap">Tax</TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap">
+                  <TableHead className="text-right font-semibold whitespace-nowrap w-[7%] min-w-[65px]">
+                    TDS Tax
+                  </TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
                     Net Distribution
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap">Paid</TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap">
+                  <TableHead className="text-right font-semibold whitespace-nowrap w-[7%] min-w-[70px]">
+                    Paid
+                  </TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap w-[7%] min-w-[70px]">
                     Remaining
                   </TableHead>
-                  <TableHead className="font-semibold whitespace-nowrap min-w-[140px]">
-                    Bank Account
+                  <TableHead className="font-semibold whitespace-nowrap w-[12%] min-w-[125px]">
+                    Bank Details
                   </TableHead>
-                  <TableHead className="font-semibold whitespace-nowrap min-w-[110px]">
+                  <TableHead className="font-semibold whitespace-nowrap w-[11%] min-w-[100px]">
                     Status &amp; FY
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-20">
+                  <TableHead className="text-right font-semibold whitespace-nowrap w-[6%] min-w-[65px]">
                     Actions
                   </TableHead>
                 </TableRow>
@@ -2038,14 +2070,14 @@ function MutualFundPage() {
                     return (
                       <TableRow key={payable.id} className="hover:bg-muted/30 transition-colors">
                         {/* 1. Scheme / Fund */}
-                        <TableCell className="whitespace-nowrap">
+                        <TableCell className="py-2 px-2 whitespace-nowrap">
                           <div className="flex items-center gap-1.5">
                             <span className="font-mono text-[11px] font-bold px-1.5 py-0.5 rounded bg-muted/80 text-foreground border border-border/50">
                               {c?.company_code || "MF"}
                             </span>
                           </div>
                           <div
-                            className="text-[11px] text-muted-foreground truncate max-w-[150px] mt-0.5"
+                            className="text-[11px] text-muted-foreground truncate max-w-[140px] mt-0.5"
                             title={c?.company_name || undefined}
                           >
                             {c?.company_name || "—"}
@@ -2053,9 +2085,9 @@ function MutualFundPage() {
                         </TableCell>
 
                         {/* 2. Unitholder & BOID */}
-                        <TableCell className="min-w-[170px] max-w-[230px]">
+                        <TableCell className="py-2 px-2">
                           <div
-                            className="font-medium text-xs text-foreground truncate"
+                            className="font-medium text-xs text-foreground truncate max-w-[185px]"
                             title={cl?.full_name ?? undefined}
                           >
                             {cl?.full_name ?? "—"}
@@ -2064,21 +2096,21 @@ function MutualFundPage() {
                             {cl?.boid ? (
                               <button
                                 type="button"
-                                className="font-mono text-[11px] font-semibold text-primary hover:underline cursor-pointer block"
+                                className="font-mono text-[11px] font-semibold text-primary hover:underline cursor-pointer block leading-none"
                                 onClick={() => setSelectedStatementBoid(cl.boid)}
                                 title="Click to view full statement"
                               >
                                 {cl.boid}
                               </button>
                             ) : (
-                              <span className="font-mono text-[11px] text-muted-foreground block">
+                              <span className="font-mono text-[11px] text-muted-foreground block leading-none">
                                 —
                               </span>
                             )}
                           </div>
                           {cl?.father_name && (
                             <div
-                              className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5"
+                              className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5 block max-w-[185px]"
                               title={`s/o ${cl.father_name}`}
                             >
                               s/o {cl.father_name}
@@ -2087,7 +2119,7 @@ function MutualFundPage() {
                         </TableCell>
 
                         {/* 3. Units Held */}
-                        <TableCell className="text-right font-mono font-semibold text-primary whitespace-nowrap text-xs">
+                        <TableCell className="text-right font-mono font-semibold text-primary whitespace-nowrap text-xs py-2 px-2">
                           {payable.shares_held || payable.after_bonus_kitta || cl?.kitta
                             ? (
                                 payable.shares_held ||
@@ -2098,43 +2130,45 @@ function MutualFundPage() {
                         </TableCell>
 
                         {/* 4. Rate % */}
-                        <TableCell className="text-right font-mono whitespace-nowrap text-xs">
+                        <TableCell className="text-right font-mono whitespace-nowrap text-xs py-2 px-2">
                           {payable.dividend_rate ? `${payable.dividend_rate}%` : "—"}
                         </TableCell>
 
                         {/* 5. Gross Distribution */}
-                        <TableCell className="text-right font-mono whitespace-nowrap text-xs">
+                        <TableCell className="text-right font-mono whitespace-nowrap text-xs py-2 px-2">
                           {fmt(payable.gross_dividend)}
                         </TableCell>
 
-                        {/* 6. Tax Amount */}
-                        <TableCell className="text-right font-mono text-amber-600 whitespace-nowrap text-xs">
+                        {/* 6. TDS Tax Amount */}
+                        <TableCell className="text-right font-mono text-amber-600 dark:text-amber-400 whitespace-nowrap text-xs py-2 px-2">
                           {fmt(payable.tax_amount)}
                         </TableCell>
 
                         {/* 7. Net Distribution */}
-                        <TableCell className="text-right font-mono font-bold text-foreground whitespace-nowrap text-xs">
+                        <TableCell className="text-right font-mono font-bold text-foreground whitespace-nowrap text-xs py-2 px-2">
                           {fmt(payable.net_payable)}
                         </TableCell>
 
                         {/* 8. Paid Amount */}
-                        <TableCell className="text-right font-mono font-semibold text-emerald-600 whitespace-nowrap text-xs">
+                        <TableCell className="text-right font-mono font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap text-xs py-2 px-2">
                           {fmt(paidVal)}
                         </TableCell>
 
                         {/* 9. Remaining Amount */}
                         <TableCell
-                          className={`text-right font-mono font-semibold whitespace-nowrap text-xs ${
-                            remVal > 0 ? "text-rose-600" : "text-muted-foreground"
+                          className={`text-right font-mono font-semibold whitespace-nowrap text-xs py-2 px-2 ${
+                            remVal > 0
+                              ? "text-rose-600 dark:text-rose-400"
+                              : "text-muted-foreground"
                           }`}
                         >
                           {fmt(remVal)}
                         </TableCell>
 
                         {/* 10. Bank Details */}
-                        <TableCell className="min-w-[140px] max-w-[190px]">
+                        <TableCell className="py-2 px-2">
                           {payable.bank_name || cl?.bank_name ? (
-                            <>
+                            <div className="max-w-[160px]">
                               <div
                                 className="text-[11px] font-medium truncate"
                                 title={payable.bank_name || cl?.bank_name || undefined}
@@ -2151,14 +2185,14 @@ function MutualFundPage() {
                                   {payable.bank_account_no || cl?.bank_account_no}
                                 </div>
                               )}
-                            </>
+                            </div>
                           ) : (
                             <span className="text-muted-foreground text-xs">—</span>
                           )}
                         </TableCell>
 
                         {/* 11. Status & FY */}
-                        <TableCell className="whitespace-nowrap">
+                        <TableCell className="py-2 px-2 whitespace-nowrap">
                           <div className="flex items-center gap-1.5">
                             <Badge
                               variant={
@@ -2180,13 +2214,13 @@ function MutualFundPage() {
                             </Badge>
                             {payable.fiscal_year && (
                               <span className="font-mono text-[10px] text-muted-foreground font-medium">
-                                {payable.fiscal_year}
+                                FY {payable.fiscal_year}
                               </span>
                             )}
                           </div>
                           {(payable as any).remarks && (
                             <div
-                              className={`text-[10px] max-w-[150px] truncate mt-0.5 ${(payable as any).remarks.includes("Rejected") ? "text-destructive font-medium" : "text-muted-foreground"}`}
+                              className={`text-[10px] max-w-[140px] truncate mt-0.5 ${(payable as any).remarks.includes("Rejected") ? "text-destructive font-medium" : "text-muted-foreground"}`}
                               title={(payable as any).remarks}
                             >
                               {(payable as any).remarks}
@@ -2195,7 +2229,7 @@ function MutualFundPage() {
                         </TableCell>
 
                         {/* 12. Actions */}
-                        <TableCell className="text-right whitespace-nowrap">
+                        <TableCell className="py-2 px-2 text-right whitespace-nowrap">
                           {canWrite && (
                             <div className="flex justify-end gap-1">
                               {payable.payment_status !== "Paid" && (

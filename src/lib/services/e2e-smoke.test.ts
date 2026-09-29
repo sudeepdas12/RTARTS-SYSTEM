@@ -54,16 +54,16 @@ describe("End-to-End System Smoke Test", () => {
       expect(getPayeeTaxRate("PUBLIC", false)).toBe(0.05);
     });
 
-    it("calculates 5% TDS for Institution / Corporate on Dividend", () => {
+    it("calculates 15% TDS for Institution / Corporate on Dividend", () => {
       const result = calculatePayableTotals({
         grossAmount: 100000,
         category: "INSTITUTION",
         isDebenture: false,
       });
       expect(result.grossAmount).toBe(100000);
-      expect(result.taxAmount).toBe(5000); // 5%
-      expect(result.netPayable).toBe(95000);
-      expect(getPayeeTaxRate("INSTITUTION", false)).toBe(0.05);
+      expect(result.taxAmount).toBe(15000); // 15%
+      expect(result.netPayable).toBe(85000);
+      expect(getPayeeTaxRate("INSTITUTION", false)).toBe(0.15);
     });
 
     it("calculates 0% TDS for Tax Exempt / Mutual Fund on Dividend", () => {

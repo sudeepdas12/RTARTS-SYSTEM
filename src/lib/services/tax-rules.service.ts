@@ -195,7 +195,7 @@ export function getDebentureDisplayRates(rules?: TaxRule[] | null) {
 /**
  * Dynamic display rate helpers for Dividend payables.
  * Reads directly from active database tax rules, falling back to statutory standards
- * (Public 5%, Institution 5%, Exempt 0%).
+ * (Public 5%, Institution 15%, Exempt 0%).
  */
 export function getDividendDisplayRates(rules?: TaxRule[] | null) {
   const pub = getTaxRateFromRules(rules, "DIVIDEND", "NATURAL_PERSON");
@@ -204,7 +204,7 @@ export function getDividendDisplayRates(rules?: TaxRule[] | null) {
 
   return {
     publicRatePct: pub != null ? Math.round(pub * 10000) / 100 : 5,
-    institutionRatePct: inst != null ? Math.round(inst * 10000) / 100 : 5,
+    institutionRatePct: inst != null ? Math.round(inst * 10000) / 100 : 15,
     exemptRatePct: exempt != null ? Math.round(exempt * 10000) / 100 : 0,
   };
 }

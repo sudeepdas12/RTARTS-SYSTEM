@@ -335,11 +335,19 @@ function mapToHolderType(category: string): string | null {
  */
 const CLIENT_LOOKUP_BATCH = 300;
 
-async function fetchClientIdsByBoids(supabase: any, boids: string[]): Promise<Map<string, string>> {
+async function fetchClientIdsByBoids(
+  supabase: any,
+  boids: string[],
+  companyId?: string,
+): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   for (let i = 0; i < boids.length; i += CLIENT_LOOKUP_BATCH) {
     const part = boids.slice(i, i + CLIENT_LOOKUP_BATCH);
-    const { data } = await supabase.from("clients").select("id, boid").in("boid", part);
+    let q = supabase.from("clients").select("id, boid").in("boid", part);
+    if (companyId) {
+      q = q.eq("company_id", companyId);
+    }
+    const { data } = await q;
     for (const c of data || []) {
       if (c?.boid) map.set(String(c.boid), c.id);
     }
@@ -632,7 +640,7 @@ serve(async (req) => {
     // 3. Batch fetch existing clients by BOID.
     //    (chunked — a single .in() with ~1000 BOIDs returns "URI too long"
     //    and silently yields no rows)
-    const existingClientMap = await fetchClientIdsByBoids(supabase, boids);
+    const existingClientMap = await fetchClientIdsByBoids(supabase, boids, companyId);
 
     // 4. Prepare client inserts for new BOIDs
     const newClients: any[] = [];
@@ -913,7 +921,7 @@ serve(async (req) => {
       // we generated. We must update clientIdMap with the real database IDs.
       // (chunked lookups to avoid "URI too long" on big chunks)
       const newBoids = newClients.map((c) => c.boid);
-      const actualClientIds = await fetchClientIdsByBoids(supabase, newBoids);
+      const actualClientIds = await fetchClientIdsByBoids(supabase, newBoids, companyId);
       for (const [boid, cid] of actualClientIds) {
         clientIdMap.set(boid, cid);
       }

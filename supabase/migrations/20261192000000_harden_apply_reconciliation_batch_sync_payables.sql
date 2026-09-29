@@ -1,4 +1,4 @@
-﻿-- ============================================================================
+-- ============================================================================
 -- Migration: 20261192000000_harden_apply_reconciliation_batch_sync_payables.sql
 -- Description:
 -- Harden apply_reconciliation_batch RPC:
@@ -7,6 +7,9 @@
 --    'Paid' or 'Partial' (installment payout confirmed through settlement report).
 -- 3. Correct status of existing reconciled payments with paid_amount > 0.
 -- ============================================================================
+
+DROP FUNCTION IF EXISTS public.apply_reconciliation_batch(jsonb, jsonb);
+DROP FUNCTION IF EXISTS public.apply_reconciliation_batch(jsonb);
 
 CREATE OR REPLACE FUNCTION public.apply_reconciliation_batch(p_items jsonb, p_batch_info jsonb)
  RETURNS jsonb

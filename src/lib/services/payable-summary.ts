@@ -184,9 +184,7 @@ export function getPayeeTaxRate(
     case "INSTITUTION":
     case "COMPANY_INSTITUTION":
     case "FOREIGN":
-      // Mutual-fund institutional distributions are taxed at 15% (per the
-      // RMF sample file); ordinary dividends stay at 5%.
-      return isMutualFund || isDebenture ? 0.15 : 0.05;
+      return 0.15;
     case "MUTUAL_FUND":
     case "TAX_EXEMPT":
       return 0;

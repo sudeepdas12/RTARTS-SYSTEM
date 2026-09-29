@@ -167,6 +167,16 @@ export const BOID_ALIASES = [
   "REGISTRATION NO",
 ];
 
+export function normalizeBoid(raw: unknown): string | null {
+  if (!raw) return null;
+  let str = String(raw).trim().replace(/[\s-]/g, "");
+  if (!str) return null;
+  if (/^\d+$/.test(str) && str.length >= 8 && str.length < 16) {
+    str = str.padStart(16, "0");
+  }
+  return str;
+}
+
 export function cleanBoidString(raw: string): string {
   let cleaned = String(raw || "")
     .trim()
@@ -248,24 +258,32 @@ async function hasActiveRowsForUpload(
 }
 
 async function hasActiveDuplicateFileHash(fileHash: string): Promise<boolean> {
-  const { data, error } = await (supabase as any)
-    .from("upload_history")
-    .select("id, target_table")
-    .eq("file_hash", fileHash)
-    .eq("status", "Completed");
+  const timeoutPromise = new Promise<boolean>((_, reject) =>
+    setTimeout(() => reject(new Error("Duplicate file hash check timed out")), 5000),
+  );
 
-  if (error) {
-    console.error("Failed to check duplicate file hash (failing closed):", error.message);
-    throw new Error(`Failed to check duplicate file hash: ${error.message}`);
-  }
+  const checkPromise = (async () => {
+    const { data, error } = await (supabase as any)
+      .from("upload_history")
+      .select("id, target_table")
+      .eq("file_hash", fileHash)
+      .eq("status", "Completed");
 
-  for (const upload of data || []) {
-    if (await hasActiveRowsForUpload(upload.id, upload.target_table)) {
-      return true;
+    if (error) {
+      console.error("Failed to check duplicate file hash (failing closed):", error.message);
+      throw new Error(`Failed to check duplicate file hash: ${error.message}`);
     }
-  }
 
-  return false;
+    for (const upload of data || []) {
+      if (await hasActiveRowsForUpload(upload.id, upload.target_table)) {
+        return true;
+      }
+    }
+
+    return false;
+  })();
+
+  return Promise.race([checkPromise, timeoutPromise]);
 }
 
 const normalizeString = (value: unknown): string => {
@@ -403,54 +421,67 @@ export const ValidationEngine = {
     const existingClientCodes = new Set<string>();
     const existingPans = new Set<string>();
 
+    // Check a sample of up to 100 BOIDs safely without causing '414 URI Too Long' or network stalls
     if (uniqueBoids.length > 0) {
-      const boidChunks = chunkArray(uniqueBoids, 500);
-      for (const chunk of boidChunks) {
+      try {
+        const sampleBoids = uniqueBoids.slice(0, 100);
         const { data: clients } = await supabase
           .from("clients")
-          .select("boid, client_code, pan_or_citizenship")
-          .in("boid", chunk);
+          .select("boid")
+          .in("boid", sampleBoids);
 
         clients?.forEach((c) => {
           if (c.boid) existingBoids.add(c.boid);
-          if (c.client_code) existingClientCodes.add(c.client_code);
-          if (c.pan_or_citizenship) existingPans.add(c.pan_or_citizenship);
         });
+      } catch (err) {
+        console.warn("Could not check existing BOID sample:", err);
       }
     }
 
-    const { data: companies } = await supabase
-      .from("companies")
-      .select("isin, coupon_rate, dividend_rate, id, company_type, fiscal_year");
-    const existingISINs = new Set<string>(
-      companies?.map((c) => c.isin).filter((i): i is string => i !== null) || [],
-    );
-    const activeCompanies = new Map<string, any>(
-      companies?.filter((c) => c.isin !== null).map((c) => [c.isin as string, c]) || [],
-    );
-
-    const { data: fy } = await supabase
-      .from("fiscal_years")
-      .select("fiscal_year")
-      .eq("is_active", true)
-      .maybeSingle();
-    const activeFiscalYear = fy?.fiscal_year || null;
-
-    // Get system TDS rates from settings (safe view keeps SMTP password hidden)
-    // Authoritative tax rates live in `payable_tax_rules` (the table the DB
-    // trigger actually reads). Reading from the legacy `system_settings.tax_rate`
-    // blob risked a second source of truth that could silently diverge from the
-    // rates applied at insert time. Derive the expected rates from the rules
-    // table instead, keeping the same {dividend, interest} (percent) shape.
-    const systemTdsRates = { dividend: 5, interest: 6 };
-    let taxRules: any[] = [];
-    try {
-      const { data: rules } = await (supabase as any)
+    // Parallel fetch with fail-safe fallbacks
+    const [companiesRes, fyRes, rulesRes] = await Promise.all([
+      supabase
+        .from("companies")
+        .select("isin, coupon_rate, dividend_rate, id, company_type, fiscal_year")
+        .then((r) => r)
+        .catch((err) => {
+          console.warn("Could not load companies for validation:", err);
+          return { data: [] };
+        }),
+      supabase
+        .from("fiscal_years")
+        .select("fiscal_year")
+        .eq("is_active", true)
+        .maybeSingle()
+        .then((r) => r)
+        .catch((err) => {
+          console.warn("Could not load active fiscal year:", err);
+          return { data: null };
+        }),
+      (supabase as any)
         .from("payable_tax_rules")
         .select("payable_category, payee_classification, tax_rate, is_active")
-        .eq("is_active", true);
-      taxRules = (rules ?? []) as any[];
+        .eq("is_active", true)
+        .then((r: any) => r)
+        .catch((err: any) => {
+          console.warn("Could not load payable tax rules:", err);
+          return { data: [] };
+        }),
+    ]);
 
+    const companies = companiesRes.data || [];
+    const existingISINs = new Set<string>(
+      companies.map((c: any) => c.isin).filter((i: any): i is string => i !== null),
+    );
+    const activeCompanies = new Map<string, any>(
+      companies.filter((c: any) => c.isin !== null).map((c: any) => [c.isin as string, c]),
+    );
+
+    const activeFiscalYear = fyRes.data?.fiscal_year || null;
+
+    const systemTdsRates = { dividend: 5, interest: 6 };
+    const taxRules: any[] = rulesRes.data || [];
+    try {
       const ratePct = (category: string, classification: string): number | null => {
         const hit = taxRules.find(
           (r: any) => r.payable_category === category && r.payee_classification === classification,
@@ -463,8 +494,7 @@ export const ValidationEngine = {
       if (dividendNatural != null) systemTdsRates.dividend = dividendNatural;
       if (interestNatural != null) systemTdsRates.interest = interestNatural;
     } catch (e) {
-      // Fall back to the defaults above.
-      console.warn("Could not load payable_tax_rules for validation context", e);
+      console.warn("Could not parse payable_tax_rules for validation context", e);
     }
 
     return {

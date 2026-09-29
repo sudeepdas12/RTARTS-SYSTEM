@@ -23,6 +23,14 @@ import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -49,6 +57,7 @@ import {
   Loader2,
   Plus,
   RotateCcw,
+  History,
 } from "lucide-react";
 import { CompanyService, generateCompanyCode } from "@/lib/services/company.service";
 
@@ -66,15 +75,29 @@ function normalizeFiscalYear(fy: string): string {
   return `${yr}/${end.slice(-2)}`; // always store as YYYY/YY
 }
 
+function formatFileSize(bytes?: number): string {
+  if (!bytes || bytes <= 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
 export const Route = createFileRoute("/_authenticated/upload")({
   component: UploadRoute,
 });
 
 async function computeFileHash(file: File): Promise<string> {
-  const arrayBuffer = await file.arrayBuffer();
-  const hashBuffer = await crypto.subtle.digest("SHA-256", arrayBuffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  try {
+    if (typeof crypto !== "undefined" && crypto?.subtle) {
+      const arrayBuffer = await file.arrayBuffer();
+      const hashBuffer = await crypto.subtle.digest("SHA-256", arrayBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+    }
+  } catch (err) {
+    console.warn("crypto.subtle hash computation failed, using fast fallback:", err);
+  }
+  return `${file.name}-${file.size}-${file.lastModified}`;
 }
 
 /** Default TDS rates per sheet type */
@@ -170,6 +193,7 @@ function UploadRoute() {
   const [allSheetsProgress, setAllSheetsProgress] = useState<AllSheetsProgress | null>(null);
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([]);
   const [isValidating, setIsValidating] = useState(false);
+  const [cachedFileHash, setCachedFileHash] = useState<string>("");
   // Per-sheet TDS rates (overrideable)
   const [sheetTdsRates, setSheetTdsRates] = useState<Record<number, string>>({});
   // Per-sheet Dividend rates (overrideable)
@@ -196,6 +220,10 @@ function UploadRoute() {
   const [dividendType, setDividendType] = useState<
     "Cash" | "Bonus" | "Combined" | "Right" | "Debenture" | "MutualFund"
   >("Cash");
+  const [debenturePeriod, setDebenturePeriod] = useState<
+    "SEMI_ANNUAL_183" | "SEMI_ANNUAL_182" | "ANNUAL_365" | "CUSTOM"
+  >("SEMI_ANNUAL_183");
+  const [customDebentureDays, setCustomDebentureDays] = useState("183");
 
   const { data: taxRules } = useQuery({
     queryKey: ["tax-rules"],
@@ -252,6 +280,13 @@ function UploadRoute() {
       }
       return data || [];
     },
+    staleTime: 10_000,
+  });
+
+  // Recent uploads for quick overview
+  const { data: recentUploads = [] } = useQuery({
+    queryKey: ["recent-uploads"],
+    queryFn: () => UploadService.getUploadHistory(5),
     staleTime: 10_000,
   });
 
@@ -460,6 +495,7 @@ function UploadRoute() {
       // Check if this file content has already been uploaded
       try {
         const hash = await computeFileHash(selectedFile);
+        setCachedFileHash(hash);
         const existing = await UploadService.findActiveUploadByHash(hash);
         setActiveDuplicateUpload(existing);
         if (existing) {
@@ -501,7 +537,7 @@ function UploadRoute() {
         toast.warning("Summary sheet is reference-only and cannot be validated.");
         return;
       }
-      const fileHash = await computeFileHash(file);
+      const fileHash = cachedFileHash || (await computeFileHash(file));
       const sheetDivRate = sheetDividendRates[selectedSheetIndex];
       const rate = sheetDivRate
         ? Number(sheetDivRate)
@@ -535,8 +571,9 @@ function UploadRoute() {
           `Validation found ${hardErrors.length} blocking error${hardErrors.length === 1 ? "" : "s"}. Fix these before importing.`,
         );
       }
-    } catch (e) {
-      toast.error("Validation check failed");
+    } catch (e: any) {
+      console.error("Validation check failed:", e);
+      toast.error(`Validation check failed: ${e?.message || "Unknown error"}`);
     } finally {
       setIsValidating(false);
     }
@@ -567,6 +604,17 @@ function UploadRoute() {
         : dividendType === "MutualFund"
           ? "mutual_fund"
           : parsedData!.fileType;
+
+    const effectiveDaysCount =
+      effectiveFileType === "debenture" || effectiveFileType === "interest"
+        ? debenturePeriod === "SEMI_ANNUAL_183"
+          ? 183
+          : debenturePeriod === "SEMI_ANNUAL_182"
+            ? 182
+            : debenturePeriod === "ANNUAL_365"
+              ? 365
+              : Number(customDebentureDays) || 183
+        : undefined;
 
     const activeCompanyId =
       companyIdOverride || (selectedCompanyId !== "auto" ? selectedCompanyId : undefined);
@@ -603,6 +651,7 @@ function UploadRoute() {
       userId: undefined as string | undefined,
       isPreCalculated: sheet?.isPreCalculated,
       isRawInputFile: sheet?.isRawInputFile,
+      daysCount: effectiveDaysCount,
     };
   }
 
@@ -1236,6 +1285,7 @@ function UploadRoute() {
     setSheetDividendRates({});
     setImportSummary(null);
     setActiveDuplicateUpload(null);
+    setCachedFileHash("");
   };
 
   const currentSheet = parsedData?.sheets[selectedSheetIndex];
@@ -1251,6 +1301,13 @@ function UploadRoute() {
       <PageHeader
         title="Upload Data"
         description="Import Excel files for Dividends, Debentures, and Mutual Funds. Reconciliation bank reports go to the Reconciliation section."
+        actions={
+          <Link to="/upload-history">
+            <Button variant="outline" size="sm" className="gap-1.5 text-xs">
+              <History className="h-3.5 w-3.5 text-muted-foreground" /> View Upload History
+            </Button>
+          </Link>
+        }
       />
 
       {!parsedData && !progress && !allSheetsProgress && (
@@ -1314,6 +1371,96 @@ function UploadRoute() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Recent Upload Details */}
+          {recentUploads.length > 0 && (
+            <Card>
+              <CardHeader className="pb-3 flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                    <History className="h-4 w-4 text-primary" />
+                    Recent Upload Details
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Recently imported batches and active datasets in the system
+                  </CardDescription>
+                </div>
+                <Link to="/upload-history">
+                  <Button variant="outline" size="sm" className="text-xs h-7 gap-1">
+                    Full Upload History <ArrowRight className="h-3 w-3" />
+                  </Button>
+                </Link>
+              </CardHeader>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="text-xs">
+                      <TableHead>File Name / Sheet</TableHead>
+                      <TableHead>Target Table</TableHead>
+                      <TableHead className="text-right">Total Rows</TableHead>
+                      <TableHead className="text-right">Success</TableHead>
+                      <TableHead className="text-right">Errors</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right pr-4">Date</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {recentUploads.map((rec) => (
+                      <TableRow key={rec.id} className="text-xs">
+                        <TableCell className="font-medium">
+                          <div>
+                            <span className="font-semibold">{rec.file_name}</span>
+                            {rec.sheet_name && (
+                              <span className="text-muted-foreground ml-1.5 font-normal">
+                                ({rec.sheet_name})
+                              </span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-[10px] font-mono">
+                            {rec.target_table || "—"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {(rec.total_rows || 0).toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums font-semibold text-emerald-600">
+                          {(rec.success_rows || 0).toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {rec.error_rows > 0 ? (
+                            <span className="font-semibold text-rose-600">
+                              {rec.error_rows.toLocaleString()}
+                            </span>
+                          ) : (
+                            "—"
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              rec.status === "Completed"
+                                ? "default"
+                                : rec.status === "Processing"
+                                  ? "secondary"
+                                  : "destructive"
+                            }
+                            className="text-[10px]"
+                          >
+                            {rec.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground whitespace-nowrap pr-4">
+                          {new Date(rec.created_at).toLocaleDateString()}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
         </>
       )}
 
@@ -1354,11 +1501,54 @@ function UploadRoute() {
                 {parsedData.detectedCompanyName && (
                   <Badge variant="secondary">{parsedData.detectedCompanyName}</Badge>
                 )}
+                {parsedData.detectedIsin && (
+                  <Badge variant="outline" className="font-mono text-xs">
+                    ISIN: {parsedData.detectedIsin}
+                  </Badge>
+                )}
               </div>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                {parsedData.grandTotals.totalRows.toLocaleString()} total rows across{" "}
-                {parsedData.sheets.length} sheet(s)
-              </p>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1 flex-wrap">
+                <span>
+                  <strong>Size:</strong> {formatFileSize(file?.size)}
+                </span>
+                <span>•</span>
+                <span>
+                  <strong>Total Records:</strong>{" "}
+                  {parsedData.grandTotals.totalRows.toLocaleString()} across{" "}
+                  {parsedData.sheets.length} sheet(s)
+                </span>
+                {parsedData.grandTotals.totalKitta > 0 && (
+                  <>
+                    <span>•</span>
+                    <span>
+                      <strong>Total Kitta:</strong>{" "}
+                      {parsedData.grandTotals.totalKitta.toLocaleString()}
+                    </span>
+                  </>
+                )}
+                {parsedData.grandTotals.totalAmount > 0 && (
+                  <>
+                    <span>•</span>
+                    <span>
+                      <strong>Gross:</strong> NPR{" "}
+                      {parsedData.grandTotals.totalAmount.toLocaleString("en-IN", {
+                        minimumFractionDigits: 2,
+                      })}
+                    </span>
+                  </>
+                )}
+                {parsedData.grandTotals.totalNet > 0 && (
+                  <>
+                    <span>•</span>
+                    <span className="text-primary font-medium">
+                      <strong>Net:</strong> NPR{" "}
+                      {parsedData.grandTotals.totalNet.toLocaleString("en-IN", {
+                        minimumFractionDigits: 2,
+                      })}
+                    </span>
+                  </>
+                )}
+              </div>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               {parsedData.sheets.length > 1 && (
@@ -1383,8 +1573,19 @@ function UploadRoute() {
               <Button variant="outline" onClick={reset}>
                 Cancel
               </Button>
-              <Button variant="outline" onClick={handleValidate} disabled={isValidating}>
-                {isValidating ? "Validating..." : "Validate Only"}
+              <Button
+                variant="outline"
+                onClick={handleValidate}
+                disabled={isValidating || isImporting}
+              >
+                {isValidating ? (
+                  <>
+                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                    Validating...
+                  </>
+                ) : (
+                  "Validate Only"
+                )}
               </Button>
               <Button
                 variant={dataSheets.length <= 1 ? "default" : "outline"}
@@ -1411,6 +1612,219 @@ function UploadRoute() {
               )}
             </div>
           </div>
+
+          {/* Post-import summary card (Prominently displayed at top) */}
+          {importSummary && !isImporting && (
+            <Card className="border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/20">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-full bg-emerald-100 dark:bg-emerald-900/40 p-2">
+                      <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+                        Import Complete — "{importSummary.sheetName}"
+                      </p>
+                      <p className="text-xs text-emerald-600 dark:text-emerald-500">
+                        {importSummary.rows.toLocaleString()} rows imported in{" "}
+                        {importSummary.duration}s
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Link to="/upload-history">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5 text-amber-700 hover:text-amber-800 border-amber-300 dark:text-amber-400 dark:border-amber-800"
+                      >
+                        <RotateCcw className="h-4 w-4" /> Manage &amp; Rollback
+                      </Button>
+                    </Link>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={reset}
+                      className="border-emerald-300 dark:border-emerald-700"
+                    >
+                      Upload Another File
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Single Sheet Live Progress (Prominently displayed at top) */}
+          {progress && !allSheetsProgress && (
+            <div className="space-y-4 p-6 border-2 border-primary/40 rounded-lg bg-card shadow-sm">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold flex items-center gap-2">
+                  <Upload className="h-5 w-5 text-primary animate-pulse" />
+                  Import Progress
+                  {parsedData?.sheets[selectedSheetIndex]?.sheetName && (
+                    <span className="text-base font-normal text-muted-foreground">
+                      — {parsedData.sheets[selectedSheetIndex].sheetName}
+                    </span>
+                  )}
+                </h3>
+                <Badge variant={progress.status === "Processing" ? "secondary" : "outline"}>
+                  {progress.status}
+                </Badge>
+              </div>
+              <Progress
+                value={(progress.processedRows / Math.max(progress.totalRows, 1)) * 100}
+                className="h-3"
+              />
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center mt-4">
+                <div className="p-2 rounded bg-muted/40">
+                  <p className="text-xs text-muted-foreground">Status</p>
+                  <p className="font-semibold text-sm">{progress.status}</p>
+                </div>
+                <div className="p-2 rounded bg-muted/40">
+                  <p className="text-xs text-muted-foreground">Processed</p>
+                  <p className="font-semibold text-sm">
+                    {progress.processedRows.toLocaleString()} /{" "}
+                    {progress.totalRows.toLocaleString()}
+                  </p>
+                </div>
+                <div className="p-2 rounded bg-green-50 dark:bg-green-950/30">
+                  <p className="text-xs text-muted-foreground">Success</p>
+                  <p className="font-semibold text-sm text-green-600">
+                    {progress.successRows.toLocaleString()}
+                  </p>
+                </div>
+                <div className="p-2 rounded bg-red-50 dark:bg-red-950/30">
+                  <p className="text-xs text-muted-foreground">Errors</p>
+                  <p className="font-semibold text-sm text-red-600">
+                    {progress.errorRows.toLocaleString()}
+                  </p>
+                </div>
+              </div>
+              {progress.status !== "Processing" && (
+                <div className="flex justify-end gap-2 mt-4 pt-2 border-t">
+                  <Link to="/upload-history">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5 text-amber-700 hover:text-amber-800 border-amber-300 dark:text-amber-400 dark:border-amber-800"
+                    >
+                      <RotateCcw className="h-4 w-4" /> Manage &amp; Rollback
+                    </Button>
+                  </Link>
+                  <Button size="sm" onClick={reset}>
+                    Upload Another File
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* All Sheets Live Progress (Prominently displayed at top) */}
+          {allSheetsProgress && (
+            <div className="space-y-4 p-6 border-2 border-primary/40 rounded-lg bg-card shadow-sm">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <Layers className="h-5 w-5 text-primary" />
+                Bulk Import Progress
+                <Badge variant="outline">
+                  {allSheetsProgress.currentSheetIndex + 1} / {allSheetsProgress.totalSheets} sheets
+                </Badge>
+              </h3>
+
+              <div>
+                <div className="flex items-center justify-between mb-1 text-sm">
+                  <span className="text-muted-foreground">Overall Progress</span>
+                  <span className="font-medium">
+                    {allSheetsProgress.overallProcessed.toLocaleString()} /{" "}
+                    {allSheetsProgress.overallTotal.toLocaleString()} rows
+                  </span>
+                </div>
+                <Progress
+                  value={
+                    (allSheetsProgress.overallProcessed /
+                      Math.max(allSheetsProgress.overallTotal, 1)) *
+                    100
+                  }
+                  className="h-3"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1 text-sm">
+                  <span className="text-muted-foreground">
+                    Current Sheet: <strong>{allSheetsProgress.currentSheet}</strong>
+                  </span>
+                  <span>
+                    {allSheetsProgress.sheetProgress.processedRows.toLocaleString()} /{" "}
+                    {allSheetsProgress.sheetProgress.totalRows.toLocaleString()}
+                  </span>
+                </div>
+                <Progress
+                  value={
+                    (allSheetsProgress.sheetProgress.processedRows /
+                      Math.max(allSheetsProgress.sheetProgress.totalRows, 1)) *
+                    100
+                  }
+                  className="h-2 bg-muted"
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-4 text-center mt-2">
+                <div className="p-2 rounded bg-muted/40">
+                  <p className="text-xs text-muted-foreground">Status</p>
+                  <p className="font-semibold text-sm">{allSheetsProgress.status}</p>
+                </div>
+                <div className="p-2 rounded bg-green-50 dark:bg-green-950/30">
+                  <p className="text-xs text-muted-foreground">Success Rows</p>
+                  <p className="font-semibold text-sm text-green-600">
+                    {allSheetsProgress.overallSuccess.toLocaleString()}
+                  </p>
+                </div>
+                <div className="p-2 rounded bg-red-50 dark:bg-red-950/30">
+                  <p className="text-xs text-muted-foreground">Error Rows</p>
+                  <p className="font-semibold text-sm text-red-600">
+                    {allSheetsProgress.overallErrors.toLocaleString()}
+                  </p>
+                </div>
+              </div>
+
+              {allSheetsProgress.status !== "Processing" && (
+                <div className="flex items-center justify-between mt-4 pt-2 border-t">
+                  {allSheetsProgress.status === "Completed" ? (
+                    <div className="flex items-center gap-2 text-green-600">
+                      <CheckCircle2 className="h-5 w-5" />
+                      <span className="font-medium">All sheets imported successfully!</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-amber-600">
+                      <AlertTriangle className="h-5 w-5" />
+                      <span className="font-medium">
+                        Completed with {allSheetsProgress.overallErrors} error rows.
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <Link to="/upload-history">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5 text-amber-700 hover:text-amber-800 border-amber-300 dark:text-amber-400 dark:border-amber-800"
+                      >
+                        <RotateCcw className="h-4 w-4" /> Manage &amp; Rollback
+                      </Button>
+                    </Link>
+                    <Button size="sm" onClick={reset}>
+                      Upload Another File
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Validation Report (prominently displayed at top when validated) */}
+          {validationErrors.length > 0 && <ValidationReport errors={validationErrors} />}
 
           {parsedData.fileType === "mutual_fund" && (
             <Card className="border-l-4 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40">
@@ -1626,6 +2040,41 @@ function UploadRoute() {
                     />
                     <p className="text-xs text-muted-foreground">
                       Stock dividend ratio (e.g. 10% = 10 bonus per 100 shares)
+                    </p>
+                  </div>
+                )}
+                {isDebenture && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Installment Period (Day Count)</Label>
+                    <Select
+                      value={debenturePeriod}
+                      onValueChange={(v: any) => setDebenturePeriod(v)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="SEMI_ANNUAL_183">
+                          Semi-Annual (1st Half / 183 Days)
+                        </SelectItem>
+                        <SelectItem value="SEMI_ANNUAL_182">
+                          Semi-Annual (2nd Half / 182 Days)
+                        </SelectItem>
+                        <SelectItem value="ANNUAL_365">Annual (Full Year / 365 Days)</SelectItem>
+                        <SelectItem value="CUSTOM">Custom Days Count</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {debenturePeriod === "CUSTOM" && (
+                      <Input
+                        type="number"
+                        placeholder="Days (e.g. 183)"
+                        value={customDebentureDays}
+                        onChange={(e) => setCustomDebentureDays(e.target.value)}
+                        className="mt-1"
+                      />
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      Accrual basis (183/365 days = ~50.14% semi-annual)
                     </p>
                   </div>
                 )}
@@ -1898,189 +2347,6 @@ function UploadRoute() {
 
           {validationErrors.length > 0 && <ValidationReport errors={validationErrors} />}
           <ImportPreview data={parsedData} selectedSheetIndex={selectedSheetIndex} />
-        </div>
-      )}
-
-      {/* Post-import summary card */}
-      {importSummary && !isImporting && (
-        <Card className="border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/20">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between flex-wrap gap-3">
-              <div className="flex items-center gap-3">
-                <div className="rounded-full bg-emerald-100 dark:bg-emerald-900/40 p-2">
-                  <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
-                    Import Complete — "{importSummary.sheetName}"
-                  </p>
-                  <p className="text-xs text-emerald-600 dark:text-emerald-500">
-                    {importSummary.rows.toLocaleString()} rows imported in {importSummary.duration}s
-                  </p>
-                </div>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={reset}
-                className="border-emerald-300 dark:border-emerald-700"
-              >
-                Upload Another File
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Single Sheet Progress */}
-      {progress && !allSheetsProgress && (
-        <div className="space-y-4 p-6 border rounded-lg bg-card">
-          <h3 className="text-lg font-semibold">
-            Import Progress
-            {parsedData?.sheets[selectedSheetIndex]?.sheetName && (
-              <span className="ml-2 text-base font-normal text-muted-foreground">
-                — {parsedData.sheets[selectedSheetIndex].sheetName}
-              </span>
-            )}
-          </h3>
-          <Progress value={(progress.processedRows / Math.max(progress.totalRows, 1)) * 100} />
-          <div className="grid grid-cols-4 gap-4 text-center mt-4">
-            <div>
-              <p className="text-sm text-muted-foreground">Status</p>
-              <p className="font-medium">{progress.status}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Processed</p>
-              <p className="font-medium">
-                {progress.processedRows} / {progress.totalRows}
-              </p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Success</p>
-              <p className="font-medium text-green-600">{progress.successRows}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Errors</p>
-              <p className="font-medium text-red-600">{progress.errorRows}</p>
-            </div>
-          </div>
-          {progress.status !== "Processing" && (
-            <div className="flex justify-end gap-2 mt-4">
-              <Link to="/upload-history">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5 text-amber-700 hover:text-amber-800 border-amber-300 dark:text-amber-400 dark:border-amber-800"
-                >
-                  <RotateCcw className="h-4 w-4" /> Manage &amp; Rollback
-                </Button>
-              </Link>
-              <Button size="sm" onClick={reset}>
-                Upload Another File
-              </Button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* All Sheets Progress */}
-      {allSheetsProgress && (
-        <div className="space-y-4 p-6 border rounded-lg bg-card">
-          <h3 className="text-lg font-semibold flex items-center gap-2">
-            <Layers className="h-5 w-5" />
-            Bulk Import Progress
-            <Badge variant="outline">
-              {allSheetsProgress.currentSheetIndex + 1} / {allSheetsProgress.totalSheets} sheets
-            </Badge>
-          </h3>
-
-          <div>
-            <div className="flex items-center justify-between mb-1 text-sm">
-              <span className="text-muted-foreground">Overall Progress</span>
-              <span className="font-medium">
-                {allSheetsProgress.overallProcessed.toLocaleString()} /{" "}
-                {allSheetsProgress.overallTotal.toLocaleString()} rows
-              </span>
-            </div>
-            <Progress
-              value={
-                (allSheetsProgress.overallProcessed / Math.max(allSheetsProgress.overallTotal, 1)) *
-                100
-              }
-              className="h-3"
-            />
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-1 text-sm">
-              <span className="text-muted-foreground">
-                Current Sheet: <strong>{allSheetsProgress.currentSheet}</strong>
-              </span>
-              <span>
-                {allSheetsProgress.sheetProgress.processedRows} /{" "}
-                {allSheetsProgress.sheetProgress.totalRows}
-              </span>
-            </div>
-            <Progress
-              value={
-                (allSheetsProgress.sheetProgress.processedRows /
-                  Math.max(allSheetsProgress.sheetProgress.totalRows, 1)) *
-                100
-              }
-              className="h-2 bg-muted"
-            />
-          </div>
-
-          <div className="grid grid-cols-3 gap-4 text-center mt-2">
-            <div>
-              <p className="text-sm text-muted-foreground">Status</p>
-              <p className="font-medium">{allSheetsProgress.status}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Success Rows</p>
-              <p className="font-medium text-green-600">
-                {allSheetsProgress.overallSuccess.toLocaleString()}
-              </p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Error Rows</p>
-              <p className="font-medium text-red-600">
-                {allSheetsProgress.overallErrors.toLocaleString()}
-              </p>
-            </div>
-          </div>
-
-          {allSheetsProgress.status !== "Processing" && (
-            <div className="flex items-center justify-between mt-4">
-              {allSheetsProgress.status === "Completed" ? (
-                <div className="flex items-center gap-2 text-green-600">
-                  <CheckCircle2 className="h-5 w-5" />
-                  <span className="font-medium">All sheets imported successfully!</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 text-amber-600">
-                  <AlertTriangle className="h-5 w-5" />
-                  <span className="font-medium">
-                    Completed with {allSheetsProgress.overallErrors} error rows.
-                  </span>
-                </div>
-              )}
-              <div className="flex items-center gap-2">
-                <Link to="/upload-history">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5 text-amber-700 hover:text-amber-800 border-amber-300 dark:text-amber-400 dark:border-amber-800"
-                  >
-                    <RotateCcw className="h-4 w-4" /> Manage &amp; Rollback
-                  </Button>
-                </Link>
-                <Button size="sm" onClick={reset}>
-                  Upload Another File
-                </Button>
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>

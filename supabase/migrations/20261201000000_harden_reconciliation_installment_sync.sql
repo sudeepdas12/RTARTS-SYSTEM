@@ -9,6 +9,9 @@
 --    payouts cleanly across all companies.
 -- ============================================================================
 
+DROP FUNCTION IF EXISTS public.apply_reconciliation_batch(jsonb, jsonb);
+DROP FUNCTION IF EXISTS public.apply_reconciliation_batch(jsonb);
+
 CREATE OR REPLACE FUNCTION public.apply_reconciliation_batch(
   p_items jsonb,
   p_batch_info jsonb DEFAULT NULL

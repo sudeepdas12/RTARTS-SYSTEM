@@ -2062,15 +2062,27 @@ function ReportsRoute() {
                 </CardDescription>
               </div>
               {irdEtds && (
-                <Button
-                  variant="default"
-                  size="sm"
-                  className="bg-emerald-600 hover:bg-emerald-700 h-9"
-                  onClick={() => IrdEtdsService.exportAnnex10Excel(irdEtds)}
-                >
-                  <FileSpreadsheet className="mr-1.5 h-4 w-4" />
-                  Download IRD Annex-10 Excel
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-emerald-600/40 text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 h-9"
+                    onClick={() => IrdEtdsService.exportAnnex10Json(irdEtds)}
+                    title="Export IRD Integrated Tax System (ITS) JSON Payload"
+                  >
+                    <Download className="mr-1.5 h-4 w-4 text-emerald-600" />
+                    Download IRD e-TDS JSON
+                  </Button>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    className="bg-emerald-600 hover:bg-emerald-700 h-9"
+                    onClick={() => IrdEtdsService.exportAnnex10Excel(irdEtds)}
+                  >
+                    <FileSpreadsheet className="mr-1.5 h-4 w-4" />
+                    Download Annex-10 Excel
+                  </Button>
+                </div>
               )}
             </CardHeader>
             <CardContent className="p-6 space-y-6">

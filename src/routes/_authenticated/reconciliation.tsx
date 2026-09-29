@@ -1021,6 +1021,20 @@ export function ReconciliationRoute() {
                 <Badge variant={getStatusBadgeVariant(match.status)} className="text-xs">
                   {match.status.replace("_", " ")}
                 </Badge>
+                {match.confidenceScore !== undefined && match.confidenceScore > 0 && (
+                  <Badge
+                    variant="outline"
+                    className={`text-[10px] h-5 font-semibold ${
+                      match.confidenceScore >= 90
+                        ? "border-emerald-500/40 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400"
+                        : match.confidenceScore >= 70
+                          ? "border-amber-500/40 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400"
+                          : "border-rose-500/40 bg-rose-50 text-rose-700 dark:bg-rose-950/30 dark:text-rose-400"
+                    }`}
+                  >
+                    {match.confidenceScore}% Match
+                  </Badge>
+                )}
                 {match.matchSources && match.matchSources.length > 0 && (
                   <div className="flex gap-1">
                     {match.matchSources.map((source) => (

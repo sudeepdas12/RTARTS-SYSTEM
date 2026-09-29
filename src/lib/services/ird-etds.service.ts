@@ -380,6 +380,61 @@ export const IrdEtdsService = {
   },
 
   /**
+   * Exports Annex-10 e-TDS data as an IRD-compliant JSON payload for direct upload
+   * to the Inland Revenue Department (IRD) Nepal Integrated Tax System (ITS) portal.
+   */
+  exportAnnex10Json(summary: IrdAnnex10Summary, fileName?: string): void {
+    const payload = {
+      ird_schema_version: "2.0",
+      generated_at: new Date().toISOString(),
+      withholder_pan: summary.companyPan,
+      withholder_name: summary.companyName,
+      fiscal_year: summary.fiscalYear,
+      payable_type: summary.payableType,
+      summary_statistics: {
+        total_withholdees: summary.totalWithholdees,
+        pan_withholdees: summary.panWithholdees,
+        unregistered_withholdees: summary.unregisteredWithholdees,
+        total_gross_npr: summary.totalGrossAmount,
+        total_tds_npr: summary.totalTdsAmount,
+        total_net_npr: summary.totalNetAmount,
+      },
+      withholding_entries: summary.rows.map((r) => ({
+        sn: r.sn,
+        pan: r.withholdeePan === "UNREGISTERED" ? null : r.withholdeePan,
+        name: r.withholdeeName,
+        boid: r.boid,
+        payment_head: r.paymentType,
+        payment_date: r.paymentDate,
+        gross_amount: r.grossAmount,
+        tds_rate_pct: r.tdsRate,
+        tds_amount: r.tdsAmount,
+        net_payable: r.netPayable,
+        voucher_ref: r.voucherRef || null,
+      })),
+    };
+
+    if (typeof window !== "undefined" && typeof document !== "undefined") {
+      const jsonBlob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json;charset=utf-8;",
+      });
+      const url = URL.createObjectURL(jsonBlob);
+      const link = document.createElement("a");
+      const safeName =
+        (fileName || `IRD_eTDS_${summary.companyName}_${summary.fiscalYear}`).replace(
+          /[^a-zA-Z0-9-_]/g,
+          "_",
+        ) + ".json";
+      link.href = url;
+      link.download = safeName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+  },
+
+  /**
    * Generates a formal printable TDS Withholding Certificate PDF for an investor.
    */
   generateTdsCertificatePdf(data: TdsCertificateData): void {

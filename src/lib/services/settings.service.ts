@@ -13,8 +13,14 @@ export interface SystemSettings {
   smtp_user: string;
   smtp_from: string;
   smtp_pass: string;
+  smtp_pass_configured?: boolean;
+  // SMS Gateway Settings
+  sms_enabled?: boolean;
+  sms_provider?: "sparrow" | "aakash" | "smstonepal" | "custom";
   sms_gateway_url: string;
+  sms_sender_id?: string;
   sms_api_key: string;
+  sms_api_key_configured?: boolean;
   // ConnectIPS Banking Gateway Settings
   connectips_enabled: boolean;
   connectips_mode: "SANDBOX" | "PRODUCTION";
@@ -39,7 +45,10 @@ const DEFAULT_SETTINGS: SystemSettings = {
   smtp_user: "",
   smtp_from: "",
   smtp_pass: "",
-  sms_gateway_url: "",
+  sms_enabled: false,
+  sms_provider: "sparrow",
+  sms_gateway_url: "https://api.sparrowsms.com/v2/sms/",
+  sms_sender_id: "RBBMBL",
   sms_api_key: "",
   connectips_enabled: false,
   connectips_mode: "SANDBOX",
@@ -77,9 +86,12 @@ export const SettingsService = {
       return DEFAULT_SETTINGS;
     }
 
+    const rawVal = ((data?.setting_value as Partial<SystemSettings>) || {}) as any;
     const settings: SystemSettings = {
       ...DEFAULT_SETTINGS,
-      ...((data?.setting_value as Partial<SystemSettings>) || {}),
+      ...rawVal,
+      smtp_pass_configured: Boolean(rawVal.smtp_pass_configured || rawVal.smtp_pass),
+      sms_api_key_configured: Boolean(rawVal.sms_api_key_configured || rawVal.sms_api_key),
     };
 
     // TDS rates are authoritative in `payable_tax_rules` (the table the DB
@@ -117,8 +129,9 @@ export const SettingsService = {
       );
     }
 
-    // SECURITY: never expose the stored SMTP password to the browser/client.
+    // SECURITY: never expose stored secrets to the browser/client.
     settings.smtp_pass = "";
+    settings.sms_api_key = "";
 
     cachedSettings = { settings: { ...settings }, at: Date.now() };
     return settings;
@@ -126,29 +139,47 @@ export const SettingsService = {
 
   async saveSettings(settings: SystemSettings): Promise<void> {
     invalidateSettingsCache();
-    // SECURITY: preserve the existing stored SMTP password when the form submits
-    // it as blank (password fields are intentionally cleared and never round-tripped).
+
+    // 1) Atomically save settings using safe DB RPC which automatically preserves
+    // existing secrets (smtp_pass, connectips_token, connectips_cert_pass, sms_api_key)
+    // when empty or placeholder values are passed from the UI.
     const resolved = { ...settings };
-    const { data: existing } = await (supabase as any)
-      .from("system_settings_safe")
-      .select("setting_value")
-      .eq("setting_key", SETTINGS_KEY)
-      .maybeSingle();
+    const { error: rpcError } = await (supabase as any).rpc("save_system_settings_global", {
+      p_settings: resolved,
+    });
 
-    const existingVal = (existing?.setting_value as Partial<SystemSettings> | undefined) || {};
-    if (!settings.smtp_pass) {
-      resolved.smtp_pass = existingVal.smtp_pass ?? "";
+    if (rpcError) {
+      // Fallback to direct upsert if RPC is unavailable
+      const { data: existing } = await (supabase as any)
+        .from("system_settings")
+        .select("setting_value")
+        .eq("setting_key", SETTINGS_KEY)
+        .maybeSingle();
+
+      const existingVal = (existing?.setting_value as Partial<SystemSettings> | undefined) || {};
+      if (!settings.smtp_pass || settings.smtp_pass === "••••••••••••") {
+        resolved.smtp_pass = existingVal.smtp_pass ?? "";
+      }
+      if (!settings.connectips_token || settings.connectips_token === "••••••••••••") {
+        resolved.connectips_token = existingVal.connectips_token ?? "";
+      }
+      if (!settings.connectips_cert_pass || settings.connectips_cert_pass === "••••••••••••") {
+        resolved.connectips_cert_pass = existingVal.connectips_cert_pass ?? "";
+      }
+      if (!settings.sms_api_key || settings.sms_api_key === "••••••••••••") {
+        resolved.sms_api_key = existingVal.sms_api_key ?? "";
+      }
+
+      const { error } = await (supabase as any).from("system_settings").upsert(
+        {
+          setting_key: SETTINGS_KEY,
+          setting_value: resolved as any,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "setting_key" },
+      );
+      throwIfError(error, "Failed to save settings");
     }
-
-    const { error } = await (supabase as any).from("system_settings").upsert(
-      {
-        setting_key: SETTINGS_KEY,
-        setting_value: resolved as any,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "setting_key" },
-    );
-    throwIfError(error, "Failed to save settings");
 
     // Persist the four TDS rates into `payable_tax_rules` so the settings page
     // is the single entry point that actually drives imports, the DB trigger
@@ -173,18 +204,66 @@ export const SettingsService = {
     }
   },
 
-  async sendTestEmail(to: string): Promise<void> {
-    const { error } = await (supabase as any).functions.invoke("send-email", {
-      body: {
-        to,
-        subject: "RTARTS System - SMTP Test Email",
-        text: "RTARTS System SMTP Test. If you received this, email sending is working correctly.",
-        html:
-          "<h2>RTARTS System</h2>" +
-          "<p>This is a test email sent to verify that the SMTP configuration is working correctly.</p>" +
-          "<p>If you received this, email sending is confirmed.</p>",
+  async sendTestEmail(
+    to: string,
+    overrides?: Partial<SystemSettings>,
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      const { sendTestEmailServerFn } = await import("@/lib/email.functions");
+      const res = await sendTestEmailServerFn({
+        data: {
+          to,
+          smtp_host: overrides?.smtp_host,
+          smtp_port: overrides?.smtp_port,
+          smtp_user: overrides?.smtp_user,
+          smtp_pass: overrides?.smtp_pass,
+          smtp_from: overrides?.smtp_from,
+        },
+      });
+      return res;
+    } catch (serverErr: any) {
+      // If error is an explicit SMTP or validation error, throw immediately
+      if (
+        serverErr?.message &&
+        !serverErr.message.includes("fetch failed") &&
+        !serverErr.message.includes("Failed to fetch")
+      ) {
+        throw serverErr;
+      }
+
+      // Edge Function fallback if server function cannot connect to host
+      const { error } = await (supabase as any).functions.invoke("send-email", {
+        body: {
+          to,
+          subject: "RTARTS System - SMTP Test Email",
+          text: "RTARTS System SMTP Test. If you received this, email sending is working correctly.",
+          html:
+            "<h2>RTARTS System</h2>" +
+            "<p>This is a test email sent to verify that the SMTP configuration is working correctly.</p>" +
+            "<p>If you received this, email sending is confirmed.</p>",
+        },
+      });
+      if (error)
+        throw new Error(
+          (error as Error).message || serverErr?.message || "Failed to send test email",
+        );
+      return { success: true, message: `Test email sent successfully to ${to}` };
+    }
+  },
+
+  async sendTestSms(
+    phone: string,
+    overrides?: Partial<SystemSettings>,
+  ): Promise<{ success: boolean; message: string }> {
+    const { sendTestSmsServerFn } = await import("@/lib/sms.functions");
+    return sendTestSmsServerFn({
+      data: {
+        phone,
+        provider: overrides?.sms_provider,
+        gateway_url: overrides?.sms_gateway_url,
+        sender_id: overrides?.sms_sender_id,
+        api_key: overrides?.sms_api_key,
       },
     });
-    if (error) throw new Error((error as Error).message || "Failed to send test email");
   },
 };
