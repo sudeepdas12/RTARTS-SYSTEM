@@ -116,6 +116,9 @@ function PaymentsRoute() {
   const [fromDate, setFromDate] = useState<string>("");
   const [toDate, setToDate] = useState<string>("");
   const [isDisbursing, setIsDisbursing] = useState(false);
+  const [disburseProgress, setDisburseProgress] = useState<{ done: number; total: number } | null>(
+    null,
+  );
   const [installmentTag, setInstallmentTag] = useState<string>("FULL");
 
   // Edit Batch Dialog State (for Draft batches)
@@ -2111,10 +2114,14 @@ function PaymentsRoute() {
                         return;
                       }
                       setIsDisbursing(true);
+                      setDisburseProgress(null);
                       try {
                         const { ConnectIPSService } =
                           await import("@/lib/services/connectips.service");
-                        const res = await ConnectIPSService.disbursePaymentBatch(activeBatchId!);
+                        const res = await ConnectIPSService.disbursePaymentBatch(
+                          activeBatchId!,
+                          (done, total) => setDisburseProgress({ done, total }),
+                        );
                         if (res.success || res.totalSuccess > 0) {
                           toast.success(
                             `Disbursed ${res.totalSuccess} payments (NPR ${res.totalAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}) successfully via ConnectIPS.`,
@@ -2131,6 +2138,7 @@ function PaymentsRoute() {
                         toast.error(`ConnectIPS API error: ${err?.message || err}`);
                       } finally {
                         setIsDisbursing(false);
+                        setDisburseProgress(null);
                       }
                     }}
                   >
@@ -2139,7 +2147,11 @@ function PaymentsRoute() {
                     ) : (
                       <Send className="w-4 h-4 mr-1.5" />
                     )}
-                    {isDisbursing ? "Disbursing via ConnectIPS…" : "Disburse via ConnectIPS API"}
+                    {isDisbursing
+                      ? disburseProgress
+                        ? `Disbursing… ${disburseProgress.done}/${disburseProgress.total}`
+                        : "Disbursing via ConnectIPS…"
+                      : "Disburse via ConnectIPS API"}
                   </Button>
                   <Button
                     size="sm"

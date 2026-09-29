@@ -743,7 +743,7 @@ function UploadRoute() {
 
     let fileHash: string;
     try {
-      fileHash = await computeFileHash(file);
+      fileHash = cachedFileHash || (await computeFileHash(file));
     } catch (hashErr: any) {
       toast.error(`Could not read file: ${hashErr?.message || "File access error"}`);
       setIsImporting(false);
@@ -1037,241 +1037,246 @@ function UploadRoute() {
       }
     }
 
-    const fileHash = await computeFileHash(file);
-    setValidationErrors([]);
+    // Set importing state BEFORE company resolution so any failure path releases the button
     setIsImporting(true);
-    setProgress(null);
+    try {
+      const fileHash = cachedFileHash || (await computeFileHash(file));
+      setValidationErrors([]);
+      setProgress(null);
+      let overallProcessed = 0,
+        overallSuccess = 0,
+        overallErrors = 0;
 
-    const overallTotal = dataSheets.reduce((sum, s) => sum + s.rowCount, 0);
-    let overallProcessed = 0,
-      overallSuccess = 0,
-      overallErrors = 0;
+      const targetTable =
+        dividendType === "Debenture" ||
+        effectiveFileType === "debenture" ||
+        effectiveFileType === "interest"
+          ? "interest_payables"
+          : dividendType === "MutualFund" || effectiveFileType === "mutual_fund"
+            ? "mutual_fund_payables"
+            : "dividend_payables";
 
-    const targetTable =
-      dividendType === "Debenture" ||
-      effectiveFileType === "debenture" ||
-      effectiveFileType === "interest"
-        ? "interest_payables"
-        : dividendType === "MutualFund" || effectiveFileType === "mutual_fund"
-          ? "mutual_fund_payables"
-          : "dividend_payables";
-
-    // One shared client cache across all sheets so we don't re-insert clients
-    const sharedContext: {
-      companyId?: string;
-      clientIdCache: Map<string, string>;
-      clientInfoCache: Map<string, any>;
-    } = {
-      clientIdCache: new Map(),
-      clientInfoCache: new Map(),
-    };
-    if (resolvedCompanyId) {
-      sharedContext.companyId = resolvedCompanyId;
-    }
-
-    for (let si = 0; si < dataSheets.length; si++) {
-      const sheet = dataSheets[si];
-      const sheetIdxInParsed = parsedData.sheets.indexOf(sheet);
-
-      setAllSheetsProgress({
-        currentSheet: sheet.sheetName,
-        currentSheetIndex: si,
-        totalSheets: dataSheets.length,
-        sheetProgress: {
-          totalRows: sheet.rowCount,
-          processedRows: 0,
-          successRows: 0,
-          errorRows: 0,
-          status: "Processing",
-        },
-        overallTotal,
-        overallProcessed,
-        overallSuccess,
-        overallErrors,
-        status: "Processing",
-      });
-
-      let uploadId: string;
-      let userId: string | undefined;
-      try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        userId = user?.id;
-        const rec = await UploadService.createUploadRecord({
-          file_name: file.name,
-          file_size: file.size,
-          file_type: effectiveFileType,
-          sheet_name: sheet.sheetName,
-          target_table: targetTable,
-          total_rows: sheet.rowCount,
-          status: "Processing",
-          file_hash: `${fileHash}-${sheet.sheetName}`,
-          user_id: userId,
-        });
-        uploadId = rec.id;
-      } catch (recErr: any) {
-        const detail = recErr?.message || String(recErr);
-        if (
-          detail.includes("already been uploaded") ||
-          detail.includes("uq_upload_history_active_file_hash")
-        ) {
-          toast.error(
-            `"${sheet.sheetName}" was already uploaded and is active in the database. Go to Upload History to roll back before re-uploading.`,
-            {
-              duration: 9000,
-              action: {
-                label: "Upload History",
-                onClick: () => navigate({ to: "/upload-history" }),
-              },
-            },
-          );
-        } else {
-          toast.error(`Failed to initialize upload record for "${sheet.sheetName}": ${detail}`);
-        }
-        overallProcessed += sheet.rowCount;
-        overallErrors += sheet.rowCount;
-        continue;
+      // One shared client cache across all sheets so we don't re-insert clients
+      const sharedContext: {
+        companyId?: string;
+        clientIdCache: Map<string, string>;
+        clientInfoCache: Map<string, any>;
+      } = {
+        clientIdCache: new Map(),
+        clientInfoCache: new Map(),
+      };
+      if (resolvedCompanyId) {
+        sharedContext.companyId = resolvedCompanyId;
       }
 
-      const sheetDivRate = sheetDividendRates[sheetIdxInParsed];
-      const rate = sheetDivRate
-        ? Number(sheetDivRate)
-        : dividendRate
-          ? Number(dividendRate)
-          : undefined;
-      const validationErrorsForSheet = await ValidationEngine.validateBatch(
-        sheet.rows,
-        sheet.mapping,
-        `${fileHash}-${sheet.sheetName}`,
-        effectiveFileType,
-        {
-          isRawInputFile: sheet.isRawInputFile,
-          isPreCalculated: sheet.isPreCalculated,
-          dividendRate: rate,
-        },
-      );
-      const hardErrors = validationErrorsForSheet.filter((e) => !SOFT_ERROR_TYPES.has(e.type));
+      for (let si = 0; si < dataSheets.length; si++) {
+        const sheet = dataSheets[si];
+        const sheetIdxInParsed = parsedData.sheets.indexOf(sheet);
 
-      // Log errors to upload_errors so the user can download them
-      if (validationErrorsForSheet.length > 0) {
-        const errorRowsToLog = validationErrorsForSheet.map((e) => ({
-          upload_id: uploadId,
-          row_number: e.row,
-          field_name: e.field || "validation",
-          error_type: e.type,
-          error_message: e.message,
-          raw_data: e.rawData,
-        }));
-        await UploadService.logUploadErrors(errorRowsToLog);
-      }
-
-      // Filter out rows with hard errors
-      const invalidRowIndices = new Set(hardErrors.map((e) => e.row - 1));
-      const validRows = sheet.rows.filter((_, idx) => !invalidRowIndices.has(idx));
-
-      // Skip this sheet entirely if ALL rows failed validation
-      if (validRows.length === 0 && sheet.rows.length > 0) {
-        setValidationErrors(hardErrors);
-        overallErrors += hardErrors.length;
-        overallProcessed += sheet.rows.length;
-        try {
-          await UploadService.updateUploadStatus(uploadId, "Failed", {
-            success_rows: 0,
-            error_rows: hardErrors.length,
-            error_message: `All rows failed validation: ${hardErrors.length} error(s) found.`,
-          });
-        } catch {
-          // Ignore secondary status update errors
-        }
-        continue; // Move to the next sheet
-      }
-
-      const softErrorCount = validationErrorsForSheet.length - hardErrors.length;
-      if (softErrorCount > 0) {
-        toast.warning(
-          `Sheet "${sheet.sheetName}": ${softErrorCount} recommended check(s) skipped.`,
-        );
-      }
-
-      const opts = buildOptions(sheetIdxInParsed, resolvedCompanyId);
-      opts.fileHash = `${fileHash}-${sheet.sheetName}`;
-      opts.userId = userId;
-
-      try {
-        const result = await ChunkProcessor.processInChunks(
-          uploadId,
-          validRows,
-          targetTable,
-          1000,
-          (p) => {
-            setAllSheetsProgress((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    sheetProgress: p,
-                    overallProcessed: overallProcessed + p.processedRows,
-                    overallSuccess: overallSuccess + p.successRows,
-                    overallErrors: overallErrors + p.errorRows,
-                  }
-                : null,
-            );
+        setAllSheetsProgress({
+          currentSheet: sheet.sheetName,
+          currentSheetIndex: si,
+          totalSheets: dataSheets.length,
+          sheetProgress: {
+            totalRows: sheet.rowCount,
+            processedRows: 0,
+            successRows: 0,
+            errorRows: 0,
+            status: "Processing",
           },
-          opts,
-          sharedContext,
-        );
+          overallTotal,
+          overallProcessed,
+          overallSuccess,
+          overallErrors,
+          status: "Processing",
+        });
 
-        if (result.successRows <= 0) {
-          throw new Error(`Sheet "${sheet.sheetName}" completed without inserting any rows.`);
-        }
-        overallProcessed += sheet.rowCount;
-        overallSuccess += result.successRows;
-        overallErrors += result.errorRows;
-        toast.success(`Sheet "${sheet.sheetName}" imported (${result.successRows} rows)`);
-      } catch (err: any) {
-        overallProcessed += sheet.rowCount;
-        overallErrors += sheet.rowCount;
-        toast.error(`Sheet "${sheet.sheetName}" failed: ${err?.message}`);
-        // Mark the sheet's upload record as Failed so it doesn't stay stuck in "Processing"
+        let uploadId: string;
+        let userId: string | undefined;
         try {
-          await UploadService.updateUploadStatus(uploadId, "Failed", {
-            error_message: err?.message || "Unknown import error",
+          const {
+            data: { user },
+          } = await supabase.auth.getUser();
+          userId = user?.id;
+          const rec = await UploadService.createUploadRecord({
+            file_name: file.name,
+            file_size: file.size,
+            file_type: effectiveFileType,
+            sheet_name: sheet.sheetName,
+            target_table: targetTable,
+            total_rows: sheet.rowCount,
+            status: "Processing",
+            file_hash: `${fileHash}-${sheet.sheetName}`,
+            user_id: userId,
           });
-        } catch (statusErr) {
-          console.warn("Could not mark failed upload:", statusErr);
+          uploadId = rec.id;
+        } catch (recErr: any) {
+          const detail = recErr?.message || String(recErr);
+          if (
+            detail.includes("already been uploaded") ||
+            detail.includes("uq_upload_history_active_file_hash")
+          ) {
+            toast.error(
+              `"${sheet.sheetName}" was already uploaded and is active in the database. Go to Upload History to roll back before re-uploading.`,
+              {
+                duration: 9000,
+                action: {
+                  label: "Upload History",
+                  onClick: () => navigate({ to: "/upload-history" }),
+                },
+              },
+            );
+          } else {
+            toast.error(`Failed to initialize upload record for "${sheet.sheetName}": ${detail}`);
+          }
+          overallProcessed += sheet.rowCount;
+          overallErrors += sheet.rowCount;
+          continue;
+        }
+
+        const sheetDivRate = sheetDividendRates[sheetIdxInParsed];
+        const rate = sheetDivRate
+          ? Number(sheetDivRate)
+          : dividendRate
+            ? Number(dividendRate)
+            : undefined;
+        const validationErrorsForSheet = await ValidationEngine.validateBatch(
+          sheet.rows,
+          sheet.mapping,
+          `${fileHash}-${sheet.sheetName}`,
+          effectiveFileType,
+          {
+            isRawInputFile: sheet.isRawInputFile,
+            isPreCalculated: sheet.isPreCalculated,
+            dividendRate: rate,
+          },
+        );
+        const hardErrors = validationErrorsForSheet.filter((e) => !SOFT_ERROR_TYPES.has(e.type));
+
+        // Log errors to upload_errors so the user can download them
+        if (validationErrorsForSheet.length > 0) {
+          const errorRowsToLog = validationErrorsForSheet.map((e) => ({
+            upload_id: uploadId,
+            row_number: e.row,
+            field_name: e.field || "validation",
+            error_type: e.type,
+            error_message: e.message,
+            raw_data: e.rawData,
+          }));
+          await UploadService.logUploadErrors(errorRowsToLog);
+        }
+
+        // Filter out rows with hard errors
+        const invalidRowIndices = new Set(hardErrors.map((e) => e.row - 1));
+        const validRows = sheet.rows.filter((_, idx) => !invalidRowIndices.has(idx));
+
+        // Skip this sheet entirely if ALL rows failed validation
+        if (validRows.length === 0 && sheet.rows.length > 0) {
+          setValidationErrors(hardErrors);
+          overallErrors += hardErrors.length;
+          overallProcessed += sheet.rows.length;
+          try {
+            await UploadService.updateUploadStatus(uploadId, "Failed", {
+              success_rows: 0,
+              error_rows: hardErrors.length,
+              error_message: `All rows failed validation: ${hardErrors.length} error(s) found.`,
+            });
+          } catch {
+            // Ignore secondary status update errors
+          }
+          continue; // Move to the next sheet
+        }
+
+        const softErrorCount = validationErrorsForSheet.length - hardErrors.length;
+        if (softErrorCount > 0) {
+          toast.warning(
+            `Sheet "${sheet.sheetName}": ${softErrorCount} recommended check(s) skipped.`,
+          );
+        }
+
+        const opts = buildOptions(sheetIdxInParsed, resolvedCompanyId);
+        opts.fileHash = `${fileHash}-${sheet.sheetName}`;
+        opts.userId = userId;
+
+        try {
+          const result = await ChunkProcessor.processInChunks(
+            uploadId,
+            validRows,
+            targetTable,
+            1000,
+            (p) => {
+              setAllSheetsProgress((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      sheetProgress: p,
+                      overallProcessed: overallProcessed + p.processedRows,
+                      overallSuccess: overallSuccess + p.successRows,
+                      overallErrors: overallErrors + p.errorRows,
+                    }
+                  : null,
+              );
+            },
+            opts,
+            sharedContext,
+          );
+
+          if (result.successRows <= 0) {
+            throw new Error(`Sheet "${sheet.sheetName}" completed without inserting any rows.`);
+          }
+          overallProcessed += sheet.rowCount;
+          overallSuccess += result.successRows;
+          overallErrors += result.errorRows;
+          toast.success(`Sheet "${sheet.sheetName}" imported (${result.successRows} rows)`);
+        } catch (err: any) {
+          overallProcessed += sheet.rowCount;
+          overallErrors += sheet.rowCount;
+          toast.error(`Sheet "${sheet.sheetName}" failed: ${err?.message}`);
+          // Mark the sheet's upload record as Failed so it doesn't stay stuck in "Processing"
+          try {
+            await UploadService.updateUploadStatus(uploadId, "Failed", {
+              error_message: err?.message || "Unknown import error",
+            });
+          } catch (statusErr) {
+            console.warn("Could not mark failed upload:", statusErr);
+          }
         }
       }
-    }
 
-    setAllSheetsProgress((prev) =>
-      prev
-        ? {
-            ...prev,
-            status: overallErrors === 0 ? "Completed" : "Failed",
-            overallProcessed,
-            overallSuccess,
-            overallErrors,
-          }
-        : null,
-    );
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["companies"] }),
-      queryClient.invalidateQueries({ queryKey: ["clients"] }),
-      queryClient.invalidateQueries({ queryKey: ["interest_payables"] }),
-      queryClient.invalidateQueries({ queryKey: ["dividend_payables"] }),
-      queryClient.invalidateQueries({ queryKey: ["mutual_fund_payables"] }),
-      queryClient.invalidateQueries({ queryKey: ["dashboard-kpis"] }),
-      queryClient.invalidateQueries({ queryKey: ["upload-history"] }),
-      queryClient.invalidateQueries({ queryKey: ["classification-review-count"] }),
-    ]);
-    setIsImporting(false);
-
-    if (overallErrors === 0) {
-      toast.success(
-        `All ${dataSheets.length} sheets imported successfully (${overallSuccess.toLocaleString()} rows)!`,
+      setAllSheetsProgress((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: overallErrors === 0 ? "Completed" : "Failed",
+              overallProcessed,
+              overallSuccess,
+              overallErrors,
+            }
+          : null,
       );
-    } else {
-      toast.warning(`Import completed with ${overallErrors} error rows.`);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["companies"] }),
+        queryClient.invalidateQueries({ queryKey: ["clients"] }),
+        queryClient.invalidateQueries({ queryKey: ["interest_payables"] }),
+        queryClient.invalidateQueries({ queryKey: ["dividend_payables"] }),
+        queryClient.invalidateQueries({ queryKey: ["mutual_fund_payables"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard-kpis"] }),
+        queryClient.invalidateQueries({ queryKey: ["upload-history"] }),
+        queryClient.invalidateQueries({ queryKey: ["classification-review-count"] }),
+      ]);
+
+      if (overallErrors === 0) {
+        toast.success(
+          `All ${dataSheets.length} sheets imported successfully (${overallSuccess.toLocaleString()} rows)!`,
+        );
+      } else {
+        toast.warning(`Import completed with ${overallErrors} error rows.`);
+      }
+    } catch (fatalErr: any) {
+      console.error("handleImportAllSheets fatal error:", fatalErr);
+      toast.error(`Import failed: ${fatalErr?.message || "Unknown error"}`);
+    } finally {
+      setIsImporting(false);
     }
   };
 

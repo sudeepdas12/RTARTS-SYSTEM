@@ -48,16 +48,20 @@ export const DividendCalculator = {
     const faceValue = Math.max(0, params.faceValue ?? 100);
     const sharesHeld = Math.max(0, params.sharesHeld ?? 0);
 
-    // Determine TDS Rate by Category
-    let appliedTdsRate = 0.05; // Default 5% for Public, Institution, Promoter, Local, Employee
+    // Determine TDS Rate by Category (Nepal Income Tax Act)
+    let appliedTdsRate = 0.05; // Default 5% for Natural Person (Public, Promoter, Local, Employee)
     if (
       params.taxCategory === "TAX_EXEMPT" ||
       params.taxCategory === "TAX_EXEMPTED" ||
       params.taxCategory === "MUTUAL_FUND"
     ) {
-      appliedTdsRate = 0.0; // 0% for Mutual Fund / Tax Exempt
-    } else if (params.taxCategory === "FOREIGN" || params.taxCategory === "FOREIGN_INVESTOR") {
-      appliedTdsRate = 0.05;
+      appliedTdsRate = 0.0; // 0% for Mutual Fund / Tax Exempt (Section 88(4))
+    } else if (params.taxCategory === "INSTITUTION") {
+      appliedTdsRate = 0.15; // 15% for Corporate / Institutional investors
+    } else if (params.taxCategory === "FOREIGN_INVESTOR") {
+      appliedTdsRate = 0.15; // 15% for Foreign Institutional Investors
+    } else if (params.taxCategory === "FOREIGN") {
+      appliedTdsRate = 0.05; // 5% for individual foreign nationals (same as public)
     } else if (params.taxCategory === "CUSTOM" && params.customTaxRate !== undefined) {
       appliedTdsRate = normalizeTaxRate(params.customTaxRate);
     }
