@@ -44,7 +44,6 @@ import {
   Building2,
   Briefcase,
   TrendingUp,
-  Landmark,
   ShieldCheck,
   Percent,
   Loader2,
@@ -96,20 +95,15 @@ const emptyForm = {
   company_name: "",
   company_type: "",
   isin: "",
-  listed_date: "",
   sector_type: "Public" as Sector,
   registrar: "",
   fiscal_year: "",
   dividend_rate: "",
   debenture_rate: "",
   coupon_rate: "",
-  maturity_date: "",
   face_value: "",
   issue_size: "",
-  interest_tax_status: "Taxable" as TaxStatus,
   pan_no: "",
-  bank_account_no: "",
-  bank_name: "",
   status: "Active" as Status,
 };
 
@@ -238,20 +232,15 @@ function CompaniesPage() {
       company_name: c.company_name,
       company_type: c.company_type ?? "",
       isin: c.isin ?? "",
-      listed_date: c.listed_date ?? "",
       sector_type: (c.sector_type ?? "Public") as Sector,
       registrar: c.registrar ?? "",
       fiscal_year: c.fiscal_year ?? "",
       dividend_rate: c.dividend_rate?.toString() ?? "",
       debenture_rate: c.debenture_rate?.toString() ?? "",
       coupon_rate: c.coupon_rate?.toString() ?? "",
-      maturity_date: c.maturity_date ?? "",
       face_value: c.face_value?.toString() ?? "",
       issue_size: c.issue_size?.toString() ?? "",
-      interest_tax_status: (c.interest_tax_status ?? "Taxable") as TaxStatus,
       pan_no: c.pan_no ?? "",
-      bank_account_no: c.bank_account_no ?? "",
-      bank_name: c.bank_name ?? "",
       status: c.status,
     });
     setOpen(true);
@@ -266,20 +255,15 @@ function CompaniesPage() {
         company_name: form.company_name.trim(),
         company_type: form.company_type.trim() || null,
         isin: form.isin.trim() || null,
-        listed_date: form.listed_date || null,
         sector_type: form.sector_type,
         registrar: form.registrar.trim() || null,
         fiscal_year: form.fiscal_year.trim() || null,
         dividend_rate: num(form.dividend_rate),
         debenture_rate: num(form.debenture_rate),
         coupon_rate: num(form.coupon_rate),
-        maturity_date: form.maturity_date || null,
         face_value: num(form.face_value),
         issue_size: num(form.issue_size),
-        interest_tax_status: form.interest_tax_status,
         pan_no: form.pan_no.trim() || null,
-        bank_account_no: form.bank_account_no.trim() || null,
-        bank_name: form.bank_name.trim() || null,
         status: form.status,
       };
       if (editing) {
@@ -378,31 +362,46 @@ function CompaniesPage() {
         cell: ({ row }) => sectorBadge(row.original.sector_type),
       },
       {
+        accessorKey: "face_value",
+        header: "Face Value",
+        cell: ({ row }) => (
+          <span className="text-xs tabular-nums font-medium">
+            {row.original.face_value != null
+              ? `Rs. ${Number(row.original.face_value).toLocaleString()}`
+              : "—"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "issue_size",
+        header: "Issued Units (Kitta)",
+        cell: ({ row }) => (
+          <span className="text-xs tabular-nums font-mono font-medium text-foreground">
+            {row.original.issue_size != null
+              ? Number(row.original.issue_size).toLocaleString()
+              : "—"}
+          </span>
+        ),
+      },
+      {
         accessorKey: "dividend_rate",
         header: "Div. Rate",
         cell: ({ row }) => (
-          <span className="text-xs tabular-nums font-medium">
+          <span className="text-xs tabular-nums font-medium text-emerald-600">
             {row.original.dividend_rate != null ? `${row.original.dividend_rate}%` : "—"}
           </span>
         ),
       },
       {
         accessorKey: "coupon_rate",
-        header: "Coupon",
+        header: "Coupon / Deb.",
         cell: ({ row }) => (
-          <span className="text-xs tabular-nums font-medium">
-            {row.original.coupon_rate != null ? `${row.original.coupon_rate}%` : "—"}
-          </span>
-        ),
-      },
-      {
-        accessorKey: "face_value",
-        header: "Face Val.",
-        cell: ({ row }) => (
-          <span className="text-xs tabular-nums">
-            {row.original.face_value != null
-              ? `Rs. ${Number(row.original.face_value).toLocaleString()}`
-              : "—"}
+          <span className="text-xs tabular-nums font-medium text-blue-600">
+            {row.original.coupon_rate != null
+              ? `${row.original.coupon_rate}%`
+              : row.original.debenture_rate != null
+                ? `${row.original.debenture_rate}%`
+                : "—"}
           </span>
         ),
       },
@@ -412,6 +411,18 @@ function CompaniesPage() {
         cell: ({ row }) => (
           <span className="text-xs text-muted-foreground font-mono">
             {row.original.fiscal_year || "—"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "registrar",
+        header: "Registrar",
+        cell: ({ row }) => (
+          <span
+            className="text-xs text-muted-foreground truncate max-w-[140px] block"
+            title={row.original.registrar || ""}
+          >
+            {row.original.registrar || "RBB Merchant Banking"}
           </span>
         ),
       },
@@ -742,11 +753,11 @@ function CompaniesPage() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label>Listed Date</Label>
+                <Label>PAN No.</Label>
                 <Input
-                  type="date"
-                  value={form.listed_date}
-                  onChange={(e) => setF("listed_date", e.target.value)}
+                  placeholder="9-digit Company PAN"
+                  value={form.pan_no}
+                  onChange={(e) => setF("pan_no", e.target.value)}
                 />
               </div>
               <div className="space-y-1.5">
@@ -790,6 +801,38 @@ function CompaniesPage() {
             <SectionLabel icon={Percent}>Instrument Rates & Values</SectionLabel>
             <div className="grid gap-3 md:grid-cols-3">
               <div className="space-y-1.5">
+                <Label>Face Value (Rs.)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  placeholder="100, 1000…"
+                  value={form.face_value}
+                  onChange={(e) => setF("face_value", e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Issued Units (Kitta)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  placeholder="Total units"
+                  value={form.issue_size}
+                  onChange={(e) => setF("issue_size", e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Status</Label>
+                <Select value={form.status} onValueChange={(v) => setF("status", v)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Active">Active</SelectItem>
+                    <SelectItem value="Inactive">Inactive</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
                 <Label>Dividend Rate (%)</Label>
                 <Input
                   type="number"
@@ -817,90 +860,6 @@ function CompaniesPage() {
                   placeholder="e.g. 6.0"
                   value={form.coupon_rate}
                   onChange={(e) => setF("coupon_rate", e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Face Value (Rs.)</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  placeholder="100, 1000…"
-                  value={form.face_value}
-                  onChange={(e) => setF("face_value", e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Issue Size</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  placeholder="Total units"
-                  value={form.issue_size}
-                  onChange={(e) => setF("issue_size", e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Maturity Date</Label>
-                <Input
-                  type="date"
-                  value={form.maturity_date}
-                  onChange={(e) => setF("maturity_date", e.target.value)}
-                />
-              </div>
-            </div>
-
-            {/* Tax & Banking */}
-            <SectionLabel icon={Landmark}>Tax & Banking Information</SectionLabel>
-            <div className="grid gap-3 md:grid-cols-3">
-              <div className="space-y-1.5">
-                <Label>PAN No.</Label>
-                <Input
-                  placeholder="9-digit PAN"
-                  value={form.pan_no}
-                  onChange={(e) => setF("pan_no", e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Interest Tax Status</Label>
-                <Select
-                  value={form.interest_tax_status}
-                  onValueChange={(v) => setF("interest_tax_status", v)}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Taxable">Taxable</SelectItem>
-                    <SelectItem value="Exempted">Exempted</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Status</Label>
-                <Select value={form.status} onValueChange={(v) => setF("status", v)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Active">Active</SelectItem>
-                    <SelectItem value="Inactive">Inactive</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Bank Name</Label>
-                <Input
-                  placeholder="Designated bank"
-                  value={form.bank_name}
-                  onChange={(e) => setF("bank_name", e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5 md:col-span-2">
-                <Label>Bank Account Number</Label>
-                <Input
-                  placeholder="Account number for distributions"
-                  value={form.bank_account_no}
-                  onChange={(e) => setF("bank_account_no", e.target.value)}
                 />
               </div>
             </div>

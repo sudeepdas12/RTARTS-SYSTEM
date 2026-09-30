@@ -407,6 +407,7 @@ function UploadRoute() {
         isin: parsedData.detectedIsin,
         rate,
         fiscalYear: fiscalYear ? normalizeFiscalYear(fiscalYear) : undefined,
+        issueSize: parsedData.grandTotals.totalKitta || undefined,
         userId: user?.id,
       });
 
@@ -725,6 +726,7 @@ function UploadRoute() {
             isin: parsedData.detectedIsin,
             rate,
             fiscalYear: fiscalYear ? normalizeFiscalYear(fiscalYear) : undefined,
+            issueSize: parsedData.grandTotals.totalKitta || undefined,
             userId: currentUser?.id,
           });
           resolvedCompanyId = newComp.id;
@@ -1022,6 +1024,7 @@ function UploadRoute() {
             isin: parsedData.detectedIsin,
             rate: dividendRate ? Number(dividendRate) : undefined,
             fiscalYear: fiscalYear ? normalizeFiscalYear(fiscalYear) : undefined,
+            issueSize: parsedData.grandTotals.totalKitta || undefined,
             userId: currentUser?.id,
           });
           resolvedCompanyId = newComp.id;

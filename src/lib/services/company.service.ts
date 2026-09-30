@@ -11,6 +11,9 @@ export interface AutoRegisterCompanyParams {
   isin?: string | null;
   rate?: number | null;
   fiscalYear?: string | null;
+  faceValue?: number | null;
+  issueSize?: number | null;
+  registrar?: string | null;
   userId?: string | null;
 }
 
@@ -246,7 +249,22 @@ export const CompanyService = {
   async autoRegisterCompany(params: AutoRegisterCompanyParams): Promise<Company> {
     const cleanName = (params.name || "Unknown Company")
       .replace(/\.(xlsx|xls|csv|tsv|xlsm)$/i, "")
+      .replace(/[-_]\d{4}[._-]\d{1,2}[._-]\d{1,2}.*$/i, "")
+      .replace(/\s+/g, " ")
       .trim();
+
+    const isDebenture =
+      (params.fileType && params.fileType.toLowerCase().includes("debenture")) ||
+      /debenture|bond|rinpatra/i.test(cleanName);
+    const isMutualFund =
+      (params.fileType &&
+        (params.fileType.toLowerCase().includes("mutual") ||
+          params.fileType.toLowerCase().includes("fund"))) ||
+      /mutual\s*fund|balanced\s*fund|equity\s*fund|growth\s*fund|rmf/i.test(cleanName);
+
+    const defaultFaceValue = isDebenture ? 1000 : isMutualFund ? 10 : 100;
+    const faceValue = params.faceValue ?? defaultFaceValue;
+    const registrar = params.registrar || "RBB Merchant Banking Limited";
 
     // Check if matching company already exists
     const existing = await this.findMatchingCompany(cleanName, params.isin);
@@ -254,14 +272,17 @@ export const CompanyService = {
       // Enrich with missing metadata if available
       const updates: CompanyUpdate = {};
       if (!existing.isin && params.isin) updates.isin = params.isin;
-      const isDeb =
-        (params.fileType && params.fileType.toLowerCase().includes("debenture")) ||
-        /debenture|bond|rinpatra/i.test(cleanName);
-      if (!existing.debenture_rate && isDeb && params.rate) {
+      if (!existing.face_value && faceValue) updates.face_value = faceValue;
+      if ((!existing.issue_size || existing.issue_size <= 0) && params.issueSize)
+        updates.issue_size = params.issueSize;
+      if (!existing.registrar) updates.registrar = registrar;
+      if (!existing.fiscal_year && params.fiscalYear) updates.fiscal_year = params.fiscalYear;
+
+      if (!existing.debenture_rate && isDebenture && params.rate) {
         updates.debenture_rate = params.rate;
         updates.coupon_rate = params.rate;
       }
-      if (!existing.dividend_rate && !isDeb && params.rate) {
+      if (!existing.dividend_rate && !isDebenture && params.rate) {
         updates.dividend_rate = params.rate;
       }
       if (Object.keys(updates).length > 0) {
@@ -276,16 +297,6 @@ export const CompanyService = {
       }
       return existing;
     }
-
-    // Determine type and sector
-    const isDebenture =
-      (params.fileType && params.fileType.toLowerCase().includes("debenture")) ||
-      /debenture|bond|rinpatra/i.test(cleanName);
-    const isMutualFund =
-      (params.fileType &&
-        (params.fileType.toLowerCase().includes("mutual") ||
-          params.fileType.toLowerCase().includes("fund"))) ||
-      /mutual\s*fund|balanced\s*fund|equity\s*fund|growth\s*fund|rmf/i.test(cleanName);
 
     const companyType = isDebenture ? "Debenture" : isMutualFund ? "Mutual Fund" : "Public Limited";
     const sectorType: "Institution" | "Public" =
@@ -318,6 +329,9 @@ export const CompanyService = {
       sector_type: sectorType,
       isin: params.isin || null,
       fiscal_year: params.fiscalYear || null,
+      face_value: faceValue,
+      issue_size: params.issueSize || null,
+      registrar: registrar,
       debenture_rate: isDebenture && params.rate ? params.rate : null,
       coupon_rate: isDebenture && params.rate ? params.rate : null,
       dividend_rate: !isDebenture && params.rate ? params.rate : null,

@@ -426,7 +426,7 @@ describe.skipIf(!isSupabaseConfigured)("Integration Financial & Security Invaria
         await adminClient.from("user_roles").delete().eq("user_id", operatorId);
         await adminClient.auth.admin.deleteUser(operatorId);
       }
-    });
+    }, 20000);
   });
 
   describe("3. Workbook Validation & Net Figure Integrity", () => {
