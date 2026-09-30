@@ -250,18 +250,24 @@ function CompaniesPage() {
     mutationFn: async () => {
       if (!canWrite)
         throw new Error("Unauthorized: You do not have permission to create or edit companies.");
+      const compType = form.company_type.trim().toLowerCase();
+      const defaultFace = compType.includes("debenture")
+        ? 1000
+        : compType.includes("mutual fund")
+          ? 10
+          : 100;
       const payload = {
         company_code: form.company_code.trim(),
         company_name: form.company_name.trim(),
         company_type: form.company_type.trim() || null,
         isin: form.isin.trim() || null,
         sector_type: form.sector_type,
-        registrar: form.registrar.trim() || null,
+        registrar: form.registrar.trim() || "RBB Merchant Banking Limited",
         fiscal_year: form.fiscal_year.trim() || null,
         dividend_rate: num(form.dividend_rate),
         debenture_rate: num(form.debenture_rate),
         coupon_rate: num(form.coupon_rate),
-        face_value: num(form.face_value),
+        face_value: num(form.face_value) ?? defaultFace,
         issue_size: num(form.issue_size),
         pan_no: form.pan_no.trim() || null,
         status: form.status,
@@ -517,43 +523,53 @@ function CompaniesPage() {
       const rows = await importFromExcel<Record<string, unknown>>(file);
       const clean = rows
         .filter((r) => r.company_code && r.company_name)
-        .map((r) => ({
-          company_code: String(r.company_code).trim(),
-          company_name: String(r.company_name).trim(),
-          company_type: r.company_type ? String(r.company_type).trim() : null,
-          isin: r.isin ? String(r.isin).trim() : null,
-          listed_date: r.listed_date ? String(r.listed_date) : null,
-          sector_type: (r.sector_type as Sector) ?? null,
-          registrar: r.registrar ? String(r.registrar).trim() : null,
-          fiscal_year: r.fiscal_year ? String(r.fiscal_year).trim() : null,
-          dividend_rate:
-            r.dividend_rate !== undefined && r.dividend_rate !== ""
-              ? Number(r.dividend_rate)
-              : null,
-          debenture_rate:
-            r.debenture_rate !== undefined && r.debenture_rate !== ""
-              ? Number(r.debenture_rate)
-              : null,
-          coupon_rate:
-            r.coupon_rate !== undefined && r.coupon_rate !== "" ? Number(r.coupon_rate) : null,
-          maturity_date: r.maturity_date ? String(r.maturity_date) : null,
-          face_value:
-            r.face_value !== undefined && r.face_value !== "" ? Number(r.face_value) : null,
-          issue_size:
-            r.issue_size !== undefined && r.issue_size !== "" ? Number(r.issue_size) : null,
-          interest_tax_status: (r.interest_tax_status as TaxStatus) ?? null,
-          pan_no: r.pan_no ? String(r.pan_no).trim() : null,
-          bank_account_no: r.bank_account_no ? String(r.bank_account_no).trim() : null,
-          bank_name: r.bank_name ? String(r.bank_name).trim() : null,
-          email: r.email ? String(r.email).trim() : null,
-          phone: r.phone ? String(r.phone).trim() : null,
-          website: r.website ? String(r.website).trim() : null,
-          address: r.address ? String(r.address).trim() : null,
-          status: r.status
-            ? ((String(r.status).trim().charAt(0).toUpperCase() +
-                String(r.status).trim().slice(1).toLowerCase()) as Status)
-            : "Active",
-        }));
+        .map((r) => {
+          const compType = r.company_type ? String(r.company_type).trim().toLowerCase() : "";
+          const defaultFace = compType.includes("debenture")
+            ? 1000
+            : compType.includes("mutual fund")
+              ? 10
+              : 100;
+          return {
+            company_code: String(r.company_code).trim(),
+            company_name: String(r.company_name).trim(),
+            company_type: r.company_type ? String(r.company_type).trim() : null,
+            isin: r.isin ? String(r.isin).trim() : null,
+            listed_date: r.listed_date ? String(r.listed_date) : null,
+            sector_type: (r.sector_type as Sector) ?? null,
+            registrar: r.registrar ? String(r.registrar).trim() : "RBB Merchant Banking Limited",
+            fiscal_year: r.fiscal_year ? String(r.fiscal_year).trim() : null,
+            dividend_rate:
+              r.dividend_rate !== undefined && r.dividend_rate !== ""
+                ? Number(r.dividend_rate)
+                : null,
+            debenture_rate:
+              r.debenture_rate !== undefined && r.debenture_rate !== ""
+                ? Number(r.debenture_rate)
+                : null,
+            coupon_rate:
+              r.coupon_rate !== undefined && r.coupon_rate !== "" ? Number(r.coupon_rate) : null,
+            maturity_date: r.maturity_date ? String(r.maturity_date) : null,
+            face_value:
+              r.face_value !== undefined && r.face_value !== ""
+                ? Number(r.face_value)
+                : defaultFace,
+            issue_size:
+              r.issue_size !== undefined && r.issue_size !== "" ? Number(r.issue_size) : null,
+            interest_tax_status: (r.interest_tax_status as TaxStatus) ?? null,
+            pan_no: r.pan_no ? String(r.pan_no).trim() : null,
+            bank_account_no: r.bank_account_no ? String(r.bank_account_no).trim() : null,
+            bank_name: r.bank_name ? String(r.bank_name).trim() : null,
+            email: r.email ? String(r.email).trim() : null,
+            phone: r.phone ? String(r.phone).trim() : null,
+            website: r.website ? String(r.website).trim() : null,
+            address: r.address ? String(r.address).trim() : null,
+            status: r.status
+              ? ((String(r.status).trim().charAt(0).toUpperCase() +
+                  String(r.status).trim().slice(1).toLowerCase()) as Status)
+              : "Active",
+          };
+        });
       if (!clean.length) return toast.error("No valid company rows found");
       const { error } = await supabase
         .from("companies")

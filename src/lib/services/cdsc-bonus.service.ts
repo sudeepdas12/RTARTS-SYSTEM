@@ -92,18 +92,29 @@ export interface BonusAllocationSummary {
 
 export const CdscBonusService = {
   /**
-   * Resolves CDSC Lock-In Code from holder_type
+   * Resolves CDSC Lock-In Code from holder_type pursuant to SEBON / CDSC regulations.
+   * Promoters, local affected residents, and employee shares are subject to 3-year statutory lock-in.
    */
-  resolveLockIn(holderType?: string | null): { code: string; reason: string; expiry: string } {
+  resolveLockIn(
+    holderType?: string | null,
+    referenceDate?: string | Date | null,
+  ): { code: string; reason: string; expiry: string } {
     const ht = (holderType || "").toUpperCase();
+
+    // Standard SEBON 3-Year Lock-In calculation from listing or reference date
+    const ref = referenceDate ? new Date(referenceDate) : new Date();
+    const validRef = isNaN(ref.getTime()) ? new Date() : ref;
+    const lockInYear = validRef.getFullYear() + 3;
+    const dynamic3YrExpiry = `${lockInYear}1231`;
+
     if (ht.includes("PROMOTER")) {
-      return { code: "01", reason: "PROMOTER SHARE LOCK-IN", expiry: "20281231" };
+      return { code: "01", reason: "PROMOTER SHARE LOCK-IN", expiry: dynamic3YrExpiry };
     }
     if (ht.includes("LOCAL")) {
-      return { code: "09", reason: "LOCAL AFFECTED RESIDENTS", expiry: "20271231" };
+      return { code: "09", reason: "LOCAL AFFECTED RESIDENTS", expiry: dynamic3YrExpiry };
     }
     if (ht.includes("STAFF") || ht.includes("EMPLOYEE")) {
-      return { code: "02", reason: "EMPLOYEE QUOTA LOCK-IN", expiry: "20271231" };
+      return { code: "02", reason: "EMPLOYEE QUOTA LOCK-IN", expiry: dynamic3YrExpiry };
     }
     if (ht.includes("MUTUAL")) {
       return { code: "03", reason: "MUTUAL FUND LOCK-IN", expiry: "00000000" };
@@ -207,7 +218,7 @@ export const CdscBonusService = {
         (c.holder_type || "").toUpperCase().includes("EXEMPT");
       const bonusTaxRate = isTaxExempt ? 0.0 : 0.05;
 
-      const lockIn = this.resolveLockIn(c.holder_type);
+      const lockIn = this.resolveLockIn(c.holder_type, comp?.listed_date);
       const rawGrossBonus = existingKitta * bonusRatioDecimal;
       const creditedBonusKitta = Math.floor(rawGrossBonus);
       const fractionalKitta =

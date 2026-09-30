@@ -31,6 +31,8 @@ import { Download, User, Building2, Printer } from "lucide-react";
 import { ExcelExporter } from "@/lib/excel-exporter";
 import { format } from "date-fns";
 import { toast } from "sonner";
+import { fmtNprWords } from "@/lib/nepal-currency";
+import { adDateToBsString } from "@/lib/nepali-calendar";
 
 function escapeHtml(str: any): string {
   if (str == null) return "";
@@ -584,7 +586,7 @@ export function ShareholderStatementDialog({
         <td style="text-align: right; font-weight: 700; font-family: monospace; color: ${r.remainingAmount > 0 ? "#e11d48" : "#64748b"};">${r.remainingAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
         <td><span class="badge ${r.status === "Paid" ? "badge-paid" : r.status === "Partial" ? "badge-partial" : "badge-pending"}">${escapeHtml(r.status)}</span></td>
         <td style="font-size: 9px; color: #475569;">
-          ${r.paymentDate ? `<div>${format(new Date(r.paymentDate), "dd MMM yyyy")}</div>` : ""}
+          ${r.paymentDate ? `<div>${format(new Date(r.paymentDate), "dd MMM yyyy")} <span style="font-size: 7.5px; color: #64748b;">(${adDateToBsString(r.paymentDate)} BS)</span></div>` : ""}
           ${r.paymentRef ? `<div style="font-family: monospace; font-size: 8px; color: #64748b;">${escapeHtml(r.paymentRef)}</div>` : ""}
           ${!r.paymentDate && !r.paymentRef ? "—" : ""}
         </td>
@@ -878,6 +880,10 @@ export function ShareholderStatementDialog({
             </tr>
           </tfoot>
         </table>
+
+        <div style="margin-top: 10px; padding: 6px 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; font-size: 9.5px; font-weight: 600; color: #1e293b;">
+          <span style="color: #0f2744; text-transform: uppercase; font-size: 8.5px; letter-spacing: 0.03em;">Net Entitlement in Words:</span> ${fmtNprWords(totals.net)}
+        </div>
 
         <div class="disclaimer-block">
           <div style="max-width: 65%;">

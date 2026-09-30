@@ -72,6 +72,9 @@ import {
 import { ShareholderStatementDialog } from "@/components/shareholder-statement-dialog";
 import { loadTaxRules, getDebentureDisplayRates } from "@/lib/services/tax-rules.service";
 import { normalizeBoid } from "@/lib/validation-engine";
+import { fmtNpr } from "@/lib/nepal-currency";
+import { DualDate } from "@/components/dual-date";
+import { validateNepaliBankAccount } from "@/lib/nepal-banks";
 
 export const Route = createFileRoute("/_authenticated/interest")({
   component: InterestPage,
@@ -1037,10 +1040,7 @@ function InterestPage() {
     }
   };
 
-  const fmt = (n: number | null | undefined) =>
-    n == null
-      ? "—"
-      : Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmt = (n: number | null | undefined) => fmtNpr(n);
   const previewNet = form.net_payable
     ? Number(form.net_payable)
     : (Number(form.gross_interest) || 0) - (Number(form.tax_amount) || 0);
@@ -2362,6 +2362,23 @@ function InterestPage() {
                                   {(p as any).bank_account_no || cl?.bank_account_no}
                                 </div>
                               )}
+                              {(() => {
+                                const accNo = (p as any).bank_account_no || cl?.bank_account_no;
+                                const bName = (p as any).bank_name || cl?.bank_name;
+                                if (!accNo) return null;
+                                const bCheck = validateNepaliBankAccount(bName, accNo);
+                                if (!bCheck.isValid && bCheck.warning) {
+                                  return (
+                                    <div
+                                      className="text-[9px] text-rose-500 font-medium truncate mt-0.5"
+                                      title={bCheck.warning}
+                                    >
+                                      ⚠ {bCheck.warning}
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              })()}
                             </div>
                           ) : (
                             <span className="text-muted-foreground text-xs">—</span>
@@ -2370,7 +2387,7 @@ function InterestPage() {
 
                         {/* 10. Status & Due */}
                         <TableCell className="py-2 px-2 whitespace-nowrap">
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <Badge
                               variant={
                                 p.payment_status === "Paid"
@@ -2394,7 +2411,25 @@ function InterestPage() {
                                 FY {p.fiscal_year}
                               </span>
                             )}
+                            {Number(p.gross_interest || 0) >= 25000 &&
+                              !(
+                                cl?.pan_or_citizenship &&
+                                /^\d{9}$/.test(cl.pan_or_citizenship.trim())
+                              ) && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[9px] px-1 py-0 text-amber-700 border-amber-300 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300"
+                                  title="Nepal Income Tax Act 2058: Payments >= NPR 25,000 require PAN for IRD e-TDS credit"
+                                >
+                                  PAN Req
+                                </Badge>
+                              )}
                           </div>
+                          {p.payment_date && (
+                            <div className="mt-1">
+                              <DualDate date={p.payment_date} />
+                            </div>
+                          )}
                           <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1">
                             {p.due_date && <span>Due: {p.due_date}</span>}
                             {(p as any).remarks && (
