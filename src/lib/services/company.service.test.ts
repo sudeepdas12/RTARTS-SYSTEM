@@ -33,7 +33,13 @@ describe("generateCompanyCode", () => {
   });
 });
 
-describe("CompanyService.autoRegisterCompany and findMatchingCompany", () => {
+const isLiveDb =
+  !process.env.CI ||
+  Boolean(
+    process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.SUPABASE_URL !== "http://127.0.0.1:54321",
+  );
+
+describe.skipIf(!isLiveDb)("CompanyService.autoRegisterCompany and findMatchingCompany", () => {
   let createdCompanyId: string | null = null;
   const testName = "Isolated Auto-Register Debenture 99.9% 2099.xlsx";
 

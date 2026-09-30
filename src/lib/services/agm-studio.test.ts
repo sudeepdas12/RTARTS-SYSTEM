@@ -581,9 +581,30 @@ describe("AgmStudioService — Multi-Year AGM & Multi-Company Universal Reconcil
 
       // Non-UUID slug returns null or a valid UUID when resolved against DB
       expect(isUuid("nlg-insurance")).toBe(false);
-      const resolvedSlug = await AgmStudioService.resolveCompanyUuid("nlg-insurance");
-      if (resolvedSlug) {
-        expect(isUuid(resolvedSlug)).toBe(true);
+      const origFrom = (supabase as any).from;
+      (supabase as any).from = (table: string) => {
+        if (table === "companies") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { id: "22222222-3333-4444-b555-666666666666" },
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        return origFrom ? origFrom.call(supabase, table) : ({} as any);
+      };
+
+      try {
+        const resolvedSlug = await AgmStudioService.resolveCompanyUuid("nlg-insurance");
+        if (resolvedSlug) {
+          expect(isUuid(resolvedSlug)).toBe(true);
+        }
+      } finally {
+        (supabase as any).from = origFrom;
       }
     });
 
@@ -843,16 +864,32 @@ describe("AgmStudioService — Multi-Year AGM & Multi-Company Universal Reconcil
       // Mock supabase.from to simulate empty DB response without network permission error
       const origFrom = (supabase as any).from;
       (supabase as any).from = (table: string) => {
-        if (table === "agm_yearly_snapshots") {
+        if (table === "companies") {
           return {
             select: vi.fn().mockReturnValue({
               eq: vi.fn().mockReturnValue({
-                not: vi.fn().mockResolvedValue({ data: [], error: null }),
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { id: "11111111-2222-3333-4444-555555555555" },
+                  error: null,
+                }),
               }),
             }),
           };
         }
-        return origFrom(table);
+        if (table === "agm_yearly_snapshots") {
+          const chainableQuery: any = {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            not: vi.fn().mockReturnThis(),
+            then: (resolve: any, reject: any) =>
+              Promise.resolve({ data: [], error: null }).then(resolve, reject),
+          };
+          chainableQuery.select.mockReturnValue(chainableQuery);
+          chainableQuery.eq.mockReturnValue(chainableQuery);
+          chainableQuery.not.mockReturnValue(chainableQuery);
+          return chainableQuery;
+        }
+        return origFrom ? origFrom.call(supabase, table) : ({} as any);
       };
 
       try {
@@ -1000,11 +1037,9 @@ describe("AgmStudioService — Multi-Year AGM & Multi-Company Universal Reconcil
       (supabase as any).from = (table: string) => {
         if (table === "agm_import_staging") {
           return {
-            insert: vi
-              .fn()
-              .mockResolvedValue({
-                error: { message: "relation agm_import_staging does not exist" },
-              }),
+            insert: vi.fn().mockResolvedValue({
+              error: { message: "relation agm_import_staging does not exist" },
+            }),
             delete: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
           };
         }
@@ -1430,11 +1465,9 @@ describe("AgmStudioService — Multi-Year AGM & Multi-Company Universal Reconcil
       (supabase as any).from = (table: string) => {
         if (table === "agm_import_staging") {
           return {
-            insert: vi
-              .fn()
-              .mockResolvedValue({
-                error: { message: "relation agm_import_staging does not exist" },
-              }),
+            insert: vi.fn().mockResolvedValue({
+              error: { message: "relation agm_import_staging does not exist" },
+            }),
             delete: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
           };
         }

@@ -2,7 +2,13 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { supabase } from "./database";
 import { UploadService } from "./upload.service";
 
-describe("UploadService.rollbackUpload integration test", () => {
+const isLiveDb =
+  !process.env.CI ||
+  Boolean(
+    process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.SUPABASE_URL !== "http://127.0.0.1:54321",
+  );
+
+describe.skipIf(!isLiveDb)("UploadService.rollbackUpload integration test", () => {
   let testCompanyId: string;
   let testClientId: string;
   let testUploadId: string;

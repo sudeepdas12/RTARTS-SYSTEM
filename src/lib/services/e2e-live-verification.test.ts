@@ -11,7 +11,13 @@ const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-describe("Comprehensive End-to-End Pipeline Verification", () => {
+const isLiveDb =
+  !process.env.CI ||
+  Boolean(
+    process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.SUPABASE_URL !== "http://127.0.0.1:54321",
+  );
+
+describe.skipIf(!isLiveDb)("Comprehensive End-to-End Pipeline Verification", () => {
   const runId = Math.random().toString(36).substring(2, 7).toUpperCase();
   const testHash = `hash_${runId}_${Date.now()}`;
   let companyId: string = "";

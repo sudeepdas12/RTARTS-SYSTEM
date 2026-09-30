@@ -11,7 +11,13 @@ const client = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-describe("Real Supabase RPCs & Transactional Rollback Integration Tests", () => {
+const isLiveDb =
+  !process.env.CI ||
+  Boolean(
+    process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.SUPABASE_URL !== "http://127.0.0.1:54321",
+  );
+
+describe.skipIf(!isLiveDb)("Real Supabase RPCs & Transactional Rollback Integration Tests", () => {
   let companyId: string;
   let runId: string;
 
