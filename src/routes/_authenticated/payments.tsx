@@ -1923,8 +1923,9 @@ function PaymentsRoute() {
                 <div>
                   <p className="text-xs text-muted-foreground">Company</p>
                   <p className="text-sm font-medium">
-                    {activeBatchData.companies?.company_code ||
-                      activeBatchData.companies?.company_name ||
+                    {(activeBatchData as any).companies?.company_code ||
+                      (activeBatchData as any).companies?.company_name ||
+                      (activeBatchData as any).company?.company_code ||
                       "All"}
                   </p>
                 </div>

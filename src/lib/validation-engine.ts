@@ -467,7 +467,7 @@ export const ValidationEngine = {
       try {
         const sampleBoids = uniqueBoids.slice(0, 100);
         const { data: clients } = await safeQuery(
-          supabase.from("clients").select("boid").in("boid", sampleBoids),
+          supabase.from("clients").select("boid").in("boid", sampleBoids) as any,
           { data: [] } as any,
           4000,
         );
@@ -485,12 +485,16 @@ export const ValidationEngine = {
       safeQuery(
         supabase
           .from("companies")
-          .select("isin, coupon_rate, dividend_rate, id, company_type, fiscal_year"),
+          .select("isin, coupon_rate, dividend_rate, id, company_type, fiscal_year") as any,
         { data: [] } as any,
         4500,
       ),
       safeQuery(
-        supabase.from("fiscal_years").select("fiscal_year").eq("is_active", true).maybeSingle(),
+        supabase
+          .from("fiscal_years")
+          .select("fiscal_year")
+          .eq("is_active", true)
+          .maybeSingle() as any,
         { data: null } as any,
         4500,
       ),

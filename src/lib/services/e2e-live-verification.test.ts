@@ -153,7 +153,7 @@ describe("Comprehensive End-to-End Pipeline Verification", () => {
       .select("id")
       .single();
     expect(divErr).toBeNull();
-    divPayId = div.id;
+    divPayId = div!.id;
 
     // Seed Interest Payable (5,000 gross, 750 tax 15%, 4,250 net, explicit due_date)
     const { data: intPay, error: intErr } = await supabase
@@ -176,8 +176,8 @@ describe("Comprehensive End-to-End Pipeline Verification", () => {
       .select("id, due_date")
       .single();
     expect(intErr).toBeNull();
-    intPayId = intPay.id;
-    expect(intPay.due_date).toBe("2082-04-15");
+    intPayId = intPay!.id;
+    expect(intPay!.due_date).toBe("2082-04-15");
   });
 
   it("2. Payment Flow: dispatches batch and updates payables atomically via RPC", async () => {
@@ -196,12 +196,12 @@ describe("Comprehensive End-to-End Pipeline Verification", () => {
       .select("id")
       .single();
     expect(bErr).toBeNull();
-    paymentBatchId = batch.id;
+    paymentBatchId = batch!.id;
 
     // Insert payments
     const { error: pErr } = await supabase.from("payments").insert([
       {
-        batch_id: batch.id,
+        batch_id: batch!.id,
         company_id: companyId,
         client_id: clientId1,
         payable_type: "dividend",
@@ -219,7 +219,7 @@ describe("Comprehensive End-to-End Pipeline Verification", () => {
         payment_date: new Date().toISOString().split("T")[0],
       },
       {
-        batch_id: batch.id,
+        batch_id: batch!.id,
         company_id: companyId,
         client_id: clientId2,
         payable_type: "interest",
@@ -241,7 +241,7 @@ describe("Comprehensive End-to-End Pipeline Verification", () => {
 
     // Call RPC to complete atomically
     const { error: rpcErr } = await supabase.rpc("complete_payment_batch_atomic", {
-      p_batch_id: batch.id,
+      p_batch_id: batch!.id,
       p_user_id: null,
     });
     expect(rpcErr).toBeNull();

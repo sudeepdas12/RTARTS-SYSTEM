@@ -839,7 +839,7 @@ function InterestPage() {
       if (!canWrite)
         throw new Error("Unauthorized: You do not have permission to update payment status.");
       if (!payOpen) return;
-      const { error } = await supabase
+      const { error } = await (supabase as any)
         .from("interest_payables")
         .update({
           payment_status: "Paid",

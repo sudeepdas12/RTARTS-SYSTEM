@@ -492,7 +492,7 @@ export function ReconciliationRoute() {
       boid: (m as any).boid || null,
       pan_or_citizenship: (m as any).pan_or_citizenship || null,
       current_bank_name: (m as any).bankName || (m as any).bank_name || null,
-      current_bank_account_no: m.accountNumber || (m as any).bank_account_no || null,
+      current_bank_account_no: (m as any).accountNumber || (m as any).bank_account_no || null,
       rejection_reason: m.transactionDescription || m.category || "ConnectIPS / CBS rejection",
       net_payable: m.systemAmount || m.excelAmount || 0,
     }));
@@ -704,7 +704,7 @@ export function ReconciliationRoute() {
     try {
       const results = buildResults(report.matches);
       const applyRes = await ReconciliationService.applyReconciliation(
-        results as ReconciliationResultRow[],
+        results as unknown as ReconciliationResultRow[],
       );
       await ReconciliationService.saveResults(results);
       if (
@@ -890,7 +890,7 @@ export function ReconciliationRoute() {
     try {
       const allSelectedResults = buildResults(selectedMatches);
       const applyRes = await ReconciliationService.applyReconciliation(
-        allSelectedResults as ReconciliationResultRow[],
+        allSelectedResults as unknown as ReconciliationResultRow[],
       );
       await ReconciliationService.saveResults(allSelectedResults);
       const rejectedCount = allSelectedResults.filter((r) => r.result === "Rejected").length;

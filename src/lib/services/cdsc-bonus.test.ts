@@ -78,6 +78,8 @@ describe("CdscBonusService — CDSC DEMAT Credit & Fractional Cash Math", () => 
           grossBonusShares: 10,
           creditedBonusKitta: 10,
           fractionalKitta: 0,
+          afterBonusKitta: 110,
+          postBonusKitta: 110,
           faceValue: 100,
           bonusTaxRate: 0.05,
           bonusShareTaxPayable: 50,

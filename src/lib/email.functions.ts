@@ -58,7 +58,7 @@ export const sendTestEmailServerFn = createServerFn({ method: "POST" })
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
     // Fetch existing settings to support testing with stored credentials
-    const { data: row } = await supabaseAdmin
+    const { data: row } = await (supabaseAdmin as any)
       .from("system_settings")
       .select("setting_value")
       .eq("setting_key", "global")

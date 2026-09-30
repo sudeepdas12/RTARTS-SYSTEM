@@ -1045,7 +1045,7 @@ function UploadRoute() {
     try {
       const fileHash = cachedFileHash || (await computeFileHash(file));
       setValidationErrors([]);
-      setProgress(null);
+      const overallTotal = dataSheets.reduce((sum, s) => sum + s.rowCount, 0);
       let overallProcessed = 0,
         overallSuccess = 0,
         overallErrors = 0;

@@ -336,6 +336,7 @@ export const ImportService = {
       isPreCalculated?: boolean;
       isRawInputFile?: boolean;
       daysCount?: number;
+      dayCountConvention?: string;
     },
     sharedContext?: {
       companyId?: string;
