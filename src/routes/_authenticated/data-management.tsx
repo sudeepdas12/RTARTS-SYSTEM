@@ -181,8 +181,8 @@ function DataManagementPage() {
   const [activeTab, setActiveTab] = useState<string>(search.tab || "clients");
 
   useEffect(() => {
-    if (search.tab && search.tab !== activeTab) {
-      setActiveTab(search.tab);
+    if (search.tab) {
+      setActiveTab((prev) => (prev !== search.tab ? search.tab : prev));
     }
   }, [search.tab]);
 

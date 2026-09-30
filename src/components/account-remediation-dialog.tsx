@@ -108,17 +108,7 @@ export function AccountRemediationDialog({
   const [newAccountNumber, setNewAccountNumber] = useState("");
   const [remediationNote, setRemediationNote] = useState("");
 
-  // Sync initial items when dialog opens or items change
-  React.useEffect(() => {
-    setItems(initialItems);
-    if (initialItems.length > 0 && !selectedId) {
-      const first = initialItems[0];
-      setSelectedId(first.payable_id);
-      loadItemForm(first);
-    }
-  }, [initialItems]);
-
-  const loadItemForm = (item: RejectedAccountItem) => {
+  const loadItemForm = React.useCallback((item: RejectedAccountItem) => {
     // Check if merger suggestion exists
     const merger = MERGER_DICTIONARY.find(
       (m) =>
@@ -131,7 +121,22 @@ export function AccountRemediationDialog({
         ? `Remediated bank merger: ${merger.note}`
         : "Updated verified bank account for payment re-run",
     );
-  };
+  }, []);
+
+  // Sync initial items when dialog opens or items change
+  React.useEffect(() => {
+    setItems(initialItems);
+    if (initialItems.length > 0) {
+      const exists = selectedId && initialItems.some((i) => i.payable_id === selectedId);
+      if (!exists) {
+        const first = initialItems[0];
+        setSelectedId(first.payable_id);
+        loadItemForm(first);
+      }
+    } else {
+      setSelectedId(null);
+    }
+  }, [initialItems, selectedId, loadItemForm]);
 
   const selectedItem = useMemo(() => {
     return items.find((i) => i.payable_id === selectedId) || null;
