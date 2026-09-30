@@ -26,6 +26,8 @@ export interface DividendResult {
   issuedBonusShares: number;
   fractionBonusShares: number;
   afterBonusKitta: number;
+  preBonusKitta: number;
+  kittaForCash: number;
   grossCashDividend: number;
   bonusTaxAmount: number;
   cashTaxAmount: number;
@@ -90,14 +92,13 @@ export const DividendCalculator = {
     // 2. Gross Cash Dividend Calculation
     let grossCashDividend = 0;
     const cashDividendRate = Math.max(0, params.cashDividendRate ?? 0);
-    if (cashDividendRate > 0) {
-      // For combined/bonus, cash dividend is paid on after-bonus kitta by default, or pre-bonus if cashOnPreBonus is true
-      const kittaForCash = params.cashOnPreBonus
-        ? sharesHeld
-        : params.dividendType === "Combined"
-          ? afterBonusKitta
-          : sharesHeld;
+    const kittaForCash = params.cashOnPreBonus
+      ? sharesHeld
+      : params.dividendType === "Combined"
+        ? afterBonusKitta
+        : sharesHeld;
 
+    if (cashDividendRate > 0) {
       if (params.cashRateIsPerShare) {
         grossCashDividend = kittaForCash * cashDividendRate;
       } else {
@@ -136,6 +137,8 @@ export const DividendCalculator = {
       issuedBonusShares,
       fractionBonusShares: Math.round(fractionBonusShares * 10000) / 10000,
       afterBonusKitta: Math.round(afterBonusKitta * 10000) / 10000,
+      preBonusKitta: sharesHeld,
+      kittaForCash,
       grossCashDividend: rGross,
       bonusTaxAmount: rBonusTax,
       cashTaxAmount: rCashTax,

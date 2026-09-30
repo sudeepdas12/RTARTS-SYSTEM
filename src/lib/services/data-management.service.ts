@@ -289,11 +289,12 @@ export const DataManagementService = {
 
       // 2. Fallback: Paginated client aggregation
       const [dividends, interests, mutualFunds] = await Promise.all([
-        fetchAllRows<any>((from, to) => {
-          let q = (supabase as any)
-            .from("dividend_payables")
-            .select(
-              `
+        fetchAllRows<any>(
+          (from, to) => {
+            let q = (supabase as any)
+              .from("dividend_payables")
+              .select(
+                `
               company_id,
               companies!inner(company_name, company_code),
               fiscal_year,
@@ -302,16 +303,20 @@ export const DataManagementService = {
               net_payable,
               payment_status
             `,
-            )
-            .range(from, to);
-          if (fiscalYear && fiscalYear !== "all") q = q.eq("fiscal_year", fiscalYear);
-          return q;
-        }),
-        fetchAllRows<any>((from, to) => {
-          let q = (supabase as any)
-            .from("interest_payables")
-            .select(
-              `
+              )
+              .range(from, to);
+            if (fiscalYear && fiscalYear !== "all") q = q.eq("fiscal_year", fiscalYear);
+            return q;
+          },
+          1000,
+          10000,
+        ),
+        fetchAllRows<any>(
+          (from, to) => {
+            let q = (supabase as any)
+              .from("interest_payables")
+              .select(
+                `
               company_id,
               companies!inner(company_name, company_code),
               fiscal_year,
@@ -320,16 +325,20 @@ export const DataManagementService = {
               net_payable,
               payment_status
             `,
-            )
-            .range(from, to);
-          if (fiscalYear && fiscalYear !== "all") q = q.eq("fiscal_year", fiscalYear);
-          return q;
-        }),
-        fetchAllRows<any>((from, to) => {
-          let q = (supabase as any)
-            .from("mutual_fund_payables")
-            .select(
-              `
+              )
+              .range(from, to);
+            if (fiscalYear && fiscalYear !== "all") q = q.eq("fiscal_year", fiscalYear);
+            return q;
+          },
+          1000,
+          10000,
+        ),
+        fetchAllRows<any>(
+          (from, to) => {
+            let q = (supabase as any)
+              .from("mutual_fund_payables")
+              .select(
+                `
               company_id,
               companies!inner(company_name, company_code),
               fiscal_year,
@@ -338,11 +347,14 @@ export const DataManagementService = {
               net_payable,
               payment_status
             `,
-            )
-            .range(from, to);
-          if (fiscalYear && fiscalYear !== "all") q = q.eq("fiscal_year", fiscalYear);
-          return q;
-        }),
+              )
+              .range(from, to);
+            if (fiscalYear && fiscalYear !== "all") q = q.eq("fiscal_year", fiscalYear);
+            return q;
+          },
+          1000,
+          10000,
+        ),
       ]);
 
       const divMap = new Map<string, CompanyFiscalData>();

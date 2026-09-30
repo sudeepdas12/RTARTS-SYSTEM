@@ -142,8 +142,12 @@ export function ShareholderStatementDialog({
         companyCode: string;
         fiscalYear: string;
         kitta: number;
+        baseKitta?: number;
+        bonusKitta?: number;
+        totalKitta?: number;
         grossAmount: number;
         taxAmount: number;
+        bonusTax?: number;
         netAmount: number;
         paidAmount: number;
         remainingAmount: number;
@@ -200,8 +204,12 @@ export function ShareholderStatementDialog({
           companyName: r.company?.company_name || "Debentures",
           fiscalYear: r.fiscal_year || "2082/83",
           kitta: derivedKitta,
+          baseKitta: derivedKitta,
+          bonusKitta: 0,
+          totalKitta: derivedKitta,
           grossAmount: Number(r.gross_interest || 0),
           taxAmount: Number(r.tax_amount || 0),
+          bonusTax: 0,
           netAmount: netAmt,
           paidAmount: paidAmt,
           remainingAmount: remAmt,
@@ -270,6 +278,13 @@ export function ShareholderStatementDialog({
         const combinedRemarks =
           [r.remarks, bonusNote, linkedPay?.reversal_reason].filter(Boolean).join(" • ") || null;
 
+        const baseKitta = Number(r.shares_held || 0);
+        const bonusKitta = bonusQty;
+        const totalKitta = Number(r.after_bonus_kitta || baseKitta + bonusKitta || baseKitta || 0);
+        const bonusTax = Number(r.bonus_tax || 0);
+        const cashTax = Number(r.tax_amount || 0);
+        const totalTds = cashTax + bonusTax;
+
         records.push({
           id: r.id,
           type: divType,
@@ -277,9 +292,13 @@ export function ShareholderStatementDialog({
           companyCode: r.company?.company_code || "EQ",
           companyName: r.company?.company_name || "Equities",
           fiscalYear: r.fiscal_year || "2081/82",
-          kitta: Number(r.shares_held || r.after_bonus_kitta || 0),
+          kitta: totalKitta || baseKitta,
+          baseKitta: baseKitta || totalKitta,
+          bonusKitta,
+          totalKitta: totalKitta || baseKitta,
           grossAmount: grossCash,
-          taxAmount: Number(r.tax_amount || 0),
+          taxAmount: totalTds,
+          bonusTax,
           netAmount: netAmt,
           paidAmount: paidAmt,
           remainingAmount: remAmt,
@@ -302,6 +321,7 @@ export function ShareholderStatementDialog({
           r.payment_status === "Paid" || (!r.payment_status && linkedPay?.status === "Completed");
         const paidAmt = isPaid ? netAmt : 0;
         const remAmt = isPaid ? 0 : netAmt;
+        const baseKitta = Number(r.shares_held || 0);
 
         records.push({
           id: r.id,
@@ -310,9 +330,13 @@ export function ShareholderStatementDialog({
           companyCode: r.company?.company_code || "MF",
           companyName: r.company?.company_name || "Mutual Funds",
           fiscalYear: r.fiscal_year || "2081/82",
-          kitta: Number(r.shares_held || 0),
+          kitta: baseKitta,
+          baseKitta,
+          bonusKitta: 0,
+          totalKitta: baseKitta,
           grossAmount: Number(r.gross_dividend || 0),
           taxAmount: Number(r.tax_amount || 0),
+          bonusTax: 0,
           netAmount: netAmt,
           paidAmount: paidAmt,
           remainingAmount: remAmt,
@@ -390,6 +414,13 @@ export function ShareholderStatementDialog({
             const paidAmt = isSettled ? snapNet : 0;
             const remAmt = isSettled ? 0 : snapNet;
 
+            const baseKitta = Number(s.base_kitta || 0);
+            const bonusKitta = snapBonus;
+            const totalKitta = Number(
+              s.post_event_kitta || baseKitta + bonusKitta || snapKitta || 0,
+            );
+            const bonusTax = Number(s.bonus_tax_withheld || 0);
+
             records.push({
               id: s.id,
               type: distType,
@@ -397,9 +428,13 @@ export function ShareholderStatementDialog({
               companyCode: compCode,
               companyName: compName,
               fiscalYear: s.fiscal_year || "Historical",
-              kitta: snapKitta,
+              kitta: totalKitta || baseKitta || snapKitta,
+              baseKitta: baseKitta || snapKitta,
+              bonusKitta,
+              totalKitta: totalKitta || snapKitta,
               grossAmount: snapGross,
               taxAmount: snapTax,
+              bonusTax,
               netAmount: snapNet,
               paidAmount: paidAmt,
               remainingAmount: remAmt,
@@ -473,8 +508,8 @@ export function ShareholderStatementDialog({
 
   const latestHoldingKitta = useMemo(() => {
     if (!filteredRecords.length) return 0;
-    const active = filteredRecords.find((r) => Number(r.kitta) > 0);
-    return active ? Number(active.kitta) : 0;
+    const active = filteredRecords.find((r) => Number(r.totalKitta || r.kitta) > 0);
+    return active ? Number(active.totalKitta || active.kitta) : 0;
   }, [filteredRecords]);
 
   const handleExport = () => {
@@ -529,9 +564,21 @@ export function ShareholderStatementDialog({
           <span class="badge badge-type">${escapeHtml(r.type)}</span>
           ${r.remarks ? `<div style="font-size: 8px; color: #64748b; margin-top: 2px; max-width: 140px; word-break: break-word;">${escapeHtml(r.remarks)}</div>` : ""}
         </td>
-        <td style="text-align: right; font-weight: 600; font-family: monospace;">${r.kitta > 0 ? r.kitta.toLocaleString() : "—"}</td>
+        <td style="text-align: right; font-weight: 600; font-family: monospace;">
+          ${
+            r.bonusKitta && r.bonusKitta > 0
+              ? `
+            <div><strong>${(r.totalKitta || r.kitta).toLocaleString()}</strong></div>
+            <div style="font-size: 7.5px; color: #64748b; font-weight: 400;">Base: ${(r.baseKitta || 0).toLocaleString()} | +Bonus: ${r.bonusKitta.toLocaleString()}</div>
+          `
+              : `${r.kitta > 0 ? r.kitta.toLocaleString() : "—"}`
+          }
+        </td>
         <td style="text-align: right; font-family: monospace;">${r.grossAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-        <td style="text-align: right; color: #d97706; font-family: monospace;">${r.taxAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+        <td style="text-align: right; color: #d97706; font-family: monospace;">
+          ${r.taxAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+          ${r.bonusTax && r.bonusTax > 0 ? `<div style="font-size: 7.5px; color: #92400e;">(Bonus: ${r.bonusTax.toLocaleString("en-IN", { minimumFractionDigits: 2 })})</div>` : ""}
+        </td>
         <td style="text-align: right; font-weight: 700; font-family: monospace; color: #0f172a;">${r.netAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
         <td style="text-align: right; font-weight: 700; font-family: monospace; color: #059669;">${r.paidAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
         <td style="text-align: right; font-weight: 700; font-family: monospace; color: ${r.remainingAmount > 0 ? "#e11d48" : "#64748b"};">${r.remainingAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
@@ -1017,7 +1064,7 @@ export function ShareholderStatementDialog({
               <TableRow className="bg-muted/40 text-xs">
                 <TableHead>Fiscal Year</TableHead>
                 <TableHead>Scheme / Company</TableHead>
-                <TableHead className="text-right">Holding (Kitta)</TableHead>
+                <TableHead className="text-right">Holding Progression (Kitta)</TableHead>
                 <TableHead>Distribution Type</TableHead>
                 <TableHead className="text-right">Gross (NPR)</TableHead>
                 <TableHead className="text-right">TDS (NPR)</TableHead>
@@ -1060,7 +1107,23 @@ export function ShareholderStatementDialog({
                       )}
                     </TableCell>
                     <TableCell className="text-right font-mono font-semibold text-primary">
-                      {r.kitta > 0 ? r.kitta.toLocaleString() : "—"}
+                      {r.bonusKitta && r.bonusKitta > 0 ? (
+                        <div className="flex flex-col items-end">
+                          <span className="font-bold text-foreground text-xs">
+                            {(r.totalKitta || r.kitta).toLocaleString()}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground font-normal">
+                            Base: {(r.baseKitta || 0).toLocaleString()}
+                          </span>
+                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">
+                            +{r.bonusKitta.toLocaleString()} Bonus
+                          </span>
+                        </div>
+                      ) : r.kitta > 0 ? (
+                        r.kitta.toLocaleString()
+                      ) : (
+                        "—"
+                      )}
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline" className="text-[10px]">
@@ -1079,7 +1142,13 @@ export function ShareholderStatementDialog({
                       {r.grossAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                     </TableCell>
                     <TableCell className="text-right font-mono text-amber-600">
-                      {r.taxAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      <div>{r.taxAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</div>
+                      {r.bonusTax && r.bonusTax > 0 ? (
+                        <div className="text-[9.5px] text-muted-foreground font-normal">
+                          (Bonus: {r.bonusTax.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                          )
+                        </div>
+                      ) : null}
                     </TableCell>
                     <TableCell className="text-right font-mono font-bold text-foreground">
                       {r.netAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}

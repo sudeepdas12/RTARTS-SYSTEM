@@ -219,15 +219,7 @@ function payableSegment(category: string): string | null {
  */
 
 async function insertRowsWithSchemaFallback(targetTable: string, rows: any[]) {
-  const { error: batchError } = await (supabase.from(targetTable as any) as any).insert(
-    rows as any,
-  );
-
-  if (!batchError) return rows.length;
-
-  console.warn(`Batch ${targetTable} insert failed; retrying row by row:`, batchError.message);
-
-  let insertedCount = 0;
+  if (!rows || rows.length === 0) return 0;
 
   const ALLOWED_STRIPPABLE_OPTIONAL_COLUMNS = new Set([
     "remarks",
@@ -243,12 +235,49 @@ async function insertRowsWithSchemaFallback(targetTable: string, rows: any[]) {
     "classification_source",
   ]);
 
-  for (const row of rows) {
+  // Fast path: attempt batch insert with batch-level column stripping
+  const currentRows = rows.map((r) => ({ ...r }));
+  let batchAttempts = 0;
+  const strippedBatchCols = new Set<string>();
+
+  while (batchAttempts < 5) {
+    const { error: batchError } = await (supabase.from(targetTable as any) as any).insert(
+      currentRows as any,
+    );
+    if (!batchError) {
+      return currentRows.length;
+    }
+
+    const missingCol = getMissingColumnName(batchError);
+    if (
+      missingCol &&
+      ALLOWED_STRIPPABLE_OPTIONAL_COLUMNS.has(missingCol) &&
+      !strippedBatchCols.has(missingCol)
+    ) {
+      console.warn(`Stripping missing column '${missingCol}' from batch and retrying insert...`);
+      strippedBatchCols.add(missingCol);
+      for (const r of currentRows) {
+        delete r[missingCol];
+      }
+      batchAttempts++;
+      continue;
+    }
+
+    console.warn(
+      `Batch ${targetTable} insert failed (${batchError.message}); retrying row by row with safety bounds.`,
+    );
+    break;
+  }
+
+  let insertedCount = 0;
+
+  // Row-by-row fallback with bounded attempts (max 3 per row)
+  for (const row of currentRows) {
     const currentRow = { ...row };
     let attempts = 0;
     const strippedColumns = new Set<string>();
 
-    while (attempts < 20) {
+    while (attempts < 3) {
       const { error } = await (supabase.from(targetTable as any) as any).insert(currentRow as any);
       if (!error) {
         insertedCount += 1;

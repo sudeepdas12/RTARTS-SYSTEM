@@ -711,16 +711,23 @@ export const PaymentService = {
       periodDays?: number;
       fromDate?: string;
       toDate?: string;
+      limit?: number;
     },
   ): Promise<any[]> {
     try {
       // 1. Fetch payable IDs that are currently locked in unfinalized batches (Draft, Pending, Approved)
       let batchedPayableIds = new Set<string>();
       try {
-        const { data: existingPayments } = await (supabase as any)
+        let paymentsQ = (supabase as any)
           .from("payments")
           .select("payable_id")
           .in("status", ["Draft", "Pending", "Approved"]);
+
+        if (companyId && companyId !== "all") {
+          paymentsQ = paymentsQ.eq("company_id", companyId);
+        }
+
+        const { data: existingPayments } = await paymentsQ.limit(5000);
 
         if (existingPayments && Array.isArray(existingPayments)) {
           batchedPayableIds = new Set(
@@ -737,12 +744,18 @@ export const PaymentService = {
       const fetchMutualFund =
         !payableType || payableType === "mutual_fund" || payableType === "all";
 
+      const clientSelect =
+        "clients(id, boid, full_name, bank_name, bank_account_no, bank_branch, pan_or_citizenship)";
+      const companySelect = "companies(id, company_name, company_code)";
+      const payablesLimit = options?.limit ?? 5000;
+
       if (fetchDividends) {
         let query = (supabase as any)
           .from("dividend_payables")
-          .select("*, clients(*), companies(*)")
+          .select(`*, ${clientSelect}, ${companySelect}`)
           .in("payment_status", ["Pending", "Partial"])
-          .order("created_at", { ascending: true });
+          .order("created_at", { ascending: true })
+          .limit(payablesLimit);
 
         if (companyId && companyId !== "all") {
           query = query.eq("company_id", companyId);
@@ -790,9 +803,10 @@ export const PaymentService = {
       if (fetchInterest) {
         let interestQuery = (supabase as any)
           .from("interest_payables")
-          .select("*, clients(*), companies(*)")
+          .select(`*, ${clientSelect}, ${companySelect}`)
           .in("payment_status", ["Pending", "Partial"])
-          .order("created_at", { ascending: true });
+          .order("created_at", { ascending: true })
+          .limit(payablesLimit);
 
         if (companyId && companyId !== "all") {
           interestQuery = interestQuery.eq("company_id", companyId);
@@ -954,9 +968,10 @@ export const PaymentService = {
       if (fetchMutualFund) {
         let mfQuery = (supabase as any)
           .from("mutual_fund_payables")
-          .select("*, clients(*), companies(*)")
+          .select(`*, ${clientSelect}, ${companySelect}`)
           .in("payment_status", ["Pending", "Partial"])
-          .order("created_at", { ascending: true });
+          .order("created_at", { ascending: true })
+          .limit(payablesLimit);
 
         if (companyId && companyId !== "all") {
           mfQuery = mfQuery.eq("company_id", companyId);

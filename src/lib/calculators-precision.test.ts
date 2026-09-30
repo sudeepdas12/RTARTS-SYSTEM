@@ -40,7 +40,36 @@ describe("DividendCalculator Precision", () => {
     // Cash Tax: 5500 * 5% = 275
     expect(result.cashTaxAmount).toBe(275);
     expect(result.totalTaxAmount).toBe(775);
-    expect(result.netCashPayable).toBe(4725);
+    expect(result.preBonusKitta).toBe(1000);
+    expect(result.kittaForCash).toBe(1100);
+    expect(Math.round((result.grossCashDividend - result.totalTaxAmount) * 100) / 100).toBe(
+      result.netCashPayable,
+    );
+  });
+
+  it("handles standard Nepal combined distribution with cash on pre-bonus capital", () => {
+    const result = DividendCalculator.calculate({
+      sharesHeld: 1000,
+      dividendType: "Combined",
+      bonusRatio: 0.1, // 10% bonus
+      cashDividendRate: 5, // 5% cash on existing capital
+      cashOnPreBonus: true,
+      cashRateIsPerShare: false, // 5% of Rs 100 face value
+      taxCategory: "PUBLIC",
+    });
+
+    expect(result.preBonusKitta).toBe(1000);
+    expect(result.issuedBonusShares).toBe(100);
+    expect(result.afterBonusKitta).toBe(1100);
+    expect(result.kittaForCash).toBe(1000);
+    // Cash dividend on pre-bonus kitta: 1000 * 100 * 5% = 5000
+    expect(result.grossCashDividend).toBe(5000);
+    // Bonus Tax: 100 * 100 * 5% = 500
+    expect(result.bonusTaxAmount).toBe(500);
+    // Cash Tax: 5000 * 5% = 250
+    expect(result.cashTaxAmount).toBe(250);
+    expect(result.totalTaxAmount).toBe(750);
+    expect(result.netCashPayable).toBe(4250);
     expect(Math.round((result.grossCashDividend - result.totalTaxAmount) * 100) / 100).toBe(
       result.netCashPayable,
     );

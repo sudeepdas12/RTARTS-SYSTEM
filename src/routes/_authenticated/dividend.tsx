@@ -212,6 +212,7 @@ function DividendPage() {
   const [calcCashRate, setCalcCashRate] = useState("");
   const [calcCashRateIsPerShare, setCalcCashRateIsPerShare] = useState(false);
   const [calcBonusRatio, setCalcBonusRatio] = useState("");
+  const [calcCashOnPreBonus, setCalcCashOnPreBonus] = useState(true);
   const [calcTaxCategory, setCalcTaxCategory] = useState<
     "PUBLIC" | "INSTITUTION" | "TAX_EXEMPTED" | "CUSTOM"
   >("PUBLIC");
@@ -265,6 +266,7 @@ function DividendPage() {
       dividendType: calcDivType,
       cashDividendRate: calcCashRate ? Number(calcCashRate) : undefined,
       cashRateIsPerShare: calcCashRateIsPerShare,
+      cashOnPreBonus: calcCashOnPreBonus,
       bonusRatio: calcBonusRatio ? Number(calcBonusRatio) / 100 : undefined,
       taxCategory: finalTaxCategory,
       customTaxRate: effectiveCustomRate,
@@ -849,7 +851,7 @@ function DividendPage() {
       if (!canWrite)
         throw new Error("Unauthorized: You do not have permission to update payment status.");
       if (!payOpen) return;
-      const { error } = await supabase
+      const { error } = await (supabase as any)
         .from("dividend_payables")
         .update({
           payment_status: "Paid",
@@ -1294,8 +1296,46 @@ function DividendPage() {
                           </SelectContent>
                         </Select>
                       </div>
+                      {(form.bonus_issued || form.after_bonus_kitta || form.bonus_actual) && (
+                        <div className="col-span-full p-2.5 bg-muted/40 border rounded-lg text-xs grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono">
+                          <div>
+                            <span className="text-muted-foreground block text-[10px] font-sans uppercase font-semibold">
+                              Earlier Base
+                            </span>
+                            <span className="font-bold text-foreground text-sm">
+                              {form.shares_held || "—"}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground block text-[10px] font-sans uppercase font-semibold">
+                              Bonus Allotted
+                            </span>
+                            <span className="font-bold text-emerald-600 dark:text-emerald-400 text-sm">
+                              +{form.bonus_issued || "0"}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground block text-[10px] font-sans uppercase font-semibold">
+                              Post-Bonus Total
+                            </span>
+                            <span className="font-bold text-primary text-sm">
+                              {form.after_bonus_kitta ||
+                                Number(form.shares_held || 0) + Number(form.bonus_issued || 0) ||
+                                "—"}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground block text-[10px] font-sans uppercase font-semibold">
+                              Bonus Tax (5%)
+                            </span>
+                            <span className="font-bold text-amber-600 text-sm">
+                              {form.bonus_tax ? `NPR ${form.bonus_tax}` : "—"}
+                            </span>
+                          </div>
+                        </div>
+                      )}
                       <div className="space-y-1.5">
-                        <Label>Shares Held</Label>
+                        <Label>Shares Held (Base)</Label>
                         <Input
                           type="number"
                           step="0.01"
@@ -1578,6 +1618,23 @@ function DividendPage() {
                   />
                 </div>
               )}
+              {calcDivType === "Combined" && (
+                <div className="sm:col-span-3 flex items-center space-x-2 py-1">
+                  <input
+                    type="checkbox"
+                    id="calcCashOnPreBonus"
+                    checked={calcCashOnPreBonus}
+                    onChange={(e) => setCalcCashOnPreBonus(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                  />
+                  <Label
+                    htmlFor="calcCashOnPreBonus"
+                    className="text-xs cursor-pointer font-medium text-foreground"
+                  >
+                    Calculate cash on pre-bonus base capital (Standard Nepal statutory rule)
+                  </Label>
+                </div>
+              )}
               <div className="sm:col-span-3 mt-2">
                 <Button onClick={handleCalcDividend} className="w-full">
                   Calculate
@@ -1587,61 +1644,89 @@ function DividendPage() {
 
             <div className="bg-primary/5 p-4 rounded-lg border border-primary/10 flex flex-col justify-center">
               {calcResult ? (
-                <div className="space-y-2 text-sm">
+                <div className="space-y-2 text-sm font-mono">
                   <div className="flex justify-between border-b pb-1">
-                    <span className="text-muted-foreground">Shares Held</span>
-                    <span className="font-medium">{fmtNr(Number(calcShares))}</span>
+                    <span className="text-muted-foreground font-sans">Earlier Base Shares</span>
+                    <span className="font-bold text-foreground">
+                      {fmtNr(calcResult.preBonusKitta)}
+                    </span>
                   </div>
                   {calcResult.exactBonusShares > 0 && (
                     <>
                       <div className="flex justify-between border-b pb-1">
-                        <span className="text-muted-foreground">
-                          Bonus Shares (Exact/Issued/Frac)
+                        <span className="text-muted-foreground font-sans">
+                          Bonus Shares (Exact / Credited / Frac)
                         </span>
-                        <span className="font-medium text-amber-600">
-                          {fmtNr(calcResult.exactBonusShares)} /{" "}
+                        <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                          {fmtNr(calcResult.exactBonusShares)} / +
                           {fmtNr(calcResult.issuedBonusShares)} /{" "}
                           {fmtNr(calcResult.fractionBonusShares)}
                         </span>
                       </div>
                       <div className="flex justify-between border-b pb-1">
-                        <span className="text-muted-foreground">After Bonus Kitta</span>
-                        <span className="font-medium text-blue-600">
+                        <span className="text-muted-foreground font-sans">
+                          Post-Bonus Total Shares
+                        </span>
+                        <span className="font-bold text-primary">
                           {fmtNr(calcResult.afterBonusKitta)}
                         </span>
                       </div>
                     </>
                   )}
                   <div className="flex justify-between border-b pb-1">
-                    <span className="text-muted-foreground">Gross Cash Dividend</span>
-                    <span className="font-medium">{fmtNr(calcResult.grossCashDividend)}</span>
+                    <span className="text-muted-foreground font-sans">Cash Capital Base</span>
+                    <span className="font-medium text-foreground">
+                      {fmtNr(calcResult.kittaForCash)} Shares
+                    </span>
                   </div>
                   <div className="flex justify-between border-b pb-1">
-                    <span className="text-muted-foreground">TDS Rate</span>
+                    <span className="text-muted-foreground font-sans">Gross Cash Dividend</span>
+                    <span className="font-semibold text-foreground">
+                      NPR {fmtNr(calcResult.grossCashDividend)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between border-b pb-1">
+                    <span className="text-muted-foreground font-sans">Applied TDS Rate</span>
                     <span className="font-medium">
                       {(calcResult.appliedTdsRate * 100).toFixed(2)}%
                     </span>
                   </div>
                   <div className="flex justify-between border-b pb-1">
-                    <span className="text-muted-foreground">Cash TDS</span>
-                    <span className="font-medium text-destructive">
-                      {fmtNr(calcResult.cashTaxAmount)}
+                    <span className="text-muted-foreground font-sans">Cash TDS Withheld</span>
+                    <span className="font-medium text-amber-600">
+                      NPR {fmtNr(calcResult.cashTaxAmount)}
                     </span>
                   </div>
                   {calcResult.bonusTaxAmount > 0 && (
                     <div className="flex justify-between border-b pb-1">
-                      <span className="text-muted-foreground">Bonus Tax</span>
-                      <span className="font-medium text-destructive">
-                        {fmtNr(calcResult.bonusTaxAmount)}
+                      <span className="text-muted-foreground font-sans">
+                        Bonus Tax (5% on Face Value)
+                      </span>
+                      <span className="font-medium text-amber-600">
+                        NPR {fmtNr(calcResult.bonusTaxAmount)}
                       </span>
                     </div>
                   )}
-                  <div className="flex justify-between pt-2">
-                    <span className="font-semibold">Net Cash Payable</span>
-                    <span className="font-bold text-lg text-green-600">
-                      Rs. {fmtNr(calcResult.netCashPayable)}
+                  <div className="flex justify-between border-b pb-1">
+                    <span className="text-muted-foreground font-sans">Total Tax Deducted</span>
+                    <span className="font-bold text-amber-600">
+                      NPR {fmtNr(calcResult.totalTaxAmount)}
                     </span>
                   </div>
+                  <div className="flex justify-between pt-1">
+                    <span className="font-semibold font-sans">Net Cash Payable</span>
+                    <span className="font-bold text-base text-emerald-600 dark:text-emerald-400">
+                      NPR {fmtNr(calcResult.netCashPayable)}
+                    </span>
+                  </div>
+                  {calcResult.taxPayableByInvestor > 0 && (
+                    <div className="flex justify-between pt-1 text-rose-600">
+                      <span className="font-semibold font-sans">Tax Due from Investor</span>
+                      <span className="font-bold">
+                        NPR {fmtNr(calcResult.taxPayableByInvestor)}
+                      </span>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="text-center text-muted-foreground h-full flex flex-col items-center justify-center">
@@ -2355,8 +2440,8 @@ function DividendPage() {
                   <TableHead className="font-semibold whitespace-nowrap w-[18%] min-w-[155px]">
                     Shareholder &amp; BOID
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[6%] min-w-[55px]">
-                    Holding
+                  <TableHead className="text-right font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
+                    Holding (Progression)
                   </TableHead>
                   <TableHead className="text-right font-semibold whitespace-nowrap w-[5%] min-w-[50px]">
                     Rate %
@@ -2471,11 +2556,47 @@ function DividendPage() {
                           )}
                         </TableCell>
 
-                        {/* 3. Holding (Kitta) */}
-                        <TableCell className="text-right font-mono font-semibold text-primary whitespace-nowrap text-xs py-2 px-2">
-                          {p.shares_held || p.after_bonus_kitta || cl?.kitta
-                            ? (p.shares_held || p.after_bonus_kitta || cl?.kitta)?.toLocaleString()
-                            : "—"}
+                        {/* 3. Holding Progression (Kitta) */}
+                        <TableCell className="text-right font-mono whitespace-nowrap text-xs py-2 px-2">
+                          {(p.bonus_issued && Number(p.bonus_issued) > 0) ||
+                          (p.after_bonus_kitta &&
+                            p.shares_held &&
+                            Number(p.after_bonus_kitta) !== Number(p.shares_held)) ? (
+                            <div className="flex flex-col items-end">
+                              <span
+                                className="font-bold text-foreground font-mono"
+                                title="Total Post-Bonus Holding"
+                              >
+                                {(
+                                  p.after_bonus_kitta ??
+                                  Number(p.shares_held || 0) + Number(p.bonus_issued || 0)
+                                )?.toLocaleString()}
+                              </span>
+                              <span
+                                className="text-[10px] text-muted-foreground font-mono"
+                                title="Earlier Base Shares Held"
+                              >
+                                Base:{" "}
+                                {p.shares_held
+                                  ? Number(p.shares_held).toLocaleString()
+                                  : cl?.kitta
+                                    ? Number(cl.kitta).toLocaleString()
+                                    : "—"}
+                              </span>
+                              <span
+                                className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold font-mono"
+                                title="Bonus Shares Allotted"
+                              >
+                                +{Number(p.bonus_issued || 0).toLocaleString()} Bonus
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="font-mono font-semibold text-primary">
+                              {p.shares_held || cl?.kitta
+                                ? (p.shares_held || cl?.kitta)?.toLocaleString()
+                                : "—"}
+                            </span>
+                          )}
                         </TableCell>
 
                         {/* 4. Rate % */}
@@ -2490,7 +2611,15 @@ function DividendPage() {
 
                         {/* 6. TDS Tax Amount */}
                         <TableCell className="text-right font-mono text-amber-600 dark:text-amber-400 whitespace-nowrap text-xs py-2 px-2">
-                          {fmt(p.tax_amount)}
+                          <div>{fmt(p.tax_amount)}</div>
+                          {p.bonus_tax && Number(p.bonus_tax) > 0 ? (
+                            <div
+                              className="text-[10px] text-muted-foreground font-normal"
+                              title="5% Bonus Share TDS"
+                            >
+                              Bonus: {fmt(p.bonus_tax)}
+                            </div>
+                          ) : null}
                         </TableCell>
 
                         {/* 7. Net Payable */}

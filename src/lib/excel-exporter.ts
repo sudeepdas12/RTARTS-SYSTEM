@@ -25,8 +25,12 @@ export interface ModernStatementRecord {
   companyCode?: string;
   type: string;
   kitta: number;
+  baseKitta?: number;
+  bonusKitta?: number;
+  totalKitta?: number;
   grossAmount: number;
   taxAmount: number;
+  bonusTax?: number;
   netAmount: number;
   paidAmount?: number;
   remainingAmount?: number;
@@ -194,7 +198,9 @@ export const ExcelExporter = {
       "Company / Scheme Name",
       "Symbol / Code",
       "Distribution Type",
-      "Holding (Kitta / Units)",
+      "Earlier Base (Kitta)",
+      "Bonus Added (Kitta)",
+      "Total Holding (Kitta)",
       "Gross Amount (NPR)",
       "TDS Tax (NPR)",
       "Net Payable (NPR)",
@@ -211,8 +217,8 @@ export const ExcelExporter = {
     // 5. Ledger Data Rows
     // In multi-year ledgers, holding is a point-in-time stock balance.
     // We report the latest active holding rather than summing historical balances across years.
-    const activeRecord = records.find((r) => Number(r.kitta) > 0);
-    const latestHolding = activeRecord ? Number(activeRecord.kitta) : 0;
+    const activeRecord = records.find((r) => Number(r.totalKitta || r.kitta) > 0);
+    const latestHolding = activeRecord ? Number(activeRecord.totalKitta || activeRecord.kitta) : 0;
 
     records.forEach((r, idx) => {
       const net = Number(r.netAmount || 0);
@@ -220,13 +226,19 @@ export const ExcelExporter = {
         r.paidAmount !== undefined ? Number(r.paidAmount) : r.status === "Paid" ? net : 0;
       const rem =
         r.remainingAmount !== undefined ? Number(r.remainingAmount) : Math.max(0, net - paid);
+      const baseK = r.baseKitta !== undefined ? Number(r.baseKitta) : Number(r.kitta || 0);
+      const bonusK = r.bonusKitta !== undefined ? Number(r.bonusKitta) : 0;
+      const totalK = r.totalKitta !== undefined ? Number(r.totalKitta) : Number(r.kitta || 0);
+
       aoa.push([
         idx + 1,
         r.fiscalYear,
         r.companyName,
         r.companyCode || "—",
         r.type,
-        Number(r.kitta || 0),
+        baseK,
+        bonusK > 0 ? bonusK : "—",
+        totalK,
         Number(r.grossAmount || 0),
         Number(r.taxAmount || 0),
         net,
@@ -243,6 +255,8 @@ export const ExcelExporter = {
     // 6. Grand Total Row
     aoa.push([
       "GRAND TOTAL",
+      "",
+      "",
       "",
       "",
       "",
@@ -274,14 +288,19 @@ export const ExcelExporter = {
       { wch: 32 }, // Company Name
       { wch: 14 }, // Symbol / Code
       { wch: 22 }, // Distribution Type
-      { wch: 22 }, // Holding (Kitta)
+      { wch: 20 }, // Earlier Base Kitta
+      { wch: 20 }, // Bonus Added Kitta
+      { wch: 20 }, // Total Holding Kitta
       { wch: 20 }, // Gross Amount
       { wch: 18 }, // TDS Tax
       { wch: 20 }, // Net Payable
+      { wch: 18 }, // Paid Amount
+      { wch: 18 }, // Remaining Due
       { wch: 16 }, // Status
       { wch: 16 }, // Payment Date
       { wch: 22 }, // Payment Reference
       { wch: 30 }, // Bank Account
+      { wch: 40 }, // Remarks
     ];
 
     const wb = XLSX.utils.book_new();

@@ -61,10 +61,16 @@ export const ClientService = {
   },
 
   async searchClients(query: string, limit = 50, offset = 0): Promise<Client[]> {
+    const trimmed = (query || "").trim();
+    if (!trimmed) {
+      return this.getClients(limit, offset);
+    }
     const { data, error } = await supabase
       .from("clients")
       .select("*")
-      .or(`full_name.ilike.%${query}%,boid.ilike.%${query}%,pan_or_citizenship.ilike.%${query}%`)
+      .or(
+        `full_name.ilike.%${trimmed}%,boid.ilike.%${trimmed}%,pan_or_citizenship.ilike.%${trimmed}%`,
+      )
       .range(offset, offset + limit - 1);
     throwIfError(error, "Failed to search clients");
     return data || [];

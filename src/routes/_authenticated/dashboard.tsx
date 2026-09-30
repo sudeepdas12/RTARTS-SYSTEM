@@ -200,33 +200,45 @@ function Dashboard() {
       // 2. Fallback to client-side row retrieval only if RPC is unavailable
       if (!rpcSucceeded) {
         const [interestRows, dividendRows, mutualFundRows] = await Promise.all([
-          fetchAllRows<Row>((from, to) => {
-            let q = (supabase as any)
-              .from("interest_payables")
-              .select("net_payable, payment_status, paid_amount")
-              .range(from, to);
-            if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
-            if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
-            return q;
-          }),
-          fetchAllRows<Row>((from, to) => {
-            let q = (supabase as any)
-              .from("dividend_payables")
-              .select("net_payable, payment_status, paid_amount")
-              .range(from, to);
-            if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
-            if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
-            return q;
-          }),
-          fetchAllRows<Row>((from, to) => {
-            let q = (supabase as any)
-              .from("mutual_fund_payables")
-              .select("net_payable, payment_status, paid_amount")
-              .range(from, to);
-            if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
-            if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
-            return q;
-          }),
+          fetchAllRows<Row>(
+            (from, to) => {
+              let q = (supabase as any)
+                .from("interest_payables")
+                .select("net_payable, payment_status, paid_amount")
+                .range(from, to);
+              if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
+              if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
+              return q;
+            },
+            1000,
+            10000,
+          ),
+          fetchAllRows<Row>(
+            (from, to) => {
+              let q = (supabase as any)
+                .from("dividend_payables")
+                .select("net_payable, payment_status, paid_amount")
+                .range(from, to);
+              if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
+              if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
+              return q;
+            },
+            1000,
+            10000,
+          ),
+          fetchAllRows<Row>(
+            (from, to) => {
+              let q = (supabase as any)
+                .from("mutual_fund_payables")
+                .select("net_payable, payment_status, paid_amount")
+                .range(from, to);
+              if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
+              if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
+              return q;
+            },
+            1000,
+            10000,
+          ),
         ]);
 
         const sum = (rows: Row[] | null, status: string) =>

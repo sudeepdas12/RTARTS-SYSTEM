@@ -39,6 +39,8 @@ export interface BonusShareRow {
   grossBonusShares: number; // floating point (4 decimals)
   creditedBonusKitta: number; // whole shares
   fractionalKitta: number; // 0..0.9999
+  afterBonusKitta: number; // existingKitta + creditedBonusKitta
+  postBonusKitta: number; // alias for afterBonusKitta
 
   // Tax & Valuation
   faceValue: number;
@@ -234,6 +236,10 @@ export const CdscBonusService = {
 
       if (taxMode === "INVESTOR_PAID") {
         taxPayableByInvestor = bonusShareTaxPayable;
+        const netCashFromDiv = grossCashDividend - cashDividendTds;
+        netCashPayableCombined =
+          Math.round((Math.max(0, netCashFromDiv) + fractionalNetPayable + Number.EPSILON) * 100) /
+          100;
       } else if (taxMode === "CASH_ADJUSTED") {
         const netCashFromDiv = grossCashDividend - cashDividendTds;
         if (netCashFromDiv >= bonusShareTaxPayable) {
@@ -247,11 +253,19 @@ export const CdscBonusService = {
             Math.round((bonusShareTaxPayable - netCashFromDiv + Number.EPSILON) * 100) / 100;
           netCashPayableCombined = fractionalNetPayable;
         }
+      } else {
+        // COMPANY_PAID: Company bears 5% bonus share tax from reserves; investor receives net cash + fractional cash
+        const netCashFromDiv = grossCashDividend - cashDividendTds;
+        netCashPayableCombined =
+          Math.round((Math.max(0, netCashFromDiv) + fractionalNetPayable + Number.EPSILON) * 100) /
+          100;
       }
 
       let validationStatus: "VALID" | "INVALID_BOID" | "MISSING_BANK" = "VALID";
       if (!isBoidValid) validationStatus = "INVALID_BOID";
       else if (fractionalGrossCash > 0 && !c.bank_account_no) validationStatus = "MISSING_BANK";
+
+      const afterBonusKitta = existingKitta + creditedBonusKitta;
 
       rows.push({
         sn: sn++,
@@ -269,6 +283,8 @@ export const CdscBonusService = {
         grossBonusShares: Math.round((rawGrossBonus + Number.EPSILON) * 10000) / 10000,
         creditedBonusKitta,
         fractionalKitta,
+        afterBonusKitta,
+        postBonusKitta: afterBonusKitta,
         faceValue,
         bonusTaxRate,
         bonusShareTaxPayable,
