@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { ConnectIPSService } from "./connectips.service";
+import { supabase } from "./database";
 
 describe("ConnectIPSService", () => {
   it("builds standard NCHL ConnectIPS signature string correctly", () => {
@@ -50,9 +51,27 @@ describe("ConnectIPSService", () => {
   });
 
   it("inquires transaction status gracefully and handles pending/unconfirmed references", async () => {
-    const statusResult = await ConnectIPSService.checkTransactionStatus("CIPS-NON-EXISTENT-TXN");
-    expect(statusResult).toBeDefined();
-    expect(["SUCCESS", "FAILED", "PENDING"]).toContain(statusResult.status);
-    expect(statusResult.refId).toBe("CIPS-NON-EXISTENT-TXN");
+    const origFrom = (supabase as any).from;
+    (supabase as any).from = (table: string) => {
+      if (table === "payments") {
+        return {
+          select: vi.fn().mockReturnValue({
+            or: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          }),
+        };
+      }
+      return origFrom ? origFrom.call(supabase, table) : ({} as any);
+    };
+
+    try {
+      const statusResult = await ConnectIPSService.checkTransactionStatus("CIPS-NON-EXISTENT-TXN");
+      expect(statusResult).toBeDefined();
+      expect(["SUCCESS", "FAILED", "PENDING"]).toContain(statusResult.status);
+      expect(statusResult.refId).toBe("CIPS-NON-EXISTENT-TXN");
+    } finally {
+      (supabase as any).from = origFrom;
+    }
   });
 });

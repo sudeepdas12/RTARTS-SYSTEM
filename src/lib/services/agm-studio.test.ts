@@ -626,9 +626,61 @@ describe("AgmStudioService — Multi-Year AGM & Multi-Company Universal Reconcil
         remarks: "Test overdraft",
       };
 
-      // In unit test without real Postgres DB running claim_agm_broker_pool, fallback checks balance in agm_broker_pools
-      // If pool doesn't exist or balance is insufficient, it throws an error preventing overdraft
-      await expect(AgmStudioService.saveBrokerPoolClaim(claim)).rejects.toThrow();
+      // Mock rpc and from to simulate insufficient balance fallback without network timeout
+      const origRpc = (supabase as any).rpc;
+      const origFrom = (supabase as any).from;
+      (supabase as any).rpc = vi.fn().mockImplementation((fn: string) => {
+        if (fn === "claim_agm_broker_pool") {
+          return Promise.resolve({
+            data: null,
+            error: { message: "RPC failed, fallback to balance check" },
+          });
+        }
+        return origRpc ? origRpc.call(supabase, fn) : Promise.resolve({ data: null, error: null });
+      });
+      (supabase as any).from = (table: string) => {
+        if (table === "companies") {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({ data: { id: "test-uuid" }, error: null }),
+              }),
+            }),
+            insert: vi.fn().mockReturnValue({
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: { id: "test-uuid" }, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === "agm_broker_pools") {
+          const query: any = {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: {
+                id: "pool-1",
+                active_balance_kitta: 10, // less than claimed 50 kitta
+                active_balance_cash: 100,
+              },
+              error: null,
+            }),
+          };
+          query.select.mockReturnValue(query);
+          query.eq.mockReturnValue(query);
+          return query;
+        }
+        return origFrom ? origFrom.call(supabase, table) : ({} as any);
+      };
+
+      try {
+        await expect(AgmStudioService.saveBrokerPoolClaim(claim)).rejects.toThrow(
+          /Insufficient pool kitta balance/,
+        );
+      } finally {
+        (supabase as any).rpc = origRpc;
+        (supabase as any).from = origFrom;
+      }
     });
 
     it("6. Dynamic Escrow & Floating Lot Calculations: summary avoids hardcoded 120.0406 and matches actual inputs", () => {

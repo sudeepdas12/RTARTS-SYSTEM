@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import * as XLSX from "xlsx";
 import { parseExcelFile } from "./excel-parser";
 import { ValidationEngine } from "./validation-engine";
@@ -127,6 +127,31 @@ describe("Sample Workbook & Matrix Regression Suite", () => {
   });
 
   describe("5. Validation Engine Calculation & Discrepancy Diagnostics", () => {
+    let origFrom: any;
+    let mockSupabase: any;
+
+    beforeAll(async () => {
+      const dbModule = await import("./services/database");
+      mockSupabase = dbModule.supabase;
+      origFrom = (mockSupabase as any).from;
+      (mockSupabase as any).from = () => {
+        const query: any = {
+          select: vi.fn().mockReturnThis(),
+          in: vi.fn().mockResolvedValue({ data: [], error: null }),
+          eq: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+          then: (resolve: any) => Promise.resolve({ data: [], error: null }).then(resolve),
+        };
+        return query;
+      };
+    });
+
+    afterAll(() => {
+      if (mockSupabase && origFrom) {
+        (mockSupabase as any).from = origFrom;
+      }
+    });
+
     it("flags net payable calculation discrepancies (gross - tax != net)", async () => {
       const rows = [
         {

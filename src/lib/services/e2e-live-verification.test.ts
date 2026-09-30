@@ -3,19 +3,24 @@ import { createClient } from "@supabase/supabase-js";
 import { ReconciliationEngine } from "@/lib/reconciliation-engine";
 import { UploadService } from "@/lib/services/upload.service";
 
-const SUPABASE_URL = process.env.SUPABASE_URL || "http://127.0.0.1:54321";
-const SERVICE_ROLE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
-
-const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false },
-});
-
 const isLiveDb =
   !process.env.CI ||
   Boolean(
     process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.SUPABASE_URL !== "http://127.0.0.1:54321",
   );
+
+const SUPABASE_URL = process.env.SUPABASE_URL || "http://127.0.0.1:54321";
+const SERVICE_ROLE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.VITE_SUPABASE_ANON_KEY ||
+  process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummy";
+
+const supabase = isLiveDb
+  ? createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+  : (null as any);
 
 describe.skipIf(!isLiveDb)("Comprehensive End-to-End Pipeline Verification", () => {
   const runId = Math.random().toString(36).substring(2, 7).toUpperCase();

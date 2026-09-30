@@ -442,7 +442,14 @@ export const ValidationEngine = {
     const existingPans = new Set<string>();
 
     // Helper to safely execute a query with a strict timeout and fallback
-    const safeQuery = async <T>(promise: Promise<T>, fallback: T, ms = 4500): Promise<T> => {
+    const isTestOrCi =
+      process.env.NODE_ENV === "test" || Boolean(process.env.VITEST) || Boolean(process.env.CI);
+    const defaultTimeoutMs = isTestOrCi ? 150 : 4500;
+    const safeQuery = async <T>(
+      promise: Promise<T>,
+      fallback: T,
+      ms = defaultTimeoutMs,
+    ): Promise<T> => {
       let timer: any;
       const timeoutPromise = new Promise<T>((resolve) => {
         timer = setTimeout(() => resolve(fallback), ms);
@@ -469,7 +476,7 @@ export const ValidationEngine = {
         const { data: clients } = await safeQuery(
           supabase.from("clients").select("boid").in("boid", sampleBoids) as any,
           { data: [] } as any,
-          4000,
+          defaultTimeoutMs,
         );
 
         clients?.forEach((c: any) => {
@@ -487,7 +494,7 @@ export const ValidationEngine = {
           .from("companies")
           .select("isin, coupon_rate, dividend_rate, id, company_type, fiscal_year") as any,
         { data: [] } as any,
-        4500,
+        defaultTimeoutMs,
       ),
       safeQuery(
         supabase
@@ -496,7 +503,7 @@ export const ValidationEngine = {
           .eq("is_active", true)
           .maybeSingle() as any,
         { data: null } as any,
-        4500,
+        defaultTimeoutMs,
       ),
       safeQuery(
         (supabase as any)
@@ -504,7 +511,7 @@ export const ValidationEngine = {
           .select("payable_category, payee_classification, tax_rate, is_active")
           .eq("is_active", true),
         { data: [] } as any,
-        4500,
+        defaultTimeoutMs,
       ),
     ]);
 
