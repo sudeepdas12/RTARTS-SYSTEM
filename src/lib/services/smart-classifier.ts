@@ -139,7 +139,7 @@ const CORPORATE_SUFFIX_REGEX =
 
 // 4. Institutional Business Patterns in Nepal (Strict word-bounded keywords to avoid matching human names)
 const INSTITUTIONAL_BUSINESS_REGEX =
-  /\b(BANK|BIKAS\s*BANK|DEVELOPMENT\s*BANK|FINANCE|MICROFINANCE|MICRO\s*INSURANCE|MICRO|LAGHUBITTA|BITTIYA|BITTIYA\s*SANSTHA|BIMA|BEEMA|INSURANCE|REINSURANCE|RE\s*INSURANCE|RE-INSURANCE|NIRJIBAN\s*BIMA|JIBAN\s*BIMA|HYDROPOWER|HYDRO\s*POWER|HYDRO|JALABIDHYUT|DOORSANCHAR|TELECOM|CLEARING\s*HOUSE|STOCK\s*EXCHANGE|STOCK\s*DEALER|STOCK\s*BROKER|STOCK\s*MARKET|CDS\s*(AND|&)?\s*CLEARING|PHARMA|PHARMACEUTICALS|HOSPITAL|COLLEGE|UNIVERSITY|ACADEMY|COOPERATIVE|CO-OPERATIVE|SAHAKARI|ENTERPRISES|TRADING|TRADERS|SUPPLIERS|DISTRIBUTORS|INDUSTRIES|VENTURES|SECURITIES|BROKER|MERCHANT(\s*BANKING)?|CAPITAL|INVESTMENT|HOLDINGS|ASSET\s*MANAGEMENT|GOVERNMENT|SARKAR|MINISTRY|DEPARTMENT|PRADHIKARAN|SANSTHAN|NIGAM|MUNICIPALITY|NAGARPALIKA|GAUNPALIKA|EMBASSY|GUTHI|ARMY\s*WELFARE|NEPALESE\s*ARMY\s*WELFARE|SAINIK\s*KALYAN|POLICE\s*WELFARE|PRAHARI\s*KALYAN|WELFARE\s*FUND|KALYAN\s*KOSH)\b/i;
+  /\b(BANK|BIKAS\s*BANK|DEVELOPMENT\s*BANK|FINANCE|MICROFINANCE|MICRO\s*INSURANCE|MICRO|LAGHUBITTA|BITTIYA|BITTIYA\s*SANSTHA|BIMA|BEEMA|INSURANCE|REINSURANCE|RE\s*INSURANCE|RE-INSURANCE|NIRJIBAN\s*BIMA|JIBAN\s*BIMA|HYDROPOWER|HYDRO\s*POWER|HYDRO|JALABIDHYUT|DOORSANCHAR|TELECOM|CLEARING\s*HOUSE|STOCK\s*EXCHANGE|STOCK\s*DEALER|STOCK\s*BROKER|STOCK\s*MARKET|CDS\s*(AND|&)?\s*CLEARING|PHARMA|PHARMACEUTICALS|HOSPITAL|COLLEGE|UNIVERSITY|ACADEMY|COOPERATIVE|CO-OPERATIVE|SAHAKARI|ENTERPRISES|TRADING|TRADERS|SUPPLIERS|DISTRIBUTORS|INDUSTRIES|VENTURES|SECURITIES|BROKER|MERCHANT(\s*BANKING)?|CAPITAL|INVESTMENT|HOLDINGS|ASSET\s*MANAGEMENT|DEVELOPERS?|INFRA(?:STRUCTURE)?|KHARID\s*BIKRI|BIKRI\s*KENDRA|SANIMA\s*RELIANCE|RELIANCE|PATHIVARA\s*MATA|MANDIR|SEWA\s*SAMITI|DHARMA\s*TRUST|GOVERNMENT|SARKAR|MINISTRY|DEPARTMENT|PRADHIKARAN|SANSTHAN|NIGAM|MUNICIPALITY|NAGARPALIKA|GAUNPALIKA|EMBASSY|GUTHI|ARMY\s*WELFARE|NEPALESE\s*ARMY\s*WELFARE|SAINIK\s*KALYAN|POLICE\s*WELFARE|PRAHARI\s*KALYAN|WELFARE\s*FUND|KALYAN\s*KOSH)\b/i;
 
 // 5. Distinct Human Honorifics & Personal Titles (Prefixes)
 const HUMAN_TITLES_REGEX =
@@ -635,17 +635,44 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
   }
 
   // =========================================================================
-  // TIER 8: Fallback -> Natural Person (Public) or Unclassified if empty / ambiguous
+  // TIER 8: Fallback -> Natural Person (if human evidence exists) or Unclassified
   // =========================================================================
-  if (!rawName || rawName === "Ram Shyam") {
+  // When an entity reaches Tier 8:
+  // - It has NO family lineage (no father, grandfather, mother, spouse, guardian - checked in Tier 3)
+  // - It has NO personal credentials / demographics (no citizenship, passport, DOB, gender, occupation, title - checked in Tier 5)
+  // - It has NO corporate suffix (checked in Tier 2)
+  // - It has NO institutional keyword (checked in Tier 4)
+  // - It has NO explicit upload metadata (checked in Tier 6)
+  // - It has NO joint human account marker and NO recognized Nepali surname (checked in Tier 7)
+  //
+  // Crucially: real individuals in RTS/CDS shareholder files possess family lineage
+  // or credentials. An entity lacking ALL human proof and all corporate proof must NOT
+  // be blindly assumed to be a natural person with 5% TDS. It must be flagged as
+  // UNCLASSIFIED / REVIEW_REQUIRED so operators can safely verify its tax status.
+  const hasAnyHumanProof =
+    Boolean(father || gfather || mother || spouse || guardian) ||
+    Boolean(citizenship || passport || dob || gender || maritalStatus || occupation) ||
+    Boolean(hasHumanTitle || hasHumanRelationship || isJointHumanHolder) ||
+    NEPALI_SURNAMES_REGEX.test(nameUpper);
+
+  if (!rawName || rawName === "Ram Shyam" || !hasAnyHumanProof) {
     return {
       payee_classification: "UNCLASSIFIED",
       payee_category: "UNKNOWN",
-      payee_segment: null,
-      holder_type: "Public",
+      payee_segment: isPromoterSegment
+        ? "PROMOTER"
+        : isLocalSegment
+          ? "LOCAL"
+          : isEmployeeSegment
+            ? "EMPLOYEE"
+            : null,
+      holder_type: "Unclassified",
       tds_rate_dividend: 0.05,
       tds_rate_debenture: 0.06,
-      rule_matched: "Unclassified (Ambiguous Name)",
+      rule_matched:
+        !rawName || rawName === "Ram Shyam"
+          ? "Unclassified (Ambiguous Name)"
+          : "Unclassified (No Family Lineage, Personal Demographics, or Institutional Identifiers)",
     };
   }
 

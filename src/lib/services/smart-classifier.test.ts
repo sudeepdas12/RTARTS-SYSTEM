@@ -315,4 +315,57 @@ describe("Smart Shareholder Classification Engine (Ultra-Smart & Multi-Tier)", (
       expect(foreign.payee_category).toBe("FOREIGN");
     });
   });
+
+  describe("7. Absence of Father/Guardian & Lineage Verification (Tier 8 Fallback Safety)", () => {
+    it("flags ambiguous entities with no father, guardian, citizenship, or surname as UNCLASSIFIED", () => {
+      const opaqueEntities = ["RAJDEVI", "Sundaram", "VALLEY", "Global Vision"];
+      for (const name of opaqueEntities) {
+        const res = smartClassify({ full_name: name });
+        expect(res.payee_classification, `${name} must not be assumed NATURAL_PERSON`).toBe(
+          "UNCLASSIFIED",
+        );
+        expect(res.payee_category, `${name} category must be UNKNOWN`).toBe("UNKNOWN");
+        expect(res.holder_type, `${name} holder_type must be Unclassified`).toBe("Unclassified");
+        expect(res.rule_matched).toContain("Unclassified");
+      }
+    });
+
+    it("correctly classifies institutional entities with trade terms, brand names, and trusts", () => {
+      const institutions = [
+        { name: "R.N. Kharid Bikri", expectedMatched: "Kharid Bikri" },
+        { name: "SANIMA RELIANCE", expectedMatched: "SANIMA RELIANCE" },
+        { name: "PATHIVARA MATA", expectedMatched: "PATHIVARA MATA" },
+        { name: "TECHNO INFRA AND INVESTMENT PVT LTD.", expectedMatched: "Corporate Registration" },
+        { name: "SWASTIK INVESTMENT AND DEVELOPERS PVT.", expectedMatched: "Institutional" },
+        { name: "DYNAMIC INVESTMENT AND DEVELOPERS PVT.", expectedMatched: "Institutional" },
+        { name: "Garima Capital", expectedMatched: "Institutional" },
+        { name: "JYOTI BIKASH BANK", expectedMatched: "Institutional" },
+        { name: "SALPA BIKASH BANK LTD", expectedMatched: "Corporate Registration" },
+      ];
+
+      for (const inst of institutions) {
+        const res = smartClassify({ full_name: inst.name });
+        expect(res.payee_classification, `${inst.name} must be COMPANY_INSTITUTION`).toBe(
+          "COMPANY_INSTITUTION",
+        );
+      }
+    });
+
+    it("still classifies natural persons correctly when father name is missing but surname or credentials exist", () => {
+      const personWithSurname = smartClassify({ full_name: "Santosh Pokharel" });
+      expect(personWithSurname.payee_classification).toBe("NATURAL_PERSON");
+      expect(personWithSurname.payee_category).toBe("PUBLIC");
+
+      const personWithCitizenship = smartClassify({
+        full_name: "Sita Kumari",
+        citizenship_no: "27-01-72-12345",
+      });
+      expect(personWithCitizenship.payee_classification).toBe("NATURAL_PERSON");
+      expect(personWithCitizenship.payee_category).toBe("PUBLIC");
+
+      const personWithTitle = smartClassify({ full_name: "Dr. Ram Prasad" });
+      expect(personWithTitle.payee_classification).toBe("NATURAL_PERSON");
+      expect(personWithTitle.payee_category).toBe("PUBLIC");
+    });
+  });
 });
