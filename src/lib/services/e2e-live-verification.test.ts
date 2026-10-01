@@ -36,6 +36,13 @@ describe.skipIf(!isLiveDb)("Comprehensive End-to-End Pipeline Verification", () 
   const paymentRef2 = `CIPS-${runId}-002`;
 
   beforeAll(async () => {
+    // Authenticate default client as admin so secured RPCs (like rollback_upload_atomic) succeed
+    const { supabase: defaultClient } = await import("@/integrations/supabase/client");
+    await defaultClient.auth.signInWithPassword({
+      email: "admin@rbbmbl.com.np",
+      password: "Admin123!",
+    });
+
     // 1. Company Registration
     const { data: comp, error: compErr } = await supabase
       .from("companies")

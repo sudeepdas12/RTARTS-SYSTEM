@@ -188,15 +188,16 @@ export const adminConfirmClientClassification = createServerFn({ method: "POST" 
       .eq("id", data.clientId);
     if (clientErr) throw new Error(clientErr.message);
 
-    // 2) Recompute + rewrite all payables for this client with the confirmed
-    //    classification and the authoritative rule rate.
+    // 2) Recompute + rewrite pending payables for this client with the confirmed
+    //    classification and the authoritative rule rate. Settled or paid payables are locked.
     let recomputed = 0;
     for (const [table, meta] of Object.entries(PAYABLE_TABLES)) {
       const rate = ruleMap.get(`${meta.category}|${data.classification}`);
       const { data: rows } = await supabaseAdmin
         .from(table)
         .select(`id, ${meta.grossCol}`)
-        .eq("client_id", data.clientId);
+        .eq("client_id", data.clientId)
+        .or("payment_status.is.null,payment_status.eq.Pending");
 
       for (const row of rows ?? []) {
         const gross = Number(row[meta.grossCol] ?? 0);
@@ -319,10 +320,16 @@ export const adminRecomputePayable = createServerFn({ method: "POST" })
 
     const { data: pay, error: payErr } = await supabaseAdmin
       .from(data.table)
-      .select(`id, client_id, ${meta.grossCol}, payee_classification`)
+      .select(`id, client_id, ${meta.grossCol}, payee_classification, payment_status`)
       .eq("id", data.id)
       .maybeSingle();
     if (payErr || !pay) throw new Error(payErr?.message ?? "Payable not found.");
+
+    if (pay.payment_status && pay.payment_status !== "Pending") {
+      throw new Error(
+        `Cannot recompute payable with status '${pay.payment_status}'. Only Pending payables can be recalculated.`,
+      );
+    }
 
     const { data: client } = await supabaseAdmin
       .from("clients")
@@ -393,10 +400,11 @@ export const adminRecomputeAllPayables = createServerFn({ method: "POST" })
 
       const { data: pay } = await supabaseAdmin
         .from(item.table)
-        .select(`id, client_id, ${meta.grossCol}, payee_classification`)
+        .select(`id, client_id, ${meta.grossCol}, payee_classification, payment_status`)
         .eq("id", item.id)
         .maybeSingle();
       if (!pay) continue;
+      if (pay.payment_status && pay.payment_status !== "Pending") continue;
 
       const { data: client } = await supabaseAdmin
         .from("clients")

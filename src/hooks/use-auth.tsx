@@ -31,44 +31,47 @@ export function useAuth() {
     let isMounted = true;
 
     const syncSession = async () => {
-      const { data: sessionData, error } = await supabase.auth.getSession();
-      if (!isMounted) return;
-
-      if (error) {
-        console.warn("[supabase] getSession error", error.message);
-      }
-
-      const session = sessionData.session;
-      if (session?.expires_at && session.expires_at <= Math.floor(Date.now() / 1000) + 60) {
-        const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
+      try {
+        const { data: sessionData, error } = await supabase.auth.getSession();
         if (!isMounted) return;
-        if (refreshError) {
-          console.warn("[supabase] refreshSession error", refreshError.message);
+
+        if (error) {
+          console.warn("[supabase] getSession error", error.message);
         }
-        setUser(refreshedData.session?.user ?? session.user ?? null);
-        if (refreshedData.session?.user) {
-          setTimeout(() => loadRoles(refreshedData.session!.user.id), 0);
+
+        let activeSession = sessionData.session;
+        if (
+          activeSession?.expires_at &&
+          activeSession.expires_at <= Math.floor(Date.now() / 1000) + 60
+        ) {
+          const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
+          if (!isMounted) return;
+          if (refreshError) {
+            console.warn("[supabase] refreshSession error", refreshError.message);
+          }
+          activeSession = refreshedData.session ?? activeSession;
+        }
+
+        const activeUser = activeSession?.user ?? null;
+        setUser(activeUser);
+        if (activeUser) {
+          await loadRoles(activeUser.id);
         } else {
           setRoles([]);
         }
-        setLoading(false);
-        return;
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
       }
-
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        setTimeout(() => loadRoles(session.user.id), 0);
-      } else {
-        setRoles([]);
-      }
-      setLoading(false);
     };
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (!isMounted) return;
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        setTimeout(() => loadRoles(session.user.id), 0);
+      const activeUser = session?.user ?? null;
+      setUser(activeUser);
+      if (activeUser) {
+        await loadRoles(activeUser.id);
       } else {
         setRoles([]);
       }

@@ -318,7 +318,7 @@ export const RBACService = {
  */
 export const ROUTE_PERMISSIONS: Record<string, AppRole[]> = {
   "/users": ["admin"],
-  "/settings": ["admin", "supervisor"],
+  "/settings": ["admin"],
   "/settings/fiscal-years": ["admin", "supervisor"],
   "/data-management": ["admin", "supervisor"],
   "/approvals": ["admin", "supervisor", "approver", "checker"],

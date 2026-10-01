@@ -242,6 +242,20 @@ describe("Smart Shareholder Classification Engine (Ultra-Smart & Multi-Tier)", (
       expect(cit.tds_rate_dividend).toBe(0.0);
       expect(cit.tds_rate_debenture).toBe(0.0);
     });
+
+    it('does NOT classify "RAM BAHADUR THAPA 50" as Mutual Fund / TAX_EXEMPT', () => {
+      const personWith50 = smartClassify({
+        full_name: "RAM BAHADUR THAPA 50",
+        father_name: "KRISHNA BAHADUR THAPA",
+      });
+      expect(personWith50.payee_classification).toBe("NATURAL_PERSON");
+      expect(personWith50.payee_category).toBe("PUBLIC");
+      expect(personWith50.tds_rate_dividend).toBe(0.05);
+
+      const genuineNmb50 = smartClassify({ full_name: "NMB 50" });
+      expect(genuineNmb50.payee_classification).toBe("TAX_EXEMPT");
+      expect(genuineNmb50.tds_rate_dividend).toBe(0.0);
+    });
   });
 
   describe("4. Promoter & Local Segments", () => {

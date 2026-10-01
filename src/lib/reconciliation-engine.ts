@@ -246,19 +246,23 @@ export const ReconciliationEngine = {
 
     // Load all related data in parallel scoped by companyId
     const [clients, payables, paymentsResult, bankStatementsResult] = await Promise.all([
-      // 1. Load clients in chunks
-      fetchInChunks(boids, (chunk) =>
-        (db as any)
+      // 1. Load clients in chunks scoped to companyId
+      fetchInChunks(boids, (chunk) => {
+        let q = (db as any)
           .from("clients")
           .select("id,boid,company_id,full_name,bank_name,bank_account_no")
-          .in("boid", chunk),
-      ),
+          .in("boid", chunk);
+        if (companyId) q = q.eq("company_id", companyId);
+        return q;
+      }),
 
       // 2. Load all payables (dividend, interest, mutual_fund) in chunks
       (async () => {
-        const clientsData = await fetchInChunks(boids, (chunk) =>
-          db.from("clients").select("id").in("boid", chunk),
-        );
+        const clientsData = await fetchInChunks(boids, (chunk) => {
+          let q = db.from("clients").select("id").in("boid", chunk);
+          if (companyId) q = q.eq("company_id", companyId);
+          return q;
+        });
         const clientIds = clientsData?.map((c: any) => c.id) || [];
         if (clientIds.length === 0) return [];
 
