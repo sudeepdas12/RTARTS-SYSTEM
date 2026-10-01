@@ -710,6 +710,8 @@ function ClientsPage() {
         kitta: kittaVal,
         holder_type: form.holder_type,
         payee_classification: form.payee_classification,
+        classification_status: "CONFIRMED",
+        classification_source: "manual_edit",
         pan_no: panNo,
         citizenship_no: citizenshipNo,
         pan_or_citizenship: panNo || citizenshipNo || form.pan_or_citizenship.trim() || null,
@@ -746,7 +748,23 @@ function ClientsPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["clients"] });
       qc.invalidateQueries({ queryKey: ["clients-stats"] });
-      toast.success(editing ? "Client updated successfully" : "Client created successfully");
+      qc.invalidateQueries({ queryKey: ["clients-lookup"] });
+      qc.invalidateQueries({ queryKey: ["dividend_payables"] });
+      qc.invalidateQueries({ queryKey: ["dividend_payables_totals"] });
+      qc.invalidateQueries({ queryKey: ["interest_payables"] });
+      qc.invalidateQueries({ queryKey: ["interest_payables_totals"] });
+      qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
+      qc.invalidateQueries({ queryKey: ["mutual_fund_payables_totals"] });
+      qc.invalidateQueries({ queryKey: ["payments"] });
+      qc.invalidateQueries({ queryKey: ["all-individual-payments"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+      qc.invalidateQueries({ queryKey: ["live-payable-summary"] });
+      qc.invalidateQueries({ queryKey: ["exceptions"] });
+      toast.success(
+        editing
+          ? "Client updated and pending payables synchronized"
+          : "Client created successfully",
+      );
       setSheetOpen(false);
       setEditing(null);
     },
@@ -1699,6 +1717,14 @@ function ClientsPage() {
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+            <div className="rounded-md border border-primary/20 bg-primary/5 p-2.5 text-xs text-muted-foreground flex items-center gap-2">
+              <Percent className="h-4 w-4 text-primary shrink-0" />
+              <span>
+                <strong>Automatic Tax Sync:</strong> Updating Tax Classification immediately
+                recomputes TDS tax and net payable on all pending payables for this shareholder
+                across Dividend, Interest, and Mutual Fund modules.
+              </span>
             </div>
 
             {/* Address & Contact */}

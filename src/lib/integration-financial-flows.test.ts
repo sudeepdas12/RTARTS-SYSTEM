@@ -77,11 +77,12 @@ describe.skipIf(!isSupabaseConfigured)("Integration Financial & Security Invaria
     adminUserId = adminUser?.id;
 
     // 3. Create test clients
+    const entropy = Math.floor(Math.random() * 89999 + 10000).toString();
     const { data: clA, error: clAErr } = await adminClient
       .from("clients")
       .insert({
         company_id: companyAId,
-        boid: `130100${Date.now().toString().slice(-8)}1`,
+        boid: `13010${entropy}${Date.now().toString().slice(-5)}1`,
         client_code: `CL_${runId}_A`,
         full_name: "Ram Sharma",
         holder_type: "Natural Person - Public",
@@ -96,7 +97,7 @@ describe.skipIf(!isSupabaseConfigured)("Integration Financial & Security Invaria
       .from("clients")
       .insert({
         company_id: companyBId,
-        boid: `130100${Date.now().toString().slice(-8)}2`,
+        boid: `13010${entropy}${Date.now().toString().slice(-5)}2`,
         client_code: `CL_${runId}_B`,
         full_name: "Hari Thapa",
         holder_type: "Legal Person",
