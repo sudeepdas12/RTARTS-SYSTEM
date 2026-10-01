@@ -323,6 +323,33 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
   }
 
   // =========================================================================
+  // TIER 0.5: Commercial Bank & Corporate Retirement Funds
+  // Under Nepal tax rules, commercial bank and corporate retirement funds
+  // (e.g. Rastriya Banijya Bank Retirement Fund) are taxable corporate entities
+  // (Institution / Legal Person — 15% TDS), not statutory tax-exempt funds (CIT/EPF/SSF).
+  // =========================================================================
+  const isTaxableBankRetirementFund =
+    /\b(RASTRIYA\s*BANIJYA\s*BANK\s*RETIREMENT\s*FUND|RBB\s*RETIREMENT)\b/i.test(nameUpper) ||
+    (/\b(BANK|BIKAS\s*BANK|FINANCE)\b.*\b(RETIREMENT|PENSION|GRATUITY|AWAKASH)\b/i.test(
+      nameUpper,
+    ) &&
+      !/\b(CIT|EPF|SSF|SANCHAYA|LAGANI\s*KOSH|SURAKSHA\s*KOSH)\b/i.test(nameUpper));
+
+  if (isTaxableBankRetirementFund) {
+    const segment: PayeeSegment = isPromoterSegment ? "PROMOTER" : null;
+    return {
+      payee_classification: "COMPANY_INSTITUTION",
+      payee_category: isPromoterSegment ? "PROMOTER" : "INSTITUTION",
+      payee_segment: segment,
+      holder_type: isPromoterSegment ? "Legal Person - Promoter" : "Legal Person",
+      tds_rate_dividend: 0.15,
+      tds_rate_debenture: 0.15,
+      rule_matched: "Bank / Corporate Retirement Fund (Taxable Legal Person — 15% TDS)",
+      confidence: 0.99,
+    };
+  }
+
+  // =========================================================================
   // TIER 1: Tax Exempt Entities (SEBON Mutual Funds & Statutory Retirement Funds)
   // Mutual funds & SSF/CIT/EPF/Welfare funds MUST ALWAYS be 0% TDS.
   // =========================================================================

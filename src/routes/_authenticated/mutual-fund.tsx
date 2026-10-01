@@ -506,9 +506,26 @@ function MutualFundPage() {
       }
 
       if (debouncedSearch) {
-        q = q.or(
-          `lot_name.ilike.%${debouncedSearch}%,payment_reference.ilike.%${debouncedSearch}%,bank_name.ilike.%${debouncedSearch}%,bank_account_no.ilike.%${debouncedSearch}%`,
-        );
+        const cleanTerm = debouncedSearch.trim().replace(/[%_,]/g, "");
+        const { data: matchedClients } = await supabase
+          .from("clients")
+          .select("id")
+          .or(
+            `full_name.ilike.%${cleanTerm}%,boid.ilike.%${cleanTerm}%,client_code.ilike.%${cleanTerm}%`,
+          )
+          .limit(100);
+
+        const matchedIds = (matchedClients || []).map((c) => c.id);
+        const searchFilters = [
+          `lot_name.ilike.%${cleanTerm}%`,
+          `payment_reference.ilike.%${cleanTerm}%`,
+          `bank_name.ilike.%${cleanTerm}%`,
+          `bank_account_no.ilike.%${cleanTerm}%`,
+        ];
+        if (matchedIds.length > 0) {
+          searchFilters.push(`client_id.in.(${matchedIds.join(",")})`);
+        }
+        q = q.or(searchFilters.join(","));
       }
 
       const { data, count, error } = await q;

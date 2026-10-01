@@ -277,6 +277,12 @@ interface Client {
   data_quality_notes?: string | null;
   created_at: string;
   company?: { company_name: string; company_code: string } | null;
+  company_details?: Array<{
+    company_id: string;
+    company_code: string;
+    company_name: string;
+    kitta: number;
+  }> | null;
 }
 
 const emptyForm = {
@@ -507,11 +513,12 @@ function ClientsPage() {
             p_limit: 1,
             p_offset: 0,
           }),
-          (supabase as any)
-            .from("clients")
-            .select("id", { count: "exact", head: true })
-            .eq("company_id", companyFilter)
-            .eq("needs_review", true),
+          (supabase as any).rpc("get_clients_paginated", {
+            p_company_id: companyFilter,
+            p_needs_review: "true",
+            p_limit: 1,
+            p_offset: 0,
+          }),
         ],
       );
 
@@ -531,7 +538,10 @@ function ClientsPage() {
             : 0,
         institutions:
           instRes.data && instRes.data.length > 0 ? Number(instRes.data[0].total_count) : 0,
-        needsReview: reviewRes.count || 0,
+        needsReview:
+          reviewRes.data && reviewRes.data.length > 0
+            ? Number(reviewRes.data[0].total_count)
+            : reviewRes.count || 0,
       };
     },
   });
@@ -608,9 +618,11 @@ function ClientsPage() {
 
       const rows = (data || []).map((r: any) => ({
         ...r,
-        company: r.company_name
-          ? { company_name: r.company_name, company_code: r.company_code }
-          : null,
+        company:
+          r.company_code || r.company_name
+            ? { company_name: r.company_name || "", company_code: r.company_code || "" }
+            : null,
+        company_details: r.company_details || null,
       }));
       const count = data && data.length > 0 ? Number(data[0].total_count) : 0;
 
@@ -867,8 +879,8 @@ function ClientsPage() {
           full_name: d.full_name,
           boid: d.boid,
           holding_kitta: d.kitta || 0,
-          company_code: d.company?.company_code || "",
-          company: d.company?.company_name || "",
+          company_code: d.company_code || d.company?.company_code || "",
+          company: d.company_name || d.company?.company_name || "",
           holder_type: d.holder_type,
           classification: d.payee_classification,
           father_name: d.father_name,
@@ -1346,16 +1358,46 @@ function ClientsPage() {
                       )}
                     </TableCell>
                     <TableCell className="text-right font-mono font-semibold text-primary">
-                      {c.kitta ? Number(c.kitta).toLocaleString() : "—"}
+                      <div>{c.kitta ? Number(c.kitta).toLocaleString() : "—"}</div>
+                      {companyFilter === "all" &&
+                        c.company_details &&
+                        c.company_details.length > 1 && (
+                          <span
+                            className="text-[10px] text-muted-foreground font-normal block cursor-help"
+                            title={c.company_details
+                              .map(
+                                (cd) =>
+                                  `${cd.company_code}: ${Number(cd.kitta || 0).toLocaleString()}`,
+                              )
+                              .join(" | ")}
+                          >
+                            Total ({c.company_details.length} co.)
+                          </span>
+                        )}
                     </TableCell>
                     <TableCell>
                       {classificationBadge(c.payee_classification, c.holder_type)}
                     </TableCell>
                     <TableCell>{holderBadge(c.holder_type)}</TableCell>
                     <TableCell>
-                      <span className="text-xs text-muted-foreground font-medium">
-                        {c.company?.company_code || c.company?.company_name || "—"}
-                      </span>
+                      {c.company_details && c.company_details.length > 1 ? (
+                        <div className="flex flex-wrap gap-1 items-center max-w-[180px]">
+                          {c.company_details.map((cd) => (
+                            <Badge
+                              key={cd.company_id || cd.company_code}
+                              variant="secondary"
+                              className="font-mono text-[10px] px-1.5 py-0 bg-primary/10 text-primary border-0 font-medium"
+                              title={`${cd.company_name}: ${Number(cd.kitta || 0).toLocaleString()} kitta`}
+                            >
+                              {cd.company_code}
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground font-medium">
+                          {c.company?.company_code || c.company?.company_name || "—"}
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell className="text-xs font-mono">
                       {c.pan_or_citizenship ?? "—"}
@@ -1501,6 +1543,60 @@ function ClientsPage() {
                     Entering the bank account number or correcting identity details and clicking
                     Save will clear this review flag.
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* Portfolio & Company Holdings */}
+            {editing?.company_details && editing.company_details.length > 0 && (
+              <div className="rounded-lg border bg-muted/40 p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                    <Building2 className="h-4 w-4 text-primary" />
+                    <span>
+                      Company Holdings & Portfolio ({editing.company_details.length} Companies)
+                    </span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 text-[11px] text-primary hover:bg-primary/10 px-2 gap-1 cursor-pointer"
+                    onClick={() => {
+                      if (editing.boid) setSelectedStatementBoid(editing.boid);
+                      else setSelectedStatementBoid(editing.id);
+                    }}
+                  >
+                    <FileText className="h-3 w-3" /> View Consolidated Statement
+                  </Button>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {editing.company_details.map((cd) => (
+                    <div
+                      key={cd.company_id || cd.company_code}
+                      className="rounded-md border bg-card p-2.5 flex items-center justify-between text-xs shadow-xs"
+                    >
+                      <div className="min-w-0 pr-2">
+                        <Badge
+                          variant="outline"
+                          className="font-mono font-semibold text-primary px-1.5 py-0 mb-0.5"
+                        >
+                          {cd.company_code}
+                        </Badge>
+                        <span
+                          className="text-muted-foreground text-[11px] block truncate"
+                          title={cd.company_name}
+                        >
+                          {cd.company_name}
+                        </span>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="font-mono font-bold text-foreground">
+                          {Number(cd.kitta || 0).toLocaleString()}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground block">kitta</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
