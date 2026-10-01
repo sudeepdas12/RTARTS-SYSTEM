@@ -278,7 +278,7 @@ function payableSegment(category: string, isDebenture = false): string | null {
  *
  * Dividend TDS rules:
  *   Natural Person (Public, Promoter, Local): 5%
- *   Legal Person / Company (Institution): 5%  ← same as natural person for dividend
+ *   Legal Person / Company (Institution, Foreign): 15% (dividend & debenture)
  *   Mutual Fund / Tax Exempt: 0%
  */
 function getCategoryTdsRate(category: string, isDebenture: boolean): number {
@@ -290,9 +290,11 @@ function getCategoryTdsRate(category: string, isDebenture: boolean): number {
     case "LOCAL":
       return isDebenture ? 0.06 : 0.05;
     case "INSTITUTION":
-      return isDebenture ? 0.15 : 0.05; // 15% for debenture, 5% for dividend
+    case "COMPANY_INSTITUTION":
+      return 0.15; // Statutory 15% for institutions (dividend & debenture)
     case "FOREIGN":
-      return isDebenture ? 0.15 : 0.05; // Foreign same as institution
+    case "FOREIGN_INVESTOR":
+      return 0.15; // Foreign investors same as institution
     case "MUTUAL_FUND":
       return 0;
     case "TAX_EXEMPT":

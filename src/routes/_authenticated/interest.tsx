@@ -2194,22 +2194,22 @@ function InterestPage() {
                   <TableHead className="font-semibold whitespace-nowrap w-[19%] min-w-[160px]">
                     Shareholder &amp; BOID
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[6%] min-w-[55px]">
+                  <TableHead className="text-center font-semibold whitespace-nowrap w-[6%] min-w-[55px]">
                     Holding
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
+                  <TableHead className="text-center font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
                     Gross (NPR)
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[7%] min-w-[65px]">
+                  <TableHead className="text-center font-semibold whitespace-nowrap w-[7%] min-w-[65px]">
                     TDS Tax
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
+                  <TableHead className="text-center font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
                     Net Payable
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
+                  <TableHead className="text-center font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
                     Paid
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
+                  <TableHead className="text-center font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
                     Remaining
                   </TableHead>
                   <TableHead className="font-semibold whitespace-nowrap w-[12%] min-w-[125px]">
@@ -2305,35 +2305,35 @@ function InterestPage() {
                         </TableCell>
 
                         {/* 3. Holding (Kitta) */}
-                        <TableCell className="text-right font-mono font-semibold text-primary whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-center font-mono font-semibold text-primary whitespace-nowrap text-xs py-2 px-2">
                           {p.kitta || p.shares_held || cl?.kitta
                             ? (p.kitta || p.shares_held || cl?.kitta)?.toLocaleString()
                             : "—"}
                         </TableCell>
 
                         {/* 4. Gross Interest */}
-                        <TableCell className="text-right font-mono whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-center font-mono whitespace-nowrap text-xs py-2 px-2">
                           {fmt(p.gross_interest)}
                         </TableCell>
 
                         {/* 5. TDS Tax Amount */}
-                        <TableCell className="text-right font-mono text-amber-600 dark:text-amber-400 whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-center font-mono text-amber-600 dark:text-amber-400 whitespace-nowrap text-xs py-2 px-2">
                           {fmt(p.tax_amount)}
                         </TableCell>
 
                         {/* 6. Net Payable */}
-                        <TableCell className="text-right font-mono font-bold text-foreground whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-center font-mono font-bold text-foreground whitespace-nowrap text-xs py-2 px-2">
                           {fmt(p.net_payable)}
                         </TableCell>
 
                         {/* 7. Paid Amount */}
-                        <TableCell className="text-right font-mono font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-center font-mono font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap text-xs py-2 px-2">
                           {fmt(paidVal)}
                         </TableCell>
 
                         {/* 8. Remaining Amount */}
                         <TableCell
-                          className={`text-right font-mono font-semibold whitespace-nowrap text-xs py-2 px-2 ${
+                          className={`text-center font-mono font-semibold whitespace-nowrap text-xs py-2 px-2 ${
                             remVal > 0
                               ? "text-rose-600 dark:text-rose-400"
                               : "text-muted-foreground"

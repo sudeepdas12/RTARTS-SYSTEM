@@ -2,7 +2,7 @@
 
 **RBB Merchant Banking Limited — Registrar & Transfer Agent (RTS / RTARTS) System**
 
-[![Vitest Tests](https://img.shields.io/badge/Vitest-256%20Passed-brightgreen.svg)](https://github.com/sudeepdas12/RTARTS-SYSTEM)
+[![Vitest Tests](https://img.shields.io/badge/Vitest-271%20Passed-brightgreen.svg)](https://github.com/sudeepdas12/RTARTS-SYSTEM)
 [![Playwright E2E](https://img.shields.io/badge/Playwright-6%20Passed-brightgreen.svg)](https://github.com/sudeepdas12/RTARTS-SYSTEM)
 [![ESLint](https://img.shields.io/badge/ESLint-Clean-blue.svg)](https://github.com/sudeepdas12/RTARTS-SYSTEM)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)

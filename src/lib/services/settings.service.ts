@@ -35,7 +35,7 @@ export interface SystemSettings {
 const DEFAULT_SETTINGS: SystemSettings = {
   enable_nepali_dates: true,
   dividend_tds_natural: 5.0,
-  dividend_tds_legal: 5.0,
+  dividend_tds_legal: 15.0,
   interest_tds_natural: 6.0,
   interest_tds_legal: 15.0,
   require_maker_checker: true,

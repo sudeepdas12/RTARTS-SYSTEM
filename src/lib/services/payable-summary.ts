@@ -1,5 +1,10 @@
 import { NET_PAYABLE_TOLERANCE_NPR } from "../constants";
 import { smartClassify } from "./smart-classifier";
+import {
+  type TaxRule,
+  getTaxRateFromRules,
+  investorCategoryToClassification,
+} from "./tax-rules.service";
 
 export type PayeeCategory =
   | "PUBLIC"
@@ -106,6 +111,7 @@ export interface PayableTotalsInput {
   isDebenture?: boolean;
   isMutualFund?: boolean;
   customTaxRate?: number | null;
+  taxRules?: TaxRule[] | null;
 }
 
 export interface PayableTotalsResult {
@@ -151,7 +157,23 @@ export function getPayeeTaxRate(
   isDebenture = false,
   customTaxRate?: number | null,
   isMutualFund = false,
+  rules?: TaxRule[] | null,
 ): number {
+  // If a custom rate was explicitly specified and not an exempt/institutional debenture entity
+  if (customTaxRate !== undefined && customTaxRate !== null) {
+    return Number(customTaxRate) || 0;
+  }
+
+  // If authoritative database tax rules are supplied, query them first
+  if (rules && rules.length > 0) {
+    const payableCategory = isMutualFund ? "MUTUAL_FUND" : isDebenture ? "INTEREST" : "DIVIDEND";
+    const classification = investorCategoryToClassification(category);
+    if (classification) {
+      const rate = getTaxRateFromRules(rules, payableCategory, classification);
+      if (rate != null) return rate;
+    }
+  }
+
   const sanitized = (category || "UNKNOWN").toUpperCase();
 
   // Statutory rule: Mutual Funds and Tax-Exempt entities are ALWAYS 0% TDS
@@ -167,11 +189,6 @@ export function getPayeeTaxRate(
     return 0.15;
   }
 
-  // If a custom rate was explicitly specified and not an exempt/institutional debenture entity
-  if (customTaxRate !== undefined && customTaxRate !== null) {
-    return Number(customTaxRate) || 0;
-  }
-
   switch (sanitized) {
     case "PROMOTER":
     case "NATURAL_PERSON":
@@ -184,6 +201,7 @@ export function getPayeeTaxRate(
     case "INSTITUTION":
     case "COMPANY_INSTITUTION":
     case "FOREIGN":
+    case "FOREIGN_INVESTOR":
       return 0.15;
     case "MUTUAL_FUND":
     case "TAX_EXEMPT":
@@ -201,6 +219,7 @@ export function calculatePayableTotals(input: PayableTotalsInput): PayableTotals
     Boolean(input.isDebenture),
     input.customTaxRate,
     Boolean(input.isMutualFund),
+    input.taxRules,
   );
   const taxAmountFromInput =
     input.taxAmount !== undefined && input.taxAmount !== null ? Number(input.taxAmount ?? 0) : null;

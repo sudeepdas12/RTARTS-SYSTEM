@@ -95,7 +95,7 @@ graph TB
 - **Backend / Database**: Supabase PostgreSQL 15, PostgREST, GoTrue Auth, Realtime WebSocket pub/sub.
 - **Server Runtime**: Nitro server engine with SSR and client hydration.
 - **Edge Functions**: Deno TypeScript runtime executing parallel chunk ingestion with zero cold-start footprint.
-- **Testing & Quality Assurance**: Vitest test runner (31 test files, 256 unit/precision/live tests), Playwright E2E browser test suite (6 tests), ESLint v9, Prettier.
+- **Testing & Quality Assurance**: Vitest test runner (33 test files, 271 unit/precision/live tests), Playwright E2E browser test suite (6 tests), ESLint v9, Prettier.
 
 ### Infrastructure & Production Hosting Sizing
 

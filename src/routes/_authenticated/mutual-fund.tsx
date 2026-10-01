@@ -2011,25 +2011,25 @@ function MutualFundPage() {
                   <TableHead className="font-semibold whitespace-nowrap w-[18%] min-w-[155px]">
                     Unitholder &amp; BOID
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[6%] min-w-[55px]">
+                  <TableHead className="text-center font-semibold whitespace-nowrap w-[6%] min-w-[55px]">
                     Units
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[5%] min-w-[50px]">
+                  <TableHead className="text-center font-semibold whitespace-nowrap w-[5%] min-w-[50px]">
                     Rate %
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
+                  <TableHead className="text-center font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
                     Gross (NPR)
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[7%] min-w-[65px]">
+                  <TableHead className="text-center font-semibold whitespace-nowrap w-[7%] min-w-[65px]">
                     TDS Tax
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
+                  <TableHead className="text-center font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
                     Net Distribution
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[7%] min-w-[70px]">
+                  <TableHead className="text-center font-semibold whitespace-nowrap w-[7%] min-w-[70px]">
                     Paid
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[7%] min-w-[70px]">
+                  <TableHead className="text-center font-semibold whitespace-nowrap w-[7%] min-w-[70px]">
                     Remaining
                   </TableHead>
                   <TableHead className="font-semibold whitespace-nowrap w-[12%] min-w-[125px]">
@@ -2119,7 +2119,7 @@ function MutualFundPage() {
                         </TableCell>
 
                         {/* 3. Units Held */}
-                        <TableCell className="text-right font-mono font-semibold text-primary whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-center font-mono font-semibold text-primary whitespace-nowrap text-xs py-2 px-2">
                           {payable.shares_held || payable.after_bonus_kitta || cl?.kitta
                             ? (
                                 payable.shares_held ||
@@ -2130,33 +2130,33 @@ function MutualFundPage() {
                         </TableCell>
 
                         {/* 4. Rate % */}
-                        <TableCell className="text-right font-mono whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-center font-mono whitespace-nowrap text-xs py-2 px-2">
                           {payable.dividend_rate ? `${payable.dividend_rate}%` : "—"}
                         </TableCell>
 
                         {/* 5. Gross Distribution */}
-                        <TableCell className="text-right font-mono whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-center font-mono whitespace-nowrap text-xs py-2 px-2">
                           {fmt(payable.gross_dividend)}
                         </TableCell>
 
                         {/* 6. TDS Tax Amount */}
-                        <TableCell className="text-right font-mono text-amber-600 dark:text-amber-400 whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-center font-mono text-amber-600 dark:text-amber-400 whitespace-nowrap text-xs py-2 px-2">
                           {fmt(payable.tax_amount)}
                         </TableCell>
 
                         {/* 7. Net Distribution */}
-                        <TableCell className="text-right font-mono font-bold text-foreground whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-center font-mono font-bold text-foreground whitespace-nowrap text-xs py-2 px-2">
                           {fmt(payable.net_payable)}
                         </TableCell>
 
                         {/* 8. Paid Amount */}
-                        <TableCell className="text-right font-mono font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-center font-mono font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap text-xs py-2 px-2">
                           {fmt(paidVal)}
                         </TableCell>
 
                         {/* 9. Remaining Amount */}
                         <TableCell
-                          className={`text-right font-mono font-semibold whitespace-nowrap text-xs py-2 px-2 ${
+                          className={`text-center font-mono font-semibold whitespace-nowrap text-xs py-2 px-2 ${
                             remVal > 0
                               ? "text-rose-600 dark:text-rose-400"
                               : "text-muted-foreground"

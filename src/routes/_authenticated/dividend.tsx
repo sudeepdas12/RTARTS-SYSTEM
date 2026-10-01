@@ -2440,25 +2440,25 @@ function DividendPage() {
                   <TableHead className="font-semibold whitespace-nowrap w-[18%] min-w-[155px]">
                     Shareholder &amp; BOID
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
+                  <TableHead className="text-center font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
                     Holding (Progression)
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[5%] min-w-[50px]">
+                  <TableHead className="text-center font-semibold whitespace-nowrap w-[5%] min-w-[50px]">
                     Rate %
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
+                  <TableHead className="text-center font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
                     Gross (NPR)
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[7%] min-w-[65px]">
+                  <TableHead className="text-center font-semibold whitespace-nowrap w-[7%] min-w-[65px]">
                     TDS Tax
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
+                  <TableHead className="text-center font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
                     Net Payable
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[7%] min-w-[70px]">
+                  <TableHead className="text-center font-semibold whitespace-nowrap w-[7%] min-w-[70px]">
                     Paid
                   </TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap w-[7%] min-w-[70px]">
+                  <TableHead className="text-center font-semibold whitespace-nowrap w-[7%] min-w-[70px]">
                     Remaining
                   </TableHead>
                   <TableHead className="font-semibold whitespace-nowrap w-[12%] min-w-[125px]">
@@ -2557,12 +2557,12 @@ function DividendPage() {
                         </TableCell>
 
                         {/* 3. Holding Progression (Kitta) */}
-                        <TableCell className="text-right font-mono whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-center font-mono whitespace-nowrap text-xs py-2 px-2">
                           {(p.bonus_issued && Number(p.bonus_issued) > 0) ||
                           (p.after_bonus_kitta &&
                             p.shares_held &&
                             Number(p.after_bonus_kitta) !== Number(p.shares_held)) ? (
-                            <div className="flex flex-col items-end">
+                            <div className="flex flex-col items-center justify-center text-center">
                               <span
                                 className="font-bold text-foreground font-mono"
                                 title="Total Post-Bonus Holding"
@@ -2600,21 +2600,21 @@ function DividendPage() {
                         </TableCell>
 
                         {/* 4. Rate % */}
-                        <TableCell className="text-right font-mono whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-center font-mono whitespace-nowrap text-xs py-2 px-2">
                           {p.dividend_rate ? `${p.dividend_rate}%` : "—"}
                         </TableCell>
 
                         {/* 5. Gross Dividend */}
-                        <TableCell className="text-right font-mono whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-center font-mono whitespace-nowrap text-xs py-2 px-2">
                           {fmt(p.gross_dividend)}
                         </TableCell>
 
                         {/* 6. TDS Tax Amount */}
-                        <TableCell className="text-right font-mono text-amber-600 dark:text-amber-400 whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-center font-mono text-amber-600 dark:text-amber-400 whitespace-nowrap text-xs py-2 px-2">
                           <div>{fmt(p.tax_amount)}</div>
                           {p.bonus_tax && Number(p.bonus_tax) > 0 ? (
                             <div
-                              className="text-[10px] text-muted-foreground font-normal"
+                              className="text-[10px] text-muted-foreground font-normal text-center"
                               title="5% Bonus Share TDS"
                             >
                               Bonus: {fmt(p.bonus_tax)}
@@ -2623,18 +2623,18 @@ function DividendPage() {
                         </TableCell>
 
                         {/* 7. Net Payable */}
-                        <TableCell className="text-right font-mono font-bold text-foreground whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-center font-mono font-bold text-foreground whitespace-nowrap text-xs py-2 px-2">
                           {fmt(p.net_payable)}
                         </TableCell>
 
                         {/* 8. Paid Amount */}
-                        <TableCell className="text-right font-mono font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-center font-mono font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap text-xs py-2 px-2">
                           {fmt(paidVal)}
                         </TableCell>
 
                         {/* 9. Remaining Amount */}
                         <TableCell
-                          className={`text-right font-mono font-semibold whitespace-nowrap text-xs py-2 px-2 ${
+                          className={`text-center font-mono font-semibold whitespace-nowrap text-xs py-2 px-2 ${
                             remVal > 0
                               ? "text-rose-600 dark:text-rose-400"
                               : "text-muted-foreground"

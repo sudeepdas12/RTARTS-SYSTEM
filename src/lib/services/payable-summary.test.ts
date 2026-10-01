@@ -38,6 +38,40 @@ describe("payee classification and payable totals", () => {
     expect(getPayeeTaxRate("PUBLIC", true)).toBeCloseTo(0.06, 6);
     expect(getPayeeTaxRate("INSTITUTION", true)).toBeCloseTo(0.15, 6);
     expect(getPayeeTaxRate("MUTUAL_FUND", true)).toBe(0);
+    expect(getPayeeTaxRate("INSTITUTION", false)).toBeCloseTo(0.15, 6);
+    expect(getPayeeTaxRate("PUBLIC", false)).toBeCloseTo(0.05, 6);
+  });
+
+  it("prioritizes authoritative database tax rules when provided", () => {
+    const mockRules = [
+      {
+        id: "1",
+        payable_category: "DIVIDEND" as const,
+        payee_classification: "COMPANY_INSTITUTION" as const,
+        tax_rate: 0.15,
+        is_active: true,
+      },
+      {
+        id: "2",
+        payable_category: "DIVIDEND" as const,
+        payee_classification: "NATURAL_PERSON" as const,
+        tax_rate: 0.05,
+        is_active: true,
+      },
+    ];
+
+    expect(getPayeeTaxRate("INSTITUTION", false, undefined, false, mockRules)).toBe(0.15);
+    expect(getPayeeTaxRate("PUBLIC", false, undefined, false, mockRules)).toBe(0.05);
+
+    const result = calculatePayableTotals({
+      grossAmount: 100000,
+      category: "INSTITUTION",
+      isDebenture: false,
+      taxRules: mockRules,
+    });
+    expect(result.taxRate).toBe(0.15);
+    expect(result.taxAmount).toBe(15000);
+    expect(result.netPayable).toBe(85000);
   });
 
   it("validates that gross minus tax equals net and total sums remain consistent", () => {

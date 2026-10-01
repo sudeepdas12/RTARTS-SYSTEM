@@ -160,7 +160,7 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
  *
  * Dividend TDS rules:
  *   Natural Person (Public, Promoter, Local, etc.): 5%
- *   Legal Person / Company (Institution):           5%  ← same as natural person
+ *   Legal Person / Company (Institution, Foreign):  15%
  *   Mutual Fund / Tax Exempt:                        0%
  */
 function getCategoryTdsRate(
