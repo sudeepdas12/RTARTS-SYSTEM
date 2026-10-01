@@ -472,12 +472,14 @@ function ClassificationReviewPage() {
                       className="border-emerald-600/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
                       onClick={() => fixLineageMutation.mutate()}
                       disabled={fixLineageMutation.isPending}
-                      title="Automatically detect and correct natural persons with family names who were misclassified as tax-exempt"
+                      title="Automatically detect and fix misclassified individuals, institutional companies, and queue ambiguous entities for review."
                     >
                       <Sparkles
                         className={`h-3.5 w-3.5 mr-1.5 ${fixLineageMutation.isPending ? "animate-spin" : "text-emerald-600"}`}
                       />
-                      {fixLineageMutation.isPending ? "Correcting..." : "Auto-Fix Natural Persons"}
+                      {fixLineageMutation.isPending
+                        ? "Scanning..."
+                        : "Auto-Scan & Fix Classifications"}
                     </Button>
                   )}
                   <Button

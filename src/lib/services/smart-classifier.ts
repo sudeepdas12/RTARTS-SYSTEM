@@ -111,7 +111,7 @@ export interface ClassificationResult {
   payee_classification: PayeeClassification;
   payee_category: PayeeCategory;
   payee_segment: PayeeSegment;
-  holder_type: string;
+  holder_type: string | null;
   tds_rate_dividend: number; // 0.05 (5%) or 0 (0%)
   tds_rate_debenture: number; // 0.06 (6%), 0.15 (15%), or 0 (0%)
   rule_matched: string;
@@ -666,7 +666,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
           : isEmployeeSegment
             ? "EMPLOYEE"
             : null,
-      holder_type: "Unclassified",
+      holder_type: null,
       tds_rate_dividend: 0.05,
       tds_rate_debenture: 0.06,
       rule_matched:

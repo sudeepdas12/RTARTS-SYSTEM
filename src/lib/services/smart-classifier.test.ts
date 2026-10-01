@@ -325,7 +325,7 @@ describe("Smart Shareholder Classification Engine (Ultra-Smart & Multi-Tier)", (
           "UNCLASSIFIED",
         );
         expect(res.payee_category, `${name} category must be UNKNOWN`).toBe("UNKNOWN");
-        expect(res.holder_type, `${name} holder_type must be Unclassified`).toBe("Unclassified");
+        expect(res.holder_type, `${name} holder_type must be null`).toBeNull();
         expect(res.rule_matched).toContain("Unclassified");
       }
     });
