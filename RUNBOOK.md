@@ -409,7 +409,8 @@ graph LR
 
 #### Strict Reconciliation Rules
 
-- Matching strictly requires identical company, fiscal year, and net amount ($\pm\text{NPR } 0.01$).
+- Matching strictly requires identical company, matching payable type/record, and net amount within banking clearance settlement tolerance ($\pm\text{NPR } 0.50$, 50 paisa) to account for commercial bank gateway truncation (`RECONCILIATION_TOLERANCE_NPR`).
+- Schema balance invariants enforce strict ledger integrity ($|Gross - Tax - Net| \le \text{NPR } 0.05$, 5 paisa) at the database layer via PostgreSQL check constraints (`chk_div_balance_invariant`).
 - Unmatched records are flagged with clear errors; ambiguous guessing or arbitrary fallback is strictly prohibited.
 - Reversals are executed via `revert_reconciliation_lot_atomic`, atomically resetting payables to `Pending` and removing tracking lots.
 

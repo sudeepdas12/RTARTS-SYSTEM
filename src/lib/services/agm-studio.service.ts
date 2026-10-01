@@ -865,7 +865,8 @@ export const AgmStudioService = {
           company_code: code,
           company_name: name,
           isin: code === "NLG" ? "NPE208A00006" : undefined,
-          total_shares: 10000000,
+          sector_type: "Public",
+          status: "Active",
         })
         .select("id")
         .maybeSingle();

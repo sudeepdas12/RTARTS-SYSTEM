@@ -250,7 +250,7 @@ export const ReconciliationEngine = {
       fetchInChunks(boids, (chunk) =>
         (db as any)
           .from("clients")
-          .select("id,boid,full_name,bank_name,bank_account_no")
+          .select("id,boid,company_id,full_name,bank_name,bank_account_no")
           .in("boid", chunk),
       ),
 
@@ -328,7 +328,13 @@ export const ReconciliationEngine = {
     // Build lookup maps
     const clientsByBoid = new Map<string, any>();
     (clients || []).forEach((c: any) => {
-      if (c.boid) clientsByBoid.set(String(c.boid).trim(), c);
+      if (c.boid) {
+        const boidKey = String(c.boid).trim();
+        // If companyId is provided, prioritize client record belonging to that company
+        if (!clientsByBoid.has(boidKey) || (companyId && c.company_id === companyId)) {
+          clientsByBoid.set(boidKey, c);
+        }
+      }
     });
 
     const payablesByClientId = new Map<string, PayableRow[]>();

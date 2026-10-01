@@ -39,6 +39,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
 import { useAuth, type AppRole } from "@/hooks/use-auth";
+import { ROUTE_PERMISSIONS } from "@/lib/rbac-service";
 
 interface NavItem {
   title: string;
@@ -200,7 +201,9 @@ export function AppSidebar() {
       <SidebarContent>
         {sections.map((s) => {
           if (!canSee(s.roles)) return null;
-          const visibleItems = s.items.filter((item) => canSee(item.roles));
+          const visibleItems = s.items.filter((item) =>
+            canSee(item.roles ?? ROUTE_PERMISSIONS[item.url]),
+          );
           if (visibleItems.length === 0) return null;
           return (
             <SidebarGroup key={s.label}>

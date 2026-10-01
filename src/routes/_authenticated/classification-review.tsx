@@ -50,6 +50,7 @@ import {
   type PayeeClassification,
 } from "@/lib/classification-review.functions";
 import { exportToExcel } from "@/lib/xlsx-utils";
+import { useAuth } from "@/hooks/use-auth";
 
 export const Route = createFileRoute("/_authenticated/classification-review")({
   component: ClassificationReviewPage,
@@ -241,6 +242,8 @@ function ReviewRow({
 }
 
 function ClassificationReviewPage() {
+  const { hasAny } = useAuth();
+  const canManage = hasAny(["admin", "supervisor"]);
   const qc = useQueryClient();
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearchQuery = useDebounce(searchQuery, 300);
@@ -462,19 +465,21 @@ function ClassificationReviewPage() {
                   </CardDescription>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="border-emerald-600/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
-                    onClick={() => fixLineageMutation.mutate()}
-                    disabled={fixLineageMutation.isPending}
-                    title="Automatically detect and correct natural persons with family names who were misclassified as tax-exempt"
-                  >
-                    <Sparkles
-                      className={`h-3.5 w-3.5 mr-1.5 ${fixLineageMutation.isPending ? "animate-spin" : "text-emerald-600"}`}
-                    />
-                    {fixLineageMutation.isPending ? "Correcting..." : "Auto-Fix Natural Persons"}
-                  </Button>
+                  {canManage && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="border-emerald-600/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                      onClick={() => fixLineageMutation.mutate()}
+                      disabled={fixLineageMutation.isPending}
+                      title="Automatically detect and correct natural persons with family names who were misclassified as tax-exempt"
+                    >
+                      <Sparkles
+                        className={`h-3.5 w-3.5 mr-1.5 ${fixLineageMutation.isPending ? "animate-spin" : "text-emerald-600"}`}
+                      />
+                      {fixLineageMutation.isPending ? "Correcting..." : "Auto-Fix Natural Persons"}
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
                     size="sm"
@@ -639,35 +644,37 @@ function ClassificationReviewPage() {
                 <div>
                   <CardTitle className="text-base">Tax / TDS Consistency Exceptions</CardTitle>
                   <CardDescription>
-                    Payables where the stored amounts disagree with statutory rules (net ≠ gross − tax,
-                    or tax ≠ gross × rate). Click Recompute to recalculate and fix discrepancies
-                    immediately.
+                    Payables where the stored amounts disagree with statutory rules (net ≠ gross −
+                    tax, or tax ≠ gross × rate). Click Recompute to recalculate and fix
+                    discrepancies immediately.
                   </CardDescription>
                 </div>
                 {exceptions.data && exceptions.data.length > 0 && (
                   <div className="flex items-center gap-2">
-                    <Button
-                      variant="default"
-                      size="sm"
-                      className="h-8 text-xs bg-amber-600 hover:bg-amber-700 text-white"
-                      disabled={recomputeAllMutation.isPending}
-                      onClick={() => {
-                        const items = exceptions.data.map((r: any) => ({
-                          table: r.table,
-                          id: r.id,
-                        }));
-                        recomputeAllMutation.mutate(items);
-                      }}
-                    >
-                      <RefreshCw
-                        className={`w-3.5 h-3.5 mr-1.5 ${
-                          recomputeAllMutation.isPending ? "animate-spin" : ""
-                        }`}
-                      />
-                      {recomputeAllMutation.isPending
-                        ? "Recomputing All..."
-                        : `Recompute All (${exceptions.data.length})`}
-                    </Button>
+                    {canManage && (
+                      <Button
+                        variant="default"
+                        size="sm"
+                        className="h-8 text-xs bg-amber-600 hover:bg-amber-700 text-white"
+                        disabled={recomputeAllMutation.isPending}
+                        onClick={() => {
+                          const items = exceptions.data.map((r: any) => ({
+                            table: r.table,
+                            id: r.id,
+                          }));
+                          recomputeAllMutation.mutate(items);
+                        }}
+                      >
+                        <RefreshCw
+                          className={`w-3.5 h-3.5 mr-1.5 ${
+                            recomputeAllMutation.isPending ? "animate-spin" : ""
+                          }`}
+                        />
+                        {recomputeAllMutation.isPending
+                          ? "Recomputing All..."
+                          : `Recompute All (${exceptions.data.length})`}
+                      </Button>
+                    )}
                     <Button
                       variant="outline"
                       size="sm"
@@ -748,7 +755,8 @@ function ClassificationReviewPage() {
                               size="sm"
                               variant="outline"
                               className="h-7 text-xs"
-                              disabled={recomputeMutation.isPending}
+                              disabled={!canManage || recomputeMutation.isPending}
+                              title={!canManage ? "Requires Admin or Supervisor role" : undefined}
                               onClick={() =>
                                 recomputeMutation.mutate({ table: row.table, id: row.id })
                               }

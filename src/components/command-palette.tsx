@@ -37,6 +37,7 @@ import {
   Moon,
 } from "lucide-react";
 import { useAuth, type AppRole } from "@/hooks/use-auth";
+import { ROUTE_PERMISSIONS } from "@/lib/rbac-service";
 
 interface CommandRoute {
   title: string;
@@ -152,7 +153,7 @@ export function CommandPalette({
     return requiredRoles.some((r) => roles.includes(r));
   };
 
-  const visibleRoutes = routes.filter((r) => canSee(r.roles));
+  const visibleRoutes = routes.filter((r) => canSee(r.roles ?? ROUTE_PERMISSIONS[r.url]));
   const groups = Array.from(new Set(visibleRoutes.map((r) => r.group)));
 
   return (

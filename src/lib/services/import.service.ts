@@ -1525,13 +1525,15 @@ export const ImportService = {
             investorCategory !== "MUTUAL_FUND" &&
             investorCategory !== "TAX_EXEMPT"
           ) {
-            rowBonusTax = Math.round(rowIssuedBonus * 100 * rowTdsRate * 100) / 100;
+            rowBonusTax =
+              Math.round(rowIssuedBonus * (options?.faceValue || 100) * rowTdsRate * 100) / 100;
           }
         }
 
         if (!options?.isPreCalculated) {
           if (!grossAmount && sharesHeld && options?.dividendRate) {
-            const faceVal = targetTable === "mutual_fund_payables" ? 10 : 100;
+            const defaultFaceValue = targetTable === "mutual_fund_payables" ? 10 : 100;
+            const faceVal = options?.faceValue || defaultFaceValue;
             grossAmount =
               Math.round(sharesHeld * (faceVal * (options.dividendRate / 100)) * 100) / 100;
           }
@@ -1614,19 +1616,21 @@ export const ImportService = {
             : 365;
         if (!options?.isPreCalculated) {
           if (!grossAmount && sharesHeld && options?.dividendRate) {
-            // Debenture face value is NPR 1,000; coupon rate is annualized percentage
+            // Debenture face value defaults to NPR 1,000; coupon rate is annualized percentage
+            const debentureFaceVal = options?.faceValue || 1000;
             if (effectiveDays > 0 && effectiveDays < divisor) {
               grossAmount =
                 Math.round(
                   sharesHeld *
-                    1000 *
+                    debentureFaceVal *
                     (options.dividendRate / 100) *
                     (effectiveDays / divisor) *
                     100,
                 ) / 100;
             } else {
               grossAmount =
-                Math.round(sharesHeld * 1000 * (options.dividendRate / 100) * 100) / 100;
+                Math.round(sharesHeld * debentureFaceVal * (options.dividendRate / 100) * 100) /
+                100;
             }
           }
           if (!taxAmount && grossAmount && rowTdsRate > 0) {

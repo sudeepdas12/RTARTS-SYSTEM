@@ -310,3 +310,78 @@ export const RBACService = {
     ];
   },
 };
+
+/**
+ * Authoritative system route access policies by route path.
+ * Shared across the authenticated route guard (route.tsx), the application
+ * sidebar (app-sidebar.tsx), and the quick-action command palette (command-palette.tsx).
+ */
+export const ROUTE_PERMISSIONS: Record<string, AppRole[]> = {
+  "/users": ["admin"],
+  "/settings": ["admin", "supervisor"],
+  "/settings/fiscal-years": ["admin", "supervisor"],
+  "/data-management": ["admin", "supervisor"],
+  "/approvals": ["admin", "supervisor", "approver", "checker"],
+  "/audit-logs": ["admin", "auditor", "supervisor"],
+  "/backup": ["admin", "supervisor"],
+  "/companies": ["admin", "supervisor", "operator", "read_only"],
+  "/clients": ["admin", "supervisor", "operator", "maker", "checker", "approver", "read_only"],
+  "/dividend": [
+    "admin",
+    "supervisor",
+    "operator",
+    "maker",
+    "checker",
+    "approver",
+    "finance_operator",
+    "read_only",
+  ],
+  "/interest": [
+    "admin",
+    "supervisor",
+    "operator",
+    "maker",
+    "checker",
+    "approver",
+    "finance_operator",
+    "read_only",
+  ],
+  "/mutual-fund": [
+    "admin",
+    "supervisor",
+    "operator",
+    "maker",
+    "checker",
+    "approver",
+    "finance_operator",
+    "read_only",
+  ],
+  "/payments": [
+    "admin",
+    "supervisor",
+    "finance_operator",
+    "maker",
+    "checker",
+    "approver",
+    "read_only",
+  ],
+  "/reconciliation": ["admin", "supervisor", "reconciliation_officer", "finance_operator"],
+  "/allocations": ["admin", "supervisor", "finance_operator", "operator", "maker"],
+  "/agm-studio": ["admin", "supervisor", "operator", "finance_operator"],
+  "/upload": ["admin", "supervisor", "operator", "maker"],
+  "/upload-history": ["admin", "supervisor", "operator", "maker", "auditor"],
+  "/reports": [
+    "admin",
+    "supervisor",
+    "report_viewer",
+    "auditor",
+    "finance_operator",
+    "read_only",
+    "maker",
+    "operator",
+    "checker",
+    "approver",
+  ],
+  "/analytics": ["admin", "supervisor", "finance_operator", "report_viewer", "read_only"],
+  "/classification-review": ["admin", "supervisor", "checker", "approver", "operator"],
+};

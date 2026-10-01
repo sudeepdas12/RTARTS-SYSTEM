@@ -2,7 +2,7 @@ import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { supabase } from "@/integrations/supabase/client";
 import { AppShell } from "@/components/app-shell";
 import { ErrorBoundary } from "@/components/error-boundary";
-import { RBACService, type UserContext, type AppRole } from "@/lib/rbac-service";
+import { RBACService, type UserContext, type AppRole, ROUTE_PERMISSIONS } from "@/lib/rbac-service";
 
 export const Route = createFileRoute("/_authenticated")({
   ssr: false,
@@ -23,77 +23,8 @@ export const Route = createFileRoute("/_authenticated")({
       roles,
     };
 
-    // Role-based route protection
-    const restrictedPaths: Record<string, AppRole[]> = {
-      "/users": ["admin"],
-      "/settings/fiscal-years": ["admin", "supervisor"],
-      "/settings": ["admin"],
-      "/backup": ["admin", "supervisor"],
-      "/data-management": ["admin", "supervisor"],
-      "/approvals": ["admin", "supervisor", "approver", "checker"],
-      "/allocations": ["admin", "supervisor", "finance_operator", "operator", "maker"],
-      "/classification-review": ["admin", "supervisor", "checker", "approver", "operator"],
-      "/audit-logs": ["admin", "auditor", "supervisor"],
-      "/audit": ["admin", "auditor", "supervisor"],
-      "/payments": [
-        "admin",
-        "supervisor",
-        "finance_operator",
-        "maker",
-        "checker",
-        "approver",
-        "read_only",
-      ],
-      "/reports": [
-        "admin",
-        "supervisor",
-        "report_viewer",
-        "auditor",
-        "finance_operator",
-        "read_only",
-        "maker",
-        "operator",
-        "checker",
-        "approver",
-      ],
-      "/clients": ["admin", "supervisor", "operator", "maker", "checker", "approver", "read_only"],
-      "/companies": ["admin", "supervisor", "operator", "read_only"],
-      "/dividend": [
-        "admin",
-        "supervisor",
-        "operator",
-        "maker",
-        "checker",
-        "approver",
-        "finance_operator",
-        "read_only",
-      ],
-      "/interest": [
-        "admin",
-        "supervisor",
-        "operator",
-        "maker",
-        "checker",
-        "approver",
-        "finance_operator",
-        "read_only",
-      ],
-      "/mutual-fund": [
-        "admin",
-        "supervisor",
-        "operator",
-        "maker",
-        "checker",
-        "approver",
-        "finance_operator",
-        "read_only",
-      ],
-      "/reconciliation": ["admin", "supervisor", "reconciliation_officer", "finance_operator"],
-      "/upload": ["admin", "supervisor", "operator", "maker"],
-      "/upload-history": ["admin", "supervisor", "operator", "maker", "auditor"],
-      "/analytics": ["admin", "supervisor", "finance_operator", "report_viewer", "read_only"],
-      "/agm-studio": ["admin", "supervisor", "operator", "finance_operator"],
-    };
+    // Role-based route protection from central ROUTE_PERMISSIONS catalog
+    const restrictedPaths = ROUTE_PERMISSIONS;
 
     // Match most specific routes first
     const matchedPath = Object.keys(restrictedPaths)

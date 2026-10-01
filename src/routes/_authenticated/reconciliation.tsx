@@ -706,15 +706,19 @@ export function ReconciliationRoute() {
       const applyRes = await ReconciliationService.applyReconciliation(
         results as unknown as ReconciliationResultRow[],
       );
+      let historySaved = true;
       try {
         await ReconciliationService.saveResults(results);
       } catch (saveErr: any) {
+        historySaved = false;
         console.error("Ledger updated but failed to save reconciliation history:", saveErr);
-        toast.warning(
-          `Reconciliation applied (${applyRes.updated} payables updated), but saving history failed: ${saveErr?.message || saveErr}`,
+        toast.error(
+          `Ledger updated (${applyRes.updated} payables), but saving reconciliation history failed: ${saveErr?.message || saveErr}`,
         );
       }
-      if (
+      if (!historySaved) {
+        // History saving failed; do not show success toast
+      } else if (
         applyRes.updated === 0 &&
         applyRes.paymentsCreated === 0 &&
         (applyRes.alreadyPaid ?? 0) > 0
@@ -899,16 +903,20 @@ export function ReconciliationRoute() {
       const applyRes = await ReconciliationService.applyReconciliation(
         allSelectedResults as unknown as ReconciliationResultRow[],
       );
+      let historySaved = true;
       try {
         await ReconciliationService.saveResults(allSelectedResults);
       } catch (saveErr: any) {
+        historySaved = false;
         console.error("Ledger updated but failed to save reconciliation history:", saveErr);
-        toast.warning(
-          `Reconciliation applied (${applyRes.updated} payables updated), but saving history failed: ${saveErr?.message || saveErr}`,
+        toast.error(
+          `Ledger updated (${applyRes.updated} payables), but saving reconciliation history failed: ${saveErr?.message || saveErr}`,
         );
       }
       const rejectedCount = allSelectedResults.filter((r) => r.result === "Rejected").length;
-      if (
+      if (!historySaved) {
+        // History saving failed; do not show success toast
+      } else if (
         applyRes.updated === 0 &&
         applyRes.paymentsCreated === 0 &&
         (applyRes.alreadyPaid ?? 0) > 0
