@@ -414,6 +414,14 @@ graph LR
 - Unmatched records are flagged with clear errors; ambiguous guessing or arbitrary fallback is strictly prohibited.
 - Reversals are executed via `revert_reconciliation_lot_atomic`, atomically resetting payables to `Pending` and removing tracking lots.
 
+> [!NOTE]
+> **Operational Distinction Between 0.50 NPR and 0.05 NPR Tolerances:**
+>
+> | Scope                                       | Threshold                                 | Where Defined                                                                        | Operational Rationale                                                                                                                                                                                                                                                                                                        |
+> | ------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+> | **Internal Ledger Balance Invariant**       | $\mathbf{\pm 0.05\text{ NPR}}$ (5 paisa)  | `chk_div_balance_invariant`, `chk_int_balance_invariant`, `chk_mf_balance_invariant` | Strict internal ledger math invariant ($                                                                                                                                                                                                                                                                                     | \text{Gross} - \text{Tax} - \text{Net} | \le 0.05$). Absorbs 2-decimal rounding adjustments across multiple tax brackets while strictly preventing penny leakage or accounting ledger drift. |
+> | **External Bank Settlement Reconciliation** | $\mathbf{\pm 0.50\text{ NPR}}$ (50 paisa) | `RECONCILIATION_TOLERANCE_NPR` in `src/lib/constants.ts`                             | Accommodates commercial banking gateway batch truncation, clearing house (ConnectIPS / NCHL) fractional variances, and intermediary fee rounding. Enforcing a strict 5-paisa limit on third-party bank statements would cause valid settlement records to falsely fail automated matching due to partner bank-side rounding. |
+
 #### Investor Protection Fund (IAF) Allocation
 
 - Unclaimed dividends $> 5$ years are flagged for transfer to the government IAF under Nepalese Company Act provisions.
