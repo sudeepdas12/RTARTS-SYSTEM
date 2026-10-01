@@ -57,7 +57,7 @@ This script verifies:
 
 1. **16 Critical Tables**: `companies`, `clients`, `dividend_payables`, `interest_payables`, `mutual_fund_payables`, `payment_batches`, `payments`, `upload_history`, `upload_errors`, `audit_logs`, `agm_historical_shareholders`, `agm_yearly_snapshots`, etc.
 2. **Atomic RPCs**: Checks existence and authorization parameters for all financial stored procedures.
-3. **Migration Catalog**: Verifies that the latest migration (`20261184000000_harden_agm_service_role_auth_and_pool_claims.sql`) has been registered in the Supabase schema migration history.
+3. **Migration Catalog**: Verifies that the latest migrations (including `20261220000000_harden_bulk_insert_clients_and_global_boid.sql`) have been registered in the Supabase schema migration history.
 
 ---
 

@@ -22,8 +22,8 @@ test.describe("Authentication and System Navigation Workflows", () => {
   test("auth page displays system branding and validation controls", async ({ page }) => {
     await page.goto("/auth");
 
-    await expect(page.locator("text=RBBMBL").first()).toBeVisible();
-    await expect(page.locator("text=RTA / RTS Console").first()).toBeVisible();
+    await expect(page.locator('img[alt*="RBBMBL"]').first()).toBeVisible();
+    await expect(page.locator("text=RTA / RTS Management Console").first()).toBeVisible();
     await expect(page.locator("text=Access your console").first()).toBeVisible();
 
     const emailInput = page.locator('input[type="email"]');

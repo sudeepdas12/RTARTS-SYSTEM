@@ -192,6 +192,58 @@ describe("Smart Shareholder Classification Engine (Ultra-Smart & Multi-Tier)", (
     });
   });
 
+  describe("3b. Regression: Nepali given names that share tokens with fund scheme names", () => {
+    it('does NOT classify "YOJANA <surname>" as Mutual Fund (YOJANA is a common Nepali given name)', () => {
+      // Five names from RMF1 Original that were incorrectly classified as MUTUAL_FUND
+      const cases = [
+        { full_name: "YOJANA ACHARYA", father_name: "LAXUMAN ACHARYA" },
+        { full_name: "Yojana Shrestha", father_name: "Nrsingh Bahadur Shrestha" },
+        { full_name: "Yojana Baral", father_name: "Bishnu Prasad Baral" },
+        { full_name: "Yojana Subedi", father_name: "Kedarnath Subedi" },
+      ];
+      for (const input of cases) {
+        const result = smartClassify(input);
+        expect(result.payee_classification, `${input.full_name} should be NATURAL_PERSON`).toBe(
+          "NATURAL_PERSON",
+        );
+        expect(result.payee_category, `${input.full_name} should be PUBLIC`).toBe("PUBLIC");
+        expect(result.tds_rate_dividend, `${input.full_name} dividend TDS should be 5%`).toBe(0.05);
+        expect(result.tds_rate_debenture, `${input.full_name} debenture TDS should be 6%`).toBe(
+          0.06,
+        );
+      }
+    });
+
+    it('does NOT classify "LUK MAYA THAPA" as Mutual Fund (LUK is a Nepali given name fragment)', () => {
+      const result = smartClassify({
+        full_name: "LUK MAYA THAPA",
+        father_name: "KESHOR BAHADUR THAPA",
+      });
+      expect(result.payee_classification).toBe("NATURAL_PERSON");
+      expect(result.payee_category).toBe("PUBLIC");
+      expect(result.tds_rate_dividend).toBe(0.05);
+    });
+
+    it("still classifies genuine mutual fund names correctly (NABIL BALANCED FUND-II, NIBL SAMRIDDHI FUND-II)", () => {
+      const balanced = smartClassify({ full_name: "NABIL BALANCED FUND-II" });
+      expect(balanced.payee_classification).toBe("TAX_EXEMPT");
+      expect(balanced.payee_category).toBe("MUTUAL_FUND");
+      expect(balanced.tds_rate_dividend).toBe(0.0);
+      expect(balanced.tds_rate_debenture).toBe(0.0);
+
+      const samriddhi = smartClassify({ full_name: "NIBL SAMRIDDHI FUND-II" });
+      expect(samriddhi.payee_classification).toBe("TAX_EXEMPT");
+      expect(samriddhi.tds_rate_dividend).toBe(0.0);
+    });
+
+    it("classifies CIT-Citizen Unit Scheme as TAX_EXEMPT (statutory fund via CIT match)", () => {
+      const cit = smartClassify({ full_name: "CIT- Citizen Unit Scheme" });
+      expect(cit.payee_classification).toBe("TAX_EXEMPT");
+      expect(cit.tds_rate_dividend).toBe(0.0);
+      expect(cit.tds_rate_debenture).toBe(0.0);
+    });
+  });
+
   describe("4. Promoter & Local Segments", () => {
     it("classifies individual promoter correctly", () => {
       const prom = smartClassify({

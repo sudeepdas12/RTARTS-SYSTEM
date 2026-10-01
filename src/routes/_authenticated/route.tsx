@@ -28,6 +28,7 @@ export const Route = createFileRoute("/_authenticated")({
       "/users": ["admin"],
       "/settings/fiscal-years": ["admin", "supervisor"],
       "/settings": ["admin"],
+      "/backup": ["admin", "supervisor"],
       "/data-management": ["admin", "supervisor"],
       "/approvals": ["admin", "supervisor", "approver", "checker"],
       "/allocations": ["admin", "supervisor", "finance_operator", "operator", "maker"],

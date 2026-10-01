@@ -107,7 +107,7 @@ const sections: NavSection[] = [
         title: "Classification Review",
         url: "/classification-review",
         icon: ListChecks,
-        roles: ["admin", "supervisor"] as AppRole[],
+        roles: ["admin", "supervisor", "checker", "approver", "operator"] as AppRole[],
       },
       {
         title: "Audit Log",

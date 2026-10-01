@@ -43,8 +43,44 @@ async function assertAdmin(context: { supabase: any; userId: string }) {
     _role: "admin",
   });
   if (error || data !== true) {
-    throw new Error("You need administrator privileges to manage payee classifications.");
+    throw new Error("You need administrator privileges to perform this action.");
   }
+}
+
+const ALLOWED_REVIEW_ROLES = ["admin", "supervisor", "checker", "approver", "operator"];
+
+async function assertReviewAccess(context: {
+  supabase: any;
+  userId: string;
+}): Promise<{ isGlobal: boolean; allowedCompanyIds: string[] | null }> {
+  const { data: roleRows, error } = await context.supabase
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", context.userId);
+
+  if (error || !roleRows || roleRows.length === 0) {
+    throw new Error("Unauthorized: Access denied.");
+  }
+
+  const userRoles = roleRows.map((r: any) => r.role);
+  const hasAllowedRole = userRoles.some((r: string) => ALLOWED_REVIEW_ROLES.includes(r));
+  if (!hasAllowedRole) {
+    throw new Error("You do not have permission to access payee classification review.");
+  }
+
+  const isGlobal = userRoles.some((r: string) => r === "admin" || r === "supervisor");
+  if (isGlobal) {
+    return { isGlobal: true, allowedCompanyIds: null };
+  }
+
+  // Non-global roles: query explicit company access
+  const { data: accessRows } = await context.supabase
+    .from("user_company_access")
+    .select("company_id")
+    .eq("user_id", context.userId);
+
+  const allowedCompanyIds = (accessRows || []).map((r: any) => r.company_id).filter(Boolean);
+  return { isGlobal: false, allowedCompanyIds };
 }
 
 /**
@@ -54,16 +90,25 @@ async function assertAdmin(context: { supabase: any; userId: string }) {
  */
 export const adminListReviewClients = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .handler(async (): Promise<any[]> => {
+  .handler(async ({ context }): Promise<any[]> => {
+    const { isGlobal, allowedCompanyIds } = await assertReviewAccess(context);
+    if (!isGlobal && (!allowedCompanyIds || allowedCompanyIds.length === 0)) {
+      return [];
+    }
+
     const { supabaseAdmin }: any = await import("@/integrations/supabase/client.server");
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from("clients")
       .select(
-        "id, boid, full_name, holder_type, payee_classification, payee_segment, classification_status, classification_source, pan_or_citizenship, company:companies(company_name)",
+        "id, boid, full_name, holder_type, payee_classification, payee_segment, classification_status, classification_source, pan_or_citizenship, company_id, company:companies(company_name)",
       )
-      .or("classification_status.eq.REVIEW_REQUIRED,payee_classification.eq.UNCLASSIFIED")
-      .order("full_name")
-      .limit(3000);
+      .or("classification_status.eq.REVIEW_REQUIRED,payee_classification.eq.UNCLASSIFIED");
+
+    if (!isGlobal && allowedCompanyIds && allowedCompanyIds.length > 0) {
+      query = query.in("company_id", allowedCompanyIds);
+    }
+
+    const { data, error } = await query.order("full_name").limit(3000);
     if (error) throw new Error(error.message);
     return data ?? [];
   });
@@ -84,7 +129,7 @@ export const adminConfirmClientClassification = createServerFn({ method: "POST" 
   )
   .middleware([requireSupabaseAuth])
   .handler(async ({ data, context }) => {
-    await assertAdmin(context);
+    const { isGlobal, allowedCompanyIds } = await assertReviewAccess(context);
 
     if (data.classification === "UNCLASSIFIED") {
       throw new Error("Confirming a client requires a real classification, not UNCLASSIFIED.");
@@ -97,6 +142,26 @@ export const adminConfirmClientClassification = createServerFn({ method: "POST" 
     }
 
     const { supabaseAdmin }: any = await import("@/integrations/supabase/client.server");
+
+    // Company scoping check for non-global users
+    if (!isGlobal) {
+      if (!allowedCompanyIds || allowedCompanyIds.length === 0) {
+        throw new Error("Forbidden: You do not have access to any companies.");
+      }
+      const { data: clientRec } = await supabaseAdmin
+        .from("clients")
+        .select("company_id")
+        .eq("id", data.clientId)
+        .maybeSingle();
+
+      if (
+        !clientRec ||
+        !clientRec.company_id ||
+        !allowedCompanyIds.includes(clientRec.company_id)
+      ) {
+        throw new Error("Forbidden: You do not have access to this client's company.");
+      }
+    }
 
     // Single authoritative source for the TDS rate.
     const { data: rules } = await supabaseAdmin
@@ -161,17 +226,27 @@ export const adminConfirmClientClassification = createServerFn({ method: "POST" 
  */
 export const adminListTaxExceptions = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .handler(async (): Promise<any[]> => {
+  .handler(async ({ context }): Promise<any[]> => {
+    const { isGlobal, allowedCompanyIds } = await assertReviewAccess(context);
+    if (!isGlobal && (!allowedCompanyIds || allowedCompanyIds.length === 0)) {
+      return [];
+    }
+
     const { supabaseAdmin }: any = await import("@/integrations/supabase/client.server");
     const out: any[] = [];
 
     for (const [table, meta] of Object.entries(PAYABLE_TABLES)) {
-      const { data, error } = await supabaseAdmin
+      let query = supabaseAdmin
         .from(table)
         .select(
-          `id, ${meta.grossCol}, tax_amount, net_payable, tds_rate, payee_classification, client:clients(full_name, boid, payee_classification), company:companies(company_name)`,
-        )
-        .limit(8000);
+          `id, ${meta.grossCol}, tax_amount, net_payable, tds_rate, payee_classification, company_id, client:clients(full_name, boid, payee_classification), company:companies(company_name)`,
+        );
+
+      if (!isGlobal && allowedCompanyIds && allowedCompanyIds.length > 0) {
+        query = query.in("company_id", allowedCompanyIds);
+      }
+
+      const { data, error } = await query.limit(8000);
       if (error) continue;
 
       for (const row of data ?? []) {

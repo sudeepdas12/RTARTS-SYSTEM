@@ -706,7 +706,14 @@ export function ReconciliationRoute() {
       const applyRes = await ReconciliationService.applyReconciliation(
         results as unknown as ReconciliationResultRow[],
       );
-      await ReconciliationService.saveResults(results);
+      try {
+        await ReconciliationService.saveResults(results);
+      } catch (saveErr: any) {
+        console.error("Ledger updated but failed to save reconciliation history:", saveErr);
+        toast.warning(
+          `Reconciliation applied (${applyRes.updated} payables updated), but saving history failed: ${saveErr?.message || saveErr}`,
+        );
+      }
       if (
         applyRes.updated === 0 &&
         applyRes.paymentsCreated === 0 &&
@@ -892,7 +899,14 @@ export function ReconciliationRoute() {
       const applyRes = await ReconciliationService.applyReconciliation(
         allSelectedResults as unknown as ReconciliationResultRow[],
       );
-      await ReconciliationService.saveResults(allSelectedResults);
+      try {
+        await ReconciliationService.saveResults(allSelectedResults);
+      } catch (saveErr: any) {
+        console.error("Ledger updated but failed to save reconciliation history:", saveErr);
+        toast.warning(
+          `Reconciliation applied (${applyRes.updated} payables updated), but saving history failed: ${saveErr?.message || saveErr}`,
+        );
+      }
       const rejectedCount = allSelectedResults.filter((r) => r.result === "Rejected").length;
       if (
         applyRes.updated === 0 &&

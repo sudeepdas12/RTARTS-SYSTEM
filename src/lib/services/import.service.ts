@@ -57,18 +57,19 @@ async function fetchClientInfoByBoids(
   const map = new Map<string, ClientRecordMeta>();
   for (let i = 0; i < boids.length; i += CLIENT_LOOKUP_BATCH) {
     const part = boids.slice(i, i + CLIENT_LOOKUP_BATCH);
-    let q = (supabase as any)
+    const { data } = await (supabase as any)
       .from("clients")
       .select(
-        "id, boid, client_code, holder_type, payee_classification, payee_segment, nid_number, pan_no, citizenship_no",
+        "id, boid, company_id, client_code, holder_type, payee_classification, payee_segment, nid_number, pan_no, citizenship_no",
       )
       .in("boid", part);
-    if (companyId) {
-      q = q.eq("company_id", companyId);
-    }
-    const { data } = await q;
     for (const c of data || []) {
-      if (c?.boid) map.set(String(c.boid), c);
+      if (c?.boid) {
+        const boidKey = String(c.boid);
+        if (!map.has(boidKey) || (companyId && c.company_id === companyId)) {
+          map.set(boidKey, c);
+        }
+      }
     }
   }
   return map;
@@ -337,6 +338,7 @@ export const ImportService = {
       isRawInputFile?: boolean;
       daysCount?: number;
       dayCountConvention?: string;
+      faceValue?: number;
     },
     sharedContext?: {
       companyId?: string;
@@ -422,6 +424,9 @@ export const ImportService = {
           totalRows: options?.totalRows,
           userId: options?.userId,
           daysCount: options?.daysCount,
+          dayCountConvention: options?.dayCountConvention,
+          isPreCalculated: options?.isPreCalculated,
+          faceValue: options?.faceValue,
         },
       });
 
@@ -1144,7 +1149,7 @@ export const ImportService = {
           try {
             const { error: insErr } = await (supabase as any)
               .from("clients")
-              .upsert(clientRec, { onConflict: "company_id,boid" });
+              .upsert(clientRec, { onConflict: "boid" });
             if (!insErr) {
               clientsInserted++;
             } else {
@@ -1185,7 +1190,7 @@ export const ImportService = {
               };
               const { error: insErr2 } = await (supabase as any)
                 .from("clients")
-                .upsert(baseClient, { onConflict: "company_id,boid" });
+                .upsert(baseClient, { onConflict: "boid" });
               if (!insErr2) clientsInserted++;
             }
           } catch (cEx) {

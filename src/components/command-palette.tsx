@@ -15,7 +15,7 @@ import {
   Building2,
   Users,
   Wallet,
-  LineChart,
+  TrendingUp,
   ArrowLeftRight,
   Coins,
   FileText,
@@ -24,30 +24,110 @@ import {
   ClipboardCheck,
   History,
   UserCog,
+  CreditCard,
+  Package,
+  Landmark,
+  BarChart3,
+  ListChecks,
+  ShieldCheck,
+  Database,
+  HardDrive,
+  Settings,
   Sun,
   Moon,
 } from "lucide-react";
+import { useAuth, type AppRole } from "@/hooks/use-auth";
 
-const routes = [
+interface CommandRoute {
+  title: string;
+  url: string;
+  icon: React.ElementType;
+  group: string;
+  roles?: AppRole[];
+}
+
+const routes: CommandRoute[] = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard, group: "Overview" },
   { title: "Companies", url: "/companies", icon: Building2, group: "Master Data" },
   { title: "Clients", url: "/clients", icon: Users, group: "Master Data" },
   { title: "Debenture Interest", url: "/interest", icon: Wallet, group: "Payables" },
-  { title: "Stock Dividend", url: "/dividend", icon: LineChart, group: "Payables" },
+  { title: "Stock Dividend", url: "/dividend", icon: TrendingUp, group: "Payables" },
   { title: "Mutual Fund", url: "/mutual-fund", icon: Coins, group: "Payables" },
+  { title: "Payments", url: "/payments", icon: CreditCard, group: "Operations" },
   {
     title: "Bank Reconciliation",
     url: "/reconciliation",
     icon: ArrowLeftRight,
     group: "Operations",
   },
-  { title: "IAF Allocations", url: "/allocations", icon: Coins, group: "Operations" },
-  { title: "Pending Approvals", url: "/approvals", icon: ClipboardCheck, group: "Operations" },
-  { title: "Uploads", url: "/uploads", icon: Upload, group: "Operations" },
-  { title: "Reports", url: "/reports", icon: FileText, group: "Insights" },
-  { title: "Audit Log", url: "/audit", icon: History, group: "Insights" },
-  { title: "Users & Roles", url: "/users", icon: UserCog, group: "Administration" },
-  { title: "Fiscal Years", url: "/settings/fiscal-years", icon: Calendar, group: "Administration" },
+  {
+    title: "CDSC & IAF Allotments",
+    url: "/allocations",
+    icon: Package,
+    group: "Operations",
+    roles: ["admin", "supervisor", "finance_operator", "operator", "maker"],
+  },
+  { title: "AGM Historical Studio", url: "/agm-studio", icon: Landmark, group: "Operations" },
+  {
+    title: "Pending Approvals",
+    url: "/approvals",
+    icon: ClipboardCheck,
+    group: "Operations",
+    roles: ["admin", "supervisor", "approver", "checker"],
+  },
+  { title: "Upload Data", url: "/upload", icon: Upload, group: "Operations" },
+  { title: "Upload History", url: "/upload-history", icon: History, group: "Operations" },
+  { title: "Reports", url: "/reports", icon: FileText, group: "Insights & Operations" },
+  { title: "Analytics", url: "/analytics", icon: BarChart3, group: "Insights & Operations" },
+  {
+    title: "Classification Review",
+    url: "/classification-review",
+    icon: ListChecks,
+    group: "Insights & Operations",
+    roles: ["admin", "supervisor", "checker", "approver", "operator"],
+  },
+  {
+    title: "Audit Log",
+    url: "/audit-logs",
+    icon: ShieldCheck,
+    group: "Insights & Operations",
+    roles: ["admin", "auditor", "supervisor"],
+  },
+  {
+    title: "Data Management",
+    url: "/data-management",
+    icon: Database,
+    group: "Insights & Operations",
+    roles: ["admin", "supervisor"],
+  },
+  {
+    title: "Users & Roles",
+    url: "/users",
+    icon: UserCog,
+    group: "Administration",
+    roles: ["admin"],
+  },
+  {
+    title: "Fiscal Years",
+    url: "/settings/fiscal-years",
+    icon: Calendar,
+    group: "Administration",
+    roles: ["admin", "supervisor"],
+  },
+  {
+    title: "Backup & Recovery",
+    url: "/backup",
+    icon: HardDrive,
+    group: "Administration",
+    roles: ["admin", "supervisor"],
+  },
+  {
+    title: "System Settings",
+    url: "/settings",
+    icon: Settings,
+    group: "Administration",
+    roles: ["admin"],
+  },
 ];
 
 export function CommandPalette({
@@ -59,13 +139,21 @@ export function CommandPalette({
 }) {
   const navigate = useNavigate();
   const { theme, setTheme } = useTheme();
+  const { roles } = useAuth();
 
   const go = (url: string) => {
     onOpenChange(false);
     navigate({ to: url });
   };
 
-  const groups = Array.from(new Set(routes.map((r) => r.group)));
+  const canSee = (requiredRoles?: AppRole[]) => {
+    if (!requiredRoles || requiredRoles.length === 0) return true;
+    if (roles.includes("admin")) return true;
+    return requiredRoles.some((r) => roles.includes(r));
+  };
+
+  const visibleRoutes = routes.filter((r) => canSee(r.roles));
+  const groups = Array.from(new Set(visibleRoutes.map((r) => r.group)));
 
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange}>
@@ -74,7 +162,7 @@ export function CommandPalette({
         <CommandEmpty>No results found.</CommandEmpty>
         {groups.map((g) => (
           <CommandGroup key={g} heading={g}>
-            {routes
+            {visibleRoutes
               .filter((r) => r.group === g)
               .map((r) => (
                 <CommandItem key={r.url} onSelect={() => go(r.url)} value={`${r.title} ${r.url}`}>

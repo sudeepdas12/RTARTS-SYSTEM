@@ -23,6 +23,10 @@ interface ChunkPayload {
   sheetName?: string;
   totalRows?: number;
   userId?: string;
+  daysCount?: number;
+  dayCountConvention?: string;
+  isPreCalculated?: boolean;
+  faceValue?: number;
 }
 
 /**
@@ -180,7 +184,9 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
       legalPersonName,
     );
   const isMutualFundScheme =
-    /(MUTUAL\s*FUND|\bMF\b|FOCUS\s*(40|30|25|\d+)|SELECT\s*(30|40|\d+)|SUPER\s*(30|40|\d+)|\bNMB\s*(50|HYBRID|SARAL|SULAV|SAMRIDDHI)|\b50\b|SAMRIDDHI\s*FUND|SAMUNNAT\s*SCHEME|PRAGATI\s*FUND|SAHABHAGITA\s*FUND|DHANABRIDDHI\s*YOJANA|SABAL\s*FUND|UNNATI\s*FUND|SARAL\s*(BACHAT|FUND)|SHUBHA\s*LAXMI\s*KOSH|EQUITY\s*(FUND|SCHEME|ORIENTED)|GROWTH\s*(FUND|SCHEME)|BALANCED\s*(FUND|SCHEME)|BLUECHIP\s*(FUND|SCHEME)|LARGE\s*CAP(\s*FUND)?|FLEXI\s*CAP(\s*FUND)?|VALUE\s*FUND|DEBT\s*FUND|FIXED\s*INCOME|DYNAMIC\s*DEBT(\s*FUND)?|SYSTEMATIC\s*INVESTMENT|DIVIDEND\s*YIELD\s*FUND|MONEY\s*MARKET\s*FUND|INDEX\s*FUND|CWEDA\s*EQUITY\s*FUND|STABLE\s*FUND|RESOURCE\s*FUND|HYBRID\s*FUND|SMART\s*FUND|\bYOJANA\b|\bSSIS\b)/i.test(
+    // NOTE: \bYOJANA\b alone is NOT a fund name — it is a common Nepali given name.
+    // Only match YOJANA when followed by a fund-qualifying keyword (FUND, SCHEME, KOSH, etc.)
+    /(MUTUAL\s*FUND|\bMF\b|FOCUS\s*(40|30|25|\d+)|SELECT\s*(30|40|\d+)|SUPER\s*(30|40|\d+)|\bNMB\s*(50|HYBRID|SARAL|SULAV|SAMRIDDHI)|\b50\b|SAMRIDDHI\s*FUND|SAMUNNAT\s*SCHEME|PRAGATI\s*FUND|SAHABHAGITA\s*FUND|DHANABRIDDHI\s*YOJANA|SABAL\s*FUND|UNNATI\s*FUND|SARAL\s*(BACHAT|FUND)|SHUBHA\s*LAXMI\s*KOSH|EQUITY\s*(FUND|SCHEME|ORIENTED)|GROWTH\s*(FUND|SCHEME)|BALANCED\s*(FUND|SCHEME)|BLUECHIP\s*(FUND|SCHEME)|LARGE\s*CAP(\s*FUND)?|FLEXI\s*CAP(\s*FUND)?|VALUE\s*FUND|DEBT\s*FUND|FIXED\s*INCOME|DYNAMIC\s*DEBT(\s*FUND)?|SYSTEMATIC\s*INVESTMENT|DIVIDEND\s*YIELD\s*FUND|MONEY\s*MARKET\s*FUND|INDEX\s*FUND|CWEDA\s*EQUITY\s*FUND|STABLE\s*FUND|RESOURCE\s*FUND|HYBRID\s*FUND|SMART\s*FUND|YOJANA\s+(FUND|SCHEME|KOSH|BACHAT|LAGANI)|\bSSIS\b)/i.test(
       legalPersonName,
     );
 
@@ -345,13 +351,14 @@ async function fetchClientIdsByBoids(
   const map = new Map<string, string>();
   for (let i = 0; i < boids.length; i += CLIENT_LOOKUP_BATCH) {
     const part = boids.slice(i, i + CLIENT_LOOKUP_BATCH);
-    let q = supabase.from("clients").select("id, boid").in("boid", part);
-    if (companyId) {
-      q = q.eq("company_id", companyId);
-    }
-    const { data } = await q;
+    const { data } = await supabase.from("clients").select("id, boid, company_id").in("boid", part);
     for (const c of data || []) {
-      if (c?.boid) map.set(String(c.boid), c.id);
+      if (c?.boid) {
+        const boidKey = String(c.boid);
+        if (!map.has(boidKey) || (companyId && c.company_id === companyId)) {
+          map.set(boidKey, c.id);
+        }
+      }
     }
   }
   return map;
@@ -479,6 +486,10 @@ serve(async (req) => {
       tdsRate,
       dividendType,
       sheetType,
+      daysCount: payloadDaysCount,
+      dayCountConvention,
+      isPreCalculated,
+      faceValue: payloadFaceValue,
     } = payload;
 
     // Health-check / misconfigured calls should return a clear error instead of crashing
@@ -1123,28 +1134,49 @@ serve(async (req) => {
       let netPayable = rawNet;
 
       if (targetTable === "dividend_payables" || targetTable === "mutual_fund_payables") {
-        // Auto-calculate gross from shares × dividend rate if gross is missing
-        if (!grossAmount && sharesHeld && dividendRate) {
-          grossAmount = Math.round(sharesHeld * dividendRate * 100) / 100;
+        const defaultFaceValue = targetTable === "mutual_fund_payables" ? 10 : 100;
+        const faceVal = payloadFaceValue || defaultFaceValue;
+
+        const rowIssuedBonus = Number(row.bonus_issued || row.BONUS_ISSUED || 0);
+        let rowBonusTax = Number(row.bon_tax || row.bonus_tax || 0);
+        if (
+          !rowBonusTax &&
+          rowIssuedBonus > 0 &&
+          rowTdsRate > 0 &&
+          investorCategory !== "MUTUAL_FUND" &&
+          investorCategory !== "TAX_EXEMPT"
+        ) {
+          rowBonusTax = Math.round(rowIssuedBonus * 100 * rowTdsRate * 100) / 100;
         }
-        // Auto-calculate tax from gross using the ROW-LEVEL TDS rate
-        if (!taxAmount && grossAmount && rowTdsRate > 0) {
-          taxAmount = Math.round(grossAmount * rowTdsRate * 100) / 100;
+
+        if (!isPreCalculated) {
+          // Auto-calculate gross from shares × dividend rate if gross is missing
+          if (!grossAmount && sharesHeld && dividendRate) {
+            grossAmount = Math.round(sharesHeld * (faceVal * (dividendRate / 100)) * 100) / 100;
+          }
+          // Auto-calculate tax from gross using the ROW-LEVEL TDS rate
+          if (!taxAmount && grossAmount && rowTdsRate > 0) {
+            taxAmount = Math.round(grossAmount * rowTdsRate * 100) / 100;
+          }
+          const totalTaxToDeduct = taxAmount + rowBonusTax;
+          if (!netPayable && grossAmount) {
+            netPayable = Math.max(0, Math.round((grossAmount - totalTaxToDeduct) * 100) / 100);
+          }
+          if (!grossAmount) grossAmount = netPayable || 0;
+          if (!netPayable)
+            netPayable = Math.max(0, Math.round((grossAmount - totalTaxToDeduct) * 100) / 100);
         }
-        // Auto-calculate net = gross - tax if net is missing
-        if (!netPayable && grossAmount) {
-          netPayable = Math.round((grossAmount - taxAmount) * 100) / 100;
-        }
-        if (!grossAmount) grossAmount = netPayable || 0;
-        if (!netPayable) netPayable = Math.round((grossAmount - taxAmount) * 100) / 100;
 
         payables.push({
           upload_id: uploadId,
           company_id: companyId,
           client_id: clientId,
           gross_dividend: grossAmount,
-          tax_amount: taxAmount,
-          net_payable: netPayable,
+          tax_amount: taxAmount + rowBonusTax,
+          net_payable: Math.max(
+            0,
+            netPayable - (rowBonusTax > 0 && !isPreCalculated ? rowBonusTax : 0),
+          ),
           shares_held: sharesHeld,
           dividend_rate: dividendRate ?? null,
           bonus_rate: bonusRate ?? null,
@@ -1155,7 +1187,7 @@ serve(async (req) => {
           bonus_issued: Number(row.bonus_issued || 0) || null,
           bonus_fraction: Number(row.bonus_fraction || 0) || null,
           after_bonus_kitta: Number(row.after_bonus_kitta || 0) || null,
-          bonus_tax: Number(row.bon_tax || 0) || null,
+          bonus_tax: rowBonusTax || Number(row.bon_tax || 0) || null,
           bank_name: bankName || null,
           bank_account_no: bankAccountNo || null,
           bank_branch: bankBranch || null,
@@ -1168,24 +1200,36 @@ serve(async (req) => {
             investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
         });
       } else if (targetTable === "interest_payables") {
-        // Auto-calculate from shares × rate if gross missing (Debenture face value is NPR 1,000)
-        if (!grossAmount && sharesHeld && dividendRate) {
-          grossAmount = Math.round(sharesHeld * 1000 * (dividendRate / 100) * 100) / 100;
-        }
-        // Auto-calculate tax using ROW-LEVEL TDS rate
-        if (!taxAmount && grossAmount && rowTdsRate > 0) {
-          taxAmount = Math.round(grossAmount * rowTdsRate * 100) / 100;
-        }
-        if (!netPayable && grossAmount) {
-          netPayable = Math.round((grossAmount - taxAmount) * 100) / 100;
-        }
-        if (!grossAmount) grossAmount = netPayable || 0;
-        if (!netPayable) netPayable = Math.round((grossAmount - taxAmount) * 100) / 100;
-
         const rawDays = Number(
           row.days_count || row.days || row.period || row.DAYS || row.PERIOD || 0,
         );
-        const daysCount = rawDays > 0 ? rawDays : isDebenture ? 183 : null;
+        const effectiveDays =
+          payloadDaysCount || (rawDays > 0 ? rawDays : isDebenture ? 183 : null);
+        const divisor =
+          dayCountConvention === "30_360" || dayCountConvention === "30/360" ? 360 : 365;
+
+        if (!isPreCalculated) {
+          // Auto-calculate from shares × rate if gross missing (Debenture face value is NPR 1,000)
+          if (!grossAmount && sharesHeld && dividendRate) {
+            if (effectiveDays && effectiveDays > 0 && effectiveDays < divisor) {
+              grossAmount =
+                Math.round(
+                  sharesHeld * 1000 * (dividendRate / 100) * (effectiveDays / divisor) * 100,
+                ) / 100;
+            } else {
+              grossAmount = Math.round(sharesHeld * 1000 * (dividendRate / 100) * 100) / 100;
+            }
+          }
+          // Auto-calculate tax using ROW-LEVEL TDS rate
+          if (!taxAmount && grossAmount && rowTdsRate > 0) {
+            taxAmount = Math.round(grossAmount * rowTdsRate * 100) / 100;
+          }
+          if (!netPayable && grossAmount) {
+            netPayable = Math.round((grossAmount - taxAmount) * 100) / 100;
+          }
+          if (!grossAmount) grossAmount = netPayable || 0;
+          if (!netPayable) netPayable = Math.round((grossAmount - taxAmount) * 100) / 100;
+        }
 
         payables.push({
           upload_id: uploadId,
@@ -1197,7 +1241,7 @@ serve(async (req) => {
           tax_amount: taxAmount,
           net_payable: netPayable,
           tds_rate: rowTdsRate,
-          days_count: daysCount,
+          days_count: effectiveDays,
           due_date: dueDate,
           fiscal_year: fiscalYear ?? null,
           bank_name: bankName || null,

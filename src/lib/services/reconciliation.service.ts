@@ -185,38 +185,32 @@ export const ReconciliationService = {
     return Array.from(map.values());
   },
 
-  async saveResults(
-    results: Record<string, any>[],
-  ): Promise<{ savedCount: number; error: string | null }> {
-    if (!results.length) return { savedCount: 0, error: null };
+  async saveResults(results: Record<string, any>[]): Promise<{ savedCount: number }> {
+    if (!results.length) return { savedCount: 0 };
     const chunkSize = 200;
     let savedCount = 0;
-    try {
-      // Lot/file deduplication: if notes have [File: ...], remove previous identical lot logs to prevent accumulation across sessions
-      const firstNote = results[0]?.notes || "";
-      const fileMatch = firstNote.match(/\[File:\s*([^\]|]+)/i);
-      if (fileMatch && fileMatch[1]) {
-        const fileName = fileMatch[1].trim();
-        await (supabase as any)
-          .from("reconciliation_results")
-          .delete()
-          .ilike("notes", `%[File: ${fileName}%`);
-      }
 
-      for (let i = 0; i < results.length; i += chunkSize) {
-        const chunk = results.slice(i, i + chunkSize);
-        const { error } = await (supabase as any).from("reconciliation_results").insert(chunk);
-        if (error) {
-          console.error("Failed to save reconciliation results chunk:", error.message);
-          return { savedCount, error: error.message };
-        }
-        savedCount += chunk.length;
-      }
-      return { savedCount, error: null };
-    } catch (err: any) {
-      console.error("Failed to save reconciliation results:", err?.message || err);
-      return { savedCount, error: err?.message || String(err) };
+    // Lot/file deduplication: if notes have [File: ...], remove previous identical lot logs to prevent accumulation across sessions
+    const firstNote = results[0]?.notes || "";
+    const fileMatch = firstNote.match(/\[File:\s*([^\]|]+)/i);
+    if (fileMatch && fileMatch[1]) {
+      const fileName = fileMatch[1].trim();
+      await (supabase as any)
+        .from("reconciliation_results")
+        .delete()
+        .ilike("notes", `%[File: ${fileName}%`);
     }
+
+    for (let i = 0; i < results.length; i += chunkSize) {
+      const chunk = results.slice(i, i + chunkSize);
+      const { error } = await (supabase as any).from("reconciliation_results").insert(chunk);
+      if (error) {
+        console.error("Failed to save reconciliation results chunk:", error.message);
+        throw new Error(`Failed to save reconciliation results: ${error.message}`);
+      }
+      savedCount += chunk.length;
+    }
+    return { savedCount };
   },
 
   async deleteRecords(ids: string[]): Promise<boolean> {

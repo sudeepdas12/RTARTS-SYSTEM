@@ -939,7 +939,7 @@ function UploadRoute() {
       const importDuration = Math.round((Date.now() - importStart) / 1000);
       setImportSummary({
         rows: result.successRows,
-        clients: 0, // client count returned from Edge fn only; fallback shows 0
+        clients: result.clientsCreated ?? 0,
         duration: importDuration,
         sheetName: sheet.sheetName,
       });

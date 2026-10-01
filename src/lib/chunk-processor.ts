@@ -7,6 +7,7 @@ export interface ChunkProgress {
   processedRows: number;
   successRows: number;
   errorRows: number;
+  clientsCreated?: number;
   status: "Processing" | "Completed" | "Failed";
 }
 
@@ -112,6 +113,7 @@ export const ChunkProcessor = {
     let processed = 0;
     let success = 0;
     let errors = 0;
+    let clientsCreated = 0;
     if (chunkSize && chunkSize < 250) {
       console.warn(
         `[ChunkProcessor] Requested chunkSize (${chunkSize}) is below minimum threshold (250). Adjusted to 250 for optimal bulk database operations.`,
@@ -145,6 +147,7 @@ export const ChunkProcessor = {
         // Use explicit inserted/processed counts from the processor (edge/RPC/fallback).
         // Default to 0 rather than assuming the entire chunk succeeded.
         const chunkSuccess = Number(result?.rowsProcessed ?? result?.inserted ?? 0);
+        clientsCreated += Number(result?.clientsCreated ?? 0);
         // Count errors ONLY from the per-row error list returned by the processor.
         // Footer/total rows are silently filtered out by the processor and should NOT
         // be counted as errors. A chunk that was entirely footer rows returns
@@ -205,6 +208,7 @@ export const ChunkProcessor = {
           processedRows: processed,
           successRows: success,
           errorRows: errors,
+          clientsCreated,
           status:
             processed === rows.length
               ? success === 0 && errors > 0
@@ -235,6 +239,7 @@ export const ChunkProcessor = {
       processedRows: processed,
       successRows: success,
       errorRows: errors,
+      clientsCreated,
       status: success === 0 && errors > 0 ? "Failed" : "Completed",
     };
   },

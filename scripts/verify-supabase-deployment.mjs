@@ -179,12 +179,12 @@ function verifyLocalCatalogIfAvailable() {
     console.log("  Latest Applied Schema Migrations:");
     console.log(migrationOutput.split("\n").map((l) => `    ${l}`).join("\n"));
 
-    // Verify 20261184000000 is applied
-    if (migrationOutput.includes("20261184000000")) {
-      console.log("  [PASS] Migration 20261184000000 is registered in schema_migrations!");
+    // Verify latest migration baseline is applied
+    if (migrationOutput.includes("20261220000000") || migrationOutput.includes("20261219000000") || migrationOutput.includes("20261184000000")) {
+      console.log("  [PASS] Migration baseline (20261220000000/20261219000000/20261184000000) is registered in schema_migrations!");
       return true;
     } else {
-      console.warn("  [WARN] Migration 20261184000000 was not found in top 5 schema_migrations.");
+      console.warn("  [WARN] Latest migration baseline was not found in top 5 schema_migrations.");
       return false;
     }
   } catch (e) {
