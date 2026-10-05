@@ -348,8 +348,13 @@ BEGIN
   END IF;
   NEW.payee_classification := COALESCE(NEW.payee_classification, 'UNCLASSIFIED');
 
-  gross := CASE WHEN TG_TABLE_NAME = 'interest_payables'
-                THEN COALESCE(NEW.gross_interest, 0) ELSE COALESCE(NEW.gross_dividend, 0) END;
+  IF TG_TABLE_NAME = 'interest_payables' THEN
+    gross := COALESCE((to_jsonb(NEW)->>'gross_interest')::numeric, 0);
+  ELSIF TG_TABLE_NAME = 'mutual_fund_payables' THEN
+    gross := COALESCE((to_jsonb(NEW)->>'gross_amount')::numeric, 0);
+  ELSE
+    gross := COALESCE((to_jsonb(NEW)->>'gross_dividend')::numeric, 0);
+  END IF;
 
   IF NEW.payee_classification = 'UNCLASSIFIED' THEN
     -- Unknown payee: no tax is implied; classification review must happen before payment.
