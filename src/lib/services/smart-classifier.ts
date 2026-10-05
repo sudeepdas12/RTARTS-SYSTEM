@@ -567,7 +567,15 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
   // =========================================================================
   // TIER 5: Individual Human Demographics, Credentials & Titles
   // =========================================================================
-  const hasCitizenship = Boolean(citizenship && /[-a-zA-Z0-9]/.test(citizenship));
+  // Nepal citizenship numbers contain hyphens (27-01-72-12345) or letters, or are
+  // stored as 10+ digits. A PURE 9-digit number is a Nepal PAN — both individuals
+  // AND companies have identical 9-digit PANs from IRD. Never use a bare PAN as
+  // citizenship evidence or institutions with PANs will be misclassified as persons.
+  const isPureNineDigitPan = /^\d{9}$/.test(citizenship);
+  const hasCitizenship = Boolean(
+    citizenship && !isPureNineDigitPan && /[-a-zA-Z0-9]/.test(citizenship),
+  );
+
   const hasPassport = Boolean(passport && passport.length >= 5);
   const hasDob = Boolean(dob && dob.length >= 4);
   const hasGender = Boolean(
@@ -736,7 +744,14 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
     if (/PUBLIC|INDIVIDUAL|GENERAL/i.test(explicitType)) {
       const hasHumanEvidence =
         Boolean(father || gfather || mother || spouse || guardian) ||
-        Boolean(citizenship || passport || dob || gender || maritalStatus || occupation) ||
+        Boolean(
+          hasCitizenship ||
+          hasPassport ||
+          hasDob ||
+          hasGender ||
+          hasMaritalStatus ||
+          hasPersonalOccupation,
+        ) ||
         Boolean(hasHumanTitle || hasHumanRelationship || isJointHumanHolder) ||
         NEPALI_SURNAMES_REGEX.test(nameUpper);
 
@@ -824,7 +839,14 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
   // UNCLASSIFIED / REVIEW_REQUIRED so operators can safely verify its tax status.
   const hasAnyHumanProof =
     Boolean(father || gfather || mother || spouse || guardian) ||
-    Boolean(citizenship || passport || dob || gender || maritalStatus || occupation) ||
+    Boolean(
+      hasCitizenship ||
+      hasPassport ||
+      hasDob ||
+      hasGender ||
+      hasMaritalStatus ||
+      hasPersonalOccupation,
+    ) ||
     Boolean(hasHumanTitle || hasHumanRelationship || isJointHumanHolder) ||
     NEPALI_SURNAMES_REGEX.test(nameUpper);
 

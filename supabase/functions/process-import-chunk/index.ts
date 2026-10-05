@@ -158,7 +158,13 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
   if (fatherName || grandfatherName) {
     return "PUBLIC";
   }
-  if (citizenship && /[-a-zA-Z0-9]/.test(citizenship)) {
+  // Nepal citizenship numbers contain hyphens (e.g. 27-01-72-12345) or letters,
+  // or are stored as 10+ digits when hyphens are stripped.
+  // A PURE 9-digit number (e.g. 606525655) is a Nepal PAN — both individuals AND
+  // companies have identical 9-digit PANs. Do NOT use a bare PAN as citizenship
+  // evidence or it will misclassify institutions as Natural Persons.
+  const isPureNineDigitPan = /^\d{9}$/.test(citizenship);
+  if (citizenship && !isPureNineDigitPan && /[-a-zA-Z0-9]/.test(citizenship)) {
     return "PUBLIC";
   }
 
@@ -192,7 +198,11 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
   }
 
   // 3. Tax Exempted / Mutual Fund detection from compound institutional name
-  if (fatherName || grandfatherName || (citizenship && /[-a-zA-Z0-9]/.test(citizenship))) {
+  if (
+    fatherName ||
+    grandfatherName ||
+    (citizenship && !isPureNineDigitPan && /[-a-zA-Z0-9]/.test(citizenship))
+  ) {
     return "PUBLIC";
   }
 
