@@ -138,20 +138,20 @@ describe("Smart Shareholder Classification Engine (Ultra-Smart & Multi-Tier)", (
     });
 
     it("correctly identifies entities with missing father/grandfather names as requiring review when marked PUBLIC", () => {
-      // "Global Vision" contains the institutional keyword VISION → correctly auto-classified as
-      // COMPANY_INSTITUTION. This is intentional: "Global Vision" is an institutional brand name.
+      // "Global Vision" — no corporate suffix, no regulated-sector keyword, no lineage →
+      // UNCLASSIFIED + REVIEW_REQUIRED. "VISION" is a personal given name in Nepal/India
+      // and must NOT be treated as conclusive proof of an institution.
       const globalVision = smartClassify({
         full_name: "Global Vision",
         holder_type: "Public",
       });
-      expect(globalVision.payee_classification).toBe("COMPANY_INSTITUTION");
-      expect(globalVision.payee_category).toBe("INSTITUTION");
+      expect(globalVision.payee_classification).toBe("UNCLASSIFIED");
+      expect(globalVision.classification_status).toBe("REVIEW_REQUIRED");
 
-      // Standalone "Global Vision" without metadata → also COMPANY_INSTITUTION via institutional keyword
+      // Standalone without metadata → same result
       const globalVisionRaw = smartClassify({ full_name: "Global Vision" });
-      expect(globalVisionRaw.payee_classification).toBe("COMPANY_INSTITUTION");
-      expect(globalVisionRaw.payee_category).toBe("INSTITUTION");
-
+      expect(globalVisionRaw.payee_classification).toBe("UNCLASSIFIED");
+      expect(globalVisionRaw.classification_status).toBe("REVIEW_REQUIRED");
       // "sundaram" in Public quota has NO family lineage, NO citizenship -> UNCLASSIFIED with REVIEW_REQUIRED
       const sundaram = smartClassify({
         full_name: "sundaram",
@@ -444,8 +444,10 @@ describe("Smart Shareholder Classification Engine (Ultra-Smart & Multi-Tier)", (
 
   describe("7. Absence of Father/Guardian & Lineage Verification (Tier 8 Fallback Safety)", () => {
     it("flags ambiguous entities with no father, guardian, citizenship, or surname as UNCLASSIFIED", () => {
-      // VALLEY and opaque single words with no institutional keyword remain UNCLASSIFIED
-      const opaqueEntities = ["RAJDEVI", "Sundaram", "VALLEY"];
+      // All three: no corporate suffix, no regulated-sector keyword, no lineage.
+      // The absence of father/grandfather is the primary signal. Name keywords alone are unreliable
+      // (VISION is a personal given name; SUNDARAM / RAJDEVI are personal names).
+      const opaqueEntities = ["RAJDEVI", "Sundaram", "VALLEY", "Global Vision"];
       for (const name of opaqueEntities) {
         const res = smartClassify({ full_name: name });
         expect(res.payee_classification, `${name} must not be assumed NATURAL_PERSON`).toBe(
@@ -455,15 +457,6 @@ describe("Smart Shareholder Classification Engine (Ultra-Smart & Multi-Tier)", (
         expect(res.holder_type, `${name} holder_type must be null`).toBeNull();
         expect(res.rule_matched).toContain("Unclassified");
       }
-
-      // "Global Vision" contains the institutional keyword VISION → correctly COMPANY_INSTITUTION,
-      // not a silent natural person assumption.
-      const globalVision = smartClassify({ full_name: "Global Vision" });
-      expect(
-        ["COMPANY_INSTITUTION", "UNCLASSIFIED"],
-        "Global Vision must not be assumed NATURAL_PERSON",
-      ).toContain(globalVision.payee_classification);
-      expect(globalVision.payee_classification).not.toBe("NATURAL_PERSON");
     });
 
     it("correctly classifies institutional entities with trade terms, brand names, and trusts", () => {
