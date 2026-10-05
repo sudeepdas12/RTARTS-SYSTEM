@@ -131,10 +131,10 @@ const STATUTORY_FUNDS_REGEX =
 
 // 2. SEBON Mutual Fund Schemes Regex (All open/closed-ended schemes in Nepal)
 //
-// IMPORTANT — avoid bare standalone tokens that are also common Nepali given names:
-//   "YOJANA" is a given name (Yojana Acharya) → only match when followed by FUND/SCHEME/KOSH/BACHAT
-//   "LUK", "SLK" are given-name fragments → removed from standalone list
-//   "KDY", "KSY", "SBF", "SFMF" are fund abbrevs but collision-prone → kept with strict \b guards
+// IMPORTANT â€” avoid bare standalone tokens that are also common Nepali given names:
+//   "YOJANA" is a given name (Yojana Acharya) â†’ only match when followed by FUND/SCHEME/KOSH/BACHAT
+//   "LUK", "SLK" are given-name fragments â†’ removed from standalone list
+//   "KDY", "KSY", "SBF", "SFMF" are fund abbrevs but collision-prone â†’ kept with strict \b guards
 //   "SARAL", "UNNATI", "SAMRIDDHI" etc. only match when paired with fund-qualifier keywords
 const MUTUAL_FUND_SCHEMES_REGEX =
   /\b(MUTUAL\s*FUND|\bMF\b|HIMALAYAN\s*80[-/:]?20|FOCUS\s*(FUND|SCHEME|\d+)|SELECT\s*(FUND|SCHEME|\d+)|SUPER\s*(FUND|SCHEME|\d+)|NMB\s*(50|FIFTY|HYBRID|SARAL|SULAV|SAMRIDDHI)|SAMRIDDHI\s*(FUND|YOJANA|SCHEME)|SAMUNNAT\s*(SCHEME|FUND|YOJANA)|PRAGATI\s*(FUND|SCHEME|YOJANA)|SAHABHAGITA\s*(FUND|SCHEME|YOJANA)|DHANABRIDDHI\s*(YOJANA|FUND)|SABAL\s*(FUND|YOJANA|SCHEME)|UNNATI\s*(FUND|KOSH|SCHEME)|SARAL\s*(BACHAT|FUND|YOJANA)|SHUBHA\s*LAXMI\s*(KOSH|FUND)|EQUITY\s*(FUND|SCHEME|ORIENTED)|GROWTH\s*(FUND|SCHEME|YOJANA)|BALANCED\s*(FUND|SCHEME|YOJANA)|BLUECHIP\s*(FUND|SCHEME)|LARGE\s*CAP(\s*FUND|\s*SCHEME)?|FLEXI\s*CAP(\s*FUND|\s*SCHEME)?|VALUE\s*(FUND|SCHEME)|DEBT\s*(FUND|SCHEME)|FIXED\s*INCOME(\s*FUND|\s*SCHEME)?|DYNAMIC\s*DEBT(\s*FUND|\s*SCHEME)?|SYSTEMATIC\s*INVESTMENT(\s*SCHEME)?|DIVIDEND\s*YIELD\s*(FUND|SCHEME)|MONEY\s*MARKET\s*(FUND|SCHEME)|INDEX\s*(FUND|SCHEME)|CWEDA\s*EQUITY\s*FUND|STABLE\s*(FUND|SCHEME)|RESOURCE\s*(FUND|SCHEME)|HYBRID\s*(FUND|SCHEME)|SMART\s*(FUND|SCHEME)|YOJANA\s+(FUND|SCHEME|KOSH|BACHAT|LAGANI)|CIT\s*-\s*CITIZEN\s*UNIT\s*SCHEME|SSIS|SIGS(\s*\d+)?|GIMES(\s*\d+)?|SFMF|SBF|KDY|KSY)\b/i;
@@ -145,7 +145,7 @@ const CORPORATE_SUFFIX_REGEX =
 
 // 4. Institutional Business Patterns in Nepal (Strict word-bounded keywords to avoid matching human names)
 const INSTITUTIONAL_BUSINESS_REGEX =
-  /\b(BANK|BIKAS\s*BANK|DEVELOPMENT\s*BANK|FINANCE|MICROFINANCE|MICRO\s*INSURANCE|MICRO|LAGHUBITTA|BITTIYA|BITTIYA\s*SANSTHA|BIMA|BEEMA|INSURANCE|REINSURANCE|RE\s*INSURANCE|RE-INSURANCE|NIRJIBAN\s*BIMA|JIBAN\s*BIMA|HYDROPOWER|HYDRO\s*POWER|HYDRO|JALABIDHYUT|DOORSANCHAR|TELECOM|CLEARING\s*HOUSE|STOCK\s*EXCHANGE|STOCK\s*DEALER|STOCK\s*BROKER|STOCK\s*MARKET|CDS\s*(AND|&)?\s*CLEARING|PHARMA|PHARMACEUTICALS|HOSPITAL|COLLEGE|UNIVERSITY|ACADEMY|COOPERATIVE|CO-OPERATIVE|SAHAKARI|ENTERPRISES|TRADING|TRADERS|SUPPLIERS|DISTRIBUTORS|INDUSTRIES|VENTURES|SECURITIES|BROKER|MERCHANT(\s*BANKING)?|CAPITAL|INVESTMENT|HOLDINGS|ASSET\s*MANAGEMENT|DEVELOPERS?|INFRA(?:STRUCTURE)?|KHARID\s*BIKRI|BIKRI\s*KENDRA|SANIMA\s*RELIANCE|RELIANCE|PATHIVARA\s*MATA|MATA\s*PATHIVARA|MANDIR|SEWA\s*SAMITI|DHARMA\s*TRUST|\bTRUST\b|GOVERNMENT|SARKAR|MINISTRY|DEPARTMENT|PRADHIKARAN|SANSTHAN|NIGAM|MUNICIPALITY|NAGARPALIKA|GAUNPALIKA|EMBASSY|GUTHI|ARMY\s*WELFARE|NEPALESE\s*ARMY\s*WELFARE|SAINIK\s*KALYAN|POLICE\s*WELFARE|PRAHARI\s*KALYAN|WELFARE\s*FUND|KALYAN\s*KOSH|SOLUTIONS|SERVICES|CONSULTANCY|ASSOCIATES|INTERNATIONAL|NETWORK|GROUP|MANAGEMENT|SANSTHA|FOUNDATION|SOCIETY|COMMUNITY|RESORT|HOTEL|CLINIC|TRAVELS|TOURS|LOGISTICS)\b/i;
+  /\b(BANK|BIKAS\s*BANK|DEVELOPMENT\s*BANK|FINANCE|MICROFINANCE|MICRO\s*INSURANCE|MICRO|LAGHUBITTA|BITTIYA|BITTIYA\s*SANSTHA|BIMA|BEEMA|INSURANCE|REINSURANCE|RE\s*INSURANCE|RE-INSURANCE|NIRJIBAN\s*BIMA|JIBAN\s*BIMA|HYDROPOWER|HYDRO\s*POWER|HYDRO|JALABIDHYUT|DOORSANCHAR|TELECOM|CLEARING\s*HOUSE|STOCK\s*EXCHANGE|STOCK\s*DEALER|STOCK\s*BROKER|STOCK\s*MARKET|CDS\s*(AND|&)?\s*CLEARING|PHARMA|PHARMACEUTICALS|HOSPITAL|COLLEGE|UNIVERSITY|ACADEMY|COOPERATIVE|CO-OPERATIVE|SAHAKARI|ENTERPRISES|TRADING|TRADERS|SUPPLIERS|DISTRIBUTORS|INDUSTRIES|VENTURES|SECURITIES|BROKER|MERCHANT(\s*BANKING)?|CAPITAL|INVESTMENT|HOLDINGS|ASSET\s*MANAGEMENT|DEVELOPERS?|INFRA(?:STRUCTURE)?|KHARID\s*BIKRI|BIKRI\s*KENDRA|SANIMA\s*RELIANCE|RELIANCE|PATHIVARA\s*MATA|MATA\s*PATHIVARA|MANDIR|SEWA\s*SAMITI|DHARMA\s*TRUST|\bTRUST\b|GOVERNMENT|SARKAR|MINISTRY|DEPARTMENT|PRADHIKARAN|SANSTHAN|NIGAM|MUNICIPALITY|NAGARPALIKA|GAUNPALIKA|EMBASSY|GUTHI|ARMY\s*WELFARE|NEPALESE\s*ARMY\s*WELFARE|SAINIK\s*KALYAN|POLICE\s*WELFARE|PRAHARI\s*KALYAN|WELFARE\s*FUND|KALYAN\s*KOSH|VISION|SOLUTIONS|SERVICES|CONSULTANCY|ASSOCIATES|INTERNATIONAL|NETWORK|GROUP|MANAGEMENT|SANSTHA|FOUNDATION|SOCIETY|COMMUNITY|RESORT|HOTEL|CLINIC|TRAVELS|TOURS|LOGISTICS)\b/i;
 
 // 5. Distinct Human Honorifics & Personal Titles (Prefixes)
 const HUMAN_TITLES_REGEX =
@@ -390,7 +390,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
   // TIER 0.5: Commercial Bank & Corporate Retirement Funds
   // Under Nepal tax rules, commercial bank and corporate retirement funds
   // (e.g. Rastriya Banijya Bank Retirement Fund) are taxable corporate entities
-  // (Institution / Legal Person — 15% TDS), not statutory tax-exempt funds (CIT/EPF/SSF).
+  // (Institution / Legal Person â€” 15% TDS), not statutory tax-exempt funds (CIT/EPF/SSF).
   // =========================================================================
   const isTaxableBankRetirementFund =
     /\b(RASTRIYA\s*BANIJYA\s*BANK\s*RETIREMENT\s*FUND|RBB\s*RETIREMENT)\b/i.test(nameUpper) ||
@@ -409,7 +409,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
       tds_rate_dividend: 0.15,
       tds_rate_debenture: 0.15,
       classification_status: "REVIEW_REQUIRED", // exemption status of staff trusts is a tax-advisor call
-      rule_matched: "Bank / Corporate Retirement Fund (Taxable Legal Person — 15% TDS)",
+      rule_matched: "Bank / Corporate Retirement Fund (Taxable Legal Person â€” 15% TDS)",
       confidence: 0.99,
     };
   }
@@ -536,7 +536,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
       tds_rate_dividend: null,
       tds_rate_debenture: null,
       classification_status: "REVIEW_REQUIRED",
-      rule_matched: "Ambiguous (Institution keyword + personal surname) — operator review",
+      rule_matched: "Ambiguous (Institution keyword + personal surname) â€” operator review",
     };
   }
   if (isInstitutionalBusiness) {
@@ -741,7 +741,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
           tds_rate_debenture: null,
           classification_status: "REVIEW_REQUIRED",
           rule_matched:
-            "Unclassified (Public Quota with Missing Lineage / Ambiguous Entity — Operator Review)",
+            "Unclassified (Public Quota with Missing Lineage / Ambiguous Entity â€” Operator Review)",
         };
       }
 

@@ -233,7 +233,8 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
     if (upper.includes("PROMOT")) return "PROMOTER";
     if (upper.includes("INSTIT") || upper.includes("PRIVATE")) return "INSTITUTION";
     if (upper.includes("LOCAL")) return "LOCAL";
-    if (upper.includes("PUBLIC")) return "PUBLIC";
+    // A PUBLIC sheet name alone is NOT proof of a human (lineage/citizenship were
+    // already checked above). Leave as UNKNOWN so the operator reviews it.
   }
 
   return "UNKNOWN";
@@ -324,6 +325,7 @@ function mapToHolderType(category: string): string | null {
     case "EMPLOYEE":
       return "Natural Person - Employee";
     case "INSTITUTION":
+    case "COMPANY_INSTITUTION":
       return "Legal Person";
     case "BANK_FI":
     case "BANK":
