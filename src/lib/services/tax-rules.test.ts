@@ -98,6 +98,20 @@ const rules: TaxRule[] = [
     is_active: true,
   },
   {
+    id: "6c",
+    payable_category: "INTEREST",
+    payee_classification: "BANK_FI",
+    tax_rate: 0,
+    is_active: true,
+  },
+  {
+    id: "3c",
+    payable_category: "DIVIDEND",
+    payee_classification: "BANK_FI",
+    tax_rate: 0.05,
+    is_active: true,
+  },
+  {
     id: "7",
     payable_category: "MUTUAL_FUND",
     payee_classification: "NATURAL_PERSON",
@@ -128,6 +142,9 @@ describe("centralized tax rules (payable type + investor category → rate)", ()
     expect(investorCategoryToClassification("LOCAL")).toBe("NATURAL_PERSON");
     expect(investorCategoryToClassification("INSTITUTION")).toBe("COMPANY_INSTITUTION");
     expect(investorCategoryToClassification("FOREIGN")).toBe("FOREIGN_INVESTOR");
+    expect(investorCategoryToClassification("BANK_FI")).toBe("BANK_FI");
+    expect(investorCategoryToClassification("BANK")).toBe("BANK_FI");
+    expect(investorCategoryToClassification("BFI")).toBe("BANK_FI");
     expect(investorCategoryToClassification("MUTUAL_FUND")).toBe("TAX_EXEMPT");
     expect(investorCategoryToClassification("TAX_EXEMPTED")).toBe("TAX_EXEMPT");
     expect(investorCategoryToClassification("PRIVATE")).toBe("NATURAL_PERSON");
@@ -135,15 +152,17 @@ describe("centralized tax rules (payable type + investor category → rate)", ()
     expect(investorCategoryToClassification(null)).toBeNull();
   });
 
-  it("applies the spec rates (debenture 6/15, dividend 5/5, MF exempt)", () => {
+  it("applies the spec rates (debenture 6/15/0, dividend 5/5, MF exempt)", () => {
     // Debenture (interest)
     expect(getTaxRateFromRules(rules, "INTEREST", "NATURAL_PERSON")).toBe(0.06);
     expect(getTaxRateFromRules(rules, "INTEREST", "COMPANY_INSTITUTION")).toBe(0.15);
     expect(getTaxRateFromRules(rules, "INTEREST", "FOREIGN_INVESTOR")).toBe(0.15);
+    expect(getTaxRateFromRules(rules, "INTEREST", "BANK_FI")).toBe(0);
     // Dividend
     expect(getTaxRateFromRules(rules, "DIVIDEND", "NATURAL_PERSON")).toBe(0.05);
     expect(getTaxRateFromRules(rules, "DIVIDEND", "COMPANY_INSTITUTION")).toBe(0.05);
     expect(getTaxRateFromRules(rules, "DIVIDEND", "FOREIGN_INVESTOR")).toBe(0.05);
+    expect(getTaxRateFromRules(rules, "DIVIDEND", "BANK_FI")).toBe(0.05);
     // Mutual fund
     expect(getTaxRateFromRules(rules, "MUTUAL_FUND", "TAX_EXEMPT")).toBe(0);
     expect(getTaxRateFromRules(rules, "MUTUAL_FUND", "COMPANY_INSTITUTION")).toBe(0.15);

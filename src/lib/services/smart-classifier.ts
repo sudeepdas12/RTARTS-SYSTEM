@@ -15,11 +15,17 @@
  */
 
 export type PayeeClassification =
-  "NATURAL_PERSON" | "PUBLIC_LEGAL_PERSON" | "COMPANY_INSTITUTION" | "TAX_EXEMPT" | "UNCLASSIFIED";
+  | "NATURAL_PERSON"
+  | "PUBLIC_LEGAL_PERSON"
+  | "COMPANY_INSTITUTION"
+  | "BANK_FI"
+  | "TAX_EXEMPT"
+  | "UNCLASSIFIED";
 export type PayeeCategory =
   | "PUBLIC"
   | "PROMOTER"
   | "INSTITUTION"
+  | "BANK_FI"
   | "MUTUAL_FUND"
   | "TAX_EXEMPT"
   | "LOCAL"
@@ -277,6 +283,17 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
         rule_matched: "Explicit Payee Classification (Tax Exempt)",
       };
     }
+    if (dbClassification === "BANK_FI" || dbClassification === "BANK") {
+      return {
+        payee_classification: "BANK_FI",
+        payee_category: "BANK_FI",
+        payee_segment: null,
+        holder_type: "Bank / Financial Institution",
+        tds_rate_dividend: 0.05,
+        tds_rate_debenture: 0.0,
+        rule_matched: "Explicit Payee Classification (Bank / FI)",
+      };
+    }
     if (dbClassification === "FOREIGN" || dbClassification === "FOREIGN_INVESTOR") {
       return {
         payee_classification: "COMPANY_INSTITUTION",
@@ -326,6 +343,21 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
   // TIER 0.25: Decisive explicit metadata (uploaded investor type) outranks name guessing
   // =========================================================================
   if (explicitType && !(dbClassification && dbClassification !== "UNCLASSIFIED")) {
+    if (
+      /BANK_FI|\bBANK\b|\bBIKAS\s*BANK\b|FINANCIAL_INVESTOR|FINANCIAL_INSTITUTION|\bBFI\b/i.test(
+        explicitType,
+      )
+    ) {
+      return {
+        payee_classification: "BANK_FI",
+        payee_category: "BANK_FI",
+        payee_segment: null,
+        holder_type: "Bank / Financial Institution",
+        tds_rate_dividend: 0.05,
+        tds_rate_debenture: 0.0,
+        rule_matched: "Explicit Metadata (Bank / FI)",
+      };
+    }
     if (/FOREIGN|NRN/i.test(explicitType)) {
       return {
         payee_classification: "COMPANY_INSTITUTION",
@@ -596,6 +628,21 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
   // TIER 6: Explicit Upload / Form Metadata
   // =========================================================================
   if (explicitType) {
+    if (
+      /BANK_FI|\bBANK\b|\bBIKAS\s*BANK\b|FINANCIAL_INVESTOR|FINANCIAL_INSTITUTION|\bBFI\b/i.test(
+        explicitType,
+      )
+    ) {
+      return {
+        payee_classification: "BANK_FI",
+        payee_category: "BANK_FI",
+        payee_segment: null,
+        holder_type: "Bank / Financial Institution",
+        tds_rate_dividend: 0.05,
+        tds_rate_debenture: 0.0,
+        rule_matched: "Explicit Metadata (Bank / FI)",
+      };
+    }
     if (/MUTUAL|MF\b/i.test(explicitType)) {
       return {
         payee_classification: "TAX_EXEMPT",

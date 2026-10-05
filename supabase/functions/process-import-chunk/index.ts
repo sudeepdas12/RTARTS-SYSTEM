@@ -273,6 +273,13 @@ function payableSegment(category: string, isDebenture = false): string | null {
   return null;
 }
 
+/** Round to paisa, half away from zero (matches Postgres round(numeric, 2); avoids float noise like 2256.345). */
+function roundToPaisa(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const rounded = Math.round(Number((Math.abs(value) * 100).toPrecision(15))) / 100;
+  return value < 0 ? -rounded : rounded;
+}
+
 /**
  * Debenture TDS rules:
  *   Natural Person (Public, Promoter, Local, Employee): 6%
@@ -301,6 +308,9 @@ function getCategoryTdsRate(category: string, isDebenture: boolean): number {
     case "MUTUAL_FUND":
     case "TAX_EXEMPT":
       return 0;
+    case "BANK_FI":
+    case "BANK":
+      return isDebenture ? 0.0 : 0.05;
     default:
       return isDebenture ? 0.06 : 0.05;
   }
@@ -313,9 +323,14 @@ function mapToHolderType(category: string): string | null {
     case "PUBLIC":
       return "Natural Person - Public";
     case "LOCAL":
-      return "Natural Person - Public";
+      return "Natural Person - Local";
+    case "EMPLOYEE":
+      return "Natural Person - Employee";
     case "INSTITUTION":
       return "Legal Person";
+    case "BANK_FI":
+    case "BANK":
+      return "Bank / Financial Institution";
     case "MUTUAL_FUND":
       return "Mutual Fund";
     case "TAX_EXEMPT":
@@ -1142,25 +1157,27 @@ serve(async (req) => {
           investorCategory !== "MUTUAL_FUND" &&
           investorCategory !== "TAX_EXEMPT"
         ) {
-          rowBonusTax = Math.round(rowIssuedBonus * 100 * rowTdsRate * 100) / 100;
+          // Bonus tax is on the FACE VALUE of bonus shares (10 for mutual funds, 100 otherwise), not a fixed 100
+          rowBonusTax = roundToPaisa(rowIssuedBonus * faceVal * rowTdsRate);
         }
 
+        // True only when the uploaded sheet supplied the net amount (assumed to exclude bonus tax).
+        const netGivenBySheet = Boolean(netPayable);
         if (!isPreCalculated) {
           // Auto-calculate gross from shares × dividend rate if gross is missing
           if (!grossAmount && sharesHeld && dividendRate) {
-            grossAmount = Math.round(sharesHeld * (faceVal * (dividendRate / 100)) * 100) / 100;
+            grossAmount = roundToPaisa(sharesHeld * (faceVal * (dividendRate / 100)));
           }
           // Auto-calculate tax from gross using the ROW-LEVEL TDS rate
           if (!taxAmount && grossAmount && rowTdsRate > 0) {
-            taxAmount = Math.round(grossAmount * rowTdsRate * 100) / 100;
+            taxAmount = roundToPaisa(grossAmount * rowTdsRate);
           }
           const totalTaxToDeduct = taxAmount + rowBonusTax;
           if (!netPayable && grossAmount) {
-            netPayable = Math.max(0, Math.round((grossAmount - totalTaxToDeduct) * 100) / 100);
+            netPayable = Math.max(0, roundToPaisa(grossAmount - totalTaxToDeduct));
           }
           if (!grossAmount) grossAmount = netPayable || 0;
-          if (!netPayable)
-            netPayable = Math.max(0, Math.round((grossAmount - totalTaxToDeduct) * 100) / 100);
+          if (!netPayable) netPayable = Math.max(0, roundToPaisa(grossAmount - totalTaxToDeduct));
         }
 
         payables.push({
@@ -1171,7 +1188,7 @@ serve(async (req) => {
           tax_amount: taxAmount + rowBonusTax,
           net_payable: Math.max(
             0,
-            netPayable - (rowBonusTax > 0 && !isPreCalculated ? rowBonusTax : 0),
+            netPayable - (rowBonusTax > 0 && !isPreCalculated && netGivenBySheet ? rowBonusTax : 0),
           ),
           shares_held: sharesHeld,
           dividend_rate: dividendRate ?? null,
@@ -1208,23 +1225,22 @@ serve(async (req) => {
           // Auto-calculate from shares × rate if gross missing (Debenture face value is NPR 1,000)
           if (!grossAmount && sharesHeld && dividendRate) {
             if (effectiveDays && effectiveDays > 0 && effectiveDays < divisor) {
-              grossAmount =
-                Math.round(
-                  sharesHeld * 1000 * (dividendRate / 100) * (effectiveDays / divisor) * 100,
-                ) / 100;
+              grossAmount = roundToPaisa(
+                sharesHeld * 1000 * (dividendRate / 100) * (effectiveDays / divisor),
+              );
             } else {
-              grossAmount = Math.round(sharesHeld * 1000 * (dividendRate / 100) * 100) / 100;
+              grossAmount = roundToPaisa(sharesHeld * 1000 * (dividendRate / 100));
             }
           }
           // Auto-calculate tax using ROW-LEVEL TDS rate
           if (!taxAmount && grossAmount && rowTdsRate > 0) {
-            taxAmount = Math.round(grossAmount * rowTdsRate * 100) / 100;
+            taxAmount = roundToPaisa(grossAmount * rowTdsRate);
           }
           if (!netPayable && grossAmount) {
-            netPayable = Math.round((grossAmount - taxAmount) * 100) / 100;
+            netPayable = roundToPaisa(grossAmount - taxAmount);
           }
           if (!grossAmount) grossAmount = netPayable || 0;
-          if (!netPayable) netPayable = Math.round((grossAmount - taxAmount) * 100) / 100;
+          if (!netPayable) netPayable = roundToPaisa(grossAmount - taxAmount);
         }
 
         payables.push({

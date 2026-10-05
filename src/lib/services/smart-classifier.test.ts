@@ -118,6 +118,24 @@ describe("Smart Shareholder Classification Engine (Ultra-Smart & Multi-Tier)", (
       });
       expect(sahakari.payee_classification).toBe("COMPANY_INSTITUTION");
     });
+
+    it("classifies explicit BANK_FI or Bank metadata with 0% debenture TDS and 5% dividend TDS", () => {
+      const bankFi = smartClassify({
+        full_name: "NABIL BANK LIMITED",
+        investor_type: "BANK_FI",
+      });
+      expect(bankFi.payee_classification).toBe("BANK_FI");
+      expect(bankFi.payee_category).toBe("BANK_FI");
+      expect(bankFi.tds_rate_debenture).toBe(0.0);
+      expect(bankFi.tds_rate_dividend).toBe(0.05);
+
+      const bfi = smartClassify({
+        full_name: "GARIMA BIKAS BANK",
+        payee_classification: "BANK_FI",
+      });
+      expect(bfi.payee_classification).toBe("BANK_FI");
+      expect(bfi.tds_rate_debenture).toBe(0.0);
+    });
   });
 
   describe("3. Tax Exempted Entities (SEBON Mutual Funds & Statutory Funds)", () => {

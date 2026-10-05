@@ -22,16 +22,19 @@ INSERT INTO public.payable_tax_rules (payable_category, payee_classification, ta
   ('DIVIDEND',    'PUBLIC_LEGAL_PERSON', 0.05, true),
   ('DIVIDEND',    'COMPANY_INSTITUTION', 0.05, true),   -- Sec 88(2)(ka): 5% on any resident-company dividend (1219's 15% has no source)
   ('DIVIDEND',    'FOREIGN_INVESTOR',    0.05, true),   -- non-resident dividend: 5%, final (Sec 92)
+  ('DIVIDEND',    'BANK_FI',             0.05, true),
   ('DIVIDEND',    'TAX_EXEMPT',          0,    true),
   ('INTEREST',    'NATURAL_PERSON',      0.06, true),
   ('INTEREST',    'PUBLIC_LEGAL_PERSON', 0.06, true),   -- CONFIRM: law gives 6% only to natural persons; entities 15%
   ('INTEREST',    'COMPANY_INSTITUTION', 0.15, true),
   ('INTEREST',    'FOREIGN_INVESTOR',    0.15, true),
+  ('INTEREST',    'BANK_FI',             0.00, true),   -- Inter-bank / BFIs exempt from TDS on debentures (Sec 88(4))
   ('INTEREST',    'TAX_EXEMPT',          0,    true),
   ('MUTUAL_FUND', 'NATURAL_PERSON',      0.05, true),
   ('MUTUAL_FUND', 'PUBLIC_LEGAL_PERSON', 0.15, true),   -- Sec 88(1) proviso 6: natural person 5%, any other person 15%
   ('MUTUAL_FUND', 'COMPANY_INSTITUTION', 0.15, true),   -- Sec 88(1) proviso 6 (1111's 5% was wrong)
   ('MUTUAL_FUND', 'FOREIGN_INVESTOR',    0.15, true),   -- CONFIRM: foreign individual may be 5% (natural person); needs individual/entity split
+  ('MUTUAL_FUND', 'BANK_FI',             0.15, true),
   ('MUTUAL_FUND', 'TAX_EXEMPT',          0,    true)
 ON CONFLICT (payable_category, payee_classification)
 DO UPDATE SET tax_rate = EXCLUDED.tax_rate, is_active = EXCLUDED.is_active, updated_at = now();
@@ -60,7 +63,7 @@ DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['clients','dividend_payables','interest_payables','mutual_fund_payables'] LOOP
     EXECUTE format($f$ALTER TABLE public.%I ADD CONSTRAINT %I CHECK (payee_classification IN
-      ('NATURAL_PERSON','PUBLIC_LEGAL_PERSON','COMPANY_INSTITUTION','FOREIGN_INVESTOR','TAX_EXEMPT','UNCLASSIFIED'))$f$,
+      ('NATURAL_PERSON','PUBLIC_LEGAL_PERSON','COMPANY_INSTITUTION','FOREIGN_INVESTOR','BANK_FI','TAX_EXEMPT','UNCLASSIFIED'))$f$,
       t, t || '_payee_classification_check');
     EXECUTE format($f$ALTER TABLE public.%I ADD CONSTRAINT %I CHECK (payee_segment IS NULL OR payee_segment IN
       ('PROMOTER','LOCAL','EMPLOYEE','PUBLIC'))$f$, t, t || '_payee_segment_check');
@@ -86,6 +89,7 @@ BEGIN
     WHEN 'Public' THEN NEW.payee_classification := 'PUBLIC_LEGAL_PERSON'; NEW.payee_segment := 'PUBLIC';
     WHEN 'Legal Person', 'Legal Person - Promoter', 'Institution' THEN NEW.payee_classification := 'COMPANY_INSTITUTION';
     WHEN 'Foreign' THEN NEW.payee_classification := 'FOREIGN_INVESTOR';
+    WHEN 'Bank', 'Financial Institution', 'Bank / FI' THEN NEW.payee_classification := 'BANK_FI';
     WHEN 'Mutual Fund', 'Tax Exempt' THEN NEW.payee_classification := 'TAX_EXEMPT';
     ELSE RETURN NEW;
   END CASE;

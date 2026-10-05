@@ -23,6 +23,7 @@ export type TaxClassification =
   | "NATURAL_PERSON"
   | "PUBLIC_LEGAL_PERSON"
   | "COMPANY_INSTITUTION"
+  | "BANK_FI"
   | "FOREIGN_INVESTOR"
   | "TAX_EXEMPT";
 
@@ -44,6 +45,7 @@ export const TAX_CLASSIFICATION_LABEL: Record<TaxClassification, string> = {
   NATURAL_PERSON: "Natural Person (Public / Individual)",
   PUBLIC_LEGAL_PERSON: "Public Legal Person (Semi-Govt / Statutory)",
   COMPANY_INSTITUTION: "Legal Person (Company / Institution)",
+  BANK_FI: "Bank / Financial Institution (0% Debenture TDS)",
   FOREIGN_INVESTOR: "Foreign Investor",
   TAX_EXEMPT: "Tax Exempt (Mutual Fund / Retirement Fund)",
 };
@@ -110,6 +112,11 @@ export function investorCategoryToClassification(
     case "FOREIGN":
     case "FOREIGN_INVESTOR":
       return "FOREIGN_INVESTOR";
+    case "BANK":
+    case "BANK_FI":
+    case "FINANCIAL_INSTITUTION":
+    case "BFI":
+      return "BANK_FI";
     case "INSTITUTION":
     case "COMPANY_INSTITUTION":
     case "LEGAL PERSON":
@@ -183,11 +190,13 @@ export async function updateTaxRule(
 export function getDebentureDisplayRates(rules?: TaxRule[] | null) {
   const pub = getTaxRateFromRules(rules, "INTEREST", "NATURAL_PERSON");
   const inst = getTaxRateFromRules(rules, "INTEREST", "COMPANY_INSTITUTION");
+  const bank = getTaxRateFromRules(rules, "INTEREST", "BANK_FI");
   const exempt = getTaxRateFromRules(rules, "INTEREST", "TAX_EXEMPT");
 
   return {
     publicRatePct: pub != null ? Math.round(pub * 10000) / 100 : 6,
     institutionRatePct: inst != null ? Math.round(inst * 10000) / 100 : 15,
+    bankRatePct: bank != null ? Math.round(bank * 10000) / 100 : 0,
     exemptRatePct: exempt != null ? Math.round(exempt * 10000) / 100 : 0,
   };
 }

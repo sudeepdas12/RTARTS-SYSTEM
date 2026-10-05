@@ -37,11 +37,25 @@ export interface DividendResult {
   appliedTdsRate: number;
 }
 
+/**
+ * Round a money value to 2 decimals (paisa), half away from zero, exactly like Postgres round(numeric, 2).
+ * Plain Math.round(x * 100) mis-rounds values such as 2256.345 or 16932.255 because of binary float noise;
+ * toPrecision(15) strips that noise before rounding.
+ */
+export function roundToPaisa(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const scaled = Number((Math.abs(value) * 100).toPrecision(15));
+  const rounded = Math.round(scaled) / 100;
+  return value < 0 ? -rounded : rounded;
+}
+
 export function normalizeTaxRate(rate: number): number {
   if (isNaN(rate) || rate <= 0) return 0;
-  // If user passes whole percentage (e.g. 15 for 15%), convert to decimal (0.15)
-  if (rate > 1.0 && rate <= 100) return rate / 100;
-  // Cap at 1.0 (100%)
+  // Fractions below 1 (0.05, 0.15) are decimal rates and values from 2 to 100 are whole percentages.
+  // Exactly 1 is ambiguous; a 100% TDS rate is never legitimate, so it is read as "1%" rather than 100%.
+  if (rate === 1) return 0.01;
+  if (rate > 1 && rate <= 100) return rate / 100;
+  // Above 100 is capped at 100% (existing contract; see calculators-precision.test.ts)
   return Math.min(1.0, rate);
 }
 
@@ -107,7 +121,7 @@ export const DividendCalculator = {
     }
 
     // Round gross financial component to exact paisa first (database trigger parity)
-    const rGross = Math.round((grossCashDividend + Number.EPSILON) * 100) / 100;
+    const rGross = roundToPaisa(grossCashDividend);
 
     // 3. Tax Calculations (Bonus Tax + Cash Dividend Tax)
     // Bonus Tax: Issued Bonus Shares * Face Value * TDS Rate
@@ -122,12 +136,12 @@ export const DividendCalculator = {
 
     // Cash Dividend Tax: Computed from rounded Gross * TDS Rate
     const cashTaxAmount = rGross * appliedTdsRate;
-    const rCashTax = Math.round((cashTaxAmount + Number.EPSILON) * 100) / 100;
-    const rBonusTax = Math.round((bonusTaxAmount + Number.EPSILON) * 100) / 100;
-    const rTotalTax = Math.round((rCashTax + rBonusTax + Number.EPSILON) * 100) / 100;
+    const rCashTax = roundToPaisa(cashTaxAmount);
+    const rBonusTax = roundToPaisa(bonusTaxAmount);
+    const rTotalTax = roundToPaisa(rCashTax + rBonusTax);
 
     // Net Cash Payable: Cash dividend minus total tax on cash and bonus
-    const rawNet = Math.round((rGross - rTotalTax + Number.EPSILON) * 100) / 100;
+    const rawNet = roundToPaisa(rGross - rTotalTax);
     const netCashPayable = Math.max(0, rawNet);
     const taxPayableByInvestor = rawNet < 0 ? Math.abs(rawNet) : 0;
 

@@ -7,12 +7,48 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const ALLOWED_ROLES = new Set(["admin", "finance_operator", "supervisor", "approver", "maker"]);
 
 function getCorsHeaders(req: Request) {
-  const origin = req.headers.get("origin") || "*";
+  const origin = req.headers.get("origin") || "";
+  const allowedOrigins = [
+    Deno.env.get("APP_URL") || "",
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:3000",
+  ].filter(Boolean);
+
+  const isAllowed = allowedOrigins.includes(origin) || allowedOrigins.includes("*");
+  const allowOrigin = isAllowed ? origin : allowedOrigins[0] || "*";
   return {
-    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Origin": allowOrigin,
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
   };
+}
+
+/**
+ * Sign payload using NCHL standard SHA256withRSA (RSASSA-PKCS1-v1_5)
+ * Expects a PKCS#8 private key in PEM format.
+ */
+async function signWithRsa(payloadStr: string, privateKeyPem: string): Promise<string> {
+  const cleanPem = privateKeyPem
+    .replace(/-----BEGIN[ A-Z0-9_-]+-----/g, "")
+    .replace(/-----END[ A-Z0-9_-]+-----/g, "")
+    .replace(/\s+/g, "");
+  const binaryDer = Uint8Array.from(atob(cleanPem), (c) => c.charCodeAt(0));
+  const key = await crypto.subtle.importKey(
+    "pkcs8",
+    binaryDer.buffer,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const encoder = new TextEncoder();
+  const signatureBuffer = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    key,
+    encoder.encode(payloadStr),
+  );
+  return btoa(String.fromCharCode(...new Uint8Array(signatureBuffer)));
 }
 
 serve(async (req) => {
@@ -95,16 +131,17 @@ serve(async (req) => {
       );
     }
 
-    // 4. Server-held secret signing
-    // NOTE (NCHL Spec): In production, NCHL ConnectIPS mandates SHA256withRSA
-    // digital signing using an NCHL-issued client certificate (.pfx/.p12).
-    // The CONNECTIPS_TOKEN secret is used for token-based authentication and sandbox testing.
+    // 4. Server-held signing
+    // In production, NCHL ConnectIPS mandates SHA256withRSA digital signing using an NCHL-issued client certificate (.pfx/.p12 converted to PKCS#8 PEM).
+    // The CONNECTIPS_TOKEN secret is supported as a fallback for sandbox testing.
+    const privateKeyPem = Deno.env.get("CONNECTIPS_PRIVATE_KEY");
     const serverSecret = Deno.env.get("CONNECTIPS_TOKEN");
-    if (!serverSecret) {
+
+    if (!privateKeyPem && !serverSecret) {
       return new Response(
         JSON.stringify({
           success: false,
-          error: "CONNECTIPS_TOKEN server secret is not configured in environment",
+          error: "Neither CONNECTIPS_PRIVATE_KEY nor CONNECTIPS_TOKEN is configured in environment",
         }),
         {
           status: 500,
@@ -113,13 +150,22 @@ serve(async (req) => {
       );
     }
 
-    const encoder = new TextEncoder();
-    const data = encoder.encode(`${payloadStr}:${serverSecret}`);
-    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const signature = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+    let signature: string;
+    let algorithm: string;
 
-    return new Response(JSON.stringify({ success: true, signature }), {
+    if (privateKeyPem) {
+      signature = await signWithRsa(payloadStr, privateKeyPem);
+      algorithm = "SHA256withRSA";
+    } else {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(`${payloadStr}:${serverSecret}`);
+      const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      signature = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+      algorithm = "SHA-256-TOKEN";
+    }
+
+    return new Response(JSON.stringify({ success: true, signature, algorithm }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error: any) {

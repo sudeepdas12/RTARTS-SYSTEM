@@ -1,4 +1,4 @@
-import { normalizeTaxRate } from "./dividend-calculator";
+import { normalizeTaxRate, roundToPaisa } from "./dividend-calculator";
 
 export interface InterestCalculationParams {
   debentureKitta: number; // Number of debentures held
@@ -119,17 +119,14 @@ export const InterestCalculator = {
     }
 
     // Round gross to paisa first, then compute tax from rounded gross (matching DB trigger parity)
-    const rGross = Math.round((grossPeriodInterest + Number.EPSILON) * 100) / 100;
+    const rGross = roundToPaisa(grossPeriodInterest);
     const rawTaxAmount = rGross * tdsRate;
-    const rTax = Math.round((rawTaxAmount + Number.EPSILON) * 100) / 100;
-    const netInterestPayable = Math.max(
-      0,
-      Math.round((rGross - rTax + Number.EPSILON) * 100) / 100,
-    );
+    const rTax = roundToPaisa(rawTaxAmount);
+    const netInterestPayable = Math.max(0, roundToPaisa(rGross - rTax));
 
     return {
       totalPrincipal,
-      annualInterestAmount: Math.round((annualInterestAmount + Number.EPSILON) * 100) / 100,
+      annualInterestAmount: roundToPaisa(annualInterestAmount),
       dailyInterestRate: Math.round((dailyInterestRate + Number.EPSILON) * 1000000) / 1000000,
       daysCount: days,
       grossPeriodInterest: rGross,

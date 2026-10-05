@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DividendCalculator } from "./dividend-calculator";
+import { DividendCalculator, normalizeTaxRate, roundToPaisa } from "./dividend-calculator";
 import { InterestCalculator } from "./interest-calculator";
 import { formatCurrencyNPR, formatCount, parseFormattedNumber } from "./currency";
 
@@ -204,5 +204,27 @@ describe("DividendCalculator & InterestCalculator Edge Cases", () => {
     });
     expect(intResult.tdsRate).toBe(0.2);
     expect(intResult.taxAmount).toBe(2000);
+  });
+
+  it("rounds half-paisa values exactly like Postgres numeric (no float drift)", () => {
+    expect(roundToPaisa(2256.345)).toBe(2256.35);
+    expect(roundToPaisa(16932.255)).toBe(16932.26);
+    expect(roundToPaisa(2.675)).toBe(2.68);
+    expect(roundToPaisa(-2.675)).toBe(-2.68);
+    // gross 112881.70 @ 15% -> tax 16932.255 -> 16932.26 (was 16932.25 before the fix)
+    const r = InterestCalculator.calculate({
+      debentureKitta: 2887,
+      unitFaceValue: 1000,
+      annualInterestRate: 3.91,
+      daysCount: 365,
+      taxCategory: "INSTITUTION",
+    });
+    expect(r.taxAmount).toBe(16932.26);
+  });
+
+  it("treats a tax rate of exactly 1 as 1%, never 100%", () => {
+    expect(normalizeTaxRate(1)).toBe(0.01);
+    expect(normalizeTaxRate(0.05)).toBe(0.05);
+    expect(normalizeTaxRate(15)).toBe(0.15);
   });
 });

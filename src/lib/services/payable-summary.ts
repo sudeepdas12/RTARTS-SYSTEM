@@ -12,6 +12,7 @@ export type PayeeCategory =
   | "LOCAL"
   | "EMPLOYEE"
   | "INSTITUTION"
+  | "BANK_FI"
   | "FOREIGN"
   | "MUTUAL_FUND"
   | "TAX_EXEMPT"
@@ -73,6 +74,9 @@ export function getPayeeCategoryLabel(category?: string | null): string {
       return "Tax Exempt";
     case "FOREIGN":
       return "Foreign";
+    case "BANK_FI":
+    case "BANK":
+      return "Bank / FI";
     case "PROMOTER":
       return "Promoter";
     case "LOCAL":
@@ -189,7 +193,14 @@ export function getPayeeTaxRate(
     return 0.15;
   }
 
+  if (isDebenture && (sanitized === "BANK_FI" || sanitized === "BANK")) {
+    return 0.0;
+  }
+
   switch (sanitized) {
+    case "BANK_FI":
+    case "BANK":
+      return isDebenture ? 0.0 : 0.05;
     case "PROMOTER":
     case "NATURAL_PERSON":
     case "PUBLIC":
