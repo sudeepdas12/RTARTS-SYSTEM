@@ -15,7 +15,42 @@
 BEGIN;
 
 -- ---------------------------------------------------------------------------
--- 1. Authoritative rates (edit after tax-advisor confirmation)
+-- 1. Widen CHECK constraints (looked up by definition, so legacy names do not matter)
+-- ---------------------------------------------------------------------------
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT c.conrelid::regclass AS tbl, c.conname
+    FROM pg_constraint c
+    WHERE c.contype = 'c'
+      AND c.conrelid IN ('public.clients'::regclass, 'public.dividend_payables'::regclass,
+                         'public.interest_payables'::regclass, 'public.mutual_fund_payables'::regclass,
+                         'public.payable_tax_rules'::regclass)
+      AND (pg_get_constraintdef(c.oid) ILIKE '%payee_classification%'
+        OR pg_get_constraintdef(c.oid) ILIKE '%payee_segment%')
+  LOOP
+    EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', r.tbl, r.conname);
+  END LOOP;
+END $$;
+
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['clients','dividend_payables','interest_payables','mutual_fund_payables'] LOOP
+    EXECUTE format($f$ALTER TABLE public.%I ADD CONSTRAINT %I CHECK (payee_classification IN
+      ('NATURAL_PERSON','PUBLIC_LEGAL_PERSON','COMPANY_INSTITUTION','FOREIGN_INVESTOR','BANK_FI','TAX_EXEMPT','UNCLASSIFIED'))$f$,
+      t, t || '_payee_classification_check');
+    EXECUTE format($f$ALTER TABLE public.%I ADD CONSTRAINT %I CHECK (payee_segment IS NULL OR payee_segment IN
+      ('PROMOTER','LOCAL','EMPLOYEE','PUBLIC'))$f$, t, t || '_payee_segment_check');
+  END LOOP;
+
+  ALTER TABLE public.payable_tax_rules ADD CONSTRAINT payable_tax_rules_payee_classification_check CHECK (payee_classification IN
+    ('NATURAL_PERSON','PUBLIC_LEGAL_PERSON','COMPANY_INSTITUTION','FOREIGN_INVESTOR','BANK_FI','TAX_EXEMPT'));
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- 2. Authoritative rates (edit after tax-advisor confirmation)
 -- ---------------------------------------------------------------------------
 INSERT INTO public.payable_tax_rules (payable_category, payee_classification, tax_rate, is_active) VALUES
   ('DIVIDEND',    'NATURAL_PERSON',      0.05, true),
@@ -38,37 +73,6 @@ INSERT INTO public.payable_tax_rules (payable_category, payee_classification, ta
   ('MUTUAL_FUND', 'TAX_EXEMPT',          0,    true)
 ON CONFLICT (payable_category, payee_classification)
 DO UPDATE SET tax_rate = EXCLUDED.tax_rate, is_active = EXCLUDED.is_active, updated_at = now();
-
--- ---------------------------------------------------------------------------
--- 2. Widen CHECK constraints (looked up by definition, so legacy names do not matter)
--- ---------------------------------------------------------------------------
-DO $$
-DECLARE r record;
-BEGIN
-  FOR r IN
-    SELECT c.conrelid::regclass AS tbl, c.conname
-    FROM pg_constraint c
-    WHERE c.contype = 'c'
-      AND c.conrelid IN ('public.clients'::regclass, 'public.dividend_payables'::regclass,
-                         'public.interest_payables'::regclass, 'public.mutual_fund_payables'::regclass)
-      AND (pg_get_constraintdef(c.oid) ILIKE '%payee_classification%'
-        OR pg_get_constraintdef(c.oid) ILIKE '%payee_segment%')
-  LOOP
-    EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', r.tbl, r.conname);
-  END LOOP;
-END $$;
-
-DO $$
-DECLARE t text;
-BEGIN
-  FOREACH t IN ARRAY ARRAY['clients','dividend_payables','interest_payables','mutual_fund_payables'] LOOP
-    EXECUTE format($f$ALTER TABLE public.%I ADD CONSTRAINT %I CHECK (payee_classification IN
-      ('NATURAL_PERSON','PUBLIC_LEGAL_PERSON','COMPANY_INSTITUTION','FOREIGN_INVESTOR','BANK_FI','TAX_EXEMPT','UNCLASSIFIED'))$f$,
-      t, t || '_payee_classification_check');
-    EXECUTE format($f$ALTER TABLE public.%I ADD CONSTRAINT %I CHECK (payee_segment IS NULL OR payee_segment IN
-      ('PROMOTER','LOCAL','EMPLOYEE','PUBLIC'))$f$, t, t || '_payee_segment_check');
-  END LOOP;
-END $$;
 
 -- ---------------------------------------------------------------------------
 -- 3. Client classification trigger: Foreign -> FOREIGN_INVESTOR, Employee segment kept
