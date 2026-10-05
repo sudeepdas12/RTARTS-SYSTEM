@@ -145,7 +145,7 @@ const CORPORATE_SUFFIX_REGEX =
 
 // 4. Institutional Business Patterns in Nepal (Strict word-bounded keywords to avoid matching human names)
 const INSTITUTIONAL_BUSINESS_REGEX =
-  /\b(BANK|BIKAS\s*BANK|DEVELOPMENT\s*BANK|FINANCE|MICROFINANCE|MICRO\s*INSURANCE|MICRO|LAGHUBITTA|BITTIYA|BITTIYA\s*SANSTHA|BIMA|BEEMA|INSURANCE|REINSURANCE|RE\s*INSURANCE|RE-INSURANCE|NIRJIBAN\s*BIMA|JIBAN\s*BIMA|HYDROPOWER|HYDRO\s*POWER|HYDRO|JALABIDHYUT|DOORSANCHAR|TELECOM|CLEARING\s*HOUSE|STOCK\s*EXCHANGE|STOCK\s*DEALER|STOCK\s*BROKER|STOCK\s*MARKET|CDS\s*(AND|&)?\s*CLEARING|PHARMA|PHARMACEUTICALS|HOSPITAL|COLLEGE|UNIVERSITY|ACADEMY|COOPERATIVE|CO-OPERATIVE|SAHAKARI|ENTERPRISES|TRADING|TRADERS|SUPPLIERS|DISTRIBUTORS|INDUSTRIES|VENTURES|SECURITIES|BROKER|MERCHANT(\s*BANKING)?|CAPITAL|INVESTMENT|HOLDINGS|ASSET\s*MANAGEMENT|DEVELOPERS?|INFRA(?:STRUCTURE)?|KHARID\s*BIKRI|BIKRI\s*KENDRA|SANIMA\s*RELIANCE|RELIANCE|PATHIVARA\s*MATA|MATA\s*PATHIVARA|MANDIR|SEWA\s*SAMITI|DHARMA\s*TRUST|\bTRUST\b|GOVERNMENT|SARKAR|MINISTRY|DEPARTMENT|PRADHIKARAN|SANSTHAN|NIGAM|MUNICIPALITY|NAGARPALIKA|GAUNPALIKA|EMBASSY|GUTHI|ARMY\s*WELFARE|NEPALESE\s*ARMY\s*WELFARE|SAINIK\s*KALYAN|POLICE\s*WELFARE|PRAHARI\s*KALYAN|WELFARE\s*FUND|KALYAN\s*KOSH)\b/i;
+  /\b(BANK|BIKAS\s*BANK|DEVELOPMENT\s*BANK|FINANCE|MICROFINANCE|MICRO\s*INSURANCE|MICRO|LAGHUBITTA|BITTIYA|BITTIYA\s*SANSTHA|BIMA|BEEMA|INSURANCE|REINSURANCE|RE\s*INSURANCE|RE-INSURANCE|NIRJIBAN\s*BIMA|JIBAN\s*BIMA|HYDROPOWER|HYDRO\s*POWER|HYDRO|JALABIDHYUT|DOORSANCHAR|TELECOM|CLEARING\s*HOUSE|STOCK\s*EXCHANGE|STOCK\s*DEALER|STOCK\s*BROKER|STOCK\s*MARKET|CDS\s*(AND|&)?\s*CLEARING|PHARMA|PHARMACEUTICALS|HOSPITAL|COLLEGE|UNIVERSITY|ACADEMY|COOPERATIVE|CO-OPERATIVE|SAHAKARI|ENTERPRISES|TRADING|TRADERS|SUPPLIERS|DISTRIBUTORS|INDUSTRIES|VENTURES|SECURITIES|BROKER|MERCHANT(\s*BANKING)?|CAPITAL|INVESTMENT|HOLDINGS|ASSET\s*MANAGEMENT|DEVELOPERS?|INFRA(?:STRUCTURE)?|KHARID\s*BIKRI|BIKRI\s*KENDRA|SANIMA\s*RELIANCE|RELIANCE|PATHIVARA\s*MATA|MATA\s*PATHIVARA|MANDIR|SEWA\s*SAMITI|DHARMA\s*TRUST|\bTRUST\b|GOVERNMENT|SARKAR|MINISTRY|DEPARTMENT|PRADHIKARAN|SANSTHAN|NIGAM|MUNICIPALITY|NAGARPALIKA|GAUNPALIKA|EMBASSY|GUTHI|ARMY\s*WELFARE|NEPALESE\s*ARMY\s*WELFARE|SAINIK\s*KALYAN|POLICE\s*WELFARE|PRAHARI\s*KALYAN|WELFARE\s*FUND|KALYAN\s*KOSH|SOLUTIONS|SERVICES|CONSULTANCY|ASSOCIATES|INTERNATIONAL|NETWORK|GROUP|MANAGEMENT|SANSTHA|FOUNDATION|SOCIETY|COMMUNITY|RESORT|HOTEL|CLINIC|TRAVELS|TOURS|LOGISTICS)\b/i;
 
 // 5. Distinct Human Honorifics & Personal Titles (Prefixes)
 const HUMAN_TITLES_REGEX =
@@ -176,6 +176,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
   ).trim();
 
   const nameUpper = rawName.toUpperCase();
+  const isJointHumanHolder = /\s+(\/|&|\+)\s+/.test(nameUpper);
 
   // Family Lineage
   const father = String(
@@ -547,6 +548,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
       holder_type: isPromoterSegment ? "Legal Person - Promoter" : "Legal Person",
       tds_rate_dividend: 0.05,
       tds_rate_debenture: 0.15,
+      classification_status: STRONG_INSTITUTION ? "AUTO_CLASSIFIED" : "REVIEW_REQUIRED",
       rule_matched: "Legal Person (Institutional Organization Keyword)",
     };
   }
@@ -721,6 +723,28 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
       };
     }
     if (/PUBLIC|INDIVIDUAL|GENERAL/i.test(explicitType)) {
+      const hasHumanEvidence =
+        Boolean(father || gfather || mother || spouse || guardian) ||
+        Boolean(citizenship || passport || dob || gender || maritalStatus || occupation) ||
+        Boolean(hasHumanTitle || hasHumanRelationship || isJointHumanHolder) ||
+        NEPALI_SURNAMES_REGEX.test(nameUpper);
+
+      if (!hasHumanEvidence) {
+        // Public tranche shareholder with NO family lineage, credentials, or personal surname
+        // Must NOT be assumed to be a natural person; held for review
+        return {
+          payee_classification: "UNCLASSIFIED",
+          payee_category: "UNKNOWN",
+          payee_segment: "PUBLIC",
+          holder_type: null,
+          tds_rate_dividend: null,
+          tds_rate_debenture: null,
+          classification_status: "REVIEW_REQUIRED",
+          rule_matched:
+            "Unclassified (Public Quota with Missing Lineage / Ambiguous Entity — Operator Review)",
+        };
+      }
+
       return {
         payee_classification: "NATURAL_PERSON",
         payee_category: "PUBLIC",
@@ -736,8 +760,6 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
   // =========================================================================
   // TIER 7: Joint human accounts & Nepali Human Surname Detection
   // =========================================================================
-  const isJointHumanHolder = /\s+(\/|&|\+)\s+/.test(nameUpper);
-
   if (isJointHumanHolder || NEPALI_SURNAMES_REGEX.test(nameUpper)) {
     const segment: PayeeSegment = isPromoterSegment
       ? "PROMOTER"

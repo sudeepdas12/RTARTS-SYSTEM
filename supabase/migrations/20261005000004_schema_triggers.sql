@@ -179,10 +179,7 @@ CREATE TRIGGER trg_dp_calc BEFORE INSERT OR UPDATE ON public.dividend_payables F
 
 --
 
--- Name: interest_payables trg_enforce_interest_payable_tax; Type: TRIGGER; Schema: public; Owner: -
---
 
-CREATE TRIGGER trg_enforce_interest_payable_tax BEFORE INSERT OR UPDATE ON public.interest_payables FOR EACH ROW EXECUTE FUNCTION public.enforce_interest_payable_tax_rates();
 
 
 --

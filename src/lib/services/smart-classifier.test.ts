@@ -136,6 +136,53 @@ describe("Smart Shareholder Classification Engine (Ultra-Smart & Multi-Tier)", (
       expect(bfi.payee_classification).toBe("BANK_FI");
       expect(bfi.tds_rate_debenture).toBe(0.0);
     });
+
+    it("correctly identifies entities with missing father/grandfather names as requiring review when marked PUBLIC", () => {
+      // "Global Vision" in Public quota has NO family lineage, NO citizenship -> UNCLASSIFIED with REVIEW_REQUIRED
+      const globalVision = smartClassify({
+        full_name: "Global Vision",
+        holder_type: "Public",
+      });
+      expect(globalVision.payee_classification).toBe("UNCLASSIFIED");
+      expect(globalVision.classification_status).toBe("REVIEW_REQUIRED");
+
+      // Standalone "Global Vision" without metadata -> UNCLASSIFIED with REVIEW_REQUIRED
+      const globalVisionRaw = smartClassify({ full_name: "Global Vision" });
+      expect(globalVisionRaw.payee_classification).toBe("UNCLASSIFIED");
+      expect(globalVisionRaw.classification_status).toBe("REVIEW_REQUIRED");
+
+      // "sundaram" in Public quota has NO family lineage, NO citizenship -> UNCLASSIFIED with REVIEW_REQUIRED
+      const sundaram = smartClassify({
+        full_name: "sundaram",
+        holder_type: "Public",
+      });
+      expect(sundaram.payee_classification).toBe("UNCLASSIFIED");
+      expect(sundaram.classification_status).toBe("REVIEW_REQUIRED");
+
+      // "Rajdevi" is ambiguous (could be municipality or female name) -> UNCLASSIFIED with REVIEW_REQUIRED
+      const rajdevi = smartClassify({
+        full_name: "Rajdevi",
+        holder_type: "Public",
+      });
+      expect(rajdevi.payee_classification).toBe("UNCLASSIFIED");
+      expect(rajdevi.classification_status).toBe("REVIEW_REQUIRED");
+
+      // But real individuals with personal surnames or lineage stay NATURAL_PERSON
+      const santosh = smartClassify({
+        full_name: "Santosh Pokharel",
+        holder_type: "Public",
+      });
+      expect(santosh.payee_classification).toBe("NATURAL_PERSON");
+      expect(santosh.tds_rate_debenture).toBe(0.06);
+
+      const ramPrasad = smartClassify({
+        full_name: "Ram Prasad",
+        father_name: "Hari Prasad",
+        holder_type: "Public",
+      });
+      expect(ramPrasad.payee_classification).toBe("NATURAL_PERSON");
+      expect(ramPrasad.tds_rate_debenture).toBe(0.06);
+    });
   });
 
   describe("3. Tax Exempted Entities (SEBON Mutual Funds & Statutory Funds)", () => {

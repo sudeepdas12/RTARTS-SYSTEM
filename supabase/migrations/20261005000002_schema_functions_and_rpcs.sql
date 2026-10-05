@@ -2249,6 +2249,8 @@ BEGIN
       AND (p_fiscal_year IS NULL OR p_fiscal_year = 'all' OR p_fiscal_year = '' OR mf.fiscal_year = p_fiscal_year)
       AND mf.payment_status IN ('Pending', 'Partial')
       AND GREATEST(COALESCE(mf.net_payable,0) - COALESCE(mf.paid_amount,0), 0) > 0
+      AND mf.payee_classification <> 'UNCLASSIFIED'
+      AND mf.classification_status <> 'REVIEW_REQUIRED'
       AND NOT EXISTS (
         SELECT 1 FROM public.payments p
         WHERE p.payable_id = mf.id
@@ -2303,6 +2305,10 @@ BEGIN
       AND (p_fiscal_year IS NULL OR p_fiscal_year = 'all' OR p_fiscal_year = '' OR dp.fiscal_year = p_fiscal_year)
       AND dp.payment_status IN ('Pending', 'Partial')
       AND GREATEST(COALESCE(dp.net_payable,0) - COALESCE(dp.paid_amount,0), 0) > 0
+      AND dp.payee_classification <> 'UNCLASSIFIED'
+      AND dp.classification_status <> 'REVIEW_REQUIRED'
+      AND dp.payee_classification <> 'UNCLASSIFIED'
+      AND dp.classification_status <> 'REVIEW_REQUIRED'
       AND NOT EXISTS (
         SELECT 1 FROM public.payments p
         WHERE p.payable_id = dp.id
@@ -2357,6 +2363,10 @@ BEGIN
       AND (p_fiscal_year IS NULL OR p_fiscal_year = 'all' OR p_fiscal_year = '' OR ip.fiscal_year = p_fiscal_year)
       AND ip.payment_status IN ('Pending', 'Partial')
       AND GREATEST(COALESCE(ip.net_payable,0) - COALESCE(ip.paid_amount,0), 0) > 0
+      AND ip.payee_classification <> 'UNCLASSIFIED'
+      AND ip.classification_status <> 'REVIEW_REQUIRED'
+      AND ip.payee_classification <> 'UNCLASSIFIED'
+      AND ip.classification_status <> 'REVIEW_REQUIRED'
       AND NOT EXISTS (
         SELECT 1 FROM public.payments p
         WHERE p.payable_id = ip.id
@@ -2681,26 +2691,7 @@ CREATE FUNCTION public.enforce_interest_payable_tax_rates() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
-  -- TAX_EXEMPT: always 0% (Mutual Funds, Social Security Fund, CIT, etc.)
-  IF NEW.payee_classification = 'TAX_EXEMPT' THEN
-    NEW.tds_rate    := 0.00;
-    NEW.tax_amount  := 0.00;
-    NEW.net_payable := NEW.gross_interest;
-
-  -- COMPANY_INSTITUTION: always 15% for debenture/interest
-  ELSIF NEW.payee_classification = 'COMPANY_INSTITUTION' THEN
-    NEW.tds_rate    := 0.15;
-    NEW.tax_amount  := ROUND((NEW.gross_interest * 0.15)::numeric, 2);
-    NEW.net_payable := ROUND((NEW.gross_interest * 0.85)::numeric, 2);
-
-  -- NATURAL_PERSON / others: 6% for debenture
-  ELSIF NEW.payee_classification IN ('NATURAL_PERSON', 'UNCLASSIFIED') 
-        AND (NEW.tds_rate IS NULL OR NEW.tds_rate = 0) THEN
-    NEW.tds_rate    := 0.06;
-    NEW.tax_amount  := ROUND((NEW.gross_interest * 0.06)::numeric, 2);
-    NEW.net_payable := ROUND((NEW.gross_interest * 0.94)::numeric, 2);
-  END IF;
-
+  -- Deprecated in favor of apply_payable_classification_and_tax() using authoritative payable_tax_rules
   RETURN NEW;
 END;
 $$;
@@ -2993,6 +2984,8 @@ BEGIN
       AND mf.payment_status IN ('Pending', 'Partial')
       AND (p_from_date IS NULL OR p_from_date = '' OR mf.created_at >= p_from_date::timestamptz)
       AND (p_to_date IS NULL OR p_to_date = '' OR mf.created_at <= (p_to_date || ' 23:59:59.999Z')::timestamptz)
+      AND mf.payee_classification <> 'UNCLASSIFIED'
+      AND mf.classification_status <> 'REVIEW_REQUIRED'
       AND NOT EXISTS (
         SELECT 1 FROM public.payments p
         JOIN public.payment_batches pb ON pb.id = p.batch_id
@@ -3016,6 +3009,8 @@ BEGIN
       AND dp.payment_status IN ('Pending', 'Partial')
       AND (p_from_date IS NULL OR p_from_date = '' OR dp.created_at >= p_from_date::timestamptz)
       AND (p_to_date IS NULL OR p_to_date = '' OR dp.created_at <= (p_to_date || ' 23:59:59.999Z')::timestamptz)
+      AND dp.payee_classification <> 'UNCLASSIFIED'
+      AND dp.classification_status <> 'REVIEW_REQUIRED'
       AND NOT EXISTS (
         SELECT 1 FROM public.payments p
         JOIN public.payment_batches pb ON pb.id = p.batch_id
@@ -3039,6 +3034,8 @@ BEGIN
       AND ip.payment_status IN ('Pending', 'Partial')
       AND (p_from_date IS NULL OR p_from_date = '' OR ip.created_at >= p_from_date::timestamptz)
       AND (p_to_date IS NULL OR p_to_date = '' OR ip.created_at <= (p_to_date || ' 23:59:59.999Z')::timestamptz)
+      AND ip.payee_classification <> 'UNCLASSIFIED'
+      AND ip.classification_status <> 'REVIEW_REQUIRED'
       AND NOT EXISTS (
         SELECT 1 FROM public.payments p
         JOIN public.payment_batches pb ON pb.id = p.batch_id
@@ -4168,6 +4165,8 @@ BEGIN
       AND (p_fiscal_year IS NULL OR p_fiscal_year = 'all' OR p_fiscal_year = '' OR mf.fiscal_year = p_fiscal_year)
       AND mf.payment_status IN ('Pending', 'Partial')
       AND GREATEST(COALESCE(mf.net_payable,0) - COALESCE(mf.paid_amount,0), 0) > 0
+      AND mf.payee_classification <> 'UNCLASSIFIED'
+      AND mf.classification_status <> 'REVIEW_REQUIRED'
       AND NOT EXISTS (
         SELECT 1 FROM public.payments p
         JOIN public.payment_batches pb ON pb.id = p.batch_id
@@ -5764,9 +5763,10 @@ CREATE FUNCTION public.sync_client_payee_classification() RETURNS trigger
     SET search_path TO 'public'
     AS $$
 BEGIN
-  IF NEW.classification_status = 'CONFIRMED' THEN RETURN NEW; END IF;
-  IF NEW.payee_classification <> 'UNCLASSIFIED' THEN
-    NEW.classification_status := COALESCE(NULLIF(NEW.classification_status, 'REVIEW_REQUIRED'), 'AUTO_CLASSIFIED');
+  IF NEW.classification_status = 'CONFIRMED' THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.payee_classification IS NOT NULL AND NEW.payee_classification <> 'UNCLASSIFIED' THEN
     RETURN NEW;
   END IF;
   CASE NEW.holder_type::text
