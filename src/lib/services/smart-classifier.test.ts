@@ -188,7 +188,53 @@ describe("Smart Shareholder Classification Engine (Ultra-Smart & Multi-Tier)", (
       const nblTrust = smartClassify({
         full_name: "NEPAL BANK KARMACHARI AWAKASH KOSH BYAWASTHAPAN TRUST",
       });
-      expect(nblTrust.payee_classification).toBe("TAX_EXEMPT");
+      // Bank staff trusts: exemption is a tax-advisor decision, so never auto-apply it silently.
+      expect(nblTrust.classification_status).toBe("REVIEW_REQUIRED");
+    });
+  });
+
+  describe("3c. Regression: misclassification found in review", () => {
+    it("does not treat ordinary trading/company names as mutual funds", () => {
+      expect(smartClassify({ full_name: "SUPER TRADERS" }).payee_classification).toBe(
+        "COMPANY_INSTITUTION",
+      );
+      expect(smartClassify({ full_name: "ABC FOCUS PVT LTD" }).payee_classification).toBe(
+        "COMPANY_INSTITUTION",
+      );
+      expect(smartClassify({ full_name: "SELECT" }).payee_classification).toBe("UNCLASSIFIED");
+    });
+    it("routes keyword/surname collisions to review instead of guessing a company", () => {
+      for (const name of ["SITA CAPITAL THAPA", "RAM SARKAR"]) {
+        const r = smartClassify({ full_name: name });
+        expect(r.payee_classification).toBe("UNCLASSIFIED");
+        expect(r.classification_status).toBe("REVIEW_REQUIRED");
+      }
+    });
+    it("lets explicit Foreign / Mutual Fund metadata outrank name heuristics", () => {
+      expect(
+        smartClassify({ full_name: "GROWTH HOLDINGS", holder_type: "Mutual Fund" })
+          .payee_classification,
+      ).toBe("TAX_EXEMPT");
+      const f = smartClassify({
+        full_name: "RAM SHARMA",
+        father_name: "HARI SHARMA",
+        holder_type: "Foreign",
+      });
+      expect(f.holder_type).toBe("Foreign");
+      expect(f.classification_status).toBe("REVIEW_REQUIRED"); // foreign individual vs entity
+    });
+    it("name-only exemptions outside the known funds need review; known funds do not", () => {
+      expect(smartClassify({ full_name: "ANITA PENSION FUND" }).classification_status).toBe(
+        "REVIEW_REQUIRED",
+      );
+      expect(smartClassify({ full_name: "NAGARIK LAGANI KOSH" }).classification_status).toBe(
+        "AUTO_CLASSIFIED",
+      );
+    });
+    it("never implies a tax rate for unclassified payees", () => {
+      const r = smartClassify({ full_name: "JOHN DOE" });
+      expect(r.tds_rate_dividend).toBeNull();
+      expect(r.tds_rate_debenture).toBeNull();
     });
   });
 

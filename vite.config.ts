@@ -62,6 +62,14 @@ export default defineConfig(({ mode }) => {
         "react-dom/client",
         "react/jsx-runtime",
         "react/jsx-dev-runtime",
+        "@tanstack/react-query",
+        "@tanstack/react-router",
+        "lucide-react",
+        "date-fns",
+        "xlsx",
+        "sonner",
+        "tailwind-merge",
+        "clsx",
       ],
     },
     plugins,
@@ -82,7 +90,6 @@ export default defineConfig(({ mode }) => {
         },
       },
     };
-    config.esbuild = { keepNames: true } as unknown as typeof config.esbuild;
   }
 
   return config;

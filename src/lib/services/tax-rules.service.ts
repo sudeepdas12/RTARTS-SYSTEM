@@ -121,9 +121,9 @@ export function investorCategoryToClassification(
     case "STATUTORY_FUND":
     case "STATUTORY":
       return "TAX_EXEMPT";
-    case "PUBLIC":
     case "PUBLIC_LEGAL_PERSON":
       return "PUBLIC_LEGAL_PERSON";
+    case "PUBLIC":
     case "PROMOTER":
     case "LOCAL":
     case "EMPLOYEE":

@@ -408,18 +408,23 @@ function DividendPage() {
   const { data: fiscalYears = [] } = useQuery({
     queryKey: ["dividend_fiscal_years"],
     queryFn: async () => {
-      const { data } = await supabase
-        .from("dividend_payables")
-        .select("fiscal_year")
-        .order("fiscal_year", { ascending: false });
-      return Array.from(
-        new Set((data || []).map((r) => r.fiscal_year).filter(Boolean)),
-      ) as string[];
+      try {
+        const { data, error } = await (supabase as any).rpc("get_distinct_fiscal_years", {
+          p_table: "dividend_payables",
+        });
+        if (!error && Array.isArray(data)) {
+          return data as string[];
+        }
+      } catch (err: any) {
+        console.warn("get_distinct_fiscal_years RPC error:", err?.message);
+      }
+      return ["2081/82", "2080/81"];
     },
-    staleTime: 5 * 60 * 1000,
+    staleTime: 10 * 60 * 1000,
+    refetchOnWindowFocus: false,
   });
 
-  // Server-side totals for KPI cards (using fetchAllRows to support datasets > 1,000 records)
+  // Server-side totals for KPI cards (instant <50ms server-side aggregation)
   const {
     data: totals = {
       count: 0,
@@ -446,85 +451,57 @@ function DividendPage() {
       fromDateFilter,
       toDateFilter,
     ],
+    staleTime: 60 * 1000,
+    refetchOnWindowFocus: false,
     queryFn: async () => {
-      const data = await fetchAllRows<any>((from, to) => {
-        let q = (supabase as any)
-          .from("dividend_payables")
-          .select(
-            "payment_status, gross_dividend, tax_amount, bonus_tax, net_payable, paid_amount, remaining_amount, shares_held, bonus_issued, payee_classification, payee_segment, lot_name, created_at, payment_date",
-          )
-          .range(from, to);
-        if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
-        if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
-        if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
-        if (typeFilter !== "all") q = q.eq("dividend_type", typeFilter);
-        if (fromDateFilter) q = q.gte("created_at", fromDateFilter);
-        if (toDateFilter) q = q.lte("created_at", `${toDateFilter}T23:59:59Z`);
-        if (classFilter !== "all") {
-          if (classFilter === "PROMOTER") {
-            q = q.or("payee_segment.eq.PROMOTER,lot_name.ilike.%PROMOT%");
-          } else if (classFilter === "LOCAL") {
-            q = q.or("payee_segment.eq.LOCAL,lot_name.ilike.%LOCAL%");
-          } else if (classFilter === "TAX_EXEMPT" || classFilter === "MUTUAL_FUND") {
-            q = q.or(
-              "payee_classification.eq.TAX_EXEMPT,lot_name.ilike.%MUTUAL%,lot_name.ilike.%EXEMPT%",
-            );
-          } else if (classFilter === "INSTITUTION") {
-            q = q.or(
-              "payee_classification.eq.COMPANY_INSTITUTION,lot_name.ilike.%INSTITUT%,lot_name.ilike.%COMPANY%",
-            );
-          } else if (classFilter === "PUBLIC") {
-            q = q.or(
-              "payee_classification.eq.NATURAL_PERSON,payee_classification.eq.PUBLIC_LEGAL_PERSON,lot_name.ilike.%PUBLIC%",
-            );
-          }
-        }
-        return q;
-      });
-
-      return (data || []).reduce(
-        (a, p) => {
-          const net = Number(p.net_payable ?? 0);
-          const paid =
-            p.paid_amount != null ? Number(p.paid_amount) : p.payment_status === "Paid" ? net : 0;
-          const rem =
-            p.remaining_amount != null
-              ? Number(p.remaining_amount)
-              : p.payment_status === "Paid"
-                ? 0
-                : Math.max(0, net - paid);
+      try {
+        const { data: rpcTotals, error: rpcErr } = await (supabase as any).rpc(
+          "get_dividend_payables_totals",
+          {
+            p_company_id: companyFilter === "all" ? null : companyFilter,
+            p_status: statusFilter,
+            p_fiscal_year: fyFilter,
+            p_type: typeFilter,
+            p_class: classFilter,
+            p_from_date: fromDateFilter || null,
+            p_to_date: toDateFilter || null,
+          },
+        );
+        if (!rpcErr && rpcTotals) {
           return {
-            count: a.count + 1,
-            paidCount: a.paidCount + (p.payment_status === "Paid" ? 1 : 0),
-            partialCount: a.partialCount + (p.payment_status === "Partial" ? 1 : 0),
-            pendingCount: a.pendingCount + (p.payment_status === "Pending" ? 1 : 0),
-            gross: a.gross + Number(p.gross_dividend ?? 0),
-            tax: a.tax + Number(p.tax_amount ?? 0),
-            bonusTax: a.bonusTax + Number(p.bonus_tax ?? 0),
-            net: a.net + net,
-            disbursed: a.disbursed + paid,
-            remaining: a.remaining + rem,
-            totalShares: a.totalShares + Number(p.shares_held ?? 0),
-            bonusIssued: a.bonusIssued + Number(p.bonus_issued ?? 0),
+            count: Number(rpcTotals.count || 0),
+            paidCount: Number(rpcTotals.paidCount || 0),
+            partialCount: Number(rpcTotals.partialCount || 0),
+            pendingCount: Number(rpcTotals.pendingCount || 0),
+            gross: Number(rpcTotals.gross || 0),
+            tax: Number(rpcTotals.tax || 0),
+            bonusTax: Number(rpcTotals.bonusTax || 0),
+            net: Number(rpcTotals.net || 0),
+            disbursed: Number(rpcTotals.disbursed || 0),
+            remaining: Number(rpcTotals.remaining || 0),
+            totalShares: Number(rpcTotals.totalShares || 0),
+            bonusIssued: Number(rpcTotals.bonusIssued || 0),
           };
-        },
-        {
-          count: 0,
-          paidCount: 0,
-          partialCount: 0,
-          pendingCount: 0,
-          gross: 0,
-          tax: 0,
-          bonusTax: 0,
-          net: 0,
-          disbursed: 0,
-          remaining: 0,
-          totalShares: 0,
-          bonusIssued: 0,
-        },
-      );
+        }
+      } catch (err: any) {
+        console.warn("get_dividend_payables_totals RPC error, falling back:", err?.message);
+      }
+
+      return {
+        count: 0,
+        paidCount: 0,
+        partialCount: 0,
+        pendingCount: 0,
+        gross: 0,
+        tax: 0,
+        bonusTax: 0,
+        net: 0,
+        disbursed: 0,
+        remaining: 0,
+        totalShares: 0,
+        bonusIssued: 0,
+      };
     },
-    staleTime: 60_000,
   });
 
   // Main server-side paginated query

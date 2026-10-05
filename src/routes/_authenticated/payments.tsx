@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { PageHeader } from "@/components/page-header";
 import { supabase } from "@/integrations/supabase/client";
 import { PaymentGenerator } from "@/lib/payment-generator";
@@ -106,7 +106,7 @@ function PaymentsRoute() {
   const [selectedCompany, setSelectedCompany] = useState<string>("all");
   const [selectedPayableType, setSelectedPayableType] = useState<string>("all");
   const [batchName, setBatchName] = useState("");
-  const [fiscalYear, setFiscalYear] = useState("");
+  const [fiscalYear, setFiscalYear] = useState("all");
   const [cdsBatchRef, setCdsBatchRef] = useState("");
   const [registrar, setRegistrar] = useState("");
   const [reverseDialogOpen, setReverseDialogOpen] = useState<PaymentLineItem | null>(null);
@@ -120,6 +120,7 @@ function PaymentsRoute() {
     null,
   );
   const [installmentTag, setInstallmentTag] = useState<string>("FULL");
+  const [createBatchProgress, setCreateBatchProgress] = useState<string | null>(null);
 
   // Edit Batch Dialog State (for Draft batches)
   const [editBatchOpen, setEditBatchOpen] = useState(false);
@@ -243,30 +244,46 @@ function PaymentsRoute() {
     enabled: !!activeBatchId,
   });
 
-  const { data: availablePayables = [] } = useQuery({
+  // Default fiscal year to 'all' if empty
+  useEffect(() => {
+    if (!fiscalYear) {
+      setFiscalYear("all");
+    }
+  }, [fiscalYear]);
+
+  // Fast server-side payables preview (< 50ms)
+  const {
+    data: payablesPreview = {
+      count: 0,
+      totalAmount: 0,
+      totalGross: 0,
+      totalTax: 0,
+      mfCount: 0,
+      divCount: 0,
+      intCount: 0,
+    },
+    isLoading: isPreviewLoading,
+  } = useQuery({
     queryKey: [
-      "payables-for-payment",
+      "payables-preview",
       selectedCompany,
       selectedPayableType,
       fiscalYear,
-      periodPreset,
-      periodDays,
       fromDate,
       toDate,
     ],
     queryFn: () =>
-      PaymentService.getPayablesForPayment(
+      PaymentService.getAvailablePayablesPreview(
         selectedCompany !== "all" ? selectedCompany : undefined,
         selectedPayableType !== "all" ? selectedPayableType : undefined,
         {
           fiscalYear: fiscalYear || undefined,
-          periodPreset,
-          periodDays: periodDays ? Number(periodDays) : undefined,
           fromDate: fromDate || undefined,
           toDate: toDate || undefined,
         },
       ),
     enabled: createOpen,
+    staleTime: 15 * 1000,
   });
 
   // Dedicated query for payables specifically matching the active batch
@@ -285,6 +302,7 @@ function PaymentsRoute() {
         activeBatchData.payable_type || undefined,
         {
           fiscalYear: activeBatchData.fiscal_year || undefined,
+          limit: 1000,
         },
       );
     },
@@ -304,117 +322,58 @@ function PaymentsRoute() {
       if (!canWrite) throw new Error("You do not have permission to create payment batches.");
       if (!batchName.trim()) throw new Error("Batch name is required");
 
-      if (availablePayables.length === 0) {
+      if (payablesPreview.count === 0) {
         const proceed = confirm(
           "No pending payables match the selected company, type, and fiscal year. Are you sure you want to create an empty payment batch?",
         );
         if (!proceed) throw new Error("Batch creation cancelled: no payables selected.");
       }
 
-      const items = availablePayables.map((payable) => {
-        const origGross = Number(
-          payable.gross_dividend ??
-            payable.gross_interest ??
-            payable.gross_amount ??
-            payable.gross ??
-            0,
-        );
-        const origNet = Number(
-          payable.net_payable ?? payable.net_interest ?? payable.net_amount ?? 0,
-        );
-        const origTax = Number(payable.tax_amount ?? origGross - origNet);
-        const isPartial = payable.payment_status === "Partial";
-        const rem = payable.remaining_amount != null ? Number(payable.remaining_amount) : origNet;
+      setCreateBatchProgress("Initializing batch header...");
 
-        let grossAmount = origGross;
-        let taxAmount = origTax;
-        let netAmount = origNet;
-
-        if (isPartial && rem > 0 && rem < origNet && origNet > 0) {
-          netAmount = rem;
-          const ratio = netAmount / origNet;
-          grossAmount = Math.round(origGross * ratio * 100) / 100;
-          taxAmount = Number((grossAmount - netAmount).toFixed(2));
-          grossAmount = Number((netAmount + taxAmount).toFixed(2));
-        }
-
-        return {
-          company_id: payable.company_id,
-          client_id: payable.client_id,
-          payable_type:
-            payable.payable_type ||
-            (selectedPayableType !== "all" ? selectedPayableType : "dividend"),
-          payable_id: payable.id,
-          gross_amount: grossAmount,
-          tax_amount: taxAmount,
-          net_amount: netAmount,
-          paid_amount: netAmount,
-          payment_method: paymentMethod,
-          payment_date: null,
-          payment_reference: null,
-          bank_name: payable.clients?.bank_name || payable.bank_name || null,
-          bank_account_no: payable.clients?.bank_account_no || payable.bank_account_no || null,
-          neft_ref: null,
-          connectips_ref: null,
-          rtgs_ref: null,
-          cheque_no: null,
-          status: "Pending" as const,
-          remarks:
-            installmentTag !== "FULL"
-              ? `[${
-                  installmentTag === "SEMI_1"
-                    ? "Installment 1 (Poush)"
-                    : installmentTag === "SEMI_2"
-                      ? "Installment 2 (Asar)"
-                      : installmentTag === "INTERIM"
-                        ? "Interim Dividend"
-                        : installmentTag === "FINAL"
-                          ? "Final Dividend"
-                          : "Remediated"
-                }] ${batchName.trim()}`
-              : payable.installment_leg
-                ? `[${payable.installment_leg}] ${batchName.trim()}`
-                : null,
-        };
-      });
-
-      const batch = await PaymentService.createBatchWithLineItems(
+      // Fast, safe chunked batch population in Postgres (prevents timeouts on large batches)
+      const batch = await PaymentService.createBatchAtomic(
         {
           batch_name: batchName.trim(),
           company_id: selectedCompany !== "all" ? selectedCompany : undefined,
           fiscal_year: fiscalYear || undefined,
           payable_type: selectedPayableType !== "all" ? selectedPayableType : undefined,
           payment_method: paymentMethod,
+          installment_tag: installmentTag,
+          cds_batch_ref: cdsBatchRef.trim() || undefined,
+          registrar: registrar.trim() || undefined,
         },
-        items,
+        (inserted, total) => {
+          const target = payablesPreview.count || total || 1;
+          const pct = Math.min(100, Math.round((inserted / target) * 100));
+          setCreateBatchProgress(
+            `Populating: ${inserted.toLocaleString()} / ${target.toLocaleString()} (${pct}%)...`,
+          );
+        },
       );
-
-      // Update cds_batch_ref and registrar if provided
-      if (cdsBatchRef || registrar) {
-        await (supabase as any)
-          .from("payment_batches")
-          .update({
-            cds_batch_ref: cdsBatchRef.trim() || null,
-            registrar: registrar.trim() || null,
-          })
-          .eq("id", batch.id);
-      }
 
       return batch;
     },
     onSuccess: (batch: any) => {
-      toast.success(`Payment batch created with ${availablePayables.length} payables.`);
+      setCreateBatchProgress(null);
+      toast.success(
+        `Payment batch created with ${batch.total_payments ?? payablesPreview.count} payables.`,
+      );
       setCreateOpen(false);
       setBatchName("");
-      setFiscalYear("");
       setCdsBatchRef("");
       setRegistrar("");
       qc.invalidateQueries({ queryKey: ["payments"] });
+      qc.invalidateQueries({ queryKey: ["payment-batch"] });
+      qc.invalidateQueries({ queryKey: ["payables-preview"] });
       if (batch?.id) {
         setActiveBatchId(batch.id);
       }
     },
-    onError: (err: any) => toast.error(`Failed to create batch: ${err?.message || err}`),
+    onError: (err: any) => {
+      setCreateBatchProgress(null);
+      toast.error(`Failed to create batch: ${err?.message || err}`);
+    },
   });
 
   const { mutate: addPayablesToBatch, isPending: isAddingPayables } = useMutation({
@@ -640,8 +599,13 @@ function PaymentsRoute() {
 
   const handleDownloadPaymentFile = async (batch: PaymentBatch) => {
     let itemsToExport = lineItems;
-    if (!itemsToExport || itemsToExport.length === 0 || activeBatchId !== batch.id) {
-      itemsToExport = await PaymentService.getLineItems(batch.id);
+    if (
+      !itemsToExport ||
+      itemsToExport.length === 0 ||
+      activeBatchId !== batch.id ||
+      (batch.total_payments != null && itemsToExport.length < batch.total_payments)
+    ) {
+      itemsToExport = await PaymentService.getAllLineItemsForExport(batch.id);
     }
 
     if (!itemsToExport || itemsToExport.length === 0) {
@@ -679,8 +643,13 @@ function PaymentsRoute() {
       return;
     }
     let itemsToExport = lineItems;
-    if (!itemsToExport || itemsToExport.length === 0 || activeBatchId !== batch.id) {
-      itemsToExport = await PaymentService.getLineItems(batch.id);
+    if (
+      !itemsToExport ||
+      itemsToExport.length === 0 ||
+      activeBatchId !== batch.id ||
+      (batch.total_payments != null && itemsToExport.length < batch.total_payments)
+    ) {
+      itemsToExport = await PaymentService.getAllLineItemsForExport(batch.id);
     }
 
     if (!itemsToExport || itemsToExport.length === 0) {
@@ -814,35 +783,67 @@ function PaymentsRoute() {
     }
   };
 
-  const handleExportAvailablePayables = () => {
-    if (availablePayables.length === 0) {
+  const [isExportingAvailablePayables, setIsExportingAvailablePayables] = useState(false);
+  const handleExportAvailablePayables = async () => {
+    if (payablesPreview.count === 0) {
       toast.error("No payables available to export with current filters.");
       return;
     }
 
-    const rows = availablePayables.map((p, idx) => {
-      const gross = Number(p.gross_dividend ?? p.gross_interest ?? 0);
-      const tax = Number(p.tax_amount ?? 0);
-      const net = Number(p.net_payable ?? gross - tax);
-      return {
-        "S.N": idx + 1,
-        Company: p.companies?.company_code || "",
-        "Payee Name": p.clients?.full_name || p.full_name || "Shareholder",
-        BOID: p.clients?.boid || p.boid || "",
-        Classification: p.payee_classification || p.clients?.payee_classification || "",
-        "Bank Name": p.bank_name || p.clients?.bank_name || "",
-        "Bank Account No": p.bank_account_no || p.clients?.bank_account_no || "",
-        "Payable Type": p.payable_type || selectedPayableType,
-        "Gross Amount": gross,
-        "Tax Amount": tax,
-        "Net Payable": net,
-        Status: p.payment_status || "Pending",
-        "Fiscal Year": p.fiscal_year || fiscalYear,
-      };
-    });
+    setIsExportingAvailablePayables(true);
+    const toastId = toast.loading(
+      `Preparing Excel export for ${payablesPreview.count.toLocaleString()} payables...`,
+    );
+    try {
+      const payables = await PaymentService.getPayablesForPayment(
+        selectedCompany !== "all" ? selectedCompany : undefined,
+        selectedPayableType !== "all" ? selectedPayableType : undefined,
+        {
+          fiscalYear: fiscalYear || undefined,
+          periodPreset,
+          periodDays: periodDays ? Number(periodDays) : undefined,
+          fromDate: fromDate || undefined,
+          toDate: toDate || undefined,
+          limit: 10000,
+        },
+      );
 
-    exportToExcel(rows, `Available_Payables_List_${new Date().toISOString().slice(0, 10)}`);
-    toast.success(`Exported ${availablePayables.length} payables to Excel.`);
+      if (payables.length === 0) {
+        toast.dismiss(toastId);
+        toast.error("No payables found to export.");
+        return;
+      }
+
+      const rows = payables.map((p, idx) => {
+        const gross = Number(p.gross_dividend ?? p.gross_interest ?? 0);
+        const tax = Number(p.tax_amount ?? 0);
+        const net = Number(p.net_payable ?? gross - tax);
+        return {
+          "S.N": idx + 1,
+          Company: p.companies?.company_code || "",
+          "Payee Name": p.clients?.full_name || p.full_name || "Shareholder",
+          BOID: p.clients?.boid || p.boid || "",
+          Classification: p.payee_classification || p.clients?.payee_classification || "",
+          "Bank Name": p.bank_name || p.clients?.bank_name || "",
+          "Bank Account No": p.bank_account_no || p.clients?.bank_account_no || "",
+          "Payable Type": p.payable_type || selectedPayableType,
+          "Gross Amount": gross,
+          "Tax Amount": tax,
+          "Net Payable": net,
+          Status: p.payment_status || "Pending",
+          "Fiscal Year": p.fiscal_year || fiscalYear,
+        };
+      });
+
+      exportToExcel(rows, `Available_Payables_List_${new Date().toISOString().slice(0, 10)}`);
+      toast.dismiss(toastId);
+      toast.success(`Exported ${rows.length} payables to Excel.`);
+    } catch (err: any) {
+      toast.dismiss(toastId);
+      toast.error(`Export failed: ${err?.message || err}`);
+    } finally {
+      setIsExportingAvailablePayables(false);
+    }
   };
 
   const statusVariant = (status: string) => {
@@ -861,12 +862,21 @@ function PaymentsRoute() {
   };
 
   const batchTotals = useMemo(() => {
+    if (
+      activeBatchData &&
+      (activeBatchData.total_payments != null || activeBatchData.total_amount != null)
+    ) {
+      return {
+        count: Number(activeBatchData.total_payments || 0),
+        total: Number(activeBatchData.total_amount || 0),
+      };
+    }
     if (!lineItems) return { count: 0, total: 0 };
     return {
       count: lineItems.length,
       total: lineItems.reduce((sum, item) => sum + (item.net_amount || 0), 0),
     };
-  }, [lineItems]);
+  }, [activeBatchData, lineItems]);
 
   const filteredBatches = useMemo(() => {
     if (!payments) return [];
@@ -921,7 +931,7 @@ function PaymentsRoute() {
   // Pagination for Active Batch Line Items in Modal
   const [lineItemsPage, setLineItemsPage] = useState<number>(1);
   const [lineItemsPageSize, setLineItemsPageSize] = useState<number>(10);
-  const totalLineItems = lineItems?.length || 0;
+  const totalLineItems = activeBatchData?.total_payments || lineItems?.length || 0;
   const lineItemsTotalPages = Math.max(1, Math.ceil(totalLineItems / lineItemsPageSize));
   const safeLineItemsPage = Math.min(lineItemsPage, lineItemsTotalPages);
   const paginatedLineItems = useMemo(() => {
@@ -940,14 +950,29 @@ function PaymentsRoute() {
           <Button
             variant="outline"
             onClick={handleExportAvailablePayables}
-            disabled={availablePayables.length === 0}
+            disabled={payablesPreview.count === 0 || isExportingAvailablePayables}
           >
-            <FileSpreadsheet className="w-4 h-4 mr-2 text-emerald-600" />
-            Download Payables ({availablePayables.length})
+            {isExportingAvailablePayables ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <FileSpreadsheet className="w-4 h-4 mr-2 text-emerald-600" />
+            )}
+            Download Payables ({payablesPreview.count.toLocaleString()})
           </Button>
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
             <DialogTrigger asChild>
-              <Button>
+              <Button
+                onClick={() => {
+                  setSelectedCompany("all");
+                  setSelectedPayableType("all");
+                  setFiscalYear("all");
+                  setPeriodPreset("12M");
+                  setPeriodDays("365");
+                  setFromDate("");
+                  setToDate("");
+                  setBatchName(`Payment Batch — ${new Date().toISOString().slice(0, 10)}`);
+                }}
+              >
                 <Plus className="w-4 h-4 mr-2" />
                 New Payment Batch
               </Button>
@@ -985,7 +1010,15 @@ function PaymentsRoute() {
                             } else {
                               setSelectedPayableType("dividend");
                             }
+                            const code = comp.company_code || comp.company_name?.slice(0, 8);
+                            setBatchName(`${code} Payout — FY ${comp.fiscal_year || "2082/83"}`);
                           }
+                        } else {
+                          setSelectedPayableType("all");
+                          setFiscalYear("all");
+                          setBatchName(
+                            `All Schemes Payout — ${new Date().toISOString().slice(0, 10)}`,
+                          );
                         }
                       }}
                     >
@@ -996,7 +1029,12 @@ function PaymentsRoute() {
                         <SelectItem value="all">All companies</SelectItem>
                         {companies.map((company) => (
                           <SelectItem key={company.id} value={company.id}>
-                            {company.company_code} — {company.company_name}
+                            {company.company_code} — {company.company_name}{" "}
+                            {company.company_code === "RMF1"
+                              ? "(42,027)"
+                              : company.company_code === "RMF2"
+                                ? "(13,088)"
+                                : ""}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -1010,9 +1048,9 @@ function PaymentsRoute() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">All types</SelectItem>
+                        <SelectItem value="mutual_fund">Mutual Fund (55,115)</SelectItem>
                         <SelectItem value="dividend">Dividend</SelectItem>
                         <SelectItem value="interest">Interest</SelectItem>
-                        <SelectItem value="mutual_fund">Mutual Fund</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1087,12 +1125,13 @@ function PaymentsRoute() {
                     <Label>Fiscal Year</Label>
                     <Select value={fiscalYear} onValueChange={setFiscalYear}>
                       <SelectTrigger>
-                        <SelectValue placeholder="Select fiscal year" />
+                        <SelectValue placeholder="All Fiscal Years" />
                       </SelectTrigger>
                       <SelectContent className="max-h-60 overflow-y-auto">
+                        <SelectItem value="all">All Fiscal Years (All Records)</SelectItem>
                         {fiscalYears.map((fy) => (
                           <SelectItem key={fy} value={fy}>
-                            {fy}
+                            {fy} {fy === "2082/83" ? "(55,115 Payables)" : ""}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -1167,17 +1206,97 @@ function PaymentsRoute() {
                         : "Full Period (365 Days)"}
                     </span>
                   </div>
-                  <p className="text-muted-foreground">
-                    {availablePayables.length} payables found matching your criteria.
-                    {availablePayables.length > 0 && (
-                      <span className="ml-2 text-primary font-semibold">
-                        Total: NPR{" "}
-                        {availablePayables
-                          .reduce((sum, p) => sum + (p.net_payable || 0), 0)
-                          .toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </span>
-                    )}
-                  </p>
+                  {isPreviewLoading ? (
+                    <div className="flex items-center text-muted-foreground py-1">
+                      <Loader2 className="w-4 h-4 animate-spin text-primary mr-2" />
+                      <span>Calculating matching pending payables...</span>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-muted-foreground">
+                        {payablesPreview.count.toLocaleString()} payables found matching your
+                        criteria.
+                        {payablesPreview.count > 0 && (
+                          <span className="ml-2 text-primary font-semibold">
+                            Total: NPR{" "}
+                            {payablesPreview.totalAmount.toLocaleString("en-IN", {
+                              minimumFractionDigits: 2,
+                            })}
+                          </span>
+                        )}
+                      </p>
+                      {payablesPreview.count === 0 && (
+                        <div className="mt-2.5 p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-md text-xs text-amber-700 dark:text-amber-300 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <span>
+                            No pending payables match the current filter. All imported records are
+                            under <strong>FY 2082/83</strong>.
+                          </span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            className="h-7 text-xs font-semibold shrink-0"
+                            onClick={() => {
+                              setSelectedCompany("all");
+                              setSelectedPayableType("all");
+                              setFiscalYear("all");
+                              setBatchName(
+                                `Payment Batch — ${new Date().toISOString().slice(0, 10)}`,
+                              );
+                            }}
+                          >
+                            Load All 55,115 Payables
+                          </Button>
+                        </div>
+                      )}
+                      <div className="mt-3 pt-2.5 border-t flex flex-wrap items-center gap-1.5">
+                        <span className="text-xs text-muted-foreground mr-1">Quick Select:</span>
+                        <Button
+                          type="button"
+                          variant={
+                            selectedCompany === "all" && fiscalYear === "all"
+                              ? "default"
+                              : "outline"
+                          }
+                          size="sm"
+                          className="h-6 px-2 text-[11px]"
+                          onClick={() => {
+                            setSelectedCompany("all");
+                            setSelectedPayableType("all");
+                            setFiscalYear("all");
+                            setBatchName(
+                              `All Schemes Payout — ${new Date().toISOString().slice(0, 10)}`,
+                            );
+                          }}
+                        >
+                          All Schemes (55,115)
+                        </Button>
+                        {companies
+                          .filter(
+                            (c: any) => c.company_code === "RMF1" || c.company_code === "RMF2",
+                          )
+                          .map((c: any) => (
+                            <Button
+                              key={c.id}
+                              type="button"
+                              variant={selectedCompany === c.id ? "default" : "outline"}
+                              size="sm"
+                              className="h-6 px-2 text-[11px]"
+                              onClick={() => {
+                                setSelectedCompany(c.id);
+                                setSelectedPayableType("mutual_fund");
+                                setFiscalYear(c.fiscal_year || "2082/83");
+                                setBatchName(
+                                  `${c.company_code} Payout — FY ${c.fiscal_year || "2082/83"}`,
+                                );
+                              }}
+                            >
+                              {c.company_code} ({c.company_code === "RMF1" ? "42,027" : "13,088"})
+                            </Button>
+                          ))}
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
               <DialogFooter className="flex sm:justify-between items-center w-full gap-2 pt-2 border-t">
@@ -1185,19 +1304,32 @@ function PaymentsRoute() {
                   variant="outline"
                   type="button"
                   onClick={handleExportAvailablePayables}
-                  disabled={availablePayables.length === 0}
+                  disabled={payablesPreview.count === 0 || isExportingAvailablePayables}
                   className="text-xs"
                 >
-                  <FileSpreadsheet className="w-3.5 h-3.5 mr-1.5 text-emerald-600" />
+                  {isExportingAvailablePayables ? (
+                    <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                  ) : (
+                    <FileSpreadsheet className="w-3.5 h-3.5 mr-1.5 text-emerald-600" />
+                  )}
                   Download Payable List (Excel)
                 </Button>
                 <div className="flex items-center gap-2">
                   <Button variant="outline" onClick={() => setCreateOpen(false)}>
                     Cancel
                   </Button>
-                  <Button disabled={isPending} onClick={() => createBatch()}>
-                    <CheckCircle2 className="w-4 h-4 mr-2" />
-                    Create Payment Batch
+                  <Button disabled={isPending || isPreviewLoading} onClick={() => createBatch()}>
+                    {isPending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        {createBatchProgress || "Creating Payment Batch..."}
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4 mr-2" />
+                        Create Payment Batch
+                      </>
+                    )}
                   </Button>
                 </div>
               </DialogFooter>
@@ -2002,7 +2134,12 @@ function PaymentsRoute() {
                     size="sm"
                     className="bg-amber-600 hover:bg-amber-700 text-white font-medium shadow-sm"
                     onClick={() => {
-                      if (!lineItems || lineItems.length === 0) {
+                      const count =
+                        activeBatchData?.total_payments != null &&
+                        activeBatchData.total_payments > 0
+                          ? activeBatchData.total_payments
+                          : lineItems?.length || 0;
+                      if (count === 0) {
                         toast.error("Cannot submit an empty batch. Please add payables first.");
                         return;
                       }
@@ -2100,7 +2237,12 @@ function PaymentsRoute() {
                     className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow-sm"
                     disabled={isDisbursing}
                     onClick={async () => {
-                      if (!lineItems || lineItems.length === 0) {
+                      const count =
+                        activeBatchData?.total_payments != null &&
+                        activeBatchData.total_payments > 0
+                          ? activeBatchData.total_payments
+                          : lineItems?.length || 0;
+                      if (count === 0) {
                         toast.error("Cannot disburse an empty batch. Please add payables first.");
                         return;
                       }
@@ -2109,7 +2251,7 @@ function PaymentsRoute() {
                       ).toLocaleString("en-IN", { minimumFractionDigits: 2 });
                       if (
                         !confirm(
-                          `Are you sure you want to disburse NPR ${totalFormatted} across ${lineItems.length} payables directly via ConnectIPS API?`,
+                          `Are you sure you want to disburse NPR ${totalFormatted} across ${count.toLocaleString()} payables directly via ConnectIPS API?`,
                         )
                       ) {
                         return;
@@ -2158,7 +2300,12 @@ function PaymentsRoute() {
                     size="sm"
                     variant="outline"
                     onClick={() => {
-                      if (!lineItems || lineItems.length === 0) {
+                      const count =
+                        activeBatchData?.total_payments != null &&
+                        activeBatchData.total_payments > 0
+                          ? activeBatchData.total_payments
+                          : lineItems?.length || 0;
+                      if (count === 0) {
                         toast.error("Cannot process an empty batch.");
                         return;
                       }

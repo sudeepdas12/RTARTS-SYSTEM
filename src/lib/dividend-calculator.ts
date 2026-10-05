@@ -59,9 +59,9 @@ export const DividendCalculator = {
     ) {
       appliedTdsRate = 0.0; // 0% for Mutual Fund / Tax Exempt (Section 88(4))
     } else if (params.taxCategory === "INSTITUTION") {
-      appliedTdsRate = 0.15; // 15% for Corporate / Institutional investors
+      appliedTdsRate = 0.05; // 5% for Corporate / Institutional resident dividends (Income Tax Act Sec 88(2)(ka))
     } else if (params.taxCategory === "FOREIGN_INVESTOR") {
-      appliedTdsRate = 0.15; // 15% for Foreign Institutional Investors
+      appliedTdsRate = 0.05; // 5% for Foreign Investors (Sec 92 final withholding)
     } else if (params.taxCategory === "FOREIGN") {
       appliedTdsRate = 0.05; // 5% for individual foreign nationals (same as public)
     } else if (params.taxCategory === "CUSTOM" && params.customTaxRate !== undefined) {
@@ -78,8 +78,7 @@ export const DividendCalculator = {
     if (
       (params.dividendType === "Bonus" ||
         params.dividendType === "Stock" ||
-        params.dividendType === "Combined" ||
-        params.dividendType === "Right") &&
+        params.dividendType === "Combined") &&
       bonusRatio > 0
     ) {
       exactBonusShares = sharesHeld * bonusRatio;
@@ -107,6 +106,9 @@ export const DividendCalculator = {
       }
     }
 
+    // Round gross financial component to exact paisa first (database trigger parity)
+    const rGross = Math.round((grossCashDividend + Number.EPSILON) * 100) / 100;
+
     // 3. Tax Calculations (Bonus Tax + Cash Dividend Tax)
     // Bonus Tax: Issued Bonus Shares * Face Value * TDS Rate
     let bonusTaxAmount = 0;
@@ -118,11 +120,8 @@ export const DividendCalculator = {
       bonusTaxAmount = issuedBonusShares * faceValue * appliedTdsRate;
     }
 
-    // Cash Dividend Tax: Gross Cash Dividend * TDS Rate
-    const cashTaxAmount = grossCashDividend * appliedTdsRate;
-
-    // Round individual financial components to paisa (2 decimal places) before calculating totals and net
-    const rGross = Math.round((grossCashDividend + Number.EPSILON) * 100) / 100;
+    // Cash Dividend Tax: Computed from rounded Gross * TDS Rate
+    const cashTaxAmount = rGross * appliedTdsRate;
     const rCashTax = Math.round((cashTaxAmount + Number.EPSILON) * 100) / 100;
     const rBonusTax = Math.round((bonusTaxAmount + Number.EPSILON) * 100) / 100;
     const rTotalTax = Math.round((rCashTax + rBonusTax + Number.EPSILON) * 100) / 100;

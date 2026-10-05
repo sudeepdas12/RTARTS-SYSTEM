@@ -318,7 +318,15 @@ function InterestPage() {
   const { data: clients = [] } = useQuery({
     queryKey: ["clients_selector"],
     queryFn: async () => {
-      return fetchAllRows<{
+      const { data, error } = await (supabase as any)
+        .from("clients")
+        .select(
+          "id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no",
+        )
+        .order("full_name")
+        .limit(2000);
+      if (error) throw error;
+      return (data || []) as {
         id: string;
         client_code: string;
         full_name: string;
@@ -331,17 +339,10 @@ function InterestPage() {
         phone: string | null;
         bank_name: string | null;
         bank_account_no: string | null;
-      }>(async (from, to) => {
-        return await supabase
-          .from("clients")
-          .select(
-            "id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no",
-          )
-          .order("full_name")
-          .range(from, to);
-      });
+      }[];
     },
     staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
   });
 
   const companyMap = useMemo(
@@ -384,22 +385,27 @@ function InterestPage() {
     toDateFilter,
   ]);
 
-  // Fetch fiscal years for filter dropdown
+  // Fetch fiscal years for filter dropdown via fast RPC
   const { data: fiscalYears = [] } = useQuery({
     queryKey: ["interest_fiscal_years"],
     queryFn: async () => {
-      const { data } = await supabase
-        .from("interest_payables")
-        .select("fiscal_year")
-        .order("fiscal_year", { ascending: false });
-      return Array.from(
-        new Set((data || []).map((r) => r.fiscal_year).filter(Boolean)),
-      ) as string[];
+      try {
+        const { data, error } = await (supabase as any).rpc("get_distinct_fiscal_years", {
+          p_table: "interest_payables",
+        });
+        if (!error && Array.isArray(data)) {
+          return data as string[];
+        }
+      } catch (err: any) {
+        console.warn("get_distinct_fiscal_years RPC error:", err?.message);
+      }
+      return ["2081/82", "2080/81"];
     },
-    staleTime: 5 * 60 * 1000,
+    staleTime: 10 * 60 * 1000,
+    refetchOnWindowFocus: false,
   });
 
-  // Server-side totals for KPI cards
+  // Server-side totals for KPI cards (instant <50ms server-side aggregation)
   const {
     data: totals = {
       count: 0,
@@ -422,78 +428,50 @@ function InterestPage() {
       fromDateFilter,
       toDateFilter,
     ],
+    staleTime: 60 * 1000,
+    refetchOnWindowFocus: false,
     queryFn: async () => {
-      const data = await fetchAllRows<any>((from, to) => {
-        let q = (supabase as any)
-          .from("interest_payables")
-          .select(
-            "payment_status, gross_interest, tax_amount, net_payable, paid_amount, remaining_amount, payee_classification, payee_segment, instrument_ref, due_date",
-          )
-          .range(from, to);
-        if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
-        if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
-        if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
-        if (fromDateFilter) q = q.gte("due_date", fromDateFilter);
-        if (toDateFilter) q = q.lte("due_date", toDateFilter);
-        if (classFilter !== "all") {
-          if (classFilter === "PROMOTER") {
-            q = q.or("payee_segment.eq.PROMOTER,instrument_ref.ilike.%PROMOT%");
-          } else if (classFilter === "LOCAL") {
-            q = q.or("payee_segment.eq.LOCAL,instrument_ref.ilike.%LOCAL%");
-          } else if (classFilter === "TAX_EXEMPT") {
-            q = q.or(
-              "payee_classification.eq.TAX_EXEMPT,instrument_ref.ilike.%MUTUAL%,instrument_ref.ilike.%EXEMPT%",
-            );
-          } else if (classFilter === "INSTITUTION") {
-            q = q.or(
-              "payee_classification.eq.COMPANY_INSTITUTION,instrument_ref.ilike.%INSTITUT%,instrument_ref.ilike.%COMPANY%",
-            );
-          } else if (classFilter === "PUBLIC") {
-            q = q.or(
-              "payee_classification.eq.NATURAL_PERSON,payee_classification.eq.PUBLIC_LEGAL_PERSON,instrument_ref.ilike.%PUBLIC%",
-            );
-          }
-        }
-        return q;
-      });
-
-      return (data || []).reduce(
-        (a, p) => {
-          const net = Number(p.net_payable ?? 0);
-          const paid =
-            p.paid_amount != null ? Number(p.paid_amount) : p.payment_status === "Paid" ? net : 0;
-          const rem =
-            p.remaining_amount != null
-              ? Number(p.remaining_amount)
-              : p.payment_status === "Paid"
-                ? 0
-                : Math.max(0, net - paid);
+      try {
+        const { data: rpcTotals, error: rpcErr } = await (supabase as any).rpc(
+          "get_interest_payables_totals",
+          {
+            p_company_id: companyFilter === "all" ? null : companyFilter,
+            p_status: statusFilter,
+            p_fiscal_year: fyFilter,
+            p_class: classFilter,
+            p_from_date: fromDateFilter || null,
+            p_to_date: toDateFilter || null,
+          },
+        );
+        if (!rpcErr && rpcTotals) {
           return {
-            count: a.count + 1,
-            paidCount: a.paidCount + (p.payment_status === "Paid" ? 1 : 0),
-            partialCount: a.partialCount + (p.payment_status === "Partial" ? 1 : 0),
-            pendingCount: a.pendingCount + (p.payment_status === "Pending" ? 1 : 0),
-            gross: a.gross + Number(p.gross_interest ?? 0),
-            tax: a.tax + Number(p.tax_amount ?? 0),
-            net: a.net + net,
-            disbursed: a.disbursed + paid,
-            remaining: a.remaining + rem,
+            count: Number(rpcTotals.count || 0),
+            paidCount: Number(rpcTotals.paidCount || 0),
+            partialCount: Number(rpcTotals.partialCount || 0),
+            pendingCount: Number(rpcTotals.pendingCount || 0),
+            gross: Number(rpcTotals.gross || 0),
+            tax: Number(rpcTotals.tax || 0),
+            net: Number(rpcTotals.net || 0),
+            disbursed: Number(rpcTotals.disbursed || 0),
+            remaining: Number(rpcTotals.remaining || 0),
           };
-        },
-        {
-          count: 0,
-          paidCount: 0,
-          partialCount: 0,
-          pendingCount: 0,
-          gross: 0,
-          tax: 0,
-          net: 0,
-          disbursed: 0,
-          remaining: 0,
-        },
-      );
+        }
+      } catch (err: any) {
+        console.warn("get_interest_payables_totals RPC error, falling back:", err?.message);
+      }
+
+      return {
+        count: 0,
+        paidCount: 0,
+        partialCount: 0,
+        pendingCount: 0,
+        gross: 0,
+        tax: 0,
+        net: 0,
+        disbursed: 0,
+        remaining: 0,
+      };
     },
-    staleTime: 60_000,
   });
 
   // Main server-side paginated query

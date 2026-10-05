@@ -197,81 +197,48 @@ function Dashboard() {
         rpcSucceeded = false;
       }
 
-      // 2. Fallback to client-side row retrieval only if RPC is unavailable
+      // 2. Fast server-side fallback if get_company_fiscal_summary_rpc is unavailable
       if (!rpcSucceeded) {
-        const [interestRows, dividendRows, mutualFundRows] = await Promise.all([
-          fetchAllRows<Row>(
-            (from, to) => {
-              let q = (supabase as any)
-                .from("interest_payables")
-                .select("net_payable, payment_status, paid_amount")
-                .range(from, to);
-              if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
-              if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
-              return q;
-            },
-            1000,
-            10000,
-          ),
-          fetchAllRows<Row>(
-            (from, to) => {
-              let q = (supabase as any)
-                .from("dividend_payables")
-                .select("net_payable, payment_status, paid_amount")
-                .range(from, to);
-              if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
-              if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
-              return q;
-            },
-            1000,
-            10000,
-          ),
-          fetchAllRows<Row>(
-            (from, to) => {
-              let q = (supabase as any)
-                .from("mutual_fund_payables")
-                .select("net_payable, payment_status, paid_amount")
-                .range(from, to);
-              if (selectedCompanyId !== "all") q = q.eq("company_id", selectedCompanyId);
-              if (selectedFiscalYear !== "all") q = q.eq("fiscal_year", selectedFiscalYear);
-              return q;
-            },
-            1000,
-            10000,
-          ),
-        ]);
+        try {
+          const compId = selectedCompanyId === "all" ? null : selectedCompanyId;
+          const fy = selectedFiscalYear === "all" ? "all" : selectedFiscalYear;
+          const [mfRes, divRes, intRes] = await Promise.all([
+            (supabase as any).rpc("get_mutual_fund_payables_totals", {
+              p_company_id: compId,
+              p_fiscal_year: fy,
+            }),
+            (supabase as any).rpc("get_dividend_payables_totals", {
+              p_company_id: compId,
+              p_fiscal_year: fy,
+            }),
+            (supabase as any).rpc("get_interest_payables_totals", {
+              p_company_id: compId,
+              p_fiscal_year: fy,
+            }),
+          ]);
 
-        const sum = (rows: Row[] | null, status: string) =>
-          (rows ?? [])
-            .filter((r) => String(r.payment_status || "").toLowerCase() === status.toLowerCase())
-            .reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
-
-        const sumDisbursed = (rows: Row[] | null) =>
-          (rows ?? []).reduce((a, r) => {
-            const net = Number(r.net_payable ?? 0);
-            const paid =
-              r.paid_amount != null
-                ? Number(r.paid_amount)
-                : String(r.payment_status || "").toLowerCase() === "paid"
-                  ? net
-                  : 0;
-            return a + paid;
-          }, 0);
-
-        totalInterest = interestRows.reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
-        totalDividend = dividendRows.reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
-        totalMutualFund = mutualFundRows.reduce((a, r) => a + Number(r.net_payable ?? 0), 0);
-        interestPending = sum(interestRows, "Pending");
-        interestPaid = sum(interestRows, "Paid");
-        interestPartial = sum(interestRows, "Partial");
-        dividendPending = sum(dividendRows, "Pending");
-        dividendPaid = sum(dividendRows, "Paid");
-        dividendPartial = sum(dividendRows, "Partial");
-        mutualFundPending = sum(mutualFundRows, "Pending");
-        mutualFundPaid = sum(mutualFundRows, "Paid");
-        mutualFundPartial = sum(mutualFundRows, "Partial");
-        totalDisbursed =
-          sumDisbursed(interestRows) + sumDisbursed(dividendRows) + sumDisbursed(mutualFundRows);
+          if (mfRes.data) {
+            mutualFundPaid = Number(mfRes.data.disbursed || 0);
+            mutualFundPending = Number(mfRes.data.pendingCount > 0 ? mfRes.data.remaining || 0 : 0);
+            mutualFundPartial = Number(mfRes.data.partialCount > 0 ? mfRes.data.remaining || 0 : 0);
+            totalMutualFund = Number(mfRes.data.net || 0);
+          }
+          if (divRes.data) {
+            dividendPaid = Number(divRes.data.disbursed || 0);
+            dividendPending = Number(divRes.data.pendingCount > 0 ? divRes.data.remaining || 0 : 0);
+            dividendPartial = Number(divRes.data.partialCount > 0 ? divRes.data.remaining || 0 : 0);
+            totalDividend = Number(divRes.data.net || 0);
+          }
+          if (intRes.data) {
+            interestPaid = Number(intRes.data.disbursed || 0);
+            interestPending = Number(intRes.data.pendingCount > 0 ? intRes.data.remaining || 0 : 0);
+            interestPartial = Number(intRes.data.partialCount > 0 ? intRes.data.remaining || 0 : 0);
+            totalInterest = Number(intRes.data.net || 0);
+          }
+          totalDisbursed = mutualFundPaid + dividendPaid + interestPaid;
+        } catch (e: any) {
+          console.warn("Dashboard totals fallback error:", e?.message);
+        }
       }
 
       let paymentsQ = (supabase as any)

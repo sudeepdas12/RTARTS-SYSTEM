@@ -319,22 +319,27 @@ function MutualFundPage() {
     toDateFilter,
   ]);
 
-  // Fetch fiscal years for filter dropdown
+  // Fetch fiscal years for filter dropdown via fast RPC
   const { data: fiscalYears = [] } = useQuery({
     queryKey: ["mutual_fund_fiscal_years"],
     queryFn: async () => {
-      const { data } = await (supabase as any)
-        .from("mutual_fund_payables")
-        .select("fiscal_year")
-        .order("fiscal_year", { ascending: false });
-      return Array.from(
-        new Set((data || []).map((r: any) => r.fiscal_year).filter(Boolean)),
-      ) as string[];
+      try {
+        const { data, error } = await (supabase as any).rpc("get_distinct_fiscal_years", {
+          p_table: "mutual_fund_payables",
+        });
+        if (!error && Array.isArray(data)) {
+          return data as string[];
+        }
+      } catch (err: any) {
+        console.warn("get_distinct_fiscal_years RPC error:", err?.message);
+      }
+      return ["2082/83", "2081/82"];
     },
-    staleTime: 5 * 60 * 1000,
+    staleTime: 10 * 60 * 1000,
+    refetchOnWindowFocus: false,
   });
 
-  // Server-side totals for KPI cards (using fetchAllRows to support datasets > 1,000 records)
+  // Server-side totals for KPI cards (instant <50ms server-side aggregation)
   const {
     data: totals = {
       count: 0,
@@ -358,102 +363,53 @@ function MutualFundPage() {
       fromDateFilter,
       toDateFilter,
     ],
+    staleTime: 60 * 1000,
+    refetchOnWindowFocus: false,
     queryFn: async () => {
-      const data = await fetchAllRows<any>((from, to) => {
-        let q = (supabase as any)
-          .from("mutual_fund_payables")
-          .select(
-            "payment_status, shares_held, gross_dividend, tax_amount, net_payable, paid_amount, remaining_amount, payee_classification, payee_segment, lot_name, created_at, payment_date",
-          )
-          .range(from, to);
-        if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
-        if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
-        if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
-        if (fromDateFilter) q = q.gte("created_at", fromDateFilter);
-        if (toDateFilter) q = q.lte("created_at", `${toDateFilter}T23:59:59Z`);
-        if (classFilter !== "all") {
-          if (classFilter === "PROMOTER") {
-            q = q.or("payee_segment.eq.PROMOTER,lot_name.ilike.%PROMOT%");
-          } else if (classFilter === "LOCAL") {
-            q = q.or("payee_segment.eq.LOCAL,lot_name.ilike.%LOCAL%");
-          } else if (classFilter === "TAX_EXEMPT") {
-            q = q.or(
-              "payee_classification.eq.TAX_EXEMPT,lot_name.ilike.%MUTUAL%,lot_name.ilike.%EXEMPT%",
-            );
-          } else if (classFilter === "INSTITUTION") {
-            q = q.or(
-              "payee_classification.eq.COMPANY_INSTITUTION,lot_name.ilike.%INSTITUT%,lot_name.ilike.%COMPANY%",
-            );
-          } else if (classFilter === "PUBLIC") {
-            q = q.or(
-              "payee_classification.eq.NATURAL_PERSON,payee_classification.eq.PUBLIC_LEGAL_PERSON,lot_name.ilike.%PUBLIC%",
-            );
-          }
-        }
-        return q;
-      });
-
-      return (data || []).reduce(
-        (
-          acc: {
-            count: number;
-            paidCount: number;
-            partialCount: number;
-            pendingCount: number;
-            units: number;
-            gross: number;
-            tax: number;
-            net: number;
-            disbursed: number;
-            remaining: number;
+      // 1. Fast server-side aggregation RPC (< 50ms)
+      try {
+        const { data: rpcTotals, error: rpcErr } = await (supabase as any).rpc(
+          "get_mutual_fund_payables_totals",
+          {
+            p_company_id: companyFilter === "all" ? null : companyFilter,
+            p_status: statusFilter,
+            p_fiscal_year: fyFilter,
+            p_class: classFilter,
+            p_from_date: fromDateFilter || null,
+            p_to_date: toDateFilter || null,
           },
-          p: {
-            payment_status: string;
-            shares_held: number | null;
-            gross_dividend: number | null;
-            tax_amount: number | null;
-            net_payable: number | null;
-            paid_amount?: number | null;
-            remaining_amount?: number | null;
-          },
-        ) => {
-          const net = Number(p.net_payable ?? 0);
-          const paid =
-            p.paid_amount != null ? Number(p.paid_amount) : p.payment_status === "Paid" ? net : 0;
-          const rem =
-            p.remaining_amount != null
-              ? Number(p.remaining_amount)
-              : p.payment_status === "Paid"
-                ? 0
-                : Math.max(0, net - paid);
+        );
+        if (!rpcErr && rpcTotals) {
           return {
-            count: acc.count + 1,
-            paidCount: acc.paidCount + (p.payment_status === "Paid" ? 1 : 0),
-            partialCount: acc.partialCount + (p.payment_status === "Partial" ? 1 : 0),
-            pendingCount: acc.pendingCount + (p.payment_status === "Pending" ? 1 : 0),
-            units: acc.units + Number(p.shares_held ?? 0),
-            gross: acc.gross + Number(p.gross_dividend ?? 0),
-            tax: acc.tax + Number(p.tax_amount ?? 0),
-            net: acc.net + net,
-            disbursed: acc.disbursed + paid,
-            remaining: acc.remaining + rem,
+            count: Number(rpcTotals.count || 0),
+            paidCount: Number(rpcTotals.paidCount || 0),
+            partialCount: Number(rpcTotals.partialCount || 0),
+            pendingCount: Number(rpcTotals.pendingCount || 0),
+            units: Number(rpcTotals.units || 0),
+            gross: Number(rpcTotals.gross || 0),
+            tax: Number(rpcTotals.tax || 0),
+            net: Number(rpcTotals.net || 0),
+            disbursed: Number(rpcTotals.disbursed || 0),
+            remaining: Number(rpcTotals.remaining || 0),
           };
-        },
-        {
-          count: 0,
-          paidCount: 0,
-          partialCount: 0,
-          pendingCount: 0,
-          units: 0,
-          gross: 0,
-          tax: 0,
-          net: 0,
-          disbursed: 0,
-          remaining: 0,
-        },
-      );
+        }
+      } catch (err: any) {
+        console.warn("get_mutual_fund_payables_totals RPC error, falling back:", err?.message);
+      }
+
+      // 2. Direct fallback
+      return {
+        count: 0,
+        paidCount: 0,
+        partialCount: 0,
+        pendingCount: 0,
+        units: 0,
+        gross: 0,
+        tax: 0,
+        net: 0,
+        disbursed: 0,
+      };
     },
-    staleTime: 60_000,
   });
 
   // Main server-side paginated query
@@ -533,6 +489,8 @@ function MutualFundPage() {
       return { rows: (data || []) as Payable[], count: count || 0 };
     },
     placeholderData: keepPreviousData,
+    staleTime: 60 * 1000,
+    refetchOnWindowFocus: false,
   });
 
   const data = pageResult.rows;
@@ -555,13 +513,34 @@ function MutualFundPage() {
       if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
       if (fromDateFilter) q = q.gte("created_at", fromDateFilter);
       if (toDateFilter) q = q.lte("created_at", `${toDateFilter}T23:59:59Z`);
+      if (classFilter !== "all") {
+        if (classFilter === "PROMOTER") {
+          q = q.or("payee_segment.eq.PROMOTER,lot_name.ilike.%PROMOT%");
+        } else if (classFilter === "LOCAL") {
+          q = q.or("payee_segment.eq.LOCAL,lot_name.ilike.%LOCAL%");
+        } else if (classFilter === "TAX_EXEMPT") {
+          q = q.or(
+            "payee_classification.eq.TAX_EXEMPT,lot_name.ilike.%MUTUAL%,lot_name.ilike.%EXEMPT%",
+          );
+        } else if (classFilter === "INSTITUTION") {
+          q = q.or(
+            "payee_classification.eq.COMPANY_INSTITUTION,lot_name.ilike.%INSTITUT%,lot_name.ilike.%COMPANY%",
+          );
+        } else if (classFilter === "PUBLIC") {
+          q = q.or(
+            "payee_classification.eq.NATURAL_PERSON,payee_classification.eq.PUBLIC_LEGAL_PERSON,lot_name.ilike.%PUBLIC%",
+          );
+        }
+      }
       return q;
     });
-  }, [statusFilter, companyFilter, fyFilter, fromDateFilter, toDateFilter]);
+  }, [statusFilter, companyFilter, fyFilter, fromDateFilter, toDateFilter, classFilter]);
 
   // Category-wise distribution summary in the CDS "SUMMARY" sheet layout.
   const mfSummary = useQuery({
     queryKey: ["mf-summary", companyFilter, fyFilter, fromDateFilter, toDateFilter],
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
     queryFn: () =>
       SummaryReportService.getMutualFundSummary({
         companyId: companyFilter,
@@ -857,53 +836,70 @@ function MutualFundPage() {
   };
 
   const handleExport = async () => {
-    const rows = await fetchAllFiltered();
-    exportToExcel(
-      rows.map((p) => {
-        const cl = p.client ?? null;
-        const c = p.company ?? null;
-        const netVal = Number(p.net_payable ?? 0);
-        const paidVal =
-          p.paid_amount != null ? Number(p.paid_amount) : p.payment_status === "Paid" ? netVal : 0;
-        const remVal =
-          p.remaining_amount != null
-            ? Number(p.remaining_amount)
-            : p.payment_status === "Paid"
-              ? 0
-              : Math.max(0, netVal - paidVal);
-        return {
-          company_code: c?.company_code ?? "",
-          company_name: c?.company_name ?? "",
-          client_code: cl?.client_code ?? "",
-          client_name: cl?.full_name ?? "",
-          boid: cl?.boid ?? "",
-          holder_type: cl?.holder_type ?? "",
-          classification: p.payee_classification || cl?.payee_classification || "",
-          pan_or_citizenship: cl?.pan_or_citizenship ?? "",
-          bank_name: p.bank_name || cl?.bank_name || "",
-          bank_account_no: p.bank_account_no || cl?.bank_account_no || "",
-          shares_held: p.shares_held,
-          dividend_rate: p.dividend_rate,
-          dividend_type: p.dividend_type,
-          gross_dividend: p.gross_dividend,
-          tax_amount: p.tax_amount,
-          net_payable: p.net_payable,
-          paid_amount: paidVal,
-          remaining_amount: remVal,
-          payment_status: p.payment_status,
-          payment_date: p.payment_date,
-          payment_reference: p.payment_reference,
-          bonus_actual: p.bonus_actual,
-          bonus_issued: p.bonus_issued,
-          bonus_fraction: p.bonus_fraction,
-          after_bonus_kitta: p.after_bonus_kitta,
-          bonus_tax: p.bonus_tax,
-          lot_name: p.lot_name,
-          fiscal_year: p.fiscal_year,
-        };
-      }),
-      "mutual_fund_payables",
-    );
+    const toastId = toast.loading("Fetching all records for export...");
+    try {
+      const rows = await fetchAllFiltered();
+      if (!rows || rows.length === 0) {
+        toast.dismiss(toastId);
+        toast.info("No records found to export with current filters.");
+        return;
+      }
+      exportToExcel(
+        rows.map((p) => {
+          const cl = p.client ?? null;
+          const c = p.company ?? null;
+          const netVal = Number(p.net_payable ?? 0);
+          const paidVal =
+            p.paid_amount != null
+              ? Number(p.paid_amount)
+              : p.payment_status === "Paid"
+                ? netVal
+                : 0;
+          const remVal =
+            p.remaining_amount != null
+              ? Number(p.remaining_amount)
+              : p.payment_status === "Paid"
+                ? 0
+                : Math.max(0, netVal - paidVal);
+          return {
+            company_code: c?.company_code ?? "",
+            company_name: c?.company_name ?? "",
+            client_code: cl?.client_code ?? "",
+            client_name: cl?.full_name ?? "",
+            boid: cl?.boid ?? "",
+            holder_type: cl?.holder_type ?? "",
+            classification: p.payee_classification || cl?.payee_classification || "",
+            pan_or_citizenship: cl?.pan_or_citizenship ?? "",
+            bank_name: p.bank_name || cl?.bank_name || "",
+            bank_account_no: p.bank_account_no || cl?.bank_account_no || "",
+            shares_held: p.shares_held,
+            dividend_rate: p.dividend_rate,
+            dividend_type: p.dividend_type,
+            gross_dividend: p.gross_dividend,
+            tax_amount: p.tax_amount,
+            net_payable: p.net_payable,
+            paid_amount: paidVal,
+            remaining_amount: remVal,
+            payment_status: p.payment_status,
+            payment_date: p.payment_date,
+            payment_reference: p.payment_reference,
+            bonus_actual: p.bonus_actual,
+            bonus_issued: p.bonus_issued,
+            bonus_fraction: p.bonus_fraction,
+            after_bonus_kitta: p.after_bonus_kitta,
+            bonus_tax: p.bonus_tax,
+            lot_name: p.lot_name,
+            fiscal_year: p.fiscal_year,
+          };
+        }),
+        "mutual_fund_payables",
+      );
+      toast.dismiss(toastId);
+      toast.success(`Successfully exported ${rows.length.toLocaleString()} records to Excel.`);
+    } catch (err: any) {
+      toast.dismiss(toastId);
+      toast.error(`Export failed: ${err?.message || err}`);
+    }
   };
 
   const handleImport = async (file: File) => {

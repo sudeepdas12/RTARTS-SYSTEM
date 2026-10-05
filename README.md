@@ -59,7 +59,8 @@ Designed strictly around Nepalese capital market regulations (Securities Board o
 
 ### 5. Banking Settlement & File Generation
 
-- **NCHL ConnectIPS Batch Integration**: Generates bank-compliant batch settlement files with account format sanitization, paisa-level amount encoding, and secure SHA-256 HMAC credential checksums.
+- **NCHL ConnectIPS Batch Integration**: Generates bank-compliant batch settlement files with account format sanitization, paisa-level amount encoding, and server-held credential checksums.
+  - _Signing Architecture_: In production, NCHL ConnectIPS mandates digital signatures (`SHA256withRSA`) using client certificates (`.pfx` / `.p12`) issued by NCHL. In sandbox/token mode, signing uses server-held `CONNECTIPS_TOKEN` HMAC-SHA256 via the authenticated `connectips-sign` Edge Function (strictly restricted to `admin`, `finance_operator`, `supervisor`, `approver`, and `maker` roles; unauthenticated and anon-key calls are rejected with 401/403).
 - **ConnectIPS Live Status Verification**: Validates transaction settlement status via dual verification (status inquiry + internal financial ledger confirmation).
 - **NEFT / RTGS Clearing Rails**: Produces structured clearing schedules for commercial banks.
 - **Maker-Checker-Approver Lifecycle**: Enforces strict multi-tier approval states:

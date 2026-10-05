@@ -112,8 +112,8 @@ export interface ClassificationResult {
   payee_category: PayeeCategory;
   payee_segment: PayeeSegment;
   holder_type: string | null;
-  tds_rate_dividend: number; // 0.05 (5%) or 0 (0%)
-  tds_rate_debenture: number; // 0.06 (6%), 0.15 (15%), or 0 (0%)
+  tds_rate_dividend: number | null; // null = not yet classified (no rate implied)
+  tds_rate_debenture: number | null;
   rule_matched: string;
   confidence?: number;
   classification_status?: "AUTO_CLASSIFIED" | "REVIEW_REQUIRED" | "MANUALLY_OVERRIDDEN";
@@ -131,15 +131,15 @@ const STATUTORY_FUNDS_REGEX =
 //   "KDY", "KSY", "SBF", "SFMF" are fund abbrevs but collision-prone → kept with strict \b guards
 //   "SARAL", "UNNATI", "SAMRIDDHI" etc. only match when paired with fund-qualifier keywords
 const MUTUAL_FUND_SCHEMES_REGEX =
-  /\b(MUTUAL\s*FUND|\bMF\b|HIMALAYAN\s*80[-/:]?20|FOCUS\s*(40|30|25|20|\d+)?|SELECT\s*(FUND|SCHEME|30|40|50|\d+)?|SUPER\s*(FUND|SCHEME|30|40|50|\d+)?|NMB\s*(50|FIFTY|HYBRID|SARAL|SULAV|SAMRIDDHI)|SAMRIDDHI\s*(FUND|YOJANA|SCHEME)|SAMUNNAT\s*(SCHEME|FUND|YOJANA)|PRAGATI\s*(FUND|SCHEME|YOJANA)|SAHABHAGITA\s*(FUND|SCHEME|YOJANA)|DHANABRIDDHI\s*(YOJANA|FUND)|SABAL\s*(FUND|YOJANA|SCHEME)|UNNATI\s*(FUND|KOSH|SCHEME)|SARAL\s*(BACHAT|FUND|YOJANA)|SHUBHA\s*LAXMI\s*(KOSH|FUND)|EQUITY\s*(FUND|SCHEME|ORIENTED)|GROWTH\s*(FUND|SCHEME|YOJANA)|BALANCED\s*(FUND|SCHEME|YOJANA)|BLUECHIP\s*(FUND|SCHEME)|LARGE\s*CAP(\s*FUND|\s*SCHEME)?|FLEXI\s*CAP(\s*FUND|\s*SCHEME)?|VALUE\s*(FUND|SCHEME)|DEBT\s*(FUND|SCHEME)|FIXED\s*INCOME(\s*FUND|\s*SCHEME)?|DYNAMIC\s*DEBT(\s*FUND|\s*SCHEME)?|SYSTEMATIC\s*INVESTMENT(\s*SCHEME)?|DIVIDEND\s*YIELD\s*(FUND|SCHEME)|MONEY\s*MARKET\s*(FUND|SCHEME)|INDEX\s*(FUND|SCHEME)|CWEDA\s*EQUITY\s*FUND|STABLE\s*(FUND|SCHEME)|RESOURCE\s*(FUND|SCHEME)|HYBRID\s*(FUND|SCHEME)|SMART\s*(FUND|SCHEME)|YOJANA\s+(FUND|SCHEME|KOSH|BACHAT|LAGANI)|CIT\s*-\s*CITIZEN\s*UNIT\s*SCHEME|SSIS|SIGS(\s*\d+)?|GIMES(\s*\d+)?|SFMF|SBF|KDY|KSY)\b/i;
+  /\b(MUTUAL\s*FUND|\bMF\b|HIMALAYAN\s*80[-/:]?20|FOCUS\s*(FUND|SCHEME|\d+)|SELECT\s*(FUND|SCHEME|\d+)|SUPER\s*(FUND|SCHEME|\d+)|NMB\s*(50|FIFTY|HYBRID|SARAL|SULAV|SAMRIDDHI)|SAMRIDDHI\s*(FUND|YOJANA|SCHEME)|SAMUNNAT\s*(SCHEME|FUND|YOJANA)|PRAGATI\s*(FUND|SCHEME|YOJANA)|SAHABHAGITA\s*(FUND|SCHEME|YOJANA)|DHANABRIDDHI\s*(YOJANA|FUND)|SABAL\s*(FUND|YOJANA|SCHEME)|UNNATI\s*(FUND|KOSH|SCHEME)|SARAL\s*(BACHAT|FUND|YOJANA)|SHUBHA\s*LAXMI\s*(KOSH|FUND)|EQUITY\s*(FUND|SCHEME|ORIENTED)|GROWTH\s*(FUND|SCHEME|YOJANA)|BALANCED\s*(FUND|SCHEME|YOJANA)|BLUECHIP\s*(FUND|SCHEME)|LARGE\s*CAP(\s*FUND|\s*SCHEME)?|FLEXI\s*CAP(\s*FUND|\s*SCHEME)?|VALUE\s*(FUND|SCHEME)|DEBT\s*(FUND|SCHEME)|FIXED\s*INCOME(\s*FUND|\s*SCHEME)?|DYNAMIC\s*DEBT(\s*FUND|\s*SCHEME)?|SYSTEMATIC\s*INVESTMENT(\s*SCHEME)?|DIVIDEND\s*YIELD\s*(FUND|SCHEME)|MONEY\s*MARKET\s*(FUND|SCHEME)|INDEX\s*(FUND|SCHEME)|CWEDA\s*EQUITY\s*FUND|STABLE\s*(FUND|SCHEME)|RESOURCE\s*(FUND|SCHEME)|HYBRID\s*(FUND|SCHEME)|SMART\s*(FUND|SCHEME)|YOJANA\s+(FUND|SCHEME|KOSH|BACHAT|LAGANI)|CIT\s*-\s*CITIZEN\s*UNIT\s*SCHEME|SSIS|SIGS(\s*\d+)?|GIMES(\s*\d+)?|SFMF|SBF|KDY|KSY)\b/i;
 
 // 3. Corporate Suffixes Regex (Guaranteed Institution / Company / Partnership)
 const CORPORATE_SUFFIX_REGEX =
-  /\b(PVT\.?\s*LTD|PRIVATE\s*LIMITED|P\.?\s*LTD|LIMITED|LTD\.?|COMPANY|CORP|CORPORATION|INC\.?|LLC|PLC|PARTNERS|PARTNERSHIP|HOLDINGS\s*COMPANY)\b/i;
+  /\b(PVT\.?\s*LTD|PRIVATE\s*LIMITED|P\.?\s*LTD|LIMITED|LTD\.?|COMPANY|\bCO\b|\bCO\.\b|CORP|CORPORATION|INC\.?|LLC|PLC|PARTNERS|PARTNERSHIP|HOLDINGS\s*COMPANY)\b/i;
 
 // 4. Institutional Business Patterns in Nepal (Strict word-bounded keywords to avoid matching human names)
 const INSTITUTIONAL_BUSINESS_REGEX =
-  /\b(BANK|BIKAS\s*BANK|DEVELOPMENT\s*BANK|FINANCE|MICROFINANCE|MICRO\s*INSURANCE|MICRO|LAGHUBITTA|BITTIYA|BITTIYA\s*SANSTHA|BIMA|BEEMA|INSURANCE|REINSURANCE|RE\s*INSURANCE|RE-INSURANCE|NIRJIBAN\s*BIMA|JIBAN\s*BIMA|HYDROPOWER|HYDRO\s*POWER|HYDRO|JALABIDHYUT|DOORSANCHAR|TELECOM|CLEARING\s*HOUSE|STOCK\s*EXCHANGE|STOCK\s*DEALER|STOCK\s*BROKER|STOCK\s*MARKET|CDS\s*(AND|&)?\s*CLEARING|PHARMA|PHARMACEUTICALS|HOSPITAL|COLLEGE|UNIVERSITY|ACADEMY|COOPERATIVE|CO-OPERATIVE|SAHAKARI|ENTERPRISES|TRADING|TRADERS|SUPPLIERS|DISTRIBUTORS|INDUSTRIES|VENTURES|SECURITIES|BROKER|MERCHANT(\s*BANKING)?|CAPITAL|INVESTMENT|HOLDINGS|ASSET\s*MANAGEMENT|DEVELOPERS?|INFRA(?:STRUCTURE)?|KHARID\s*BIKRI|BIKRI\s*KENDRA|SANIMA\s*RELIANCE|RELIANCE|PATHIVARA\s*MATA|MANDIR|SEWA\s*SAMITI|DHARMA\s*TRUST|GOVERNMENT|SARKAR|MINISTRY|DEPARTMENT|PRADHIKARAN|SANSTHAN|NIGAM|MUNICIPALITY|NAGARPALIKA|GAUNPALIKA|EMBASSY|GUTHI|ARMY\s*WELFARE|NEPALESE\s*ARMY\s*WELFARE|SAINIK\s*KALYAN|POLICE\s*WELFARE|PRAHARI\s*KALYAN|WELFARE\s*FUND|KALYAN\s*KOSH)\b/i;
+  /\b(BANK|BIKAS\s*BANK|DEVELOPMENT\s*BANK|FINANCE|MICROFINANCE|MICRO\s*INSURANCE|MICRO|LAGHUBITTA|BITTIYA|BITTIYA\s*SANSTHA|BIMA|BEEMA|INSURANCE|REINSURANCE|RE\s*INSURANCE|RE-INSURANCE|NIRJIBAN\s*BIMA|JIBAN\s*BIMA|HYDROPOWER|HYDRO\s*POWER|HYDRO|JALABIDHYUT|DOORSANCHAR|TELECOM|CLEARING\s*HOUSE|STOCK\s*EXCHANGE|STOCK\s*DEALER|STOCK\s*BROKER|STOCK\s*MARKET|CDS\s*(AND|&)?\s*CLEARING|PHARMA|PHARMACEUTICALS|HOSPITAL|COLLEGE|UNIVERSITY|ACADEMY|COOPERATIVE|CO-OPERATIVE|SAHAKARI|ENTERPRISES|TRADING|TRADERS|SUPPLIERS|DISTRIBUTORS|INDUSTRIES|VENTURES|SECURITIES|BROKER|MERCHANT(\s*BANKING)?|CAPITAL|INVESTMENT|HOLDINGS|ASSET\s*MANAGEMENT|DEVELOPERS?|INFRA(?:STRUCTURE)?|KHARID\s*BIKRI|BIKRI\s*KENDRA|SANIMA\s*RELIANCE|RELIANCE|PATHIVARA\s*MATA|MATA\s*PATHIVARA|MANDIR|SEWA\s*SAMITI|DHARMA\s*TRUST|\bTRUST\b|GOVERNMENT|SARKAR|MINISTRY|DEPARTMENT|PRADHIKARAN|SANSTHAN|NIGAM|MUNICIPALITY|NAGARPALIKA|GAUNPALIKA|EMBASSY|GUTHI|ARMY\s*WELFARE|NEPALESE\s*ARMY\s*WELFARE|SAINIK\s*KALYAN|POLICE\s*WELFARE|PRAHARI\s*KALYAN|WELFARE\s*FUND|KALYAN\s*KOSH)\b/i;
 
 // 5. Distinct Human Honorifics & Personal Titles (Prefixes)
 const HUMAN_TITLES_REGEX =
@@ -323,6 +323,37 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
   }
 
   // =========================================================================
+  // TIER 0.25: Decisive explicit metadata (uploaded investor type) outranks name guessing
+  // =========================================================================
+  if (explicitType && !(dbClassification && dbClassification !== "UNCLASSIFIED")) {
+    if (/FOREIGN|NRN/i.test(explicitType)) {
+      return {
+        payee_classification: "COMPANY_INSTITUTION",
+        payee_category: "FOREIGN",
+        payee_segment: null,
+        holder_type: "Foreign",
+        tds_rate_dividend: 0.05,
+        tds_rate_debenture: 0.15,
+        // Foreign individuals (with family lineage) vs foreign entities carry different TDS: confirm.
+        classification_status:
+          father || gfather || mother || spouse ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
+        rule_matched: "Explicit Metadata (Foreign / NRN)",
+      };
+    }
+    if (/MUTUAL|\bMF\b/i.test(explicitType)) {
+      return {
+        payee_classification: "TAX_EXEMPT",
+        payee_category: "MUTUAL_FUND",
+        payee_segment: null,
+        holder_type: "Mutual Fund",
+        tds_rate_dividend: 0.0,
+        tds_rate_debenture: 0.0,
+        rule_matched: "Explicit Metadata (Mutual Fund)",
+      };
+    }
+  }
+
+  // =========================================================================
   // TIER 0.5: Commercial Bank & Corporate Retirement Funds
   // Under Nepal tax rules, commercial bank and corporate retirement funds
   // (e.g. Rastriya Banijya Bank Retirement Fund) are taxable corporate entities
@@ -344,6 +375,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
       holder_type: isPromoterSegment ? "Legal Person - Promoter" : "Legal Person",
       tds_rate_dividend: 0.15,
       tds_rate_debenture: 0.15,
+      classification_status: "REVIEW_REQUIRED", // exemption status of staff trusts is a tax-advisor call
       rule_matched: "Bank / Corporate Retirement Fund (Taxable Legal Person — 15% TDS)",
       confidence: 0.99,
     };
@@ -353,10 +385,22 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
   // TIER 1: Tax Exempt Entities (SEBON Mutual Funds & Statutory Retirement Funds)
   // Mutual funds & SSF/CIT/EPF/Welfare funds MUST ALWAYS be 0% TDS.
   // =========================================================================
+  const hasFamilyLineageEarly = Boolean(father || gfather || mother || spouse || guardian);
   const isStatutoryFund = STATUTORY_FUNDS_REGEX.test(nameUpper);
   const isMutualFundScheme = MUTUAL_FUND_SCHEMES_REGEX.test(nameUpper);
 
-  if (isStatutoryFund || isMutualFundScheme) {
+  const hasStrongFundWord = /\b(MUTUAL\s*FUND|FUND|SCHEME|YOJANA|KOSH|MF)\b/i.test(nameUpper);
+  const hasCorporateSuffix = CORPORATE_SUFFIX_REGEX.test(nameUpper);
+  // A corporate suffix with no real fund word (e.g. "ABC FOCUS PVT LTD") is a company, not a fund.
+  const weakFundHit =
+    isMutualFundScheme && !isStatutoryFund && !hasStrongFundWord && hasCorporateSuffix;
+  // Name-only exemption is only auto-applied for well-known funds or when the upload says so.
+  const KNOWN_EXEMPT =
+    /\b(NAGARIK\s*LAGANI\s*KOSH|CITIZEN\s*INVESTMENT\s*TRUST|KARMACHARI\s*SANCHAYA\s*KOSH|EMPLOYEES?\s*PROVIDENT\s*FUND|SAMAJIK\s*SURAKSHA\s*KOSH|SOCIAL\s*SECURITY\s*FUND|MUTUAL\s*FUND)\b/i.test(
+      nameUpper,
+    ) || /MUTUAL|EXEMPT/i.test(explicitType);
+  if ((isStatutoryFund || isMutualFundScheme) && !weakFundHit) {
+    const needsReview = !KNOWN_EXEMPT || Boolean(hasFamilyLineageEarly);
     return {
       payee_classification: "TAX_EXEMPT",
       payee_category: isMutualFundScheme ? "MUTUAL_FUND" : "TAX_EXEMPT",
@@ -364,6 +408,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
       holder_type: isMutualFundScheme ? "Mutual Fund" : "Tax Exempt",
       tds_rate_dividend: 0.0,
       tds_rate_debenture: 0.0,
+      classification_status: needsReview ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
       rule_matched: isStatutoryFund
         ? "Tax Exempted (Statutory Retirement / Pension Fund)"
         : "Tax Exempted (SEBON Approved Mutual Fund Scheme)",
@@ -440,6 +485,27 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
   // TIER 4: Strict Institutional Organizations
   // =========================================================================
   const isInstitutionalBusiness = INSTITUTIONAL_BUSINESS_REGEX.test(nameUpper);
+  const STRONG_INSTITUTION =
+    /\b(BANK|FINANCE|INSURANCE|BIMA|BEEMA|HYDROPOWER|COOPERATIVE|SAHAKARI|SECURITIES|MICROFINANCE|LAGHUBITTA|UNIVERSITY|MUNICIPALITY|NAGARPALIKA|GAUNPALIKA|MINISTRY|GOVERNMENT|TRUST|GUTHI)\b/i.test(
+      nameUpper,
+    );
+  if (
+    isInstitutionalBusiness &&
+    !STRONG_INSTITUTION &&
+    (NEPALI_SURNAMES_REGEX.test(nameUpper) || /^[A-Z]+\s+SARKAR$/.test(nameUpper))
+  ) {
+    // e.g. "SITA CAPITAL THAPA", "RAM SARKAR": keyword collides with a personal name
+    return {
+      payee_classification: "UNCLASSIFIED",
+      payee_category: "UNKNOWN",
+      payee_segment: null,
+      holder_type: null,
+      tds_rate_dividend: null,
+      tds_rate_debenture: null,
+      classification_status: "REVIEW_REQUIRED",
+      rule_matched: "Ambiguous (Institution keyword + personal surname) — operator review",
+    };
+  }
   if (isInstitutionalBusiness) {
     const segment: PayeeSegment = isPromoterSegment ? "PROMOTER" : null;
     return {
@@ -694,8 +760,9 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
             ? "EMPLOYEE"
             : null,
       holder_type: null,
-      tds_rate_dividend: 0.05,
-      tds_rate_debenture: 0.06,
+      tds_rate_dividend: null,
+      tds_rate_debenture: null,
+      classification_status: "REVIEW_REQUIRED",
       rule_matched:
         !rawName || rawName === "Ram Shyam"
           ? "Unclassified (Ambiguous Name)"

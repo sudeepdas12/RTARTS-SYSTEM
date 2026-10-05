@@ -122,7 +122,8 @@ const rules: TaxRule[] = [
 
 describe("centralized tax rules (payable type + investor category → rate)", () => {
   it("maps investor categories to tax classifications", () => {
-    expect(investorCategoryToClassification("PUBLIC")).toBe("PUBLIC_LEGAL_PERSON");
+    expect(investorCategoryToClassification("PUBLIC")).toBe("NATURAL_PERSON");
+    expect(investorCategoryToClassification("PUBLIC_LEGAL_PERSON")).toBe("PUBLIC_LEGAL_PERSON");
     expect(investorCategoryToClassification("PROMOTER")).toBe("NATURAL_PERSON");
     expect(investorCategoryToClassification("LOCAL")).toBe("NATURAL_PERSON");
     expect(investorCategoryToClassification("INSTITUTION")).toBe("COMPANY_INSTITUTION");
@@ -189,7 +190,8 @@ describe("investor category → classification edge cases", () => {
   it("is case-insensitive and trims whitespace", () => {
     expect(investorCategoryToClassification("  institution ")).toBe("COMPANY_INSTITUTION");
     expect(investorCategoryToClassification("Mutual_Fund")).toBe("TAX_EXEMPT");
-    expect(investorCategoryToClassification("public")).toBe("PUBLIC_LEGAL_PERSON");
+    expect(investorCategoryToClassification("public")).toBe("NATURAL_PERSON");
+    expect(investorCategoryToClassification("Public_Legal_Person")).toBe("PUBLIC_LEGAL_PERSON");
     expect(investorCategoryToClassification("Foreign")).toBe("FOREIGN_INVESTOR");
   });
   it("maps the legal-person / company synonyms to institution", () => {

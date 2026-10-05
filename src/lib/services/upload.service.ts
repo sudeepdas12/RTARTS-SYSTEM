@@ -266,6 +266,13 @@ export const UploadService = {
     if (error) {
       throw error;
     }
+
+    if (status === "Completed" || status === "RolledBack") {
+      (supabase as any).rpc("refresh_company_client_map").catch((e: any) => {
+        console.warn("Background refresh_company_client_map error:", e?.message);
+      });
+    }
+
     return data as UploadHistoryRow;
   },
 

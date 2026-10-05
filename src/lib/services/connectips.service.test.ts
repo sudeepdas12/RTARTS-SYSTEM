@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { ConnectIPSService } from "./connectips.service";
-import { supabase } from "./database";
+import { supabase } from "@/integrations/supabase/client";
 
 describe("ConnectIPSService", () => {
   it("builds standard NCHL ConnectIPS signature string correctly", () => {
@@ -72,6 +72,26 @@ describe("ConnectIPSService", () => {
       expect(statusResult.refId).toBe("CIPS-NON-EXISTENT-TXN");
     } finally {
       (supabase as any).from = origFrom;
+    }
+  });
+
+  it("handles edge function signing error when unauthenticated or role denied", async () => {
+    const mockInvoke = vi.fn().mockResolvedValue({
+      data: null,
+      error: { message: "Unauthorized: payment authorization privileges required" },
+    });
+    const functionsSpy = vi.spyOn(supabase, "functions", "get").mockReturnValue({
+      invoke: mockInvoke,
+    } as any);
+
+    try {
+      const { data, error } = await supabase.functions.invoke("connectips-sign", {
+        body: { payloadStr: "TEST_PAYLOAD" },
+      });
+      expect(error).toBeDefined();
+      expect(error?.message).toContain("Unauthorized: payment authorization privileges required");
+    } finally {
+      functionsSpy.mockRestore();
     }
   });
 });

@@ -183,8 +183,8 @@ BEGIN
     VALUES
       ('DIVIDEND', 'NATURAL_PERSON', 0.05, true),
       ('DIVIDEND', 'PUBLIC_LEGAL_PERSON', 0.05, true),
-      ('DIVIDEND', 'COMPANY_INSTITUTION', 0.15, true),
-      ('DIVIDEND', 'FOREIGN_INVESTOR', 0.15, true),
+      ('DIVIDEND', 'COMPANY_INSTITUTION', 0.05, true),
+      ('DIVIDEND', 'FOREIGN_INVESTOR', 0.05, true),
       ('DIVIDEND', 'TAX_EXEMPT', 0.00, true),
       ('INTEREST', 'NATURAL_PERSON', 0.06, true),
       ('INTEREST', 'PUBLIC_LEGAL_PERSON', 0.06, true),
@@ -192,7 +192,7 @@ BEGIN
       ('INTEREST', 'FOREIGN_INVESTOR', 0.15, true),
       ('INTEREST', 'TAX_EXEMPT', 0.00, true),
       ('MUTUAL_FUND', 'NATURAL_PERSON', 0.05, true),
-      ('MUTUAL_FUND', 'PUBLIC_LEGAL_PERSON', 0.05, true),
+      ('MUTUAL_FUND', 'PUBLIC_LEGAL_PERSON', 0.15, true),
       ('MUTUAL_FUND', 'COMPANY_INSTITUTION', 0.15, true),
       ('MUTUAL_FUND', 'FOREIGN_INVESTOR', 0.15, true),
       ('MUTUAL_FUND', 'TAX_EXEMPT', 0.00, true)

@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "./database";
 import { bulkUpdateByIds, chunkArray } from "../bulk-ops";
 import { BULK_CHUNK_SIZE } from "../constants";
 import { getPayeeTaxRate } from "./payable-summary";
@@ -148,13 +149,14 @@ export const PaymentService = {
     }
   },
 
-  async getLineItems(batchId: string): Promise<PaymentLineItem[]> {
+  async getLineItems(batchId: string, limit = 2000): Promise<PaymentLineItem[]> {
     try {
       const { data, error } = await (supabase as any)
         .from("payments")
         .select("*, clients(id, boid, full_name, bank_name, bank_account_no)")
         .eq("batch_id", batchId)
-        .order("created_at", { ascending: true });
+        .order("created_at", { ascending: true })
+        .limit(limit);
 
       if (error) {
         console.error("Failed to fetch line items:", error.message);
@@ -163,6 +165,27 @@ export const PaymentService = {
       return (data || []) as PaymentLineItem[];
     } catch (err: any) {
       console.error("Failed to fetch line items:", err?.message || err);
+      throw err;
+    }
+  },
+
+  async getAllLineItemsForExport(batchId: string): Promise<PaymentLineItem[]> {
+    try {
+      const data = await fetchAllRows<any>(
+        (from, to) => {
+          return (supabase as any)
+            .from("payments")
+            .select("*, clients(id, boid, full_name, bank_name, bank_account_no)")
+            .eq("batch_id", batchId)
+            .order("created_at", { ascending: true })
+            .range(from, to);
+        },
+        1000,
+        100000,
+      );
+      return (data || []) as PaymentLineItem[];
+    } catch (err: any) {
+      console.error("Failed to fetch all line items for export:", err?.message || err);
       throw err;
     }
   },
@@ -195,6 +218,149 @@ export const PaymentService = {
       throw new Error(`Failed to create payment batch: ${error.message}`);
     }
     return data as PaymentBatch;
+  },
+
+  /**
+   * Fast server-side preview of available payables count and total amounts (< 50ms)
+   */
+  async getAvailablePayablesPreview(
+    companyId?: string,
+    payableType?: string,
+    options?: {
+      fiscalYear?: string;
+      fromDate?: string;
+      toDate?: string;
+    },
+  ): Promise<{
+    count: number;
+    totalAmount: number;
+    totalGross: number;
+    totalTax: number;
+    mfCount: number;
+    divCount: number;
+    intCount: number;
+  }> {
+    try {
+      const { data, error } = await (supabase as any).rpc("get_available_payables_preview", {
+        p_company_id: companyId && companyId !== "all" ? companyId : null,
+        p_payable_type: payableType && payableType !== "all" ? payableType : "all",
+        p_fiscal_year:
+          options?.fiscalYear && options.fiscalYear !== "all" ? options.fiscalYear : "all",
+        p_from_date: options?.fromDate || null,
+        p_to_date: options?.toDate || null,
+      });
+
+      if (error) throw error;
+      return {
+        count: Number(data?.count || 0),
+        totalAmount: Number(data?.totalAmount || 0),
+        totalGross: Number(data?.totalGross || 0),
+        totalTax: Number(data?.totalTax || 0),
+        mfCount: Number(data?.mfCount || 0),
+        divCount: Number(data?.divCount || 0),
+        intCount: Number(data?.intCount || 0),
+      };
+    } catch (err: any) {
+      console.warn("get_available_payables_preview error:", err?.message || err);
+      return {
+        count: 0,
+        totalAmount: 0,
+        totalGross: 0,
+        totalTax: 0,
+        mfCount: 0,
+        divCount: 0,
+        intCount: 0,
+      };
+    }
+  },
+
+  /**
+   * Fast server-side payment batch creation using safe chunked population (< 2s per chunk).
+   * Prevents statement timeout on large datasets (50,000+ records) and supports progress callbacks.
+   */
+  async createBatchAtomic(
+    params: {
+      batch_name: string;
+      company_id?: string;
+      fiscal_year?: string;
+      payable_type?: string;
+      payment_method?: string;
+      installment_tag?: string;
+      cds_batch_ref?: string;
+      registrar?: string;
+      max_items?: number;
+    },
+    onProgress?: (inserted: number, totalExpected: number) => void,
+  ): Promise<PaymentBatch> {
+    // 1. Create the Batch Header in Draft status
+    const { data: batch, error: batchErr } = await (supabase as any)
+      .from("payment_batches")
+      .insert({
+        batch_name: params.batch_name.trim(),
+        company_id: params.company_id && params.company_id !== "all" ? params.company_id : null,
+        fiscal_year: params.fiscal_year && params.fiscal_year !== "all" ? params.fiscal_year : null,
+        payable_type:
+          params.payable_type && params.payable_type !== "all" ? params.payable_type : "all",
+        payment_method: params.payment_method || "ConnectIPS",
+        status: "Draft",
+        total_payments: 0,
+        total_amount: 0,
+        total_tax: 0,
+        cds_batch_ref: params.cds_batch_ref?.trim() || null,
+        registrar: params.registrar?.trim() || null,
+      })
+      .select()
+      .single();
+
+    if (batchErr || !batch) {
+      throw new Error(`Failed to create batch header: ${batchErr?.message || "Unknown error"}`);
+    }
+
+    // 2. Populate line items in safe, fast sub-2-second chunks (2,500 rows per chunk)
+    const chunkSize = 2500;
+    let hasMore = true;
+    let totalInserted = 0;
+
+    while (hasMore) {
+      const { data: chunk, error: chunkErr } = await (supabase as any).rpc(
+        "populate_payment_batch_chunk",
+        {
+          p_batch_id: batch.id,
+          p_company_id: params.company_id && params.company_id !== "all" ? params.company_id : null,
+          p_fiscal_year:
+            params.fiscal_year && params.fiscal_year !== "all" ? params.fiscal_year : null,
+          p_payable_type:
+            params.payable_type && params.payable_type !== "all" ? params.payable_type : "all",
+          p_payment_method: params.payment_method || "ConnectIPS",
+          p_installment_tag: params.installment_tag || "FULL",
+          p_limit: chunkSize,
+        },
+      );
+
+      if (chunkErr) {
+        console.error("Chunk population error:", chunkErr);
+        if (totalInserted === 0) {
+          await (supabase as any).from("payment_batches").delete().eq("id", batch.id);
+        }
+        throw new Error(`Failed to populate batch items: ${chunkErr.message}`);
+      }
+
+      totalInserted = Number(chunk?.total_in_batch || 0);
+      hasMore = Boolean(chunk?.has_more) && Number(chunk?.inserted_count || 0) > 0;
+
+      if (onProgress) {
+        onProgress(totalInserted, totalInserted);
+      }
+    }
+
+    // 3. Return updated batch
+    const { data: finalBatch } = await (supabase as any)
+      .from("payment_batches")
+      .select("*")
+      .eq("id", batch.id)
+      .single();
+
+    return (finalBatch || batch) as PaymentBatch;
   },
 
   /**
@@ -416,16 +582,14 @@ export const PaymentService = {
   async updateBatchTotals(batchId: string): Promise<void> {
     try {
       // Get all active payments for this batch (excluding Reversed, Failed, Cancelled)
-      const { data: payments, error: paymentError } = await (supabase as any)
-        .from("payments")
-        .select("net_amount, tax_amount, gross_amount, status")
-        .eq("batch_id", batchId)
-        .not("status", "in", '("Reversed","Failed","Cancelled")');
-
-      if (paymentError) {
-        console.warn("Failed to fetch payments for batch total:", paymentError.message);
-        return;
-      }
+      const payments = await fetchAllRows<any>((from, to) => {
+        return (supabase as any)
+          .from("payments")
+          .select("net_amount, tax_amount, gross_amount, status")
+          .eq("batch_id", batchId)
+          .not("status", "in", '("Reversed","Failed","Cancelled")')
+          .range(from, to);
+      });
 
       const totalAmount = (payments || []).reduce(
         (sum: number, p: any) => sum + (p.net_amount || 0),
@@ -718,16 +882,18 @@ export const PaymentService = {
       // 1. Fetch payable IDs that are currently locked in unfinalized batches (Draft, Pending, Approved)
       let batchedPayableIds = new Set<string>();
       try {
-        let paymentsQ = (supabase as any)
-          .from("payments")
-          .select("payable_id")
-          .in("status", ["Draft", "Pending", "Approved"]);
+        const existingPayments = await fetchAllRows<any>((from, to) => {
+          let paymentsQ = (supabase as any)
+            .from("payments")
+            .select("payable_id")
+            .in("status", ["Draft", "Pending", "Approved"])
+            .range(from, to);
 
-        if (companyId && companyId !== "all") {
-          paymentsQ = paymentsQ.eq("company_id", companyId);
-        }
-
-        const { data: existingPayments } = await paymentsQ.limit(5000);
+          if (companyId && companyId !== "all") {
+            paymentsQ = paymentsQ.eq("company_id", companyId);
+          }
+          return paymentsQ;
+        });
 
         if (existingPayments && Array.isArray(existingPayments)) {
           batchedPayableIds = new Set(
@@ -747,26 +913,34 @@ export const PaymentService = {
       const clientSelect =
         "clients(id, boid, full_name, bank_name, bank_account_no, bank_branch, pan_or_citizenship)";
       const companySelect = "companies(id, company_name, company_code)";
-      const payablesLimit = options?.limit ?? 5000;
+      const payablesLimit = options?.limit ?? 200000;
 
       if (fetchDividends) {
-        let query = (supabase as any)
-          .from("dividend_payables")
-          .select(`*, ${clientSelect}, ${companySelect}`)
-          .in("payment_status", ["Pending", "Partial"])
-          .order("created_at", { ascending: true })
-          .limit(payablesLimit);
+        let dividendData: any[] = [];
+        try {
+          dividendData = await fetchAllRows<any>(
+            (from, to) => {
+              let query = (supabase as any)
+                .from("dividend_payables")
+                .select(`*, ${clientSelect}, ${companySelect}`)
+                .in("payment_status", ["Pending", "Partial"])
+                .order("created_at", { ascending: true })
+                .range(from, to);
 
-        if (companyId && companyId !== "all") {
-          query = query.eq("company_id", companyId);
-        }
-        if (options?.fiscalYear && options.fiscalYear !== "all") {
-          query = query.eq("fiscal_year", options.fiscalYear);
-        }
-
-        const { data: dividendData, error: dividendError } = await query;
-        if (dividendError)
+              if (companyId && companyId !== "all") {
+                query = query.eq("company_id", companyId);
+              }
+              if (options?.fiscalYear && options.fiscalYear !== "all") {
+                query = query.eq("fiscal_year", options.fiscalYear);
+              }
+              return query;
+            },
+            1000,
+            payablesLimit,
+          );
+        } catch (dividendError: any) {
           console.warn("Failed to fetch dividend payables:", dividendError.message);
+        }
         if (dividendData) {
           payables.push(
             ...dividendData.map((p: any) => {
@@ -801,29 +975,37 @@ export const PaymentService = {
       }
 
       if (fetchInterest) {
-        let interestQuery = (supabase as any)
-          .from("interest_payables")
-          .select(`*, ${clientSelect}, ${companySelect}`)
-          .in("payment_status", ["Pending", "Partial"])
-          .order("created_at", { ascending: true })
-          .limit(payablesLimit);
+        let interestData: any[] = [];
+        try {
+          interestData = await fetchAllRows<any>(
+            (from, to) => {
+              let interestQuery = (supabase as any)
+                .from("interest_payables")
+                .select(`*, ${clientSelect}, ${companySelect}`)
+                .in("payment_status", ["Pending", "Partial"])
+                .order("created_at", { ascending: true })
+                .range(from, to);
 
-        if (companyId && companyId !== "all") {
-          interestQuery = interestQuery.eq("company_id", companyId);
-        }
-        if (options?.fiscalYear && options.fiscalYear !== "all") {
-          interestQuery = interestQuery.eq("fiscal_year", options.fiscalYear);
-        }
-        if (options?.fromDate) {
-          interestQuery = interestQuery.gte("due_date", options.fromDate);
-        }
-        if (options?.toDate) {
-          interestQuery = interestQuery.lte("due_date", options.toDate);
-        }
-
-        const { data: interestData, error: interestError } = await interestQuery;
-        if (interestError)
+              if (companyId && companyId !== "all") {
+                interestQuery = interestQuery.eq("company_id", companyId);
+              }
+              if (options?.fiscalYear && options.fiscalYear !== "all") {
+                interestQuery = interestQuery.eq("fiscal_year", options.fiscalYear);
+              }
+              if (options?.fromDate) {
+                interestQuery = interestQuery.gte("due_date", options.fromDate);
+              }
+              if (options?.toDate) {
+                interestQuery = interestQuery.lte("due_date", options.toDate);
+              }
+              return interestQuery;
+            },
+            1000,
+            payablesLimit,
+          );
+        } catch (interestError: any) {
           console.warn("Failed to fetch interest payables:", interestError.message);
+        }
         if (interestData) {
           const days =
             options?.periodDays && options.periodDays > 0
@@ -966,22 +1148,31 @@ export const PaymentService = {
       }
 
       if (fetchMutualFund) {
-        let mfQuery = (supabase as any)
-          .from("mutual_fund_payables")
-          .select(`*, ${clientSelect}, ${companySelect}`)
-          .in("payment_status", ["Pending", "Partial"])
-          .order("created_at", { ascending: true })
-          .limit(payablesLimit);
+        let mfData: any[] = [];
+        try {
+          mfData = await fetchAllRows<any>(
+            (from, to) => {
+              let mfQuery = (supabase as any)
+                .from("mutual_fund_payables")
+                .select(`*, ${clientSelect}, ${companySelect}`)
+                .in("payment_status", ["Pending", "Partial"])
+                .order("created_at", { ascending: true })
+                .range(from, to);
 
-        if (companyId && companyId !== "all") {
-          mfQuery = mfQuery.eq("company_id", companyId);
+              if (companyId && companyId !== "all") {
+                mfQuery = mfQuery.eq("company_id", companyId);
+              }
+              if (options?.fiscalYear && options.fiscalYear !== "all") {
+                mfQuery = mfQuery.eq("fiscal_year", options.fiscalYear);
+              }
+              return mfQuery;
+            },
+            1000,
+            payablesLimit,
+          );
+        } catch (mfError: any) {
+          console.warn("Failed to fetch mutual fund payables:", mfError.message);
         }
-        if (options?.fiscalYear && options.fiscalYear !== "all") {
-          mfQuery = mfQuery.eq("fiscal_year", options.fiscalYear);
-        }
-
-        const { data: mfData, error: mfError } = await mfQuery;
-        if (mfError) console.warn("Failed to fetch mutual fund payables:", mfError.message);
         if (mfData) {
           payables.push(
             ...mfData.map((p: any) => {

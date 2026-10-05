@@ -8,6 +8,7 @@ export interface InterestCalculationParams {
   toDate?: Date;
   daysCount?: number; // explicit day count
   dayCountConvention?: "ACTUAL_365" | "30_360";
+  couponFrequency?: "SEMI_ANNUAL" | "ANNUAL" | "DAY_COUNT";
   taxRate?: number; // e.g. 0.06 for 6% TDS
   taxCategory?:
     | "PUBLIC"
@@ -17,6 +18,7 @@ export interface InterestCalculationParams {
     | "INSTITUTION"
     | "TAX_EXEMPTED"
     | "FOREIGN_INVESTOR"
+    | "BANK_FI"
     | "PROMOTER"
     | "LOCAL"
     | "EMPLOYEE"
@@ -81,9 +83,16 @@ export const InterestCalculator = {
       }
     }
 
-    // High-precision Gross Period Interest directly to avoid intermediate floating point division drift
-    const grossPeriodInterest =
-      days > 0 ? (totalPrincipal * annualInterestRate * days) / (100 * divisor) : 0;
+    // High-precision Gross Period Interest (direct or fixed coupon frequency)
+    let grossPeriodInterest = 0;
+    if (params.couponFrequency === "SEMI_ANNUAL") {
+      grossPeriodInterest = (totalPrincipal * annualInterestRate) / 200;
+    } else if (params.couponFrequency === "ANNUAL") {
+      grossPeriodInterest = annualInterestAmount;
+    } else {
+      grossPeriodInterest =
+        days > 0 ? (totalPrincipal * annualInterestRate * days) / (100 * divisor) : 0;
+    }
 
     // TDS rate logic
     let tdsRate = params.taxRate !== undefined ? normalizeTaxRate(params.taxRate) : 0.06;
@@ -91,9 +100,10 @@ export const InterestCalculator = {
     if (
       params.taxCategory === "TAX_EXEMPT" ||
       params.taxCategory === "TAX_EXEMPTED" ||
-      params.taxCategory === "MUTUAL_FUND"
+      params.taxCategory === "MUTUAL_FUND" ||
+      params.taxCategory === "BANK_FI"
     ) {
-      tdsRate = 0.0; // Tax Exempted / Mutual Fund
+      tdsRate = 0.0; // Tax Exempted / Mutual Fund / Inter-Bank FI (0% TDS)
     } else if (params.taxCategory === "INSTITUTION" || params.taxCategory === "FOREIGN_INVESTOR") {
       tdsRate = 0.15; // Legal Person / Foreign Investor (15%)
     } else if (
@@ -108,8 +118,9 @@ export const InterestCalculator = {
       tdsRate = normalizeTaxRate(params.taxRate);
     }
 
-    const rawTaxAmount = grossPeriodInterest * tdsRate;
+    // Round gross to paisa first, then compute tax from rounded gross (matching DB trigger parity)
     const rGross = Math.round((grossPeriodInterest + Number.EPSILON) * 100) / 100;
+    const rawTaxAmount = rGross * tdsRate;
     const rTax = Math.round((rawTaxAmount + Number.EPSILON) * 100) / 100;
     const netInterestPayable = Math.max(
       0,

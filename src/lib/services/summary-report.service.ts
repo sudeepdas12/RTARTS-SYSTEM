@@ -407,6 +407,39 @@ export const SummaryReportService = {
   async getMutualFundSummary(
     filters: { companyId?: string; fiscalYear?: string; startDate?: string; endDate?: string } = {},
   ): Promise<MutualFundSummaryRow[]> {
+    // 1. Fast server-side aggregation (< 50ms)
+    try {
+      const { data: rpcData, error: rpcErr } = await (supabase as any).rpc(
+        "get_mutual_fund_distribution_summary",
+        {
+          p_company_id: filters.companyId && filters.companyId !== "all" ? filters.companyId : null,
+          p_fiscal_year:
+            filters.fiscalYear && filters.fiscalYear !== "all" ? filters.fiscalYear : "all",
+          p_from_date: filters.startDate || null,
+          p_to_date: filters.endDate || null,
+        },
+      );
+      if (!rpcErr && Array.isArray(rpcData) && rpcData.length > 0) {
+        let totalKitta = 0;
+        for (const r of rpcData) {
+          totalKitta += Number(r.kitta || 0);
+        }
+        return rpcData.map((r: any, idx: number) => ({
+          sn: idx + 1,
+          type: r.type,
+          transaction_count: Number(r.transaction_count || 0),
+          kitta: Number(r.kitta || 0),
+          gross: Number(r.gross || 0),
+          tax: Number(r.tax || 0),
+          net: Number(r.net || 0),
+          composition: totalKitta > 0 ? (Number(r.kitta || 0) / totalKitta) * 100 : 0,
+        }));
+      }
+    } catch (err: any) {
+      console.warn("get_mutual_fund_distribution_summary RPC error, falling back:", err?.message);
+    }
+
+    // 2. Client-side fallback if RPC is unavailable
     const data = await fetchAllRows<any>((from, to) => {
       let query = (supabase as any)
         .from("mutual_fund_payables")

@@ -246,12 +246,8 @@ function payableClassification(category: string): string {
   const upper = String(category || "")
     .trim()
     .toUpperCase();
-  if (
-    upper === "INSTITUTION" ||
-    upper === "FOREIGN" ||
-    upper === "COMPANY_INSTITUTION" ||
-    upper === "PRIVATE"
-  )
+  if (upper === "FOREIGN" || upper === "FOREIGN_INVESTOR") return "FOREIGN_INVESTOR";
+  if (upper === "INSTITUTION" || upper === "COMPANY_INSTITUTION" || upper === "PRIVATE")
     return "COMPANY_INSTITUTION";
   if (upper === "MUTUAL_FUND" || upper === "TAX_EXEMPT" || upper === "TAX_EXEMPTED")
     return "TAX_EXEMPT";
@@ -273,36 +269,36 @@ function payableSegment(category: string, isDebenture = false): string | null {
   if (upper === "PROMOTER") return "PROMOTER";
   if (upper === "LOCAL") return "LOCAL";
   if (upper === "PUBLIC") return "PUBLIC";
+  if (upper === "EMPLOYEE") return "EMPLOYEE";
   return null;
 }
 
 /**
  * Debenture TDS rules:
- *   Natural Person (Public, Promoter, Local): 6%
+ *   Natural Person (Public, Promoter, Local, Employee): 6%
  *   Legal Person / Company (Institution, Foreign): 15%
- *   Tax Exempt / Mutual Fund: 0%
+ *   Tax Exempt / Mutual Fund / Bank FI: 0%
  *
  * Dividend TDS rules:
- *   Natural Person (Public, Promoter, Local): 5%
- *   Legal Person / Company (Institution, Foreign): 15% (dividend & debenture)
+ *   Natural Person (Public, Promoter, Local, Employee): 5%
+ *   Legal Person / Company (Resident Institution): 5% (Sec 88(2)(ka))
+ *   Foreign Investor: 5% (Sec 92 final withholding)
  *   Mutual Fund / Tax Exempt: 0%
  */
 function getCategoryTdsRate(category: string, isDebenture: boolean): number {
   switch (category) {
     case "PROMOTER":
-      return isDebenture ? 0.06 : 0.05;
     case "PUBLIC":
-      return isDebenture ? 0.06 : 0.05;
     case "LOCAL":
+    case "EMPLOYEE":
       return isDebenture ? 0.06 : 0.05;
     case "INSTITUTION":
     case "COMPANY_INSTITUTION":
-      return 0.15; // Statutory 15% for institutions (dividend & debenture)
+      return isDebenture ? 0.15 : 0.05;
     case "FOREIGN":
     case "FOREIGN_INVESTOR":
-      return 0.15; // Foreign investors same as institution
+      return isDebenture ? 0.15 : 0.05;
     case "MUTUAL_FUND":
-      return 0;
     case "TAX_EXEMPT":
       return 0;
     default:

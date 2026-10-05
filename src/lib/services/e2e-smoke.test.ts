@@ -258,7 +258,7 @@ describe("End-to-End System Smoke Test", () => {
         determineDebentureCategory({
           client: { full_name: "NEPAL BANK KARMACHARI AWAKASH KOSH BYAWASTHAPAN TRUST" },
         }),
-      ).toBe("MUTUAL FUND");
+      ).toBe("INSTITUTION");
     });
 
     it("detects natural persons as default public and avoids false positives on names containing kosh", () => {
