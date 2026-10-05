@@ -1033,6 +1033,9 @@ export const ImportService = {
         resolvedClientIds.set(boid, clientMeta.id);
 
         // Queue update for existing client so bulk_insert_clients COALESCE fills any newly available information
+        const existingInvestorCategory = detectInvestorCategory(row, options?.sheetType);
+        const existingHolderType = mapToHolderType(existingInvestorCategory);
+
         newClientRecords.push({
           id: clientMeta.id,
           boid: boid,
@@ -1062,6 +1065,13 @@ export const ImportService = {
           bank_code: bankCode || undefined,
           account_type: accountType || undefined,
           residency: residency || undefined,
+          holder_type: existingHolderType,
+          payee_classification: payableClassification(existingInvestorCategory),
+          payee_segment: payableSegment(existingInvestorCategory),
+          classification_status:
+            existingInvestorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
+          classification_source:
+            existingInvestorCategory === "UNKNOWN" ? "upload_requires_review" : "upload_evidence",
         });
 
         if (nidNumber) clientMeta.nid_number = nidNumber;
@@ -1480,7 +1490,7 @@ export const ImportService = {
       let investorCategory = detectInvestorCategory(row, options?.sheetType);
       if (investorCategory === "UNKNOWN") {
         const cachedClient = sharedContext?.clientInfoCache?.get(boid);
-        if (cachedClient) {
+        if (cachedClient && cachedClient.classification_status === "CONFIRMED") {
           if (
             cachedClient.payee_classification &&
             cachedClient.payee_classification !== "UNCLASSIFIED"

@@ -690,12 +690,11 @@ serve(async (req) => {
       ).trim();
       if (!boid || boid.length < 8) continue;
 
-      if (existingClientMap.has(boid)) {
-        clientIdMap.set(boid, existingClientMap.get(boid)!);
-      } else if (!clientIdMap.has(boid)) {
-        // Will be inserted in batch
-        const tempId = crypto.randomUUID();
-        clientIdMap.set(boid, tempId);
+      if (!clientIdMap.has(boid)) {
+        const isExisting = existingClientMap.has(boid);
+        const resolvedId = isExisting ? existingClientMap.get(boid)! : crypto.randomUUID();
+        clientIdMap.set(boid, resolvedId);
+        const tempId = resolvedId;
 
         // Smart categorization: detect investor type from row data or sheet name
         const investorCategory = detectInvestorCategory(row, sheetType);

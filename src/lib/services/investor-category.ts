@@ -68,6 +68,7 @@ export function mapToHolderType(category: string): HolderTypeValue | null {
     case "NATURAL PERSON - EMPLOYEE":
       return "Natural Person - Employee";
     case "INSTITUTION":
+    case "COMPANY_INSTITUTION":
     case "CORPORATE":
     case "COMPANY":
     case "LEGAL PERSON":
