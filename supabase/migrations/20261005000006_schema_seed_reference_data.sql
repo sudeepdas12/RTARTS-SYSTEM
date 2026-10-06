@@ -140,4 +140,28 @@ BEGIN
   END IF;
 END $$;
 
+-- 5. Data Correction: reset unconfirmed clients with missing lineage to REVIEW_REQUIRED
+UPDATE public.clients
+SET holder_type = NULL,
+    payee_classification = 'UNCLASSIFIED',
+    classification_status = 'REVIEW_REQUIRED'
+WHERE classification_status = 'AUTO_CLASSIFIED'
+  AND (classification_source = 'upload_requires_review' OR payee_classification = 'UNCLASSIFIED')
+  AND (father_name IS NULL OR father_name = '')
+  AND (grandfather_name IS NULL OR grandfather_name = '');
+
+-- 6. Payables Reconciliation: ensure remaining_amount matches net_payable minus paid_amount
+UPDATE public.dividend_payables
+SET remaining_amount = GREATEST(0, net_payable - COALESCE(paid_amount, 0))
+WHERE remaining_amount IS NULL OR remaining_amount != GREATEST(0, net_payable - COALESCE(paid_amount, 0));
+
+UPDATE public.interest_payables
+SET remaining_amount = GREATEST(0, net_payable - COALESCE(paid_amount, 0))
+WHERE remaining_amount IS NULL OR remaining_amount != GREATEST(0, net_payable - COALESCE(paid_amount, 0));
+
+UPDATE public.mutual_fund_payables
+SET remaining_amount = GREATEST(0, net_payable - COALESCE(paid_amount, 0))
+WHERE remaining_amount IS NULL OR remaining_amount != GREATEST(0, net_payable - COALESCE(paid_amount, 0));
+
 COMMIT;
+

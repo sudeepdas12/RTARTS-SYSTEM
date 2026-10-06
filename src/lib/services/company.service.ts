@@ -17,6 +17,15 @@ export interface AutoRegisterCompanyParams {
   userId?: string | null;
 }
 
+const KNOWN_MUTUAL_FUNDS: Record<string, string> = {
+  "RBB MUTUAL FUND 1": "RBF1",
+  "RBB MUTUAL FUND 2": "RMF2",
+  "RMF 1": "RBF1",
+  RMF1: "RBF1",
+  "RMF 2": "RMF2",
+  RMF2: "RMF2",
+};
+
 const KNOWN_CODES: Record<string, string> = {
   "GLOBAL IME": "GBIME",
   "NIC ASIA": "NICA",
@@ -33,9 +42,13 @@ const KNOWN_CODES: Record<string, string> = {
 export function generateCompanyCode(name: string, fileType?: string, rate?: number): string {
   if (!name || !name.trim()) return "COMP";
 
-  // Strip true file extensions only (e.g. .xlsx, .xls, .csv)
+  // Strip true file extensions and common upload noise words (e.g. Original, Final, Copy, Shareholders)
   const clean = name
     .replace(/\.(xlsx|xls|csv|tsv|xlsm)$/i, "")
+    .replace(
+      /\b(original|final|copy|updated|shareholders?|investors?|sheet\d*|data|export)\b/gi,
+      "",
+    )
     .replace(/[,\-_()[\]{}]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -94,6 +107,12 @@ export function generateCompanyCode(name: string, fileType?: string, rate?: numb
 
   // If Mutual Fund
   if (isMutualFund) {
+    for (const [key, sym] of Object.entries(KNOWN_MUTUAL_FUNDS)) {
+      if (cleanUpper.includes(key)) {
+        return sym;
+      }
+    }
+
     const fundWords = clean
       .replace(/mutual\s*fund|fund/gi, "Fund")
       .split(/\s+/)
@@ -357,6 +376,52 @@ export const CompanyService = {
     }
 
     return created!;
+  },
+
+  async enrichCompany(
+    companyId: string,
+    params: {
+      issueSize?: number | null;
+      rate?: number | null;
+      fiscalYear?: string | null;
+      isin?: string | null;
+      fileType?: string;
+    },
+  ): Promise<Company | null> {
+    if (!companyId) return null;
+    const existing = await this.getCompanyById(companyId);
+    if (!existing) return null;
+
+    const isDebenture =
+      (params.fileType && params.fileType.toLowerCase().includes("debenture")) ||
+      /debenture|bond|rinpatra/i.test(existing.company_name);
+
+    const updates: CompanyUpdate = {};
+    if (!existing.isin && params.isin) updates.isin = params.isin;
+    if ((!existing.issue_size || existing.issue_size <= 0) && params.issueSize) {
+      updates.issue_size = params.issueSize;
+    }
+    if (!existing.fiscal_year && params.fiscalYear) {
+      updates.fiscal_year = params.fiscalYear;
+    }
+    if (!existing.debenture_rate && isDebenture && params.rate) {
+      updates.debenture_rate = params.rate;
+      updates.coupon_rate = params.rate;
+    }
+    if (!existing.dividend_rate && !isDebenture && params.rate) {
+      updates.dividend_rate = params.rate;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      const { data: updated, error } = await supabase
+        .from("companies")
+        .update(updates)
+        .eq("id", companyId)
+        .select()
+        .maybeSingle();
+      if (!error && updated) return updated;
+    }
+    return existing;
   },
 
   async createCompany(company: CompanyInsert): Promise<Company> {

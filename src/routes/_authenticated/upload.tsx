@@ -713,6 +713,14 @@ function UploadRoute() {
       if (matched) {
         resolvedCompanyId = matched.id;
         setSelectedCompanyId(matched.id);
+        await CompanyService.enrichCompany(matched.id, {
+          issueSize: parsedData.grandTotals.totalKitta || undefined,
+          rate,
+          fiscalYear: fiscalYear ? normalizeFiscalYear(fiscalYear) : undefined,
+          isin: parsedData.detectedIsin,
+          fileType: effectiveFileType,
+        });
+        await queryClient.invalidateQueries({ queryKey: ["companies"] });
       } else {
         try {
           toast.loading(`Auto-registering company "${rawDetect}"...`, { id: "comp-autoreg" });
@@ -741,6 +749,15 @@ function UploadRoute() {
           return;
         }
       }
+    } else {
+      await CompanyService.enrichCompany(resolvedCompanyId, {
+        issueSize: parsedData.grandTotals.totalKitta || undefined,
+        rate,
+        fiscalYear: fiscalYear ? normalizeFiscalYear(fiscalYear) : undefined,
+        isin: parsedData.detectedIsin,
+        fileType: effectiveFileType,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["companies"] });
     }
 
     let fileHash: string;
@@ -1011,6 +1028,14 @@ function UploadRoute() {
       if (matched) {
         resolvedCompanyId = matched.id;
         setSelectedCompanyId(matched.id);
+        await CompanyService.enrichCompany(matched.id, {
+          issueSize: parsedData.grandTotals.totalKitta || undefined,
+          rate: dividendRate ? Number(dividendRate) : undefined,
+          fiscalYear: fiscalYear ? normalizeFiscalYear(fiscalYear) : undefined,
+          isin: parsedData.detectedIsin,
+          fileType: effectiveFileType,
+        });
+        await queryClient.invalidateQueries({ queryKey: ["companies"] });
       } else {
         try {
           toast.loading(`Auto-registering company "${rawDetect}"...`, { id: "comp-autoreg-all" });
@@ -1038,6 +1063,15 @@ function UploadRoute() {
           return;
         }
       }
+    } else {
+      await CompanyService.enrichCompany(resolvedCompanyId, {
+        issueSize: parsedData.grandTotals.totalKitta || undefined,
+        rate: dividendRate ? Number(dividendRate) : undefined,
+        fiscalYear: fiscalYear ? normalizeFiscalYear(fiscalYear) : undefined,
+        isin: parsedData.detectedIsin,
+        fileType: effectiveFileType,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["companies"] });
     }
 
     // Set importing state BEFORE company resolution so any failure path releases the button

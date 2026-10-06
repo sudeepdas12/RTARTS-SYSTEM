@@ -173,6 +173,7 @@ function PaymentsRoute() {
           `,
           )
           .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
           .range(from, to);
 
         if (shareholderCompany !== "all") q = q.eq("company_id", shareholderCompany);

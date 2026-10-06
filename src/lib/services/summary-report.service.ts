@@ -290,8 +290,9 @@ export const SummaryReportService = {
         let q = (supabase as any)
           .from("dividend_payables")
           .select(
-            "company_id, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, payment_date, created_at, companies!inner(company_name, company_code)",
+            "id, company_id, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, payment_date, created_at, companies!inner(company_name, company_code)",
           )
+          .order("id", { ascending: true })
           .range(from, to);
         if (filters.companyId && filters.companyId !== "all")
           q = q.eq("company_id", filters.companyId);
@@ -303,8 +304,9 @@ export const SummaryReportService = {
         let q = (supabase as any)
           .from("interest_payables")
           .select(
-            "company_id, gross_interest, tax_amount, net_payable, payee_classification, payee_segment, payment_date, due_date, created_at, companies!inner(company_name, company_code)",
+            "id, company_id, gross_interest, tax_amount, net_payable, payee_classification, payee_segment, payment_date, due_date, created_at, companies!inner(company_name, company_code)",
           )
+          .order("id", { ascending: true })
           .range(from, to);
         if (filters.companyId && filters.companyId !== "all")
           q = q.eq("company_id", filters.companyId);
@@ -316,8 +318,9 @@ export const SummaryReportService = {
         let q = (supabase as any)
           .from("mutual_fund_payables")
           .select(
-            "company_id, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, payment_date, created_at, companies!inner(company_name, company_code)",
+            "id, company_id, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, payment_date, created_at, companies!inner(company_name, company_code)",
           )
+          .order("id", { ascending: true })
           .range(from, to);
         if (filters.companyId && filters.companyId !== "all")
           q = q.eq("company_id", filters.companyId);
@@ -444,8 +447,9 @@ export const SummaryReportService = {
       let query = (supabase as any)
         .from("mutual_fund_payables")
         .select(
-          "shares_held, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, lot_name, created_at",
+          "id, shares_held, gross_dividend, tax_amount, net_payable, payee_classification, payee_segment, lot_name, created_at",
         )
+        .order("id", { ascending: true })
         .range(from, to);
       if (filters.companyId && filters.companyId !== "all") {
         query = query.eq("company_id", filters.companyId);
@@ -549,9 +553,9 @@ export const SummaryReportService = {
         "TOTAL",
         total.transaction_count,
         total.kitta,
-        total.gross,
-        total.tax,
-        total.net,
+        Math.round(total.gross * 100) / 100,
+        Math.round(total.tax * 100) / 100,
+        Math.round(total.net * 100) / 100,
         "100.00%",
       ],
     ];

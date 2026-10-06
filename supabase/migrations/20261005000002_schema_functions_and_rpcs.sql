@@ -351,7 +351,7 @@ BEGIN
   IF TG_TABLE_NAME = 'interest_payables' THEN
     gross := COALESCE((to_jsonb(NEW)->>'gross_interest')::numeric, 0);
   ELSIF TG_TABLE_NAME = 'mutual_fund_payables' THEN
-    gross := COALESCE((to_jsonb(NEW)->>'gross_amount')::numeric, 0);
+    gross := COALESCE((to_jsonb(NEW)->>'gross_dividend')::numeric, (to_jsonb(NEW)->>'gross_amount')::numeric, 0);
   ELSE
     gross := COALESCE((to_jsonb(NEW)->>'gross_dividend')::numeric, 0);
   END IF;
@@ -375,6 +375,7 @@ BEGIN
   END IF;
 
   NEW.net_payable := round(gross - COALESCE(NEW.tax_amount, 0), 2);
+  NEW.remaining_amount := GREATEST(0, NEW.net_payable - COALESCE(NEW.paid_amount, 0));
   NEW.updated_at := now();
   RETURN NEW;
 END;
@@ -823,7 +824,7 @@ $$;
 -- Name: bulk_insert_clients(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.bulk_insert_clients(p_clients jsonb) RETURNS jsonb
+CREATE OR REPLACE FUNCTION public.bulk_insert_clients(p_clients jsonb) RETURNS jsonb
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -881,6 +882,9 @@ BEGIN
         v_holder_type := 'Foreign'::public.holder_type;
       ELSIF v_client->>'holder_type' ILIKE '%exempt%' THEN
         v_holder_type := 'Tax Exempt'::public.holder_type;
+      ELSIF NULLIF(BTRIM(COALESCE(v_client->>'holder_type', '')), '') IS NULL THEN
+        -- Unknown holder type must stay NULL so the classifier's REVIEW_REQUIRED verdict is kept.
+        v_holder_type := NULL;
       ELSE
         v_holder_type := 'Natural Person - Public'::public.holder_type;
       END IF;
@@ -972,18 +976,27 @@ BEGIN
         bank_account_no = COALESCE(NULLIF(EXCLUDED.bank_account_no, ''), clients.bank_account_no),
         bank_code = COALESCE(NULLIF(EXCLUDED.bank_code, ''), clients.bank_code),
         account_type = COALESCE(NULLIF(EXCLUDED.account_type, ''), clients.account_type),
-        holder_type = COALESCE(EXCLUDED.holder_type, clients.holder_type),
+        holder_type = CASE
+          WHEN clients.classification_status = 'CONFIRMED' THEN clients.holder_type
+          WHEN EXCLUDED.classification_status = 'REVIEW_REQUIRED' AND EXCLUDED.payee_classification = 'UNCLASSIFIED' THEN EXCLUDED.holder_type
+          ELSE COALESCE(EXCLUDED.holder_type, clients.holder_type)
+        END,
         payee_classification = CASE 
-          WHEN clients.classification_status = 'OVERRIDDEN' THEN clients.payee_classification 
+          WHEN clients.classification_status = 'CONFIRMED' THEN clients.payee_classification 
+          WHEN EXCLUDED.classification_status = 'REVIEW_REQUIRED' AND EXCLUDED.payee_classification = 'UNCLASSIFIED' THEN 'UNCLASSIFIED'
           ELSE COALESCE(NULLIF(EXCLUDED.payee_classification, 'UNCLASSIFIED'), clients.payee_classification) 
         END,
         payee_segment = CASE 
-          WHEN clients.classification_status = 'OVERRIDDEN' THEN clients.payee_segment 
+          WHEN clients.classification_status = 'CONFIRMED' THEN clients.payee_segment 
           ELSE COALESCE(EXCLUDED.payee_segment, clients.payee_segment) 
         END,
         classification_status = CASE 
-          WHEN clients.classification_status = 'OVERRIDDEN' THEN 'OVERRIDDEN' 
+          WHEN clients.classification_status = 'CONFIRMED' THEN 'CONFIRMED' 
           ELSE COALESCE(EXCLUDED.classification_status, clients.classification_status) 
+        END,
+        classification_source = CASE
+          WHEN clients.classification_status = 'CONFIRMED' THEN clients.classification_source
+          ELSE COALESCE(EXCLUDED.classification_source, clients.classification_source)
         END;
 
       v_inserted := v_inserted + 1;
@@ -2543,22 +2556,33 @@ $$;
 -- Name: delete_orphan_clients(text, text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.delete_orphan_clients(p_company_id text DEFAULT NULL::text, p_fiscal_year text DEFAULT NULL::text, p_imported_after timestamp with time zone DEFAULT NULL::timestamp with time zone) RETURNS jsonb
+CREATE OR REPLACE FUNCTION public.delete_orphan_clients(p_company_id text DEFAULT NULL::text, p_fiscal_year text DEFAULT NULL::text, p_imported_after timestamp with time zone DEFAULT NULL::timestamp with time zone) RETURNS jsonb
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
 DECLARE
   v_orphans int := 0;
+  v_jwt_role text;
 BEGIN
-  IF NOT public.has_role(auth.uid(), 'admin') THEN
-    RETURN jsonb_build_object('success', false, 'deleted', 0, 'error', 'Not authorized.');
+  BEGIN
+    v_jwt_role := COALESCE(
+      auth.jwt() ->> 'role',
+      (NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role')
+    );
+  EXCEPTION WHEN OTHERS THEN
+    v_jwt_role := NULL;
+  END;
+
+  IF COALESCE(v_jwt_role, '') != 'service_role' 
+     AND current_user NOT IN ('service_role', 'postgres', 'supabase_admin') THEN
+    PERFORM public.require_role('admin', 'supervisor', 'finance_operator', 'operator', 'maker');
   END IF;
 
-  -- Delete clients that no longer have ANY remaining dividend/interest/mutual-fund payables.
   DELETE FROM public.clients c
   WHERE NOT EXISTS (SELECT 1 FROM public.dividend_payables d WHERE d.client_id = c.id)
     AND NOT EXISTS (SELECT 1 FROM public.interest_payables i WHERE i.client_id = c.id)
-    AND NOT EXISTS (SELECT 1 FROM public.mutual_fund_payables m WHERE m.client_id = c.id);
+    AND NOT EXISTS (SELECT 1 FROM public.mutual_fund_payables m WHERE m.client_id = c.id)
+    AND NOT EXISTS (SELECT 1 FROM public.payments p WHERE p.client_id = c.id);
 
   GET DIAGNOSTICS v_orphans = ROW_COUNT;
 
@@ -2943,6 +2967,9 @@ CREATE FUNCTION public.get_available_payables_preview(p_company_id uuid DEFAULT 
     SET search_path TO 'public'
     AS $$
 DECLARE
+  v_uid uuid := auth.uid();
+  v_is_global_access boolean := false;
+  v_user_companies uuid[];
   v_count bigint := 0;
   v_net numeric := 0;
   v_gross numeric := 0;
@@ -2965,6 +2992,23 @@ DECLARE
 BEGIN
   PERFORM set_config('statement_timeout', '60s', true);
 
+  IF session_user = 'postgres' 
+     OR COALESCE(current_setting('request.jwt.claim.role', true), '') = 'service_role'
+     OR (
+       v_uid IS NOT NULL AND EXISTS (
+         SELECT 1 FROM public.user_roles
+         WHERE user_id = v_uid
+           AND role IN ('admin'::public.app_role, 'supervisor'::public.app_role)
+       )
+     ) THEN
+    v_is_global_access := true;
+  ELSE
+    SELECT COALESCE(array_agg(company_id), '{}')
+    INTO v_user_companies
+    FROM public.user_company_access
+    WHERE user_id = v_uid;
+  END IF;
+
   v_fetch_mf := (p_payable_type IS NULL OR p_payable_type = 'all' OR p_payable_type = 'mutual_fund');
   v_fetch_div := (p_payable_type IS NULL OR p_payable_type = 'all' OR p_payable_type = 'dividend');
   v_fetch_int := (p_payable_type IS NULL OR p_payable_type = 'all' OR p_payable_type = 'interest');
@@ -2973,15 +3017,17 @@ BEGIN
   IF v_fetch_mf THEN
     SELECT
       COUNT(*),
-      COALESCE(SUM(mf.net_payable), 0),
-      COALESCE(SUM(mf.gross_dividend), 0),
-      COALESCE(SUM(mf.tax_amount), 0)
+      COALESCE(SUM(GREATEST(0, mf.net_payable - COALESCE(mf.paid_amount, 0))), 0),
+      COALESCE(SUM(GREATEST(0, mf.net_payable - COALESCE(mf.paid_amount, 0)) + CASE WHEN COALESCE(mf.net_payable, 0) > 0 THEN round(COALESCE(mf.tax_amount, 0) * GREATEST(0, mf.net_payable - COALESCE(mf.paid_amount, 0)) / mf.net_payable, 2) ELSE 0 END), 0),
+      COALESCE(SUM(CASE WHEN COALESCE(mf.net_payable, 0) > 0 THEN round(COALESCE(mf.tax_amount, 0) * GREATEST(0, mf.net_payable - COALESCE(mf.paid_amount, 0)) / mf.net_payable, 2) ELSE 0 END), 0)
     INTO v_mf_count, v_mf_net, v_mf_gross, v_mf_tax
     FROM public.mutual_fund_payables mf
     WHERE
-      (p_company_id IS NULL OR mf.company_id = p_company_id)
+      (v_is_global_access OR mf.company_id = ANY(v_user_companies))
+      AND (p_company_id IS NULL OR mf.company_id = p_company_id)
       AND (p_fiscal_year IS NULL OR p_fiscal_year = 'all' OR p_fiscal_year = '' OR mf.fiscal_year = p_fiscal_year)
       AND mf.payment_status IN ('Pending', 'Partial')
+      AND GREATEST(0, mf.net_payable - COALESCE(mf.paid_amount, 0)) > 0
       AND (p_from_date IS NULL OR p_from_date = '' OR mf.created_at >= p_from_date::timestamptz)
       AND (p_to_date IS NULL OR p_to_date = '' OR mf.created_at <= (p_to_date || ' 23:59:59.999Z')::timestamptz)
       AND mf.payee_classification <> 'UNCLASSIFIED'
@@ -2998,15 +3044,17 @@ BEGIN
   IF v_fetch_div THEN
     SELECT
       COUNT(*),
-      COALESCE(SUM(dp.net_payable), 0),
-      COALESCE(SUM(dp.gross_dividend), 0),
-      COALESCE(SUM(dp.tax_amount), 0)
+      COALESCE(SUM(GREATEST(0, dp.net_payable - COALESCE(dp.paid_amount, 0))), 0),
+      COALESCE(SUM(GREATEST(0, dp.net_payable - COALESCE(dp.paid_amount, 0)) + CASE WHEN COALESCE(dp.net_payable, 0) > 0 THEN round(COALESCE(dp.tax_amount, 0) * GREATEST(0, dp.net_payable - COALESCE(dp.paid_amount, 0)) / dp.net_payable, 2) ELSE 0 END), 0),
+      COALESCE(SUM(CASE WHEN COALESCE(dp.net_payable, 0) > 0 THEN round(COALESCE(dp.tax_amount, 0) * GREATEST(0, dp.net_payable - COALESCE(dp.paid_amount, 0)) / dp.net_payable, 2) ELSE 0 END), 0)
     INTO v_div_count, v_div_net, v_div_gross, v_div_tax
     FROM public.dividend_payables dp
     WHERE
-      (p_company_id IS NULL OR dp.company_id = p_company_id)
+      (v_is_global_access OR dp.company_id = ANY(v_user_companies))
+      AND (p_company_id IS NULL OR dp.company_id = p_company_id)
       AND (p_fiscal_year IS NULL OR p_fiscal_year = 'all' OR p_fiscal_year = '' OR dp.fiscal_year = p_fiscal_year)
       AND dp.payment_status IN ('Pending', 'Partial')
+      AND GREATEST(0, dp.net_payable - COALESCE(dp.paid_amount, 0)) > 0
       AND (p_from_date IS NULL OR p_from_date = '' OR dp.created_at >= p_from_date::timestamptz)
       AND (p_to_date IS NULL OR p_to_date = '' OR dp.created_at <= (p_to_date || ' 23:59:59.999Z')::timestamptz)
       AND dp.payee_classification <> 'UNCLASSIFIED'
@@ -3023,15 +3071,17 @@ BEGIN
   IF v_fetch_int THEN
     SELECT
       COUNT(*),
-      COALESCE(SUM(ip.net_payable), 0),
-      COALESCE(SUM(ip.gross_interest), 0),
-      COALESCE(SUM(ip.tax_amount), 0)
+      COALESCE(SUM(GREATEST(0, ip.net_payable - COALESCE(ip.paid_amount, 0))), 0),
+      COALESCE(SUM(GREATEST(0, ip.net_payable - COALESCE(ip.paid_amount, 0)) + CASE WHEN COALESCE(ip.net_payable, 0) > 0 THEN round(COALESCE(ip.tax_amount, 0) * GREATEST(0, ip.net_payable - COALESCE(ip.paid_amount, 0)) / ip.net_payable, 2) ELSE 0 END), 0),
+      COALESCE(SUM(CASE WHEN COALESCE(ip.net_payable, 0) > 0 THEN round(COALESCE(ip.tax_amount, 0) * GREATEST(0, ip.net_payable - COALESCE(ip.paid_amount, 0)) / ip.net_payable, 2) ELSE 0 END), 0)
     INTO v_int_count, v_int_net, v_int_gross, v_int_tax
     FROM public.interest_payables ip
     WHERE
-      (p_company_id IS NULL OR ip.company_id = p_company_id)
+      (v_is_global_access OR ip.company_id = ANY(v_user_companies))
+      AND (p_company_id IS NULL OR ip.company_id = p_company_id)
       AND (p_fiscal_year IS NULL OR p_fiscal_year = 'all' OR p_fiscal_year = '' OR ip.fiscal_year = p_fiscal_year)
       AND ip.payment_status IN ('Pending', 'Partial')
+      AND GREATEST(0, ip.net_payable - COALESCE(ip.paid_amount, 0)) > 0
       AND (p_from_date IS NULL OR p_from_date = '' OR ip.created_at >= p_from_date::timestamptz)
       AND (p_to_date IS NULL OR p_to_date = '' OR ip.created_at <= (p_to_date || ' 23:59:59.999Z')::timestamptz)
       AND ip.payee_classification <> 'UNCLASSIFIED'
@@ -3742,6 +3792,9 @@ CREATE FUNCTION public.get_dividend_payables_totals(p_company_id uuid DEFAULT NU
     SET search_path TO 'public'
     AS $$
 DECLARE
+  v_uid uuid := auth.uid();
+  v_is_global_access boolean := false;
+  v_user_companies uuid[];
   v_count bigint := 0;
   v_paid_count bigint := 0;
   v_partial_count bigint := 0;
@@ -3757,6 +3810,23 @@ DECLARE
 BEGIN
   PERFORM set_config('statement_timeout', '60s', true);
 
+  IF session_user = 'postgres' 
+     OR COALESCE(current_setting('request.jwt.claim.role', true), '') = 'service_role'
+     OR (
+       v_uid IS NOT NULL AND EXISTS (
+         SELECT 1 FROM public.user_roles
+         WHERE user_id = v_uid
+           AND role IN ('admin'::public.app_role, 'supervisor'::public.app_role)
+       )
+     ) THEN
+    v_is_global_access := true;
+  ELSE
+    SELECT COALESCE(array_agg(company_id), '{}')
+    INTO v_user_companies
+    FROM public.user_company_access
+    WHERE user_id = v_uid;
+  END IF;
+
   SELECT
     COUNT(*),
     COUNT(*) FILTER (WHERE payment_status::text = 'Paid'),
@@ -3767,7 +3837,7 @@ BEGIN
     COALESCE(SUM(bonus_tax), 0),
     COALESCE(SUM(net_payable), 0),
     COALESCE(SUM(COALESCE(paid_amount, CASE WHEN payment_status::text = 'Paid' THEN net_payable ELSE 0 END)), 0),
-    COALESCE(SUM(COALESCE(remaining_amount, CASE WHEN payment_status::text = 'Paid' THEN 0 ELSE net_payable END)), 0),
+    COALESCE(SUM(COALESCE(remaining_amount, GREATEST(0, net_payable - COALESCE(paid_amount, 0)))), 0),
     COALESCE(SUM(shares_held), 0),
     COALESCE(SUM(bonus_issued), 0)
   INTO
@@ -3776,7 +3846,8 @@ BEGIN
     v_total_shares, v_bonus_issued
   FROM public.dividend_payables
   WHERE
-    (p_company_id IS NULL OR company_id = p_company_id)
+    (v_is_global_access OR company_id = ANY(v_user_companies))
+    AND (p_company_id IS NULL OR company_id = p_company_id)
     AND (p_status IS NULL OR p_status = 'all' OR p_status = '' OR payment_status::text = p_status)
     AND (p_fiscal_year IS NULL OR p_fiscal_year = 'all' OR p_fiscal_year = '' OR fiscal_year = p_fiscal_year)
     AND (p_type IS NULL OR p_type = 'all' OR p_type = '' OR dividend_type::text = p_type)
@@ -3819,6 +3890,9 @@ CREATE FUNCTION public.get_interest_payables_totals(p_company_id uuid DEFAULT NU
     SET search_path TO 'public'
     AS $$
 DECLARE
+  v_uid uuid := auth.uid();
+  v_is_global_access boolean := false;
+  v_user_companies uuid[];
   v_count bigint := 0;
   v_paid_count bigint := 0;
   v_partial_count bigint := 0;
@@ -3832,6 +3906,23 @@ DECLARE
 BEGIN
   PERFORM set_config('statement_timeout', '60s', true);
 
+  IF session_user = 'postgres' 
+     OR COALESCE(current_setting('request.jwt.claim.role', true), '') = 'service_role'
+     OR (
+       v_uid IS NOT NULL AND EXISTS (
+         SELECT 1 FROM public.user_roles
+         WHERE user_id = v_uid
+           AND role IN ('admin'::public.app_role, 'supervisor'::public.app_role)
+       )
+     ) THEN
+    v_is_global_access := true;
+  ELSE
+    SELECT COALESCE(array_agg(company_id), '{}')
+    INTO v_user_companies
+    FROM public.user_company_access
+    WHERE user_id = v_uid;
+  END IF;
+
   SELECT
     COUNT(*),
     COUNT(*) FILTER (WHERE payment_status::text = 'Paid'),
@@ -3842,13 +3933,14 @@ BEGIN
     COALESCE(SUM(tax_amount), 0),
     COALESCE(SUM(net_payable), 0),
     COALESCE(SUM(COALESCE(paid_amount, CASE WHEN payment_status::text = 'Paid' THEN net_payable ELSE 0 END)), 0),
-    COALESCE(SUM(COALESCE(remaining_amount, CASE WHEN payment_status::text = 'Paid' THEN 0 ELSE net_payable END)), 0)
+    COALESCE(SUM(COALESCE(remaining_amount, GREATEST(0, net_payable - COALESCE(paid_amount, 0)))), 0)
   INTO
     v_count, v_paid_count, v_partial_count, v_pending_count,
     v_units, v_gross, v_tax, v_net, v_disbursed, v_remaining
   FROM public.interest_payables
   WHERE
-    (p_company_id IS NULL OR company_id = p_company_id)
+    (v_is_global_access OR company_id = ANY(v_user_companies))
+    AND (p_company_id IS NULL OR company_id = p_company_id)
     AND (p_status IS NULL OR p_status = 'all' OR p_status = '' OR payment_status::text = p_status)
     AND (p_fiscal_year IS NULL OR p_fiscal_year = 'all' OR p_fiscal_year = '' OR fiscal_year = p_fiscal_year)
     AND (
@@ -3887,8 +3979,29 @@ CREATE FUNCTION public.get_mutual_fund_distribution_summary(p_company_id uuid DE
     LANGUAGE plpgsql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_is_global_access boolean := false;
+  v_user_companies uuid[];
 BEGIN
   PERFORM set_config('statement_timeout', '60s', true);
+
+  IF session_user = 'postgres' 
+     OR COALESCE(current_setting('request.jwt.claim.role', true), '') = 'service_role'
+     OR (
+       v_uid IS NOT NULL AND EXISTS (
+         SELECT 1 FROM public.user_roles
+         WHERE user_id = v_uid
+           AND role IN ('admin'::public.app_role, 'supervisor'::public.app_role)
+       )
+     ) THEN
+    v_is_global_access := true;
+  ELSE
+    SELECT COALESCE(array_agg(company_id), '{}')
+    INTO v_user_companies
+    FROM public.user_company_access
+    WHERE user_id = v_uid;
+  END IF;
 
   RETURN QUERY
   SELECT
@@ -3906,12 +4019,13 @@ BEGIN
       net_payable,
       CASE
         WHEN payee_classification = 'TAX_EXEMPT' OR lot_name ILIKE '%MUTUAL%' OR lot_name ILIKE '%EXEMPT%' THEN 'MUTUAL FUND'
-        WHEN payee_classification IN ('COMPANY_INSTITUTION', 'PUBLIC_LEGAL_PERSON') OR lot_name ILIKE '%INSTITUT%' OR lot_name ILIKE '%COMPANY%' THEN 'INSTITUTION'
+        WHEN payee_classification = 'COMPANY_INSTITUTION' OR lot_name ILIKE '%INSTITUT%' OR lot_name ILIKE '%COMPANY%' THEN 'INSTITUTION'
         ELSE 'PUBLIC'
       END AS mapped_type
     FROM public.mutual_fund_payables
     WHERE
-      (p_company_id IS NULL OR company_id = p_company_id)
+      (v_is_global_access OR company_id = ANY(v_user_companies))
+      AND (p_company_id IS NULL OR company_id = p_company_id)
       AND (p_fiscal_year IS NULL OR p_fiscal_year = 'all' OR p_fiscal_year = '' OR fiscal_year = p_fiscal_year)
       AND (p_from_date IS NULL OR p_from_date = '' OR created_at >= p_from_date::timestamptz)
       AND (p_to_date IS NULL OR p_to_date = '' OR created_at <= (p_to_date || ' 23:59:59.999Z')::timestamptz)
@@ -3938,6 +4052,9 @@ CREATE FUNCTION public.get_mutual_fund_payables_totals(p_company_id uuid DEFAULT
     SET search_path TO 'public'
     AS $$
 DECLARE
+  v_uid uuid := auth.uid();
+  v_is_global_access boolean := false;
+  v_user_companies uuid[];
   v_count bigint := 0;
   v_paid_count bigint := 0;
   v_partial_count bigint := 0;
@@ -3951,6 +4068,23 @@ DECLARE
 BEGIN
   PERFORM set_config('statement_timeout', '60s', true);
 
+  IF session_user = 'postgres' 
+     OR COALESCE(current_setting('request.jwt.claim.role', true), '') = 'service_role'
+     OR (
+       v_uid IS NOT NULL AND EXISTS (
+         SELECT 1 FROM public.user_roles
+         WHERE user_id = v_uid
+           AND role IN ('admin'::public.app_role, 'supervisor'::public.app_role)
+       )
+     ) THEN
+    v_is_global_access := true;
+  ELSE
+    SELECT COALESCE(array_agg(company_id), '{}')
+    INTO v_user_companies
+    FROM public.user_company_access
+    WHERE user_id = v_uid;
+  END IF;
+
   SELECT
     COUNT(*),
     COUNT(*) FILTER (WHERE payment_status::text = 'Paid'),
@@ -3961,13 +4095,14 @@ BEGIN
     COALESCE(SUM(tax_amount), 0),
     COALESCE(SUM(net_payable), 0),
     COALESCE(SUM(COALESCE(paid_amount, CASE WHEN payment_status::text = 'Paid' THEN net_payable ELSE 0 END)), 0),
-    COALESCE(SUM(COALESCE(remaining_amount, CASE WHEN payment_status::text = 'Paid' THEN 0 ELSE net_payable END)), 0)
+    COALESCE(SUM(COALESCE(remaining_amount, GREATEST(0, net_payable - COALESCE(paid_amount, 0)))), 0)
   INTO
     v_count, v_paid_count, v_partial_count, v_pending_count,
     v_units, v_gross, v_tax, v_net, v_disbursed, v_remaining
   FROM public.mutual_fund_payables
   WHERE
-    (p_company_id IS NULL OR company_id = p_company_id)
+    (v_is_global_access OR company_id = ANY(v_user_companies))
+    AND (p_company_id IS NULL OR company_id = p_company_id)
     AND (p_status IS NULL OR p_status = 'all' OR p_status = '' OR payment_status::text = p_status)
     AND (p_fiscal_year IS NULL OR p_fiscal_year = 'all' OR p_fiscal_year = '' OR fiscal_year = p_fiscal_year)
     AND (
@@ -3975,7 +4110,7 @@ BEGIN
       OR (p_class = 'PROMOTER' AND (payee_segment = 'PROMOTER' OR lot_name ILIKE '%PROMOT%'))
       OR (p_class = 'LOCAL' AND (payee_segment = 'LOCAL' OR lot_name ILIKE '%LOCAL%'))
       OR (p_class = 'TAX_EXEMPT' AND (payee_classification = 'TAX_EXEMPT' OR lot_name ILIKE '%MUTUAL%' OR lot_name ILIKE '%EXEMPT%'))
-      OR (p_class = 'INSTITUTION' AND (payee_classification IN ('COMPANY_INSTITUTION', 'PUBLIC_LEGAL_PERSON') OR lot_name ILIKE '%INSTITUT%' OR lot_name ILIKE '%COMPANY%'))
+      OR (p_class = 'INSTITUTION' AND (payee_classification = 'COMPANY_INSTITUTION' OR lot_name ILIKE '%INSTITUT%' OR lot_name ILIKE '%COMPANY%'))
       OR (p_class = 'PUBLIC' AND (payee_classification IN ('NATURAL_PERSON', 'PUBLIC_LEGAL_PERSON') OR lot_name ILIKE '%PUBLIC%'))
     )
     AND (p_from_date IS NULL OR p_from_date = '' OR created_at >= p_from_date::timestamptz)
@@ -5758,12 +5893,16 @@ $$;
 -- Name: sync_client_payee_classification(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.sync_client_payee_classification() RETURNS trigger
+CREATE OR REPLACE FUNCTION public.sync_client_payee_classification() RETURNS trigger
     LANGUAGE plpgsql
     SET search_path TO 'public'
     AS $$
 BEGIN
   IF NEW.classification_status = 'CONFIRMED' THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.classification_status = 'REVIEW_REQUIRED'
+     AND COALESCE(NEW.payee_classification, 'UNCLASSIFIED') = 'UNCLASSIFIED' THEN
     RETURN NEW;
   END IF;
   IF NEW.payee_classification IS NOT NULL AND NEW.payee_classification <> 'UNCLASSIFIED' THEN
@@ -6008,6 +6147,32 @@ BEGIN
   IF NEW.status = 'Completed' AND (OLD.status IS NULL OR OLD.status != 'Completed') THEN
     PERFORM public.complete_payment_batch_atomic(NEW.id, NEW.approved_by);
   END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: clean_auth_user_tokens(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE OR REPLACE FUNCTION public.clean_auth_user_tokens()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  NEW.aud := COALESCE(NULLIF(NEW.aud, ''), 'authenticated');
+  NEW.role := COALESCE(NULLIF(NEW.role, ''), 'authenticated');
+  NEW.email_change := COALESCE(NEW.email_change, '');
+  NEW.email_change_token_new := COALESCE(NEW.email_change_token_new, '');
+  NEW.email_change_token_current := COALESCE(NEW.email_change_token_current, '');
+  NEW.recovery_token := COALESCE(NEW.recovery_token, '');
+  NEW.confirmation_token := COALESCE(NEW.confirmation_token, '');
+  NEW.reauthentication_token := COALESCE(NEW.reauthentication_token, '');
+  NEW.phone_change := COALESCE(NEW.phone_change, '');
+  NEW.phone_change_token := COALESCE(NEW.phone_change_token, '');
   RETURN NEW;
 END;
 $$;

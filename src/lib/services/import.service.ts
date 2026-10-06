@@ -595,22 +595,17 @@ export const ImportService = {
       }
     }
 
-    // If company exists, update ISIN or missing rates/metadata
+    // If company exists, enrich missing rates/metadata
     if (companyId) {
       try {
-        const updatePayload: any = {};
-        if (detectedIsin) updatePayload.isin = detectedIsin;
-        if (targetTable === "interest_payables" && options?.dividendRate) {
-          updatePayload.debenture_rate = Number(options.dividendRate);
-          updatePayload.coupon_rate = Number(options.dividendRate);
-        } else if (targetTable === "dividend_payables" && options?.dividendRate) {
-          updatePayload.dividend_rate = Number(options.dividendRate);
-        }
-        if (Object.keys(updatePayload).length > 0) {
-          await (supabase as any).from("companies").update(updatePayload).eq("id", companyId);
-        }
+        await CompanyService.enrichCompany(companyId, {
+          isin: detectedIsin,
+          rate: options?.dividendRate ? Number(options.dividendRate) : undefined,
+          fiscalYear: options?.fiscalYear,
+          fileType: targetTable,
+        });
       } catch (err: any) {
-        console.warn("Could not update company metadata:", err?.message);
+        console.warn("Could not enrich company metadata:", err?.message);
       }
     }
 

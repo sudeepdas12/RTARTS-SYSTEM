@@ -25,6 +25,10 @@ describe("generateCompanyCode", () => {
   it("generates correct code for mutual funds", () => {
     expect(generateCompanyCode("Sanima Equity Fund", "mutual_fund")).toBe("SEF");
     expect(generateCompanyCode("Nabil Balanced Fund 2", "mutual_fund")).toBe("NBF2");
+    expect(generateCompanyCode("RMF1 Original.xlsx", "mutual_fund")).toBe("RBF1");
+    expect(generateCompanyCode("RMF2 Original.xlsx", "mutual_fund")).toBe("RMF2");
+    expect(generateCompanyCode("RBB Mutual Fund 1", "mutual_fund")).toBe("RBF1");
+    expect(generateCompanyCode("RBB Mutual Fund 2", "mutual_fund")).toBe("RMF2");
   });
 
   it("handles fallback and empty names gracefully", () => {

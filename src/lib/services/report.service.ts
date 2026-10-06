@@ -255,6 +255,7 @@ export const ReportService = {
             "id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, paid_amount, remaining_amount, payment_status, payment_date, payment_reference, fiscal_year, payee_classification, bank_name, bank_account_no, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
           )
           .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
           .range(from, to);
 
         if (filters.companyId && filters.companyId !== "all")
@@ -320,6 +321,7 @@ export const ReportService = {
             "id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, paid_amount, remaining_amount, payment_status, payment_date, payment_reference, fiscal_year, payee_classification, bank_name, bank_account_no, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
           )
           .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
           .range(from, to);
 
         if (filters.companyId && filters.companyId !== "all")
@@ -385,6 +387,7 @@ export const ReportService = {
             "id, instrument_ref, gross_interest, tax_amount, net_payable, paid_amount, remaining_amount, payment_status, due_date, payment_date, payment_reference, fiscal_year, payee_classification, bank_name, bank_account_no, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
           )
           .order("due_date", { ascending: false })
+          .order("id", { ascending: true })
           .range(from, to);
 
         if (filters.companyId && filters.companyId !== "all")
@@ -450,6 +453,7 @@ export const ReportService = {
               "id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)",
             )
             .order("created_at", { ascending: false })
+            .order("id", { ascending: true })
             .range(from, to);
           if (filters.companyId && filters.companyId !== "all")
             q = q.eq("company_id", filters.companyId);
@@ -465,6 +469,7 @@ export const ReportService = {
               "id, gross_interest, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)",
             )
             .order("created_at", { ascending: false })
+            .order("id", { ascending: true })
             .range(from, to);
           if (filters.companyId && filters.companyId !== "all")
             q = q.eq("company_id", filters.companyId);
@@ -480,6 +485,7 @@ export const ReportService = {
               "id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)",
             )
             .order("created_at", { ascending: false })
+            .order("id", { ascending: true })
             .range(from, to);
           if (filters.companyId && filters.companyId !== "all")
             q = q.eq("company_id", filters.companyId);

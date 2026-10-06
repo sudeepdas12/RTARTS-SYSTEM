@@ -430,10 +430,11 @@ function MutualFundPage() {
       let q = (supabase as any)
         .from("mutual_fund_payables")
         .select(
-          "*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no), company:companies(id, company_code, company_name)",
+          "*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no, holder_type, payee_classification, payee_segment), company:companies(id, company_code, company_name)",
           { count: "exact" },
         )
         .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
         .range((page - 1) * pageSize, page * pageSize - 1);
 
       if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
@@ -500,13 +501,27 @@ function MutualFundPage() {
 
   // Helper to fetch all filtered rows for export
   const fetchAllFiltered = useCallback(async (): Promise<Payable[]> => {
+    let matchedIds: string[] = [];
+    if (debouncedSearch) {
+      const cleanTerm = debouncedSearch.trim().replace(/[%_,]/g, "");
+      const { data: matchedClients } = await supabase
+        .from("clients")
+        .select("id")
+        .or(
+          `full_name.ilike.%${cleanTerm}%,boid.ilike.%${cleanTerm}%,client_code.ilike.%${cleanTerm}%`,
+        )
+        .limit(500);
+      matchedIds = (matchedClients || []).map((c) => c.id);
+    }
+
     return fetchAllRows<Payable>((from, to) => {
       let q = (supabase as any)
         .from("mutual_fund_payables")
         .select(
-          "*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no), company:companies(id, company_code, company_name)",
+          "*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no, holder_type, payee_classification, payee_segment), company:companies(id, company_code, company_name)",
         )
         .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
         .range(from, to);
       if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
       if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
@@ -532,9 +547,30 @@ function MutualFundPage() {
           );
         }
       }
+      if (debouncedSearch) {
+        const cleanTerm = debouncedSearch.trim().replace(/[%_,]/g, "");
+        const searchFilters = [
+          `lot_name.ilike.%${cleanTerm}%`,
+          `payment_reference.ilike.%${cleanTerm}%`,
+          `bank_name.ilike.%${cleanTerm}%`,
+          `bank_account_no.ilike.%${cleanTerm}%`,
+        ];
+        if (matchedIds.length > 0) {
+          searchFilters.push(`client_id.in.(${matchedIds.join(",")})`);
+        }
+        q = q.or(searchFilters.join(","));
+      }
       return q;
     });
-  }, [statusFilter, companyFilter, fyFilter, fromDateFilter, toDateFilter, classFilter]);
+  }, [
+    statusFilter,
+    companyFilter,
+    fyFilter,
+    fromDateFilter,
+    toDateFilter,
+    classFilter,
+    debouncedSearch,
+  ]);
 
   // Category-wise distribution summary in the CDS "SUMMARY" sheet layout.
   const mfSummary = useQuery({
@@ -872,14 +908,14 @@ function MutualFundPage() {
             pan_or_citizenship: cl?.pan_or_citizenship ?? "",
             bank_name: p.bank_name || cl?.bank_name || "",
             bank_account_no: p.bank_account_no || cl?.bank_account_no || "",
-            shares_held: p.shares_held,
+            shares_held: Number(p.shares_held ?? 0),
             dividend_rate: p.dividend_rate,
             dividend_type: p.dividend_type,
-            gross_dividend: p.gross_dividend,
-            tax_amount: p.tax_amount,
-            net_payable: p.net_payable,
-            paid_amount: paidVal,
-            remaining_amount: remVal,
+            gross_dividend: Math.round(Number(p.gross_dividend ?? 0) * 100) / 100,
+            tax_amount: Math.round(Number(p.tax_amount ?? 0) * 100) / 100,
+            net_payable: Math.round(netVal * 100) / 100,
+            paid_amount: Math.round(paidVal * 100) / 100,
+            remaining_amount: Math.round(remVal * 100) / 100,
             payment_status: p.payment_status,
             payment_date: p.payment_date,
             payment_reference: p.payment_reference,
