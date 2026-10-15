@@ -24,6 +24,8 @@ import {
   ReconciliationEngine,
   ComprehensiveReconciliationReport,
   ReconciliationMatch,
+  extractReconciliationExceptions,
+  type ReconciliationExceptionItem,
 } from "@/lib/reconciliation-engine";
 import {
   ReconciliationService,
@@ -482,6 +484,16 @@ export function ReconciliationRoute() {
   const partialMatches = useMemo(() => {
     return filteredMatches.filter((m) => m.status === "Under_Paid" || m.status === "Over_Paid");
   }, [filteredMatches]);
+
+  const exceptionsSummary = useMemo(() => {
+    return extractReconciliationExceptions(filteredMatches, 1.0);
+  }, [filteredMatches]);
+
+  const [acknowledgedExceptions, setAcknowledgedExceptions] = useState<Set<string>>(new Set());
+
+  const handleAcknowledgeException = (excId: string) => {
+    setAcknowledgedExceptions((prev) => new Set(prev).add(excId));
+  };
 
   const openRemediationForMatches = () => {
     const items: RejectedAccountItem[] = rejectedMatches.map((m) => ({
@@ -1751,6 +1763,20 @@ export function ReconciliationRoute() {
                       </Badge>
                     )}
                   </TabsTrigger>
+                  <TabsTrigger
+                    value="exceptions"
+                    className="text-amber-700 dark:text-amber-400 font-medium"
+                  >
+                    Exceptions & Action Queue
+                    {exceptionsSummary.totalExceptions > 0 && (
+                      <Badge
+                        variant="destructive"
+                        className="ml-2 h-5 text-[10px] rounded-full px-1.5 min-w-[20px] justify-center bg-rose-600"
+                      >
+                        {exceptionsSummary.totalExceptions}
+                      </Badge>
+                    )}
+                  </TabsTrigger>
                 </TabsList>
                 <TabsContent
                   value="all"
@@ -1851,6 +1877,127 @@ export function ReconciliationRoute() {
                       </Alert>
                       {unmatchedBankMatches.map(renderMatchRow)}
                     </>
+                  )}
+                </TabsContent>
+                <TabsContent
+                  value="exceptions"
+                  className="m-0 space-y-4 max-h-[600px] overflow-y-auto pr-1"
+                >
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="p-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/40 rounded-lg">
+                      <p className="text-xs text-red-600 dark:text-red-400 font-medium">
+                        Unmatched Bank Entries
+                      </p>
+                      <p className="text-xl font-bold text-red-700 dark:text-red-300 mt-1">
+                        {exceptionsSummary.unmatchedBankTxnCount}
+                      </p>
+                      <p className="text-[11px] text-red-600/70 mt-0.5">
+                        Total: NPR {exceptionsSummary.unmatchedBankTotalAmount.toLocaleString()}
+                      </p>
+                    </div>
+
+                    <div className="p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-lg">
+                      <p className="text-xs text-amber-600 dark:text-amber-400 font-medium">
+                        Large Variances (&gt; NPR 1.00)
+                      </p>
+                      <p className="text-xl font-bold text-amber-700 dark:text-amber-300 mt-1">
+                        {exceptionsSummary.largeVarianceCount}
+                      </p>
+                      <p className="text-[11px] text-amber-600/70 mt-0.5">
+                        Discrepancy: NPR{" "}
+                        {exceptionsSummary.largeVarianceTotalAmount.toLocaleString()}
+                      </p>
+                    </div>
+
+                    <div className="p-3 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/40 rounded-lg">
+                      <p className="text-xs text-blue-600 dark:text-blue-400 font-medium">
+                        Reference Mismatches
+                      </p>
+                      <p className="text-xl font-bold text-blue-700 dark:text-blue-300 mt-1">
+                        {exceptionsSummary.mismatchedReferenceCount}
+                      </p>
+                      <p className="text-[11px] text-blue-600/70 mt-0.5">
+                        Action: Force-Match or Sync Reference
+                      </p>
+                    </div>
+                  </div>
+
+                  {exceptionsSummary.exceptions.length === 0 ? (
+                    <div className="text-center py-8 bg-green-50/50 rounded-lg border border-green-100 dark:bg-green-950/10 dark:border-green-900/30">
+                      <CheckCircle2 className="w-8 h-8 text-green-500 mx-auto mb-1.5 opacity-80" />
+                      <p className="text-sm font-medium text-green-700 dark:text-green-400">
+                        Zero Reconciliation Exceptions
+                      </p>
+                      <p className="text-xs text-green-600/70 dark:text-green-500/70 mt-0.5">
+                        No unmatched bank entries, high variances, or reference anomalies detected.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {exceptionsSummary.exceptions.map((exc) => {
+                        const isAcknowledged = acknowledgedExceptions.has(exc.id);
+                        return (
+                          <div
+                            key={exc.id}
+                            className={`p-3 rounded-lg border text-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-3 transition-colors ${
+                              isAcknowledged
+                                ? "bg-muted/40 border-muted opacity-60"
+                                : exc.severity === "critical"
+                                  ? "bg-rose-50/60 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/40"
+                                  : "bg-amber-50/60 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/40"
+                            }`}
+                          >
+                            <div className="space-y-1 flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <Badge
+                                  variant={
+                                    isAcknowledged
+                                      ? "secondary"
+                                      : exc.severity === "critical"
+                                        ? "destructive"
+                                        : "default"
+                                  }
+                                  className="text-[10px] uppercase font-semibold"
+                                >
+                                  {exc.type.replace(/_/g, " ")}
+                                </Badge>
+                                {exc.boid && (
+                                  <span className="font-mono text-xs text-muted-foreground">
+                                    BOID: {exc.boid}
+                                  </span>
+                                )}
+                                {exc.shareholderName && (
+                                  <span className="font-medium text-foreground">
+                                    {exc.shareholderName}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-muted-foreground">{exc.description}</p>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <div className="text-right">
+                                <p className="font-mono text-xs font-semibold">
+                                  NPR {exc.amount.toLocaleString()}
+                                </p>
+                                <span className="text-[10px] text-muted-foreground">
+                                  Action: {exc.actionRequired}
+                                </span>
+                              </div>
+                              <Button
+                                size="sm"
+                                variant={isAcknowledged ? "outline" : "secondary"}
+                                className="h-8 text-xs"
+                                disabled={isAcknowledged}
+                                onClick={() => handleAcknowledgeException(exc.id)}
+                              >
+                                {isAcknowledged ? "Acknowledged" : "Acknowledge"}
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   )}
                 </TabsContent>
               </Tabs>

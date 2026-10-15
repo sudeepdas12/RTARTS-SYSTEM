@@ -1,4 +1,4 @@
-﻿import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "vitest";
 import { BankParser } from "../bank-parser";
 import { calculatePayableTotals, getPayeeTaxRate } from "./payable-summary";
 
@@ -144,6 +144,112 @@ describe("End-to-End Payment, Reconciliation, and Bank Statement Verification", 
       expect(matchedP2).toBeDefined();
       expect(matchedP1?.id).toBe("p1");
       expect(matchedP2?.id).toBe("p2");
+    });
+  });
+
+  describe("4. Payment Duplicate Protection & Batch Locking", () => {
+    it("rejects batch line items containing duplicate payable records in-memory", async () => {
+      const { PaymentService } = await import("./payment.service");
+      const duplicatePayableItems: any[] = [
+        {
+          company_id: "comp-1",
+          client_id: "client-1",
+          payable_type: "dividend",
+          payable_id: "pay-duplicate-1",
+          gross_amount: 1000,
+          tax_amount: 50,
+          net_amount: 950,
+          paid_amount: 950,
+          payment_method: "ConnectIPS",
+          payment_date: "2026-10-13",
+          payment_reference: "REF-001",
+          bank_name: "RBB",
+          bank_account_no: "1234567890",
+          neft_ref: null,
+          connectips_ref: null,
+          rtgs_ref: null,
+          cheque_no: null,
+          status: "Draft",
+          remarks: null,
+        },
+        {
+          company_id: "comp-1",
+          client_id: "client-2",
+          payable_type: "dividend",
+          payable_id: "pay-duplicate-1", // DUPLICATE PAYABLE ID
+          gross_amount: 1000,
+          tax_amount: 50,
+          net_amount: 950,
+          paid_amount: 950,
+          payment_method: "ConnectIPS",
+          payment_date: "2026-10-13",
+          payment_reference: "REF-002",
+          bank_name: "RBB",
+          bank_account_no: "0987654321",
+          neft_ref: null,
+          connectips_ref: null,
+          rtgs_ref: null,
+          cheque_no: null,
+          status: "Draft",
+          remarks: null,
+        },
+      ];
+
+      await expect(
+        PaymentService.addLineItems("batch-test-1", duplicatePayableItems),
+      ).rejects.toThrow(/Duplicate payout attempt detected/i);
+    });
+
+    it("rejects batch line items containing duplicate payment references in-memory", async () => {
+      const { PaymentService } = await import("./payment.service");
+      const duplicateRefItems: any[] = [
+        {
+          company_id: "comp-1",
+          client_id: "client-1",
+          payable_type: "dividend",
+          payable_id: "pay-1",
+          gross_amount: 1000,
+          tax_amount: 50,
+          net_amount: 950,
+          paid_amount: 950,
+          payment_method: "ConnectIPS",
+          payment_date: "2026-10-13",
+          payment_reference: "REF-IDENTICAL", // DUPLICATE REFERENCE
+          bank_name: "RBB",
+          bank_account_no: "1234567890",
+          neft_ref: null,
+          connectips_ref: null,
+          rtgs_ref: null,
+          cheque_no: null,
+          status: "Draft",
+          remarks: null,
+        },
+        {
+          company_id: "comp-1",
+          client_id: "client-2",
+          payable_type: "dividend",
+          payable_id: "pay-2",
+          gross_amount: 1000,
+          tax_amount: 50,
+          net_amount: 950,
+          paid_amount: 950,
+          payment_method: "ConnectIPS",
+          payment_date: "2026-10-13",
+          payment_reference: "REF-IDENTICAL", // DUPLICATE REFERENCE
+          bank_name: "RBB",
+          bank_account_no: "0987654321",
+          neft_ref: null,
+          connectips_ref: null,
+          rtgs_ref: null,
+          cheque_no: null,
+          status: "Draft",
+          remarks: null,
+        },
+      ];
+
+      await expect(PaymentService.addLineItems("batch-test-2", duplicateRefItems)).rejects.toThrow(
+        /Duplicate payment reference detected/i,
+      );
     });
   });
 });

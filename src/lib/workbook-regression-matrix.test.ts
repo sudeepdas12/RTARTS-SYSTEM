@@ -212,4 +212,82 @@ describe("Sample Workbook & Matrix Regression Suite", () => {
       expect(parsed.grandTotals.totalRows).toBe(0);
     });
   });
+
+  describe("7. Pre-Import Validation Usability & Warning Tier", () => {
+    it("flags missing bank account as advisory warning and separates blocking errors", async () => {
+      const { summarizeValidationResults } = await import("./validation-engine");
+
+      const rows = [
+        {
+          boid: "1301060000000099",
+          full_name: "Shareholder Without Bank",
+          gross_amount: 5000,
+          tax_amount: 250,
+          net_payable: 4750,
+          bank_account_no: "", // Missing bank account
+          bank_name: "",
+        },
+        {
+          boid: "", // Blocking error: Missing BOID
+          full_name: "Invalid BOID Person",
+          gross_amount: 1000,
+          tax_amount: 50,
+          net_payable: 950,
+          bank_account_no: "123456789012",
+          bank_name: "RBB",
+        },
+      ];
+
+      const mappings = {
+        boid: "boid",
+        full_name: "full_name",
+        gross_amount: "gross_amount",
+        tax_amount: "tax_amount",
+        net_payable: "net_payable",
+        bank_account_no: "bank_account_no",
+        bank_name: "bank_name",
+      };
+
+      const errors = await ValidationEngine.validateBatch(rows, mappings, undefined, "dividend");
+      const summary = summarizeValidationResults(errors);
+
+      expect(summary.hasBlockingErrors).toBe(true);
+      expect(summary.blockingErrors.some((e) => e.type === "missing_boid")).toBe(true);
+      expect(summary.warnings.some((e) => e.type === "missing_bank_account")).toBe(true);
+      expect(summary.warningCount).toBeGreaterThanOrEqual(1);
+    });
+
+    it("flags suspicious net-payable calculation mismatch as warning", async () => {
+      const { summarizeValidationResults } = await import("./validation-engine");
+
+      const rows = [
+        {
+          boid: "1301060000000100",
+          full_name: "Mismatch Investor",
+          gross_amount: 10000,
+          tax_amount: 500,
+          net_payable: 8000, // Suspicious net (should be 9500)
+          bank_account_no: "123456789012",
+          bank_name: "RBB",
+        },
+      ];
+
+      const mappings = {
+        boid: "boid",
+        full_name: "full_name",
+        gross_amount: "gross_amount",
+        tax_amount: "tax_amount",
+        net_payable: "net_payable",
+        bank_account_no: "bank_account_no",
+        bank_name: "bank_name",
+      };
+
+      const errors = await ValidationEngine.validateBatch(rows, mappings, undefined, "dividend");
+      const summary = summarizeValidationResults(errors);
+
+      const netMismatchWarn = summary.warnings.find((w) => w.type === "net_mismatch");
+      expect(netMismatchWarn).toBeTruthy();
+      expect(netMismatchWarn?.severity).toBe("warning");
+    });
+  });
 });

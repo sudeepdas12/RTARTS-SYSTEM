@@ -2994,6 +2994,7 @@ BEGIN
 
   IF session_user = 'postgres' 
      OR COALESCE(current_setting('request.jwt.claim.role', true), '') = 'service_role'
+     OR COALESCE((NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role'), '') = 'service_role'
      OR (
        v_uid IS NOT NULL AND EXISTS (
          SELECT 1 FROM public.user_roles
@@ -3812,6 +3813,7 @@ BEGIN
 
   IF session_user = 'postgres' 
      OR COALESCE(current_setting('request.jwt.claim.role', true), '') = 'service_role'
+     OR COALESCE((NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role'), '') = 'service_role'
      OR (
        v_uid IS NOT NULL AND EXISTS (
          SELECT 1 FROM public.user_roles
@@ -3908,6 +3910,7 @@ BEGIN
 
   IF session_user = 'postgres' 
      OR COALESCE(current_setting('request.jwt.claim.role', true), '') = 'service_role'
+     OR COALESCE((NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role'), '') = 'service_role'
      OR (
        v_uid IS NOT NULL AND EXISTS (
          SELECT 1 FROM public.user_roles
@@ -3988,6 +3991,7 @@ BEGIN
 
   IF session_user = 'postgres' 
      OR COALESCE(current_setting('request.jwt.claim.role', true), '') = 'service_role'
+     OR COALESCE((NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role'), '') = 'service_role'
      OR (
        v_uid IS NOT NULL AND EXISTS (
          SELECT 1 FROM public.user_roles
@@ -4070,6 +4074,7 @@ BEGIN
 
   IF session_user = 'postgres' 
      OR COALESCE(current_setting('request.jwt.claim.role', true), '') = 'service_role'
+     OR COALESCE((NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role'), '') = 'service_role'
      OR (
        v_uid IS NOT NULL AND EXISTS (
          SELECT 1 FROM public.user_roles

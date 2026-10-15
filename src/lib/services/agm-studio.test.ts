@@ -926,6 +926,14 @@ describe("AgmStudioService — Multi-Year AGM & Multi-Company Universal Reconcil
                 }),
               }),
             }),
+            insert: vi.fn().mockReturnValue({
+              select: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { id: "11111111-2222-3333-4444-555555555555" },
+                  error: null,
+                }),
+              }),
+            }),
           };
         }
         if (table === "agm_yearly_snapshots") {

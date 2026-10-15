@@ -66,7 +66,26 @@ export interface ValidationError {
   field: string;
   type: string;
   message: string;
+  severity?: "error" | "warning";
   rawData?: Record<string, unknown>;
+}
+
+export function summarizeValidationResults(errors: ValidationError[]): {
+  errorCount: number;
+  warningCount: number;
+  blockingErrors: ValidationError[];
+  warnings: ValidationError[];
+  hasBlockingErrors: boolean;
+} {
+  const blockingErrors = errors.filter((e) => (e.severity ?? "error") === "error");
+  const warnings = errors.filter((e) => e.severity === "warning");
+  return {
+    errorCount: blockingErrors.length,
+    warningCount: warnings.length,
+    blockingErrors,
+    warnings,
+    hasBlockingErrors: blockingErrors.length > 0,
+  };
 }
 
 interface ValidationContext {
@@ -713,6 +732,7 @@ export const ValidationEngine = {
           row: rowNum,
           field: "boid",
           type: "missing_boid",
+          severity: "error",
           message: "BOID is required for every row.",
           rawData,
         });
@@ -723,16 +743,18 @@ export const ValidationEngine = {
           row: rowNum,
           field: "boid",
           type: "invalid_boid",
+          severity: "error",
           message: "BOID must be at least 6 alphanumeric characters.",
           rawData,
         });
       }
-      // RULE 3: Duplicate BOID within file (Soft notice)
+      // RULE 3: Duplicate BOID within file (Warning tier)
       else if (seenBoids.has(boid)) {
         errors.push({
           row: rowNum,
           field: "boid",
           type: "duplicate_boid_in_file",
+          severity: "warning",
           message: `Duplicate BOID ${boid} in file (first occurrence will be used).`,
           rawData,
         });
@@ -934,7 +956,7 @@ export const ValidationEngine = {
         }
       }
 
-      // RULE 11: Net = Gross - Tax calculation check (Soft notice)
+      // RULE 11: Net = Gross - Tax calculation check (Warning tier)
       if (!options?.isRawInputFile && !options?.isPreCalculated) {
         if (gross !== null && tax !== null && net !== null) {
           const expectedNet = Math.round((gross - tax) * 100) / 100;
@@ -943,14 +965,15 @@ export const ValidationEngine = {
               row: rowNum,
               field: "net_payable",
               type: "net_mismatch",
-              message: `Net payable notice: expected ${expectedNet.toFixed(2)} (gross ${gross.toFixed(2)} − tax ${tax.toFixed(2)}), sheet has ${net.toFixed(2)}.`,
+              severity: "warning",
+              message: `Suspicious net payable notice: expected ${expectedNet.toFixed(2)} (gross ${gross.toFixed(2)} − tax ${tax.toFixed(2)}), sheet has ${net.toFixed(2)}.`,
               rawData,
             });
           }
         }
       }
 
-      // RULE 12: Tax calculation check (Soft notice)
+      // RULE 12: Tax calculation check (Warning tier)
       if (!options?.isRawInputFile && !options?.isPreCalculated) {
         const detectedCategory = detectPayeeCategory(row, fileType);
         const classification = investorCategoryToClassification(detectedCategory);
@@ -974,6 +997,7 @@ export const ValidationEngine = {
               row: rowNum,
               field: "tax_amount",
               type: "tax_calc_mismatch",
+              severity: "warning",
               message: `Tax calculation notice: expected ${expectedTax.toFixed(2)} based on ${(tdsForTaxCheck * 100).toFixed(0)}% rate, sheet has ${tax.toFixed(2)}.`,
               rawData,
             });
@@ -981,59 +1005,85 @@ export const ValidationEngine = {
         }
       }
 
-      // RULE 13: Financial fields check (Soft notice only - values will default to 0 / calculated)
+      // RULE 13: Financial fields check (Warning tier)
       if (!options?.isRawInputFile) {
         if (gross === null && net === null && sharesHeld === null && !options?.dividendRate) {
           errors.push({
             row: rowNum,
             field: "amount",
             type: "missing_financial_data",
+            severity: "warning",
             message: "No financial amount or shares detected (will default to 0).",
             rawData,
           });
         }
       }
 
-      // RULE 14: Bank account format check (Soft notice only - accounts may be empty in CDS records)
-      if (bankAccount && !isValidAccountNumber(bankAccount)) {
+      // RULE 14: Bank account & routing checks (Warning tier)
+      if (!bankAccount && ((gross !== null && gross > 0) || (net !== null && net > 0))) {
+        errors.push({
+          row: rowNum,
+          field: "bank_account_no",
+          type: "missing_bank_account",
+          severity: "warning",
+          message:
+            "Bank account is empty for payable record (payout routing requires bank details).",
+          rawData,
+        });
+      } else if (bankAccount && !isValidAccountNumber(bankAccount)) {
         errors.push({
           row: rowNum,
           field: "bank_account_no",
           type: "invalid_bank_account",
-          message: `Bank account "${bankAccount}" notice.`,
+          severity: "warning",
+          message: `Bank account "${bankAccount}" has non-standard format (expected 8-30 alphanumeric characters).`,
           rawData,
         });
       }
 
-      // RULE 15: Email check (Soft notice only)
+      if (bankAccount && !bankName) {
+        errors.push({
+          row: rowNum,
+          field: "bank_name",
+          type: "missing_bank_name",
+          severity: "warning",
+          message: "Bank name is empty for specified account number.",
+          rawData,
+        });
+      }
+
+      // RULE 15: Email check (Warning tier)
       if (email && !isValidEmail(email)) {
         errors.push({
           row: rowNum,
           field: "email",
           type: "invalid_email",
+          severity: "warning",
           message: `Email "${email}" notice.`,
           rawData,
         });
       }
 
-      // RULE 16: Address recommended (Soft notice only)
+      // RULE 16: Address recommended (Warning tier)
       if (!address && fullName) {
         errors.push({
           row: rowNum,
           field: "address",
           type: "missing_address",
+          severity: "warning",
           message: "Address recommended.",
           rawData,
         });
       }
 
-      // RULE 17: Existing BOID in system (Soft notice)
+      // RULE 17: Existing BOID in system (Warning tier)
       if (boid && ctx.existingBoids.has(boid)) {
         errors.push({
           row: rowNum,
           field: "boid",
-          type: "existing_boid",
-          message: `BOID ${boid} exists in system (record will be updated).`,
+          type: "existing_boid_across_system",
+          severity: "warning",
+          message: `BOID ${boid} already exists in client master (record will be updated).`,
           rawData,
         });
       }

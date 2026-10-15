@@ -21,6 +21,21 @@ describe("DividendCalculator Precision", () => {
     );
   });
 
+  it("applies statutory 15% TDS for institutional corporate dividend calculations", () => {
+    const result = DividendCalculator.calculate({
+      sharesHeld: 1000,
+      dividendType: "Cash",
+      cashDividendRate: 10, // 10%
+      cashRateIsPerShare: false, // 10% of Rs 100 face value = Rs 10,000 gross
+      taxCategory: "INSTITUTION",
+    });
+
+    expect(result.grossCashDividend).toBe(10000);
+    expect(result.appliedTdsRate).toBe(0.15);
+    expect(result.cashTaxAmount).toBe(1500);
+    expect(result.netCashPayable).toBe(8500);
+  });
+
   it("handles combined bonus and cash dividends correctly", () => {
     const result = DividendCalculator.calculate({
       sharesHeld: 1000,

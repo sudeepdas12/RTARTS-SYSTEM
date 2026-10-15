@@ -19,8 +19,10 @@ const SOFT_ERROR_TYPES = new Set([
   "duplicate_client_code",
   "duplicate_boid_in_file",
   "existing_boid",
+  "existing_boid_across_system",
   "existing_client_code",
   "net_mismatch",
+  "suspicious_net_mismatch",
   "tax_calc_mismatch",
   "tax_above_gross",
   "net_above_gross",
@@ -49,8 +51,12 @@ interface ValidationReportProps {
 export function ValidationReport({ errors, fileName = "import" }: ValidationReportProps) {
   if (errors.length === 0) return null;
 
-  const hardErrors = errors.filter((e) => !SOFT_ERROR_TYPES.has(e.type));
-  const softErrors = errors.filter((e) => SOFT_ERROR_TYPES.has(e.type));
+  const hardErrors = errors.filter((e) =>
+    e.severity ? e.severity === "error" : !SOFT_ERROR_TYPES.has(e.type),
+  );
+  const softErrors = errors.filter((e) =>
+    e.severity ? e.severity === "warning" : SOFT_ERROR_TYPES.has(e.type),
+  );
   const isBlocking = hardErrors.length > 0;
 
   const groupedErrors = errors.reduce(

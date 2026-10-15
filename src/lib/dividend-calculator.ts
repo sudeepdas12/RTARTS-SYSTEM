@@ -73,11 +73,9 @@ export const DividendCalculator = {
     ) {
       appliedTdsRate = 0.0; // 0% for Mutual Fund / Tax Exempt (Section 88(4))
     } else if (params.taxCategory === "INSTITUTION") {
-      appliedTdsRate = 0.05; // 5% for Corporate / Institutional resident dividends (Income Tax Act Sec 88(2)(ka))
-    } else if (params.taxCategory === "FOREIGN_INVESTOR") {
-      appliedTdsRate = 0.05; // 5% for Foreign Investors (Sec 92 final withholding)
-    } else if (params.taxCategory === "FOREIGN") {
-      appliedTdsRate = 0.05; // 5% for individual foreign nationals (same as public)
+      appliedTdsRate = 0.15; // 15% for Corporate / Institutional resident dividends
+    } else if (params.taxCategory === "FOREIGN_INVESTOR" || params.taxCategory === "FOREIGN") {
+      appliedTdsRate = 0.15; // 15% for Foreign Investors
     } else if (params.taxCategory === "CUSTOM" && params.customTaxRate !== undefined) {
       appliedTdsRate = normalizeTaxRate(params.customTaxRate);
     }

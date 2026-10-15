@@ -1621,3 +1621,125 @@ export const ReconciliationEngine = {
     };
   },
 };
+
+export interface ReconciliationExceptionItem {
+  id: string;
+  type:
+    | "UNMATCHED_BANK_CREDIT"
+    | "LARGE_VARIANCE"
+    | "MISMATCHED_REFERENCE"
+    | "UNDER_OVER_PAID"
+    | "UNMATCHED_RECORD";
+  severity: "critical" | "warning" | "info";
+  description: string;
+  amount: number;
+  varianceAmount: number;
+  bankReference?: string | null;
+  systemReference?: string | null;
+  boid?: string | null;
+  shareholderName?: string | null;
+  status: string;
+  actionRequired: "REVIEW" | "FORCE_MATCH" | "REMEDIATE" | "ACKNOWLEDGE";
+}
+
+export interface ReconciliationExceptionSummary {
+  unmatchedBankTxnCount: number;
+  unmatchedBankTotalAmount: number;
+  largeVarianceCount: number;
+  largeVarianceTotalAmount: number;
+  mismatchedReferenceCount: number;
+  totalExceptions: number;
+  exceptions: ReconciliationExceptionItem[];
+}
+
+export function extractReconciliationExceptions(
+  matchesOrReport: ComprehensiveReconciliationReport | ReconciliationMatch[],
+  varianceThresholdNpr = 1.0,
+): ReconciliationExceptionSummary {
+  const matches = Array.isArray(matchesOrReport) ? matchesOrReport : matchesOrReport.matches;
+  const exceptions: ReconciliationExceptionItem[] = [];
+
+  let unmatchedBankTxnCount = 0;
+  let unmatchedBankTotalAmount = 0;
+  let largeVarianceCount = 0;
+  let largeVarianceTotalAmount = 0;
+  let mismatchedReferenceCount = 0;
+
+  for (const m of matches) {
+    const isBankSource = m.sourceType === "bank_statement";
+    const diff = Math.abs(m.difference || 0);
+
+    // 1. Unmatched Bank Transactions
+    if (
+      isBankSource &&
+      (m.status === "Missing" || m.status === "Rejected" || (!m.payableId && !m.paymentId))
+    ) {
+      unmatchedBankTxnCount++;
+      unmatchedBankTotalAmount += m.excelAmount || 0;
+      exceptions.push({
+        id: `exc-bank-${m.id}`,
+        type: "UNMATCHED_BANK_CREDIT",
+        severity: "critical",
+        description: `Unmatched bank statement transaction: ${m.shareholderName || "Unknown Beneficiary"} (NPR ${(m.excelAmount || 0).toLocaleString()})`,
+        amount: m.excelAmount || 0,
+        varianceAmount: m.excelAmount || 0,
+        bankReference: m.referenceId || null,
+        systemReference: null,
+        boid: m.boid || null,
+        shareholderName: m.shareholderName || null,
+        status: m.status,
+        actionRequired: "REVIEW",
+      });
+      continue;
+    }
+
+    // 2. Large Variance Alerts
+    if (diff > varianceThresholdNpr) {
+      largeVarianceCount++;
+      largeVarianceTotalAmount += diff;
+      exceptions.push({
+        id: `exc-var-${m.id}`,
+        type: "LARGE_VARIANCE",
+        severity: diff > 100 ? "critical" : "warning",
+        description: `Variance exceeds threshold (NPR ${diff.toFixed(2)}): System NPR ${(m.systemAmount || 0).toFixed(2)} vs Bank/File NPR ${(m.excelAmount || 0).toFixed(2)}`,
+        amount: m.excelAmount || m.systemAmount || 0,
+        varianceAmount: diff,
+        bankReference: m.referenceId || null,
+        systemReference: m.instructionId || null,
+        boid: m.boid || null,
+        shareholderName: m.shareholderName || null,
+        status: m.status,
+        actionRequired: "REMEDIATE",
+      });
+    }
+
+    // 3. Mismatched Payment Reference
+    if (m.referenceId && m.instructionId && m.referenceId !== m.instructionId) {
+      mismatchedReferenceCount++;
+      exceptions.push({
+        id: `exc-ref-${m.id}`,
+        type: "MISMATCHED_REFERENCE",
+        severity: "warning",
+        description: `Payment reference mismatch: Bank ref "${m.referenceId}" does not match system ref "${m.instructionId}"`,
+        amount: m.excelAmount || m.systemAmount || 0,
+        varianceAmount: diff,
+        bankReference: m.referenceId,
+        systemReference: m.instructionId,
+        boid: m.boid || null,
+        shareholderName: m.shareholderName || null,
+        status: m.status,
+        actionRequired: "FORCE_MATCH",
+      });
+    }
+  }
+
+  return {
+    unmatchedBankTxnCount,
+    unmatchedBankTotalAmount: Math.round(unmatchedBankTotalAmount * 100) / 100,
+    largeVarianceCount,
+    largeVarianceTotalAmount: Math.round(largeVarianceTotalAmount * 100) / 100,
+    mismatchedReferenceCount,
+    totalExceptions: exceptions.length,
+    exceptions,
+  };
+}

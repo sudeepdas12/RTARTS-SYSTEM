@@ -308,10 +308,10 @@ function getCategoryTdsRate(category: string, isDebenture: boolean): number {
       return isDebenture ? 0.06 : 0.05;
     case "INSTITUTION":
     case "COMPANY_INSTITUTION":
-      return isDebenture ? 0.15 : 0.05;
+      return 0.15;
     case "FOREIGN":
     case "FOREIGN_INVESTOR":
-      return isDebenture ? 0.15 : 0.05;
+      return 0.15;
     case "MUTUAL_FUND":
     case "TAX_EXEMPT":
       return 0;

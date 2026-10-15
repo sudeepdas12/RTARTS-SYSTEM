@@ -2407,7 +2407,8 @@ CREATE INDEX idx_uca_user ON public.user_company_access USING btree (user_id);
 -- Name: uq_active_payments_payable_id; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX uq_active_payments_payable_id ON public.payments USING btree (payable_id) WHERE ((status = ANY (ARRAY['Draft'::text, 'Pending'::text, 'Approved'::text])) AND (payable_id IS NOT NULL));
+CREATE UNIQUE INDEX uq_active_payments_payable_id ON public.payments USING btree (payable_id) WHERE (status NOT IN ('Failed', 'Reversed', 'Cancelled') AND (payable_id IS NOT NULL));
+CREATE UNIQUE INDEX uq_active_payments_reference ON public.payments USING btree (payment_reference) WHERE (status NOT IN ('Failed', 'Reversed', 'Cancelled') AND (payment_reference IS NOT NULL AND payment_reference <> ''));
 
 
 --

@@ -117,7 +117,7 @@ function classificationBadge(c: PayeeClassification | null, holderType?: string 
           variant="secondary"
           className="bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300 border-0 text-[10px]"
         >
-          Legal Person (5% Div / 15% Deb)
+          Legal Person / Institution (15% Div / 15% Deb)
         </Badge>
       );
     case "TAX_EXEMPT":

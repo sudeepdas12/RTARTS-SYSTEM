@@ -555,6 +555,58 @@ export const PaymentService = {
     lineItems: Omit<PaymentLineItem, "id" | "batch_id" | "created_at" | "updated_at">[],
   ): Promise<boolean> {
     try {
+      // 1. In-memory duplicate guards
+      const payableIds = lineItems.map((item) => item.payable_id).filter(Boolean);
+      const uniquePayableIds = new Set(payableIds);
+      if (uniquePayableIds.size < payableIds.length) {
+        throw new Error(
+          "Duplicate payout attempt detected: batch contains duplicate payable records in line items.",
+        );
+      }
+
+      const paymentRefs = lineItems
+        .map((item) => item.payment_reference?.trim())
+        .filter(Boolean) as string[];
+      const uniquePaymentRefs = new Set(paymentRefs);
+      if (uniquePaymentRefs.size < paymentRefs.length) {
+        throw new Error(
+          "Duplicate payment reference detected: batch contains duplicate payment references in line items.",
+        );
+      }
+
+      // 2. Database duplicate protection checks
+      if (payableIds.length > 0) {
+        const { data: existingPayments, error: dupCheckErr } = await (supabase as any)
+          .from("payments")
+          .select("payable_id, status")
+          .in("payable_id", payableIds.slice(0, 1000))
+          .not("status", "in", '("Failed","Reversed","Cancelled")')
+          .limit(10);
+
+        if (!dupCheckErr && existingPayments && existingPayments.length > 0) {
+          const dupId = existingPayments[0].payable_id;
+          throw new Error(
+            `Duplicate payout attempt detected: payable ${dupId} already has an active or completed payment record (status: ${existingPayments[0].status}).`,
+          );
+        }
+      }
+
+      if (paymentRefs.length > 0) {
+        const { data: existingRefs, error: refCheckErr } = await (supabase as any)
+          .from("payments")
+          .select("payment_reference, status")
+          .in("payment_reference", paymentRefs.slice(0, 1000))
+          .not("status", "in", '("Failed","Reversed","Cancelled")')
+          .limit(10);
+
+        if (!refCheckErr && existingRefs && existingRefs.length > 0) {
+          const dupRef = existingRefs[0].payment_reference;
+          throw new Error(
+            `Duplicate payment reference detected: reference "${dupRef}" is already in use by an active payment.`,
+          );
+        }
+      }
+
       const items = lineItems.map((item) => ({
         ...item,
         batch_id: batchId,
@@ -643,6 +695,16 @@ export const PaymentService = {
     }
 
     // Non-Completed status updates (Draft, Pending, Approved, Processed, Rejected, etc.)
+    const { data: currentBatch } = await (supabase as any)
+      .from("payment_batches")
+      .select("status")
+      .eq("id", batchId)
+      .maybeSingle();
+
+    if (currentBatch && currentBatch.status === "Completed") {
+      throw new Error(`Cannot modify batch ${batchId}: batch is Completed and permanently locked.`);
+    }
+
     const updateData: any = { status };
 
     if (status === "Approved" && userId) {

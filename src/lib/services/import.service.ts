@@ -45,6 +45,7 @@ export interface ClientRecordMeta {
   holder_type?: string | null;
   payee_classification?: string | null;
   payee_segment?: string | null;
+  classification_status?: string | null;
   nid_number?: string | null;
   pan_no?: string | null;
   citizenship_no?: string | null;
@@ -60,7 +61,7 @@ async function fetchClientInfoByBoids(
     const { data } = await (supabase as any)
       .from("clients")
       .select(
-        "id, boid, company_id, client_code, holder_type, payee_classification, payee_segment, nid_number, pan_no, citizenship_no",
+        "id, boid, company_id, client_code, holder_type, payee_classification, payee_segment, classification_status, nid_number, pan_no, citizenship_no",
       )
       .in("boid", part);
     for (const c of data || []) {
@@ -1570,6 +1571,7 @@ export const ImportService = {
                 isDebenture: false,
                 isMutualFund: targetTable === "mutual_fund_payables",
                 customTaxRate: investorCategory === "UNKNOWN" ? options?.tdsRate : undefined,
+                taxRules,
               });
         if (
           totals.grossAmount <= 0 &&
@@ -1663,6 +1665,7 @@ export const ImportService = {
                 category: investorCategory,
                 isDebenture: true,
                 customTaxRate: investorCategory === "UNKNOWN" ? options?.tdsRate : undefined,
+                taxRules,
               });
         if (totals.grossAmount <= 0 && totals.netPayable <= 0 && (!sharesHeld || sharesHeld <= 0)) {
           continue;

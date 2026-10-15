@@ -303,7 +303,6 @@ function PaymentsRoute() {
         activeBatchData.payable_type || undefined,
         {
           fiscalYear: activeBatchData.fiscal_year || undefined,
-          limit: 1000,
         },
       );
     },
@@ -805,7 +804,6 @@ function PaymentsRoute() {
           periodDays: periodDays ? Number(periodDays) : undefined,
           fromDate: fromDate || undefined,
           toDate: toDate || undefined,
-          limit: 10000,
         },
       );
 
@@ -1012,7 +1010,9 @@ function PaymentsRoute() {
                               setSelectedPayableType("dividend");
                             }
                             const code = comp.company_code || comp.company_name?.slice(0, 8);
-                            setBatchName(`${code} Payout — FY ${comp.fiscal_year || "2082/83"}`);
+                            setBatchName(
+                              `${code} Payout — ${comp.fiscal_year ? `FY ${comp.fiscal_year}` : new Date().toISOString().slice(0, 10)}`,
+                            );
                           }
                         } else {
                           setSelectedPayableType("all");
@@ -1030,12 +1030,7 @@ function PaymentsRoute() {
                         <SelectItem value="all">All companies</SelectItem>
                         {companies.map((company) => (
                           <SelectItem key={company.id} value={company.id}>
-                            {company.company_code} — {company.company_name}{" "}
-                            {company.company_code === "RMF1"
-                              ? "(42,027)"
-                              : company.company_code === "RMF2"
-                                ? "(13,088)"
-                                : ""}
+                            {company.company_code} — {company.company_name}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -1049,7 +1044,7 @@ function PaymentsRoute() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">All types</SelectItem>
-                        <SelectItem value="mutual_fund">Mutual Fund (55,115)</SelectItem>
+                        <SelectItem value="mutual_fund">Mutual Fund</SelectItem>
                         <SelectItem value="dividend">Dividend</SelectItem>
                         <SelectItem value="interest">Interest</SelectItem>
                       </SelectContent>
@@ -1132,7 +1127,7 @@ function PaymentsRoute() {
                         <SelectItem value="all">All Fiscal Years (All Records)</SelectItem>
                         {fiscalYears.map((fy) => (
                           <SelectItem key={fy} value={fy}>
-                            {fy} {fy === "2082/83" ? "(55,115 Payables)" : ""}
+                            {fy}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -1228,26 +1223,27 @@ function PaymentsRoute() {
                       </p>
                       {payablesPreview.count === 0 && (
                         <div className="mt-2.5 p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-md text-xs text-amber-700 dark:text-amber-300 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                          <span>
-                            No pending payables match the current filter. All imported records are
-                            under <strong>FY 2082/83</strong>.
-                          </span>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="secondary"
-                            className="h-7 text-xs font-semibold shrink-0"
-                            onClick={() => {
-                              setSelectedCompany("all");
-                              setSelectedPayableType("all");
-                              setFiscalYear("all");
-                              setBatchName(
-                                `Payment Batch — ${new Date().toISOString().slice(0, 10)}`,
-                              );
-                            }}
-                          >
-                            Load All 55,115 Payables
-                          </Button>
+                          <span>No pending payables match the current filter.</span>
+                          {(selectedCompany !== "all" ||
+                            selectedPayableType !== "all" ||
+                            fiscalYear !== "all") && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              className="h-7 text-xs font-semibold shrink-0"
+                              onClick={() => {
+                                setSelectedCompany("all");
+                                setSelectedPayableType("all");
+                                setFiscalYear("all");
+                                setBatchName(
+                                  `Payment Batch — ${new Date().toISOString().slice(0, 10)}`,
+                                );
+                              }}
+                            >
+                              Reset Filters
+                            </Button>
+                          )}
                         </div>
                       )}
                       <div className="mt-3 pt-2.5 border-t flex flex-wrap items-center gap-1.5">
@@ -1270,7 +1266,7 @@ function PaymentsRoute() {
                             );
                           }}
                         >
-                          All Schemes (55,115)
+                          All Schemes
                         </Button>
                         {companies
                           .filter(
@@ -1286,13 +1282,13 @@ function PaymentsRoute() {
                               onClick={() => {
                                 setSelectedCompany(c.id);
                                 setSelectedPayableType("mutual_fund");
-                                setFiscalYear(c.fiscal_year || "2082/83");
+                                if (c.fiscal_year) setFiscalYear(c.fiscal_year);
                                 setBatchName(
-                                  `${c.company_code} Payout — FY ${c.fiscal_year || "2082/83"}`,
+                                  `${c.company_code} Payout — ${c.fiscal_year ? `FY ${c.fiscal_year}` : new Date().toISOString().slice(0, 10)}`,
                                 );
                               }}
                             >
-                              {c.company_code} ({c.company_code === "RMF1" ? "42,027" : "13,088"})
+                              {c.company_code}
                             </Button>
                           ))}
                       </div>

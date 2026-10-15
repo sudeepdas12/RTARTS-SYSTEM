@@ -12,8 +12,8 @@ INSERT INTO public.payable_tax_rules (payable_category, payee_classification, ta
 VALUES
   ('DIVIDEND',    'NATURAL_PERSON',      0.05, true),
   ('DIVIDEND',    'PUBLIC_LEGAL_PERSON', 0.05, true),
-  ('DIVIDEND',    'COMPANY_INSTITUTION', 0.05, true),
-  ('DIVIDEND',    'FOREIGN_INVESTOR',    0.05, true),
+  ('DIVIDEND',    'COMPANY_INSTITUTION', 0.15, true),
+  ('DIVIDEND',    'FOREIGN_INVESTOR',    0.15, true),
   ('DIVIDEND',    'BANK_FI',             0.05, true),
   ('DIVIDEND',    'TAX_EXEMPT',          0.00, true),
   ('INTEREST',    'NATURAL_PERSON',      0.06, true),

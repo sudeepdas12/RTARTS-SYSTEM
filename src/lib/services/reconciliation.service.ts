@@ -1,4 +1,9 @@
 import { supabase } from "./database";
+import {
+  extractReconciliationExceptions,
+  type ReconciliationMatch,
+  type ReconciliationExceptionSummary,
+} from "../reconciliation-engine";
 
 export interface ReconciliationResultRow {
   id: string;
@@ -873,5 +878,36 @@ export const ReconciliationService = {
     }
 
     return { updated, paymentsCreated, alreadyPaid, errors };
+  },
+
+  getExceptions(
+    matches: ReconciliationMatch[],
+    varianceThresholdNpr = 1.0,
+  ): ReconciliationExceptionSummary {
+    return extractReconciliationExceptions(matches, varianceThresholdNpr);
+  },
+
+  async acknowledgeException(
+    exceptionId: string,
+    notes: string,
+    userId?: string,
+  ): Promise<{ success: boolean; id: string; acknowledgedAt: string }> {
+    const acknowledgedAt = new Date().toISOString();
+    try {
+      await (supabase as any).from("audit_logs").insert({
+        action: "RECONCILIATION_EXCEPTION_ACKNOWLEDGED",
+        target_entity: "reconciliation_exception",
+        target_id: exceptionId,
+        actor_id: userId || null,
+        metadata: {
+          exception_id: exceptionId,
+          notes,
+          acknowledged_at: acknowledgedAt,
+        },
+      });
+    } catch (e) {
+      console.warn("Could not persist audit log for exception acknowledgement:", e);
+    }
+    return { success: true, id: exceptionId, acknowledgedAt };
   },
 };

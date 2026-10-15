@@ -859,7 +859,7 @@ export const AgmStudioService = {
       // 3. Fallback: insert or find default
       const name =
         companyName || (code === "NLG" ? "NLG Insurance Company Ltd" : `Company ${code}`);
-      const { data: newComp, error: compErr } = await (supabase as any)
+      const insertBuilder = (supabase as any)
         .from("companies")
         .insert({
           company_code: code,
@@ -868,8 +868,24 @@ export const AgmStudioService = {
           sector_type: "Public",
           status: "Active",
         })
-        .select("id")
-        .maybeSingle();
+        .select("id");
+
+      let newComp: any = null;
+      let compErr: any = null;
+
+      if (insertBuilder && typeof insertBuilder.maybeSingle === "function") {
+        const res = await insertBuilder.maybeSingle();
+        newComp = res?.data;
+        compErr = res?.error;
+      } else if (insertBuilder && typeof insertBuilder.single === "function") {
+        const res = await insertBuilder.single();
+        newComp = res?.data;
+        compErr = res?.error;
+      } else if (insertBuilder && typeof insertBuilder.then === "function") {
+        const res = await insertBuilder;
+        newComp = Array.isArray(res?.data) ? res.data[0] : res?.data;
+        compErr = res?.error;
+      }
 
       if (!compErr && newComp?.id && isUuid(newComp.id)) {
         return newComp.id;

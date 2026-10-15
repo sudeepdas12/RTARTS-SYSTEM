@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { smartClassify } from "./services/smart-classifier";
+import { fetchAllRows } from "./services/database";
 
 /**
  * Payee classification review & correction workflow.
@@ -109,8 +110,10 @@ export const adminListReviewClients = createServerFn({ method: "GET" })
       query = query.in("company_id", allowedCompanyIds);
     }
 
-    const { data, error } = await query.order("full_name").limit(3000);
-    if (error) throw new Error(error.message);
+    const data = await fetchAllRows<any>((from, to) => {
+      const q = query.order("full_name").range(from, to);
+      return q;
+    });
     return data ?? [];
   });
 
@@ -238,18 +241,23 @@ export const adminListTaxExceptions = createServerFn({ method: "GET" })
     const out: any[] = [];
 
     for (const [table, meta] of Object.entries(PAYABLE_TABLES)) {
-      let query = supabaseAdmin
-        .from(table)
-        .select(
-          `id, ${meta.grossCol}, tax_amount, net_payable, tds_rate, payee_classification, company_id, client:clients(full_name, boid, payee_classification), company:companies(company_name)`,
-        );
-
-      if (!isGlobal && allowedCompanyIds && allowedCompanyIds.length > 0) {
-        query = query.in("company_id", allowedCompanyIds);
+      let data: any[] = [];
+      try {
+        data = await fetchAllRows<any>((from, to) => {
+          let q = supabaseAdmin
+            .from(table)
+            .select(
+              `id, ${meta.grossCol}, tax_amount, net_payable, tds_rate, payee_classification, company_id, client:clients(full_name, boid, payee_classification), company:companies(company_name)`,
+            )
+            .range(from, to);
+          if (!isGlobal && allowedCompanyIds && allowedCompanyIds.length > 0) {
+            q = q.in("company_id", allowedCompanyIds);
+          }
+          return q;
+        });
+      } catch {
+        continue;
       }
-
-      const { data, error } = await query.limit(8000);
-      if (error) continue;
 
       for (const row of data ?? []) {
         const gross = Number(row[meta.grossCol] ?? 0);
@@ -452,15 +460,15 @@ export const adminFixMisclassifiedNaturalPersons = createServerFn({ method: "POS
     const { supabaseAdmin }: any = await import("@/integrations/supabase/client.server");
 
     // Fetch non-confirmed clients for re-evaluation
-    const { data: clients, error: fetchErr } = await supabaseAdmin
-      .from("clients")
-      .select(
-        "id, full_name, father_name, grandfather_name, citizenship_no, payee_classification, classification_status, holder_type",
-      )
-      .neq("classification_status", "CONFIRMED")
-      .limit(10000);
-
-    if (fetchErr) throw new Error(fetchErr.message);
+    const clients = await fetchAllRows<any>((from, to) =>
+      supabaseAdmin
+        .from("clients")
+        .select(
+          "id, full_name, father_name, grandfather_name, citizenship_no, payee_classification, classification_status, holder_type",
+        )
+        .neq("classification_status", "CONFIRMED")
+        .range(from, to),
+    );
 
     const naturalRestoredIds: string[] = [];
     const institutionsToUpdate: { id: string; name: string }[] = [];

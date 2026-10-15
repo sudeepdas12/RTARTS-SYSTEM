@@ -878,72 +878,91 @@ export const DataManagementService = {
     paymentsCount: number;
     reconciliationCount: number;
   }> {
-    const [compRes, clientsRes, divRes, intRes, mfRes, batchRes, payRes, reconRes] =
+    const [compData, clientsData, divData, intData, mfData, batchData, payData, reconData] =
       await Promise.all([
-        supabase.from("companies").select("*"),
-        supabase.from("clients").select("*").limit(50000),
-        supabase.from("dividend_payables").select("*").limit(50000),
-        supabase.from("interest_payables").select("*").limit(50000),
-        (supabase as any).from("mutual_fund_payables").select("*").limit(50000),
-        (supabase as any).from("payment_batches").select("*"),
-        (supabase as any).from("payments").select("*").limit(50000),
-        (supabase as any).from("reconciliation_results").select("*").limit(50000),
+        fetchAllRows<any>((from, to) => supabase.from("companies").select("*").range(from, to)),
+        fetchAllRows<any>((from, to) => supabase.from("clients").select("*").range(from, to)),
+        fetchAllRows<any>((from, to) =>
+          supabase.from("dividend_payables").select("*").range(from, to),
+        ),
+        fetchAllRows<any>((from, to) =>
+          supabase.from("interest_payables").select("*").range(from, to),
+        ),
+        fetchAllRows<any>((from, to) =>
+          (supabase as any).from("mutual_fund_payables").select("*").range(from, to),
+        ),
+        fetchAllRows<any>((from, to) =>
+          (supabase as any).from("payment_batches").select("*").range(from, to),
+        ),
+        fetchAllRows<any>((from, to) =>
+          (supabase as any).from("payments").select("*").range(from, to),
+        ),
+        fetchAllRows<any>((from, to) =>
+          (supabase as any).from("reconciliation_results").select("*").range(from, to),
+        ),
       ]);
 
     const wb = XLSX.utils.book_new();
-    if (compRes.data?.length) {
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(compRes.data), "Companies");
+    if (compData.length) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(compData), "Companies");
     }
-    if (clientsRes.data?.length) {
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(clientsRes.data), "Clients");
+    if (clientsData.length) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(clientsData), "Clients");
     }
-    if (divRes.data?.length) {
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(divRes.data), "Dividend Payables");
+    if (divData.length) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(divData), "Dividend Payables");
     }
-    if (intRes.data?.length) {
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(intRes.data), "Interest Payables");
+    if (intData.length) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(intData), "Interest Payables");
     }
-    if (mfRes.data?.length) {
-      XLSX.utils.book_append_sheet(
-        wb,
-        XLSX.utils.json_to_sheet(mfRes.data),
-        "Mutual Fund Payables",
-      );
+    if (mfData.length) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(mfData), "Mutual Fund Payables");
     }
-    if (batchRes.data?.length) {
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(batchRes.data), "Payment Batches");
+    if (batchData.length) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(batchData), "Payment Batches");
     }
-    if (payRes.data?.length) {
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(payRes.data), "Payments");
+    if (payData.length) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(payData), "Payments");
     }
-    if (reconRes.data?.length) {
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(reconRes.data), "Reconciliation");
+    if (reconData.length) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(reconData), "Reconciliation");
     }
 
     const dateStr = new Date().toISOString().slice(0, 10);
     XLSX.writeFile(wb, `RTARTS_Full_System_Backup_${dateStr}.xlsx`);
 
     return {
-      companiesCount: compRes.data?.length || 0,
-      clientsCount: clientsRes.data?.length || 0,
-      payablesCount:
-        (divRes.data?.length || 0) + (intRes.data?.length || 0) + (mfRes.data?.length || 0),
-      paymentsCount: payRes.data?.length || 0,
-      reconciliationCount: reconRes.data?.length || 0,
+      companiesCount: compData.length,
+      clientsCount: clientsData.length,
+      payablesCount: divData.length + intData.length + mfData.length,
+      paymentsCount: payData.length,
+      reconciliationCount: reconData.length,
     };
   },
 
   async exportFullDatabaseJson(): Promise<void> {
-    const [compRes, clientsRes, divRes, intRes, mfRes, batchRes, payRes, reconRes] =
+    const [compData, clientsData, divData, intData, mfData, batchData, payData, reconData] =
       await Promise.all([
-        supabase.from("companies").select("*"),
-        supabase.from("clients").select("*").limit(50000),
-        supabase.from("dividend_payables").select("*").limit(50000),
-        supabase.from("interest_payables").select("*").limit(50000),
-        (supabase as any).from("mutual_fund_payables").select("*").limit(50000),
-        (supabase as any).from("payment_batches").select("*"),
-        (supabase as any).from("payments").select("*").limit(50000),
-        (supabase as any).from("reconciliation_results").select("*").limit(50000),
+        fetchAllRows<any>((from, to) => supabase.from("companies").select("*").range(from, to)),
+        fetchAllRows<any>((from, to) => supabase.from("clients").select("*").range(from, to)),
+        fetchAllRows<any>((from, to) =>
+          supabase.from("dividend_payables").select("*").range(from, to),
+        ),
+        fetchAllRows<any>((from, to) =>
+          supabase.from("interest_payables").select("*").range(from, to),
+        ),
+        fetchAllRows<any>((from, to) =>
+          (supabase as any).from("mutual_fund_payables").select("*").range(from, to),
+        ),
+        fetchAllRows<any>((from, to) =>
+          (supabase as any).from("payment_batches").select("*").range(from, to),
+        ),
+        fetchAllRows<any>((from, to) =>
+          (supabase as any).from("payments").select("*").range(from, to),
+        ),
+        fetchAllRows<any>((from, to) =>
+          (supabase as any).from("reconciliation_results").select("*").range(from, to),
+        ),
       ]);
 
     const backupObj = {
@@ -951,24 +970,24 @@ export const DataManagementService = {
       version: "1.0",
       exported_at: new Date().toISOString(),
       metadata: {
-        companies: compRes.data?.length || 0,
-        clients: clientsRes.data?.length || 0,
-        dividend_payables: divRes.data?.length || 0,
-        interest_payables: intRes.data?.length || 0,
-        mutual_fund_payables: mfRes.data?.length || 0,
-        payment_batches: batchRes.data?.length || 0,
-        payments: payRes.data?.length || 0,
-        reconciliation_results: reconRes.data?.length || 0,
+        companies: compData.length,
+        clients: clientsData.length,
+        dividend_payables: divData.length,
+        interest_payables: intData.length,
+        mutual_fund_payables: mfData.length,
+        payment_batches: batchData.length,
+        payments: payData.length,
+        reconciliation_results: reconData.length,
       },
       data: {
-        companies: compRes.data || [],
-        clients: clientsRes.data || [],
-        dividend_payables: divRes.data || [],
-        interest_payables: intRes.data || [],
-        mutual_fund_payables: mfRes.data || [],
-        payment_batches: batchRes.data || [],
-        payments: payRes.data || [],
-        reconciliation_results: reconRes.data || [],
+        companies: compData,
+        clients: clientsData,
+        dividend_payables: divData,
+        interest_payables: intData,
+        mutual_fund_payables: mfData,
+        payment_batches: batchData,
+        payments: payData,
+        reconciliation_results: reconData,
       },
     };
 

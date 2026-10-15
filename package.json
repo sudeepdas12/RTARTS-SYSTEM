@@ -23,6 +23,7 @@
     "db:restore": "node ./scripts/restore-db.mjs",
     "db:backup:ps": "powershell -ExecutionPolicy Bypass -File ./scripts/backup-db.ps1",
     "db:restore:ps": "powershell -ExecutionPolicy Bypass -File ./scripts/restore-db.ps1",
+    "verify:edge": "node ./scripts/verify-edge-parity.mjs",
     "prepare": "husky"
   },
   "dependencies": {

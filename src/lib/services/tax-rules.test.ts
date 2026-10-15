@@ -36,6 +36,7 @@ import {
   loadTaxRules,
   type TaxRule,
 } from "./tax-rules.service";
+import { getPayeeTaxRate } from "./payable-summary";
 // `loadTaxRules` is replaced by the vi.fn from the mock above; wrap it so the
 // test bodies can drive getEffectiveTaxRate's rule lookup.
 const mockLoad = vi.mocked(loadTaxRules);
@@ -59,14 +60,14 @@ const rules: TaxRule[] = [
     id: "3",
     payable_category: "DIVIDEND",
     payee_classification: "COMPANY_INSTITUTION",
-    tax_rate: 0.05,
+    tax_rate: 0.15,
     is_active: true,
   },
   {
     id: "3b",
     payable_category: "DIVIDEND",
     payee_classification: "FOREIGN_INVESTOR",
-    tax_rate: 0.05,
+    tax_rate: 0.15,
     is_active: true,
   },
   {
@@ -152,7 +153,7 @@ describe("centralized tax rules (payable type + investor category → rate)", ()
     expect(investorCategoryToClassification(null)).toBeNull();
   });
 
-  it("applies the spec rates (debenture 6/15/0, dividend 5/5, MF exempt)", () => {
+  it("applies the spec rates (debenture 6/15/0, dividend 5/15/0, MF exempt)", () => {
     // Debenture (interest)
     expect(getTaxRateFromRules(rules, "INTEREST", "NATURAL_PERSON")).toBe(0.06);
     expect(getTaxRateFromRules(rules, "INTEREST", "COMPANY_INSTITUTION")).toBe(0.15);
@@ -160,14 +161,32 @@ describe("centralized tax rules (payable type + investor category → rate)", ()
     expect(getTaxRateFromRules(rules, "INTEREST", "BANK_FI")).toBe(0);
     // Dividend
     expect(getTaxRateFromRules(rules, "DIVIDEND", "NATURAL_PERSON")).toBe(0.05);
-    expect(getTaxRateFromRules(rules, "DIVIDEND", "COMPANY_INSTITUTION")).toBe(0.05);
-    expect(getTaxRateFromRules(rules, "DIVIDEND", "FOREIGN_INVESTOR")).toBe(0.05);
+    expect(getTaxRateFromRules(rules, "DIVIDEND", "COMPANY_INSTITUTION")).toBe(0.15);
+    expect(getTaxRateFromRules(rules, "DIVIDEND", "FOREIGN_INVESTOR")).toBe(0.15);
     expect(getTaxRateFromRules(rules, "DIVIDEND", "BANK_FI")).toBe(0.05);
     // Mutual fund
     expect(getTaxRateFromRules(rules, "MUTUAL_FUND", "TAX_EXEMPT")).toBe(0);
     expect(getTaxRateFromRules(rules, "MUTUAL_FUND", "COMPANY_INSTITUTION")).toBe(0.15);
     // No rule for this combination
     expect(getTaxRateFromRules(rules, "DIVIDEND", "TAX_EXEMPT")).toBeNull();
+  });
+
+  it("maintains strict parity between getPayeeTaxRate and getTaxRateFromRules", () => {
+    // Dividend checks
+    expect(getPayeeTaxRate("PUBLIC", false, null, false, rules)).toBe(0.05);
+    expect(getPayeeTaxRate("INSTITUTION", false, null, false, rules)).toBe(0.15);
+    expect(getPayeeTaxRate("FOREIGN", false, null, false, rules)).toBe(0.15);
+    expect(getPayeeTaxRate("MUTUAL_FUND", false, null, false, rules)).toBe(0);
+
+    // Debenture checks
+    expect(getPayeeTaxRate("PUBLIC", true, null, false, rules)).toBe(0.06);
+    expect(getPayeeTaxRate("INSTITUTION", true, null, false, rules)).toBe(0.15);
+    expect(getPayeeTaxRate("BANK_FI", true, null, false, rules)).toBe(0);
+
+    // Mutual fund checks
+    expect(getPayeeTaxRate("PUBLIC", false, null, true, rules)).toBe(0.05);
+    expect(getPayeeTaxRate("INSTITUTION", false, null, true, rules)).toBe(0.15);
+    expect(getPayeeTaxRate("TAX_EXEMPT", false, null, true, rules)).toBe(0);
   });
 
   it("ignores inactive rules", () => {
