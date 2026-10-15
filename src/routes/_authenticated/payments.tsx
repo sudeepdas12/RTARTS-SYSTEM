@@ -4,7 +4,8 @@ import { useState, useMemo, useEffect } from "react";
 import { PageHeader } from "@/components/page-header";
 import { supabase } from "@/integrations/supabase/client";
 import { PaymentGenerator } from "@/lib/payment-generator";
-import { exportToExcel } from "@/lib/xlsx-utils";
+import { exportToExcel, exportMultiSheetExcel } from "@/lib/xlsx-utils";
+import { getPayeeCategoryLabel } from "@/lib/services/payable-summary";
 import { PaymentService, PaymentBatch, PaymentLineItem } from "@/lib/services/payment.service";
 import { ConnectIPSService } from "@/lib/services/connectips.service";
 import {
@@ -283,8 +284,7 @@ function PaymentsRoute() {
           toDate: toDate || undefined,
         },
       ),
-    enabled: createOpen,
-    staleTime: 15 * 1000,
+    staleTime: 30 * 1000,
   });
 
   // Dedicated query for payables specifically matching the active batch
@@ -657,26 +657,89 @@ function PaymentsRoute() {
       return;
     }
 
-    const rows = itemsToExport.map((item, idx) => ({
-      "S.N": idx + 1,
-      "Payee Name": item.clients?.full_name || "Shareholder",
-      BOID: item.clients?.boid || "",
-      "Bank Name": item.bank_name || item.clients?.bank_name || "",
-      "Bank Account No": item.bank_account_no || item.clients?.bank_account_no || "",
-      "Gross Amount": item.gross_amount,
-      "Tax / TDS Amount": item.tax_amount,
-      "Net Payable": item.net_amount,
-      "Payment Method": item.payment_method || batch.payment_method,
-      Status: item.status,
-      Reference: item.connectips_ref || item.payment_reference || "",
-      "Payment Date": item.payment_date || "",
+    // Classification summary for the batch
+    const classificationMap = new Map<
+      string,
+      { category: string; count: number; gross: number; tax: number; net: number }
+    >();
+
+    itemsToExport.forEach((item) => {
+      const rawCode = item.clients?.payee_classification || "UNCLASSIFIED";
+      const label = getPayeeCategoryLabel(rawCode);
+      const gross = Number(item.gross_amount || 0);
+      const tax = Number(item.tax_amount || 0);
+      const net = Number(item.net_amount || gross - tax);
+
+      if (!classificationMap.has(label)) {
+        classificationMap.set(label, { category: label, count: 0, gross: 0, tax: 0, net: 0 });
+      }
+      const entry = classificationMap.get(label)!;
+      entry.count += 1;
+      entry.gross += gross;
+      entry.tax += tax;
+      entry.net += net;
+    });
+
+    const totalGross = Array.from(classificationMap.values()).reduce((sum, c) => sum + c.gross, 0);
+    const totalTax = Array.from(classificationMap.values()).reduce((sum, c) => sum + c.tax, 0);
+    const totalNet = Array.from(classificationMap.values()).reduce((sum, c) => sum + c.net, 0);
+
+    const summaryRows = Array.from(classificationMap.values()).map((c) => ({
+      "Investor Classification": c.category,
+      "Payee Count": c.count,
+      "Gross Amount (NPR)": Number(c.gross.toFixed(2)),
+      "Tax / TDS Amount (NPR)": Number(c.tax.toFixed(2)),
+      "Net Payable Amount (NPR)": Number(c.net.toFixed(2)),
+      "Share of Total (%)": totalNet > 0 ? `${((c.net / totalNet) * 100).toFixed(2)}%` : "0%",
     }));
 
-    exportToExcel(
-      rows,
+    summaryRows.push({
+      "Investor Classification": "TOTAL BATCH SUMMARY",
+      "Payee Count": itemsToExport.length,
+      "Gross Amount (NPR)": Number(totalGross.toFixed(2)),
+      "Tax / TDS Amount (NPR)": Number(totalTax.toFixed(2)),
+      "Net Payable Amount (NPR)": Number(totalNet.toFixed(2)),
+      "Share of Total (%)": "100.00%",
+    });
+
+    const detailRows = itemsToExport.map((item, idx) => {
+      const rawCode = item.clients?.payee_classification || "";
+      const label = rawCode ? getPayeeCategoryLabel(rawCode) : "Unclassified";
+      const panOrCitizenship =
+        item.clients?.pan_or_citizenship ||
+        item.clients?.pan_no ||
+        item.clients?.citizenship_no ||
+        "";
+
+      return {
+        "S.N": idx + 1,
+        "Shareholder / Payee Name": item.clients?.full_name || "Unknown",
+        BOID: item.clients?.boid || "",
+        "PAN / Citizenship No": panOrCitizenship,
+        "Investor Classification": label,
+        "Category Code": rawCode,
+        Segment: item.clients?.payee_segment || "",
+        "Bank Name": item.bank_name || item.clients?.bank_name || "",
+        "Bank Account No": item.bank_account_no || item.clients?.bank_account_no || "",
+        "Bank Branch": item.clients?.bank_branch || "",
+        "Gross Amount (NPR)": Number(item.gross_amount || 0),
+        "Tax / TDS Amount (NPR)": Number(item.tax_amount || 0),
+        "Net Payable (NPR)": Number(item.net_amount || 0),
+        "Payment Method": item.payment_method || batch.payment_method,
+        Status: item.status,
+        Reference: item.connectips_ref || item.payment_reference || "",
+        "Payment Date": item.payment_date || "",
+      };
+    });
+
+    exportMultiSheetExcel(
+      [
+        { name: "Classification Summary", rows: summaryRows },
+        { name: "Payment Line Items", rows: detailRows },
+      ],
       `Payment_Batch_${(batch.batch_name || batch.id.slice(0, 8)).replace(/[^a-zA-Z0-9_-]/g, "_")}_${new Date().toISOString().slice(0, 10)}`,
     );
-    toast.success("Payment batch exported to Excel.");
+    toast.success("Payment batch exported to Excel with classification summary.");
   };
 
   const handleDownloadCorporatePay = async (batch: PaymentBatch) => {
@@ -813,30 +876,142 @@ function PaymentsRoute() {
         return;
       }
 
-      const rows = payables.map((p, idx) => {
+      // 1. Group by Classification to generate exact classification-wise statutory summary
+      const classificationMap = new Map<
+        string,
+        {
+          category: string;
+          rawCode: string;
+          count: number;
+          shares: number;
+          gross: number;
+          tax: number;
+          net: number;
+        }
+      >();
+
+      payables.forEach((p) => {
+        const rawCode = p.payee_classification || p.clients?.payee_classification || "UNCLASSIFIED";
+        const label = getPayeeCategoryLabel(rawCode);
         const gross = Number(p.gross_dividend ?? p.gross_interest ?? 0);
         const tax = Number(p.tax_amount ?? 0);
         const net = Number(p.net_payable ?? gross - tax);
+        const shares = Number(p.shares_held ?? p.kitta ?? p.clients?.kitta ?? 0);
+
+        if (!classificationMap.has(label)) {
+          classificationMap.set(label, {
+            category: label,
+            rawCode,
+            count: 0,
+            shares: 0,
+            gross: 0,
+            tax: 0,
+            net: 0,
+          });
+        }
+        const entry = classificationMap.get(label)!;
+        entry.count += 1;
+        entry.shares += shares;
+        entry.gross += gross;
+        entry.tax += tax;
+        entry.net += net;
+      });
+
+      const totalGross = Array.from(classificationMap.values()).reduce(
+        (sum, c) => sum + c.gross,
+        0,
+      );
+      const totalTax = Array.from(classificationMap.values()).reduce((sum, c) => sum + c.tax, 0);
+      const totalNet = Array.from(classificationMap.values()).reduce((sum, c) => sum + c.net, 0);
+      const totalShares = Array.from(classificationMap.values()).reduce(
+        (sum, c) => sum + c.shares,
+        0,
+      );
+
+      const summaryRows = Array.from(classificationMap.values()).map((c) => ({
+        "Investor Classification": c.category,
+        "System Category Code": c.rawCode,
+        "Shareholder / Payee Count": c.count,
+        "Total Shares / Kitta": c.shares,
+        "Gross Payable (NPR)": Number(c.gross.toFixed(2)),
+        "TDS / Tax Withheld (NPR)": Number(c.tax.toFixed(2)),
+        "Net Payable Amount (NPR)": Number(c.net.toFixed(2)),
+        "Share of Net Total (%)": totalNet > 0 ? `${((c.net / totalNet) * 100).toFixed(2)}%` : "0%",
+      }));
+
+      // Add Total Row to Summary
+      summaryRows.push({
+        "Investor Classification": "TOTAL STATUTORY SUMMARY",
+        "System Category Code": "ALL",
+        "Shareholder / Payee Count": payables.length,
+        "Total Shares / Kitta": totalShares,
+        "Gross Payable (NPR)": Number(totalGross.toFixed(2)),
+        "TDS / Tax Withheld (NPR)": Number(totalTax.toFixed(2)),
+        "Net Payable Amount (NPR)": Number(totalNet.toFixed(2)),
+        "Share of Net Total (%)": "100.00%",
+      });
+
+      // 2. Build full line-by-line real shareholder payable list
+      const detailRows = payables.map((p, idx) => {
+        const gross = Number(p.gross_dividend ?? p.gross_interest ?? 0);
+        const tax = Number(p.tax_amount ?? 0);
+        const net = Number(p.net_payable ?? gross - tax);
+        const rawCode = p.payee_classification || p.clients?.payee_classification || "";
+        const label = rawCode ? getPayeeCategoryLabel(rawCode) : "Unclassified";
+        const shares = Number(p.shares_held ?? p.kitta ?? p.clients?.kitta ?? 0);
+        const rate = p.dividend_rate ?? p.interest_rate_value ?? "";
+        const tdsRate =
+          p.tds_rate != null
+            ? `${Number(p.tds_rate) <= 1 ? (Number(p.tds_rate) * 100).toFixed(1) : Number(p.tds_rate)}%`
+            : "";
+        const panOrCitizenship =
+          p.clients?.pan_or_citizenship || p.clients?.pan_no || p.clients?.citizenship_no || "";
+
         return {
           "S.N": idx + 1,
-          Company: p.companies?.company_code || "",
-          "Payee Name": p.clients?.full_name || p.full_name || "Shareholder",
+          "Company Code": p.companies?.company_code || "",
+          "Company Name": p.companies?.company_name || "",
+          "Shareholder / Payee Name": p.clients?.full_name || p.full_name || "Unknown",
           BOID: p.clients?.boid || p.boid || "",
-          Classification: p.payee_classification || p.clients?.payee_classification || "",
+          "PAN / Citizenship No": panOrCitizenship,
+          "Investor Classification": label,
+          "Category Code": rawCode,
+          Segment: p.payee_segment || p.clients?.payee_segment || "",
+          "Shares / Units Held": shares,
+          "Rate (%)": rate,
+          "Gross Amount (NPR)": gross,
+          "TDS Rate": tdsRate,
+          "Tax / TDS Amount (NPR)": tax,
+          "Net Payable (NPR)": net,
+          "Paid Amount (NPR)": Number(p.paid_amount ?? 0),
+          "Remaining Amount (NPR)": Number(
+            p.remaining_amount ?? (p.payment_status === "Paid" ? 0 : net),
+          ),
           "Bank Name": p.bank_name || p.clients?.bank_name || "",
           "Bank Account No": p.bank_account_no || p.clients?.bank_account_no || "",
-          "Payable Type": p.payable_type || selectedPayableType,
-          "Gross Amount": gross,
-          "Tax Amount": tax,
-          "Net Payable": net,
-          Status: p.payment_status || "Pending",
+          "Bank Branch": p.bank_branch || p.clients?.bank_branch || "",
+          "Payable Type": (p.payable_type || selectedPayableType || "").toUpperCase(),
+          "Payment Status": p.payment_status || "Pending",
           "Fiscal Year": p.fiscal_year || fiscalYear,
         };
       });
 
-      exportToExcel(rows, `Available_Payables_List_${new Date().toISOString().slice(0, 10)}`);
+      const compCode =
+        selectedCompany !== "all"
+          ? companies.find((c: any) => c.id === selectedCompany)?.company_code || "Company"
+          : "All_Companies";
+
+      exportMultiSheetExcel(
+        [
+          { name: "Classification Summary", rows: summaryRows },
+          { name: "Shareholder Payable List", rows: detailRows },
+        ],
+        `Available_Payables_List_${compCode}_${new Date().toISOString().slice(0, 10)}`,
+      );
       toast.dismiss(toastId);
-      toast.success(`Exported ${rows.length} payables to Excel.`);
+      toast.success(
+        `Exported ${detailRows.length.toLocaleString()} payables across ${classificationMap.size} investor categories to Excel.`,
+      );
     } catch (err: any) {
       toast.dismiss(toastId);
       toast.error(`Export failed: ${err?.message || err}`);

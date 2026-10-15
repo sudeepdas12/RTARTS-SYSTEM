@@ -68,6 +68,13 @@ export interface PaymentLineItem {
     full_name: string;
     bank_name: string | null;
     bank_account_no: string | null;
+    bank_branch?: string | null;
+    pan_or_citizenship?: string | null;
+    pan_no?: string | null;
+    citizenship_no?: string | null;
+    payee_classification?: string | null;
+    payee_segment?: string | null;
+    kitta?: number | null;
   } | null;
 }
 
@@ -175,9 +182,12 @@ export const PaymentService = {
         (from, to) => {
           return (supabase as any)
             .from("payments")
-            .select("*, clients(id, boid, full_name, bank_name, bank_account_no)")
+            .select(
+              "*, clients(id, boid, full_name, bank_name, bank_account_no, bank_branch, pan_or_citizenship, pan_no, citizenship_no, payee_classification, payee_segment, kitta), companies(id, company_name, company_code)",
+            )
             .eq("batch_id", batchId)
             .order("created_at", { ascending: true })
+            .order("id", { ascending: true })
             .range(from, to);
         },
         1000,
@@ -973,7 +983,7 @@ export const PaymentService = {
         !payableType || payableType === "mutual_fund" || payableType === "all";
 
       const clientSelect =
-        "clients(id, boid, full_name, bank_name, bank_account_no, bank_branch, pan_or_citizenship)";
+        "clients(id, boid, full_name, bank_name, bank_account_no, bank_branch, pan_or_citizenship, pan_no, citizenship_no, payee_classification, payee_segment, kitta)";
       const companySelect = "companies(id, company_name, company_code)";
       const payablesLimit = options?.limit ?? 200000;
 
@@ -987,6 +997,7 @@ export const PaymentService = {
                 .select(`*, ${clientSelect}, ${companySelect}`)
                 .in("payment_status", ["Pending", "Partial"])
                 .order("created_at", { ascending: true })
+                .order("id", { ascending: true })
                 .range(from, to);
 
               if (companyId && companyId !== "all") {
@@ -1046,6 +1057,7 @@ export const PaymentService = {
                 .select(`*, ${clientSelect}, ${companySelect}`)
                 .in("payment_status", ["Pending", "Partial"])
                 .order("created_at", { ascending: true })
+                .order("id", { ascending: true })
                 .range(from, to);
 
               if (companyId && companyId !== "all") {
@@ -1219,6 +1231,7 @@ export const PaymentService = {
                 .select(`*, ${clientSelect}, ${companySelect}`)
                 .in("payment_status", ["Pending", "Partial"])
                 .order("created_at", { ascending: true })
+                .order("id", { ascending: true })
                 .range(from, to);
 
               if (companyId && companyId !== "all") {
