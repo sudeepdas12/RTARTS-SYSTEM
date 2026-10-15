@@ -33,7 +33,7 @@ export interface Page<T> {
  * to retrieve the entire dataset for full reporting and summary aggregation.
  */
 export async function fetchAllRows<T>(
-  queryBuilder: (from: number, to: number) => Promise<{ data: T[] | null; error: any }>,
+  queryBuilder: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>,
   pageSize = 1000,
   maxRows = 200000,
 ): Promise<T[]> {
@@ -58,7 +58,7 @@ export async function fetchAllRows<T>(
  * Ideal for exporting or processing datasets with 50,000+ rows without buffer bloat.
  */
 export async function* streamAllRows<T>(
-  queryBuilder: (from: number, to: number) => Promise<{ data: T[] | null; error: any }>,
+  queryBuilder: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>,
   pageSize = 1000,
   maxRows = 200000,
 ): AsyncGenerator<T[], void, unknown> {
