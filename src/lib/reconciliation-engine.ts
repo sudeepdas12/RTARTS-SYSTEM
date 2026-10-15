@@ -386,7 +386,7 @@ export const ReconciliationEngine = {
         connectips_ref: p.connectips_ref || null,
         bank_name: p.bank_name,
         bank_account_no: p.bank_account_no,
-        payment_status: p.payment_status,
+        payment_status: p.status || p.payment_status || null,
         payable_type: p.payable_type,
         payable_id: p.payable_id,
       });
@@ -1593,17 +1593,47 @@ export const ReconciliationEngine = {
       });
     });
 
-    categories.push({
-      categoryName: "Bank / ConnectIPS Settlement",
-      rowCount: transactions.length,
-      totalKitta: 0,
-      totalGrossAmount: grandTotal.totalGrossAmount,
-      totalTaxAmount: 0,
-      totalNetPayable: grandTotal.totalNetPayable,
-      matchedCount: grandTotal.matchedRecords,
-      mismatchedCount: grandTotal.discrepancyCount,
-      pledgedCount: 0,
+    // Build distinct classification summaries from bank statement matches
+    const catMap = new Map<string, CategorySummary>();
+    matches.forEach((m) => {
+      const cName = m.category || "General Settlement";
+      if (!catMap.has(cName)) {
+        catMap.set(cName, {
+          categoryName: cName,
+          rowCount: 0,
+          totalKitta: 0,
+          totalGrossAmount: 0,
+          totalTaxAmount: 0,
+          totalNetPayable: 0,
+          matchedCount: 0,
+          mismatchedCount: 0,
+          pledgedCount: 0,
+        });
+      }
+      const entry = catMap.get(cName)!;
+      entry.rowCount += 1;
+      entry.totalGrossAmount += m.excelAmount;
+      entry.totalNetPayable += m.excelAmount;
+      if (m.status === "Matched") entry.matchedCount += 1;
+      else if (m.status === "Pledged") entry.pledgedCount += 1;
+      else entry.mismatchedCount += 1;
     });
+
+    if (catMap.size > 0) {
+      categories.push(...Array.from(catMap.values()));
+    } else {
+      categories.push({
+        categoryName: "Bank / ConnectIPS Settlement",
+        rowCount: transactions.length,
+        totalKitta: 0,
+        totalGrossAmount: grandTotal.totalGrossAmount,
+        totalTaxAmount: 0,
+        totalNetPayable: grandTotal.totalNetPayable,
+        matchedCount: grandTotal.matchedRecords,
+        mismatchedCount: grandTotal.discrepancyCount,
+        pledgedCount: 0,
+      });
+    }
 
     const uniqueFiles = Array.from(
       new Set(transactions.map((t) => t.fileName).filter(Boolean)),

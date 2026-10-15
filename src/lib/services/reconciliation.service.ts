@@ -92,7 +92,21 @@ export const ReconciliationService = {
         console.error("Failed to fetch reconciliation results:", error.message);
         throw error;
       }
-      return (data || []) as ReconciliationResultRow[];
+      const enriched = ((data || []) as ReconciliationResultRow[]).map((r) => {
+        if ((!r.client || !r.client.full_name) && r.notes) {
+          const holderMatch = r.notes.match(/\[Holder:\s*([^|\]]+)(?:\|\s*BOID:\s*([^\]]+))?\]/);
+          if (holderMatch) {
+            r.client = {
+              full_name: holderMatch[1]?.trim() || "Shareholder",
+              boid: holderMatch[2]?.trim() || "",
+              bank_name: r.client?.bank_name || "",
+              bank_account_no: r.client?.bank_account_no || "",
+            };
+          }
+        }
+        return r;
+      });
+      return enriched;
     } catch (err: any) {
       console.error("Failed to fetch reconciliation results:", err?.message || err);
       throw err;
@@ -206,8 +220,39 @@ export const ReconciliationService = {
         .ilike("notes", `%[File: ${fileName}%`);
     }
 
+    const ALLOWED_COLUMNS = new Set([
+      "id",
+      "reconciliation_date",
+      "source_a_type",
+      "source_a_id",
+      "source_b_type",
+      "source_b_id",
+      "client_id",
+      "company_id",
+      "payable_type",
+      "payable_id",
+      "expected_amount",
+      "actual_amount",
+      "difference",
+      "result",
+      "notes",
+      "matched_by",
+      "matched_at",
+      "fiscal_year",
+      "payment_id",
+      "batch_id",
+    ]);
+
     for (let i = 0; i < results.length; i += chunkSize) {
-      const chunk = results.slice(i, i + chunkSize);
+      const chunk = results.slice(i, i + chunkSize).map((item) => {
+        const sanitized: Record<string, any> = {};
+        for (const [k, v] of Object.entries(item)) {
+          if (ALLOWED_COLUMNS.has(k)) {
+            sanitized[k] = v;
+          }
+        }
+        return sanitized;
+      });
       const { error } = await (supabase as any).from("reconciliation_results").insert(chunk);
       if (error) {
         console.error("Failed to save reconciliation results chunk:", error.message);

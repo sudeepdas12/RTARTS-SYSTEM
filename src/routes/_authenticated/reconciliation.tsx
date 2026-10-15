@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
+import * as XLSX from "xlsx";
 import { ExcelParser } from "@/lib/excel-parser";
 import { BankParser } from "@/lib/bank-parser";
 import {
@@ -87,6 +88,7 @@ export function ReconciliationRoute() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [sourceFilter, setSourceFilter] = useState<string>("all");
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>("all");
   const [reconCompanyId, setReconCompanyId] = useState<string>("all");
   const [historyVisibleCount, setHistoryVisibleCount] = useState(15);
   const [expandedLotKey, setExpandedLotKey] = useState<string | null>(null);
@@ -236,45 +238,113 @@ export function ReconciliationRoute() {
   };
 
   const handleExportLot = (lot: ReconciliationGroupedLot) => {
-    const csvContent = [
+    // 1. Sheet 1: Classification Summary for Lot
+    const classRows: any[] = [
       [
+        "S.N.",
+        "Lot / Settlement Batch",
+        "Company",
+        "Payable Type",
+        "Date",
+        "Total Records",
+        "Matched Count",
+        "Rejected Count",
+        "Discrepancy Count",
+        "Total Settled Amount (NPR)",
+        "Matched Amount (NPR)",
+        "Rejected Amount (NPR)",
+      ],
+      [
+        1,
+        lot.lotName,
+        lot.companyName,
+        lot.payableType,
+        lot.date,
+        lot.totalRecords,
+        lot.matchedCount,
+        lot.rejectedCount,
+        lot.discrepancyCount,
+        Number(lot.totalAmount.toFixed(2)),
+        Number(lot.matchedAmount.toFixed(2)),
+        Number(lot.rejectedAmount.toFixed(2)),
+      ],
+    ];
+
+    // 2. Sheet 2: Shareholder Reconciliation Records
+    const matchRows: any[] = [
+      [
+        "S.N.",
         "BOID",
         "Shareholder Name",
         "Company",
         "Payable Type",
-        "Status",
-        "Expected Amount",
-        "Actual Amount",
-        "Difference",
+        "Reconciliation Status",
+        "Expected System Amount (NPR)",
+        "Actual Settled Amount (NPR)",
+        "Difference (NPR)",
         "Bank Name",
-        "Account No",
-        "Notes",
-      ].join(","),
-      ...lot.records.map((r) =>
-        [
-          r.client?.boid || "",
-          `"${(r.client?.full_name || "").replace(/"/g, '""')}"`,
-          `"${(r.company?.company_name || lot.companyName || "").replace(/"/g, '""')}"`,
-          r.payable_type || lot.payableType,
-          r.result,
-          (r.expected_amount || 0).toFixed(2),
-          (r.actual_amount || 0).toFixed(2),
-          (r.difference || 0).toFixed(2),
-          `"${(r.client?.bank_name || "").replace(/"/g, '""')}"`,
-          `"${(r.client?.bank_account_no || "").replace(/"/g, '""')}"`,
-          `"${(r.notes || "").replace(/"/g, '""')}"`,
-        ].join(","),
-      ),
-    ].join("\n");
+        "Account Number",
+        "Notes / Remarks",
+      ],
+    ];
 
-    const blob = new Blob([csvContent], { type: "text/csv" });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `reconciliation-${lot.lotName.replace(/[^a-zA-Z0-9_-]/g, "_")}.csv`;
-    a.click();
-    window.URL.revokeObjectURL(url);
-    toast.success(`Exported ${lot.records.length} records for ${lot.lotName}`);
+    lot.records.forEach((r, idx) => {
+      matchRows.push([
+        idx + 1,
+        r.client?.boid || "",
+        r.client?.full_name || "Shareholder",
+        r.company?.company_name || lot.companyName || "",
+        r.payable_type || lot.payableType,
+        r.result,
+        Number(Number(r.expected_amount || 0).toFixed(2)),
+        Number(Number(r.actual_amount || 0).toFixed(2)),
+        Number(Number(r.difference || 0).toFixed(2)),
+        r.client?.bank_name || (r as any).bank_name || "",
+        r.client?.bank_account_no || (r as any).bank_account_no || "",
+        r.notes || "",
+      ]);
+    });
+
+    const wb = XLSX.utils.book_new();
+    const wsClass = XLSX.utils.aoa_to_sheet(classRows);
+    const wsMatches = XLSX.utils.aoa_to_sheet(matchRows);
+
+    wsClass["!cols"] = [
+      { wch: 6 },
+      { wch: 28 },
+      { wch: 28 },
+      { wch: 16 },
+      { wch: 14 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 18 },
+      { wch: 26 },
+      { wch: 24 },
+      { wch: 24 },
+    ];
+
+    wsMatches["!cols"] = [
+      { wch: 6 },
+      { wch: 20 },
+      { wch: 30 },
+      { wch: 28 },
+      { wch: 16 },
+      { wch: 20 },
+      { wch: 26 },
+      { wch: 26 },
+      { wch: 16 },
+      { wch: 25 },
+      { wch: 22 },
+      { wch: 40 },
+    ];
+
+    XLSX.utils.book_append_sheet(wb, wsClass, "Classification Summary");
+    XLSX.utils.book_append_sheet(wb, wsMatches, "Shareholder List");
+
+    const safeLotName = lot.lotName.replace(/[^a-zA-Z0-9_-]/g, "_");
+    XLSX.writeFile(wb, `Reconciliation_Lot_${safeLotName}.xlsx`);
+    toast.success(`Exported Excel workbook (${lot.records.length} records) for ${lot.lotName}`);
   };
 
   const loadHistory = async () => {
@@ -462,10 +532,12 @@ export function ReconciliationRoute() {
 
       const matchesStatus = statusFilter === "all" || match.status === statusFilter;
       const matchesSource = sourceFilter === "all" || match.sourceType === sourceFilter;
+      const matchesCategory =
+        selectedCategoryFilter === "all" || match.category === selectedCategoryFilter;
 
-      return matchesSearch && matchesStatus && matchesSource;
+      return matchesSearch && matchesStatus && matchesSource && matchesCategory;
     });
-  }, [report, searchQuery, statusFilter, sourceFilter]);
+  }, [report, searchQuery, statusFilter, sourceFilter, selectedCategoryFilter]);
 
   const unmatchedBankMatches = useMemo(() => {
     return filteredMatches.filter(
@@ -559,7 +631,10 @@ export function ReconciliationRoute() {
 
       const fileNamePrefix = report?.fileName ? `File: ${report.fileName}` : "";
       const lotPrefix = match.lotName ? `Lot: ${match.lotName}` : "";
-      const contextPrefix = [fileNamePrefix, lotPrefix].filter(Boolean).join(" | ");
+      const holderPrefix = match.shareholderName
+        ? `Holder: ${match.shareholderName}${match.boid ? ` | BOID: ${match.boid}` : ""}`
+        : "";
+      const contextPrefix = [fileNamePrefix, lotPrefix, holderPrefix].filter(Boolean).join(" | ");
 
       return {
         reconciliation_date: today,
@@ -775,49 +850,131 @@ export function ReconciliationRoute() {
   const handleExportReport = () => {
     if (!report?.matches) return;
 
-    const csvContent = [
+    // 1. Sheet 1: Classification Summary
+    const classificationRows: any[] = [
       [
-        "BOID",
-        "Name",
-        "Category",
-        "Status",
-        "Excel / Bank Amount",
-        "System Amount",
-        "Difference",
-        "Payable ID",
-        "Client ID",
-        "Fiscal Year",
-        "Bank Name",
-        "Account No",
-        "Match Sources",
-      ].join(","),
-      ...filteredMatches.map((m) =>
-        [
-          m.boid || "",
-          `"${(m.shareholderName || "").replace(/"/g, '""')}"`,
-          `"${(m.category || "").replace(/"/g, '""')}"`,
-          m.status || "",
-          Number(m.excelAmount ?? 0).toFixed(2),
-          Number(m.systemAmount ?? 0).toFixed(2),
-          Number(m.difference ?? 0).toFixed(2),
-          m.payableId || "",
-          m.clientId || "",
-          m.fiscalYear || "",
-          `"${(m.bankName || "").replace(/"/g, '""')}"`,
-          `"${(m.bankAccountNo || "").replace(/"/g, '""')}"`,
-          `"${(m.matchSources?.join(";") || "None").replace(/"/g, '""')}"`,
-        ].join(","),
-      ),
-    ].join("\n");
+        "S.N.",
+        "Classification / Category",
+        "Total Records",
+        "Total Kitta",
+        "Gross Amount (NPR)",
+        "TDS Tax (NPR)",
+        "Net Payable (NPR)",
+        "Exact Matched",
+        "Partial / Discrepancy",
+        "Reconciliation Status",
+      ],
+    ];
 
-    const blob = new Blob([csvContent], { type: "text/csv" });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `reconciliation-${report.fileName}-${new Date().toISOString().split("T")[0]}.csv`;
-    a.click();
-    window.URL.revokeObjectURL(url);
-    toast.success("Report exported successfully");
+    if (report.categories && report.categories.length > 0) {
+      report.categories.forEach((cat, idx) => {
+        classificationRows.push([
+          idx + 1,
+          cat.categoryName,
+          cat.rowCount,
+          cat.totalKitta || 0,
+          Number((cat.totalGrossAmount || 0).toFixed(2)),
+          Number((cat.totalTaxAmount || 0).toFixed(2)),
+          Number((cat.totalNetPayable || 0).toFixed(2)),
+          cat.matchedCount || 0,
+          cat.mismatchedCount || 0,
+          cat.matchedCount === cat.rowCount
+            ? "Fully Reconciled"
+            : cat.matchedCount > 0
+              ? "Partially Reconciled"
+              : "Pending Reconciliation",
+        ]);
+      });
+    }
+
+    // 2. Sheet 2: Shareholder Reconciliation List
+    const matchRows: any[] = [
+      [
+        "S.N.",
+        "BOID",
+        "Shareholder Name",
+        "Classification / Category",
+        "Reconciliation Status",
+        "Expected System Amount (NPR)",
+        "Actual Excel/Bank Amount (NPR)",
+        "Variance (NPR)",
+        "Bank Name",
+        "Account Number",
+        "Payable Type",
+        "Fiscal Year",
+        "Match Sources",
+        "Confidence Score (%)",
+        "Narration / Notes",
+      ],
+    ];
+
+    filteredMatches.forEach((m, idx) => {
+      matchRows.push([
+        idx + 1,
+        m.boid || "",
+        m.shareholderName || "Shareholder",
+        m.category || "",
+        m.status || "",
+        Number(Number(m.systemAmount ?? 0).toFixed(2)),
+        Number(Number(m.excelAmount ?? 0).toFixed(2)),
+        Number(Number(m.difference ?? 0).toFixed(2)),
+        m.bankName || "",
+        m.bankAccountNo || "",
+        m.payableType || "",
+        m.fiscalYear || "",
+        m.matchSources?.join(", ") || "None",
+        m.confidenceScore ?? 0,
+        m.transactionDescription || "",
+      ]);
+    });
+
+    const wb = XLSX.utils.book_new();
+    const wsClass = XLSX.utils.aoa_to_sheet(classificationRows);
+    const wsMatches = XLSX.utils.aoa_to_sheet(matchRows);
+
+    wsClass["!cols"] = [
+      { wch: 6 },
+      { wch: 32 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 20 },
+      { wch: 16 },
+      { wch: 20 },
+      { wch: 15 },
+      { wch: 22 },
+      { wch: 24 },
+    ];
+
+    wsMatches["!cols"] = [
+      { wch: 6 },
+      { wch: 20 },
+      { wch: 30 },
+      { wch: 25 },
+      { wch: 18 },
+      { wch: 22 },
+      { wch: 24 },
+      { wch: 16 },
+      { wch: 25 },
+      { wch: 22 },
+      { wch: 16 },
+      { wch: 14 },
+      { wch: 20 },
+      { wch: 18 },
+      { wch: 40 },
+    ];
+
+    XLSX.utils.book_append_sheet(wb, wsClass, "Classification Summary");
+    XLSX.utils.book_append_sheet(wb, wsMatches, "Shareholder List");
+
+    const safeFileName = (report.fileName || "reconciliation-report").replace(
+      /[^a-zA-Z0-9_-]/g,
+      "_",
+    );
+    XLSX.writeFile(
+      wb,
+      `Reconciliation_${safeFileName}_${new Date().toISOString().split("T")[0]}.xlsx`,
+    );
+    toast.success("Excel report exported with Classification Summary & Shareholder List");
   };
 
   const getStatusBadgeVariant = (status: string) => {
@@ -975,49 +1132,128 @@ export function ReconciliationRoute() {
     const toExport = (report?.matches || []).filter((m) => selectedMatchIds.has(m.id));
     if (toExport.length === 0) return;
 
-    const csvContent = [
-      [
-        "BOID",
-        "Name",
-        "Category",
-        "Status",
-        "Excel / Bank Amount",
-        "System Amount",
-        "Difference",
-        "Payable ID",
-        "Client ID",
-        "Fiscal Year",
-        "Bank Name",
-        "Account No",
-        "Match Sources",
-      ].join(","),
-      ...toExport.map((m) =>
-        [
-          m.boid || "",
-          `"${(m.shareholderName || "").replace(/"/g, '""')}"`,
-          `"${(m.category || "").replace(/"/g, '""')}"`,
-          m.status || "",
-          Number(m.excelAmount ?? 0).toFixed(2),
-          Number(m.systemAmount ?? 0).toFixed(2),
-          Number(m.difference ?? 0).toFixed(2),
-          m.payableId || "",
-          m.clientId || "",
-          m.fiscalYear || "",
-          `"${(m.bankName || "").replace(/"/g, '""')}"`,
-          `"${(m.bankAccountNo || "").replace(/"/g, '""')}"`,
-          `"${(m.matchSources?.join(";") || "None").replace(/"/g, '""')}"`,
-        ].join(","),
-      ),
-    ].join("\n");
+    // 1. Sheet 1: Classification Summary for Selected
+    const categoryMap = new Map<
+      string,
+      { count: number; expected: number; actual: number; matched: number }
+    >();
+    toExport.forEach((m) => {
+      const cat = m.category || "General";
+      if (!categoryMap.has(cat)) {
+        categoryMap.set(cat, { count: 0, expected: 0, actual: 0, matched: 0 });
+      }
+      const entry = categoryMap.get(cat)!;
+      entry.count += 1;
+      entry.expected += Number(m.systemAmount || 0);
+      entry.actual += Number(m.excelAmount || 0);
+      if (m.status === "Matched") entry.matched += 1;
+    });
 
-    const blob = new Blob([csvContent], { type: "text/csv" });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `reconciliation-selected-${toExport.length}-${new Date().toISOString().split("T")[0]}.csv`;
-    a.click();
-    window.URL.revokeObjectURL(url);
-    toast.success(`Exported ${toExport.length} selected records`);
+    const classificationRows: any[] = [
+      [
+        "S.N.",
+        "Classification / Category",
+        "Selected Records",
+        "Expected System Amount (NPR)",
+        "Actual Settled Amount (NPR)",
+        "Variance (NPR)",
+        "Matched Count",
+      ],
+    ];
+
+    Array.from(categoryMap.entries()).forEach(([catName, stats], idx) => {
+      classificationRows.push([
+        idx + 1,
+        catName,
+        stats.count,
+        Number(stats.expected.toFixed(2)),
+        Number(stats.actual.toFixed(2)),
+        Number((stats.expected - stats.actual).toFixed(2)),
+        stats.matched,
+      ]);
+    });
+
+    // 2. Sheet 2: Selected Shareholder List
+    const matchRows: any[] = [
+      [
+        "S.N.",
+        "BOID",
+        "Shareholder Name",
+        "Classification / Category",
+        "Reconciliation Status",
+        "Expected System Amount (NPR)",
+        "Actual Excel/Bank Amount (NPR)",
+        "Variance (NPR)",
+        "Bank Name",
+        "Account Number",
+        "Payable Type",
+        "Fiscal Year",
+        "Match Sources",
+        "Confidence Score (%)",
+        "Narration / Notes",
+      ],
+    ];
+
+    toExport.forEach((m, idx) => {
+      matchRows.push([
+        idx + 1,
+        m.boid || "",
+        m.shareholderName || "Shareholder",
+        m.category || "",
+        m.status || "",
+        Number(Number(m.systemAmount ?? 0).toFixed(2)),
+        Number(Number(m.excelAmount ?? 0).toFixed(2)),
+        Number(Number(m.difference ?? 0).toFixed(2)),
+        m.bankName || "",
+        m.bankAccountNo || "",
+        m.payableType || "",
+        m.fiscalYear || "",
+        m.matchSources?.join(", ") || "None",
+        m.confidenceScore ?? 0,
+        m.transactionDescription || "",
+      ]);
+    });
+
+    const wb = XLSX.utils.book_new();
+    const wsClass = XLSX.utils.aoa_to_sheet(classificationRows);
+    const wsMatches = XLSX.utils.aoa_to_sheet(matchRows);
+
+    wsClass["!cols"] = [
+      { wch: 6 },
+      { wch: 30 },
+      { wch: 18 },
+      { wch: 25 },
+      { wch: 25 },
+      { wch: 16 },
+      { wch: 15 },
+    ];
+
+    wsMatches["!cols"] = [
+      { wch: 6 },
+      { wch: 20 },
+      { wch: 30 },
+      { wch: 25 },
+      { wch: 18 },
+      { wch: 22 },
+      { wch: 24 },
+      { wch: 16 },
+      { wch: 25 },
+      { wch: 22 },
+      { wch: 16 },
+      { wch: 14 },
+      { wch: 20 },
+      { wch: 18 },
+      { wch: 40 },
+    ];
+
+    XLSX.utils.book_append_sheet(wb, wsClass, "Classification Summary");
+    XLSX.utils.book_append_sheet(wb, wsMatches, "Selected Shareholder List");
+
+    XLSX.writeFile(
+      wb,
+      `Reconciliation_Selected_${toExport.length}_${new Date().toISOString().split("T")[0]}.xlsx`,
+    );
+    toast.success(`Exported Excel workbook with ${toExport.length} selected records`);
   };
 
   const renderMatchRow = (match: ReconciliationMatch) => {
@@ -1333,7 +1569,7 @@ export function ReconciliationRoute() {
               )}
               <Button variant="outline" size="sm" onClick={handleExportReport}>
                 <Download className="w-4 h-4 mr-2" />
-                Export CSV
+                Export Excel (.xlsx)
               </Button>
               <Button variant="outline" size="sm" onClick={() => setReport(null)}>
                 <RefreshCw className="w-4 h-4 mr-2" />
@@ -1470,6 +1706,140 @@ export function ReconciliationRoute() {
                   <div className="flex items-center">
                     <div className="w-2 h-2 rounded-full bg-red-500 mr-1" /> Missing
                   </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {report.categories && report.categories.length > 0 && (
+            <Card className="border shadow-sm">
+              <CardHeader className="pb-3 flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle className="text-sm font-bold flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-primary" />
+                    Classification Summary Breakdown
+                  </CardTitle>
+                  <CardDescription className="text-xs mt-1">
+                    Exact category-wise totals across all sheets and settlement lots. Click any
+                    category row to filter shareholder matches below.
+                  </CardDescription>
+                </div>
+                {selectedCategoryFilter !== "all" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs text-primary"
+                    onClick={() => setSelectedCategoryFilter("all")}
+                  >
+                    Clear Filter ({selectedCategoryFilter})
+                  </Button>
+                )}
+              </CardHeader>
+              <CardContent>
+                <div className="border rounded-lg overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/50 border-b">
+                      <tr>
+                        <th className="py-2.5 px-3 text-left font-semibold">
+                          Classification / Category
+                        </th>
+                        <th className="py-2.5 px-3 text-right font-semibold">Shareholders</th>
+                        <th className="py-2.5 px-3 text-right font-semibold">Total Kitta</th>
+                        <th className="py-2.5 px-3 text-right font-semibold">Gross Amount (NPR)</th>
+                        <th className="py-2.5 px-3 text-right font-semibold">TDS Tax (NPR)</th>
+                        <th className="py-2.5 px-3 text-right font-semibold">Net Payable (NPR)</th>
+                        <th className="py-2.5 px-3 text-right font-semibold text-green-600 dark:text-green-400">
+                          Matched
+                        </th>
+                        <th className="py-2.5 px-3 text-right font-semibold text-amber-600 dark:text-amber-400">
+                          Discrepancy
+                        </th>
+                        <th className="py-2.5 px-3 text-center font-semibold">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {report.categories.map((cat) => {
+                        const isSelected = selectedCategoryFilter === cat.categoryName;
+                        return (
+                          <tr
+                            key={cat.categoryName}
+                            className={`cursor-pointer transition-colors ${
+                              isSelected ? "bg-primary/10 font-semibold" : "hover:bg-muted/40"
+                            }`}
+                            onClick={() =>
+                              setSelectedCategoryFilter(isSelected ? "all" : cat.categoryName)
+                            }
+                          >
+                            <td className="py-2.5 px-3 font-medium flex items-center gap-2">
+                              <span>{cat.categoryName}</span>
+                              {isSelected && (
+                                <Badge variant="secondary" className="text-[10px] h-4">
+                                  Filtered
+                                </Badge>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono">
+                              {cat.rowCount.toLocaleString()}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono">
+                              {cat.totalKitta > 0 ? cat.totalKitta.toLocaleString() : "-"}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono">
+                              {cat.totalGrossAmount > 0
+                                ? cat.totalGrossAmount.toLocaleString("en-IN", {
+                                    minimumFractionDigits: 2,
+                                  })
+                                : "-"}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono text-muted-foreground">
+                              {cat.totalTaxAmount > 0
+                                ? cat.totalTaxAmount.toLocaleString("en-IN", {
+                                    minimumFractionDigits: 2,
+                                  })
+                                : "-"}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono font-bold text-primary">
+                              {cat.totalNetPayable > 0
+                                ? cat.totalNetPayable.toLocaleString("en-IN", {
+                                    minimumFractionDigits: 2,
+                                  })
+                                : "-"}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono text-green-600 dark:text-green-400 font-semibold">
+                              {cat.matchedCount.toLocaleString()}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono">
+                              {cat.mismatchedCount > 0 ? (
+                                <span className="text-amber-600 dark:text-amber-400 font-semibold">
+                                  {cat.mismatchedCount.toLocaleString()}
+                                </span>
+                              ) : (
+                                "0"
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-center">
+                              {cat.matchedCount === cat.rowCount ? (
+                                <Badge className="bg-emerald-500/15 text-emerald-700 border-emerald-300 text-[10px] h-4">
+                                  100% Matched
+                                </Badge>
+                              ) : cat.matchedCount > 0 ? (
+                                <Badge
+                                  variant="outline"
+                                  className="text-amber-600 border-amber-300 text-[10px] h-4"
+                                >
+                                  Partial
+                                </Badge>
+                              ) : (
+                                <Badge variant="destructive" className="text-[10px] h-4">
+                                  Unmatched
+                                </Badge>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </CardContent>
             </Card>
