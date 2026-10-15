@@ -39,7 +39,7 @@ if ([string]::IsNullOrWhiteSpace($targetDir)) {
         $targetDir = "D:\BACKUP\RTARTS_DB"
     } else {
         # Fallback to local project backups directory
-        $targetDir = Join-Path $PSScriptRoot "..\backups"
+        $targetDir = Join-Path $PSScriptRoot "..\..\backups"
     }
 }
 

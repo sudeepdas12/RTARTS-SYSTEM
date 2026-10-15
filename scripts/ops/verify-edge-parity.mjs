@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const rootDir = path.resolve(__dirname, "..");
+const rootDir = path.resolve(__dirname, "../..");
 
 console.log("=========================================================");
 console.log("  RTARTS - Edge Function & Tax Parity Verification Suite ");
@@ -50,19 +50,23 @@ if (!fs.existsSync(edgeFnPath)) {
 
 // 2. Database Seed Parity
 console.log("\n[2/3] Inspecting Database Seed & Migration Reference Data...");
-const seedPath = path.join(rootDir, "supabase", "seed.sql");
-if (fs.existsSync(seedPath)) {
+const seedCandidates = [
+  path.join(rootDir, "supabase", "seed.sql"),
+  path.join(rootDir, "supabase", "migrations", "20261005000006_schema_seed_reference_data.sql"),
+];
+const seedPath = seedCandidates.find(p => fs.existsSync(p));
+if (seedPath) {
   const seedContent = fs.readFileSync(seedPath, "utf-8");
   assert(
     /\('DIVIDEND',\s*'COMPANY_INSTITUTION',\s*0\.15,\s*true\)/.test(seedContent),
-    "seed.sql seeds DIVIDEND/COMPANY_INSTITUTION as 0.15 (15%)",
+    `${path.basename(seedPath)} seeds DIVIDEND/COMPANY_INSTITUTION as 0.15 (15%)`,
   );
   assert(
     /\('DIVIDEND',\s*'FOREIGN_INVESTOR',\s*0\.15,\s*true\)/.test(seedContent),
-    "seed.sql seeds DIVIDEND/FOREIGN_INVESTOR as 0.15 (15%)",
+    `${path.basename(seedPath)} seeds DIVIDEND/FOREIGN_INVESTOR as 0.15 (15%)`,
   );
 } else {
-  assert(false, "supabase/seed.sql not found");
+  assert(false, "supabase seed reference data file not found");
 }
 
 // 3. Live Edge Runtime Health Probe

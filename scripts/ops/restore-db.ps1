@@ -42,7 +42,7 @@ if ([string]::IsNullOrWhiteSpace($targetBackup)) {
         } elseif (Test-Path -Path "D:\") {
             $targetDir = "D:\BACKUP\RTARTS_DB"
         } else {
-            $targetDir = Join-Path $PSScriptRoot "..\backups"
+            $targetDir = Join-Path $PSScriptRoot "..\..\backups"
         }
     }
 
