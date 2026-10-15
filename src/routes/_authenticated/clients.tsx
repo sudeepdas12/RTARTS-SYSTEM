@@ -58,6 +58,7 @@ import {
   Loader2,
   FileText,
   AlertTriangle,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { exportToExcel, importFromExcel } from "@/lib/xlsx-utils";
@@ -386,6 +387,100 @@ function ClientsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Client | null>(null);
   const [selectedStatementBoid, setSelectedStatementBoid] = useState<string | null>(null);
   const [counterQuery, setCounterQuery] = useState("");
+  const [isCounterSearching, setIsCounterSearching] = useState(false);
+  const [counterSearchResults, setCounterSearchResults] = useState<any[] | null>(null);
+  const [showCounterDropdown, setShowCounterDropdown] = useState(false);
+
+  const handleCounterLookup = async (queryToSearch?: string) => {
+    const raw = (queryToSearch !== undefined ? queryToSearch : counterQuery).trim();
+    if (!raw) {
+      toast.info("Please enter a BOID, PAN, Citizenship, Phone, or Name to lookup.");
+      return;
+    }
+
+    setIsCounterSearching(true);
+    try {
+      const digits = raw.replace(/[^0-9]/g, "");
+
+      // 1. Direct 16-digit numeric BOID match
+      if (digits.length === 16) {
+        const { data: boidMatches } = await supabase
+          .from("clients")
+          .select(
+            "id, boid, full_name, pan_or_citizenship, phone, bank_name, bank_account_no, company:companies(company_code, company_name)",
+          )
+          .eq("boid", digits)
+          .limit(10);
+        if (boidMatches && boidMatches.length === 1) {
+          setShowCounterDropdown(false);
+          setSelectedStatementBoid(boidMatches[0].boid || boidMatches[0].id);
+          toast.success(`Found shareholder: ${boidMatches[0].full_name} (${boidMatches[0].boid})`);
+          return;
+        } else if (boidMatches && boidMatches.length > 1) {
+          setCounterSearchResults(boidMatches);
+          setShowCounterDropdown(true);
+          toast.info(`Found ${boidMatches.length} matching accounts for this BOID.`);
+          return;
+        }
+      }
+
+      // 2. Exact match across identifiers
+      const { data: exactMatches } = await supabase
+        .from("clients")
+        .select(
+          "id, boid, full_name, pan_or_citizenship, phone, bank_name, bank_account_no, company:companies(company_code, company_name)",
+        )
+        .or(`boid.eq.${raw},pan_or_citizenship.eq.${raw},phone.eq.${raw},bank_account_no.eq.${raw}`)
+        .limit(10);
+
+      if (exactMatches && exactMatches.length === 1) {
+        setShowCounterDropdown(false);
+        setSelectedStatementBoid(exactMatches[0].boid || exactMatches[0].id);
+        toast.success(`Found shareholder: ${exactMatches[0].full_name} (${exactMatches[0].boid})`);
+        return;
+      } else if (exactMatches && exactMatches.length > 1) {
+        setCounterSearchResults(exactMatches);
+        setShowCounterDropdown(true);
+        toast.info(`Found ${exactMatches.length} matching accounts. Select one to view.`);
+        return;
+      }
+
+      // 3. Fallback partial/fuzzy match (name, pan, client_code)
+      const { data: partialMatches } = await supabase
+        .from("clients")
+        .select(
+          "id, boid, full_name, pan_or_citizenship, phone, bank_name, bank_account_no, company:companies(company_code, company_name)",
+        )
+        .or(`full_name.ilike.%${raw}%,pan_or_citizenship.ilike.%${raw}%,client_code.ilike.%${raw}%`)
+        .limit(10);
+
+      if (partialMatches && partialMatches.length === 1) {
+        setShowCounterDropdown(false);
+        setSelectedStatementBoid(partialMatches[0].boid || partialMatches[0].id);
+        toast.success(
+          `Found shareholder: ${partialMatches[0].full_name} (${partialMatches[0].boid})`,
+        );
+        return;
+      } else if (partialMatches && partialMatches.length > 1) {
+        setCounterSearchResults(partialMatches);
+        setShowCounterDropdown(true);
+        toast.info(
+          `Found ${partialMatches.length} matching shareholders. Select one to view statement.`,
+        );
+        return;
+      }
+
+      toast.error(
+        `No shareholder record found matching "${raw}". Verify BOID, PAN, or Citizenship number.`,
+      );
+    } catch (err: any) {
+      toast.error(
+        `Counter search error: ${err?.message || "Failed to query shareholder database."}`,
+      );
+    } finally {
+      setIsCounterSearching(false);
+    }
+  };
 
   const fileRef = useRef<HTMLInputElement>(null);
   const debouncedSearch = useDebounce(search, 400);
@@ -1102,23 +1197,94 @@ function ClientsPage() {
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                if (counterQuery.trim()) {
-                  setSelectedStatementBoid(counterQuery.trim());
-                }
+                handleCounterLookup();
               }}
-              className="flex items-center gap-2"
+              className="flex items-center gap-2 relative"
             >
-              <div className="relative min-w-[260px]">
+              <div className="relative min-w-[280px] sm:min-w-[340px]">
                 <Input
-                  placeholder="Enter 16-digit BOID, PAN, or Citizenship..."
+                  placeholder="Enter 16-digit BOID, PAN, Citizenship, Phone, Name..."
                   value={counterQuery}
-                  onChange={(e) => setCounterQuery(e.target.value)}
-                  className="h-9 text-xs font-mono bg-background"
+                  onChange={(e) => {
+                    setCounterQuery(e.target.value);
+                    if (showCounterDropdown) setShowCounterDropdown(false);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setShowCounterDropdown(false);
+                    }
+                  }}
+                  className="h-9 text-xs font-mono bg-background pr-7"
                 />
+                {counterQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCounterQuery("");
+                      setShowCounterDropdown(false);
+                      setCounterSearchResults(null);
+                    }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    title="Clear input"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+
+                {/* Dropdown for multiple search results */}
+                {showCounterDropdown && counterSearchResults && counterSearchResults.length > 0 && (
+                  <div className="absolute left-0 right-0 top-full mt-1.5 z-50 rounded-md border bg-popover text-popover-foreground shadow-lg max-h-64 overflow-y-auto p-1 text-xs">
+                    <div className="px-2 py-1.5 text-[11px] font-semibold text-muted-foreground border-b flex justify-between items-center">
+                      <span>Select Shareholder ({counterSearchResults.length} found)</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowCounterDropdown(false)}
+                        className="hover:text-foreground"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                    {counterSearchResults.map((res: any) => (
+                      <div
+                        key={res.id}
+                        onClick={() => {
+                          setShowCounterDropdown(false);
+                          setSelectedStatementBoid(res.boid || res.id);
+                        }}
+                        className="cursor-pointer rounded px-2.5 py-2 hover:bg-accent hover:text-accent-foreground transition-colors border-b last:border-b-0"
+                      >
+                        <div className="flex items-center justify-between font-semibold">
+                          <span>{res.full_name}</span>
+                          <span className="font-mono text-[11px] text-primary">
+                            {res.boid || "No BOID"}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3 text-[11px] text-muted-foreground mt-0.5">
+                          {res.pan_or_citizenship && <span>PAN/ID: {res.pan_or_citizenship}</span>}
+                          {res.phone && <span>Ph: {res.phone}</span>}
+                          {res.company?.company_name && (
+                            <span className="truncate max-w-[140px]">
+                              {res.company.company_name}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-              <Button type="submit" size="sm" className="h-9 text-xs gap-1.5 shrink-0">
-                <FileText className="h-3.5 w-3.5" />
-                View 360° Statement
+              <Button
+                type="submit"
+                size="sm"
+                disabled={isCounterSearching}
+                className="h-9 text-xs gap-1.5 shrink-0"
+              >
+                {isCounterSearching ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <FileText className="h-3.5 w-3.5" />
+                )}
+                {isCounterSearching ? "Searching..." : "View 360° Statement"}
               </Button>
             </form>
           </div>

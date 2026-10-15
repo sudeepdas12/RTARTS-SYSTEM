@@ -68,19 +68,50 @@ export function ShareholderStatementDialog({
     queryKey: ["shareholder-info", boid, clientId],
     queryFn: async () => {
       if (!boid && !clientId) return null;
-      let q = supabase.from("clients").select("*, company:companies(company_name, company_code)");
-      if (boid) {
-        if (isUuid(boid)) {
-          q = q.eq("id", boid.trim());
-        } else {
-          q = q.eq("boid", boid.trim());
-        }
-      } else if (clientId) {
-        q = q.eq("id", clientId.trim());
+      const target = (clientId || boid || "").trim();
+      const digits = target.replace(/[^0-9]/g, "");
+
+      // 1. Direct UUID match (by client id)
+      if (isUuid(target)) {
+        const { data } = await supabase
+          .from("clients")
+          .select("*, company:companies(company_name, company_code)")
+          .eq("id", target)
+          .maybeSingle();
+        if (data) return data;
       }
-      const { data, error } = await q.limit(1).maybeSingle();
-      if (error) return null;
-      return data;
+
+      // 2. Exact 16-digit numeric BOID match
+      if (digits.length === 16) {
+        const { data } = await supabase
+          .from("clients")
+          .select("*, company:companies(company_name, company_code)")
+          .eq("boid", digits)
+          .limit(1)
+          .maybeSingle();
+        if (data) return data;
+      }
+
+      // 3. Exact identifier match (boid, pan_or_citizenship, phone, bank_account_no, client_code)
+      const { data: exactMatch } = await supabase
+        .from("clients")
+        .select("*, company:companies(company_name, company_code)")
+        .or(
+          `boid.eq.${target},pan_or_citizenship.eq.${target},phone.eq.${target},bank_account_no.eq.${target},client_code.eq.${target}`,
+        )
+        .limit(1)
+        .maybeSingle();
+      if (exactMatch) return exactMatch;
+
+      // 4. Fuzzy / ilike match (full_name, pan_or_citizenship)
+      const { data: fuzzyMatch } = await supabase
+        .from("clients")
+        .select("*, company:companies(company_name, company_code)")
+        .or(`full_name.ilike.%${target}%,pan_or_citizenship.ilike.%${target}%`)
+        .limit(1)
+        .maybeSingle();
+
+      return fuzzyMatch || null;
     },
     enabled: open && (!!boid || !!clientId),
   });
@@ -89,19 +120,44 @@ export function ShareholderStatementDialog({
   const resolvedBoid = clientInfo?.boid || boid;
 
   const { data: statementRecords = [], isLoading: isStatementLoading } = useQuery({
-    queryKey: ["shareholder-statement-ledger", resolvedClientId, resolvedBoid],
+    queryKey: [
+      "shareholder-statement-ledger",
+      resolvedClientId,
+      resolvedBoid,
+      clientInfo?.pan_or_citizenship,
+    ],
     queryFn: async () => {
       if (!resolvedClientId && !resolvedBoid) return [];
 
-      // Find all client records belonging to this BOID (across all companies)
+      // Find all client records belonging to this BOID and/or PAN (across all companies)
       let clientIds = [resolvedClientId].filter(Boolean) as string[];
-      if (resolvedBoid) {
+      const activeBoid =
+        clientInfo?.boid ||
+        (resolvedBoid && resolvedBoid.replace(/[^0-9]/g, "").length === 16
+          ? resolvedBoid.replace(/[^0-9]/g, "")
+          : null);
+      if (activeBoid) {
+        const digits = activeBoid.replace(/[^0-9]/g, "");
+        const boidFilters = [`boid.eq.${activeBoid}`];
+        if (digits.length === 16 && digits !== activeBoid) {
+          boidFilters.push(`boid.eq.${digits}`);
+        }
         const { data: sameBoidClients } = await (supabase as any)
           .from("clients")
           .select("id")
-          .eq("boid", resolvedBoid);
+          .or(boidFilters.join(","));
         if (sameBoidClients?.length) {
           clientIds = Array.from(new Set([...clientIds, ...sameBoidClients.map((c: any) => c.id)]));
+        }
+      }
+
+      if (clientInfo?.pan_or_citizenship) {
+        const { data: samePanClients } = await (supabase as any)
+          .from("clients")
+          .select("id")
+          .eq("pan_or_citizenship", clientInfo.pan_or_citizenship);
+        if (samePanClients?.length) {
+          clientIds = Array.from(new Set([...clientIds, ...samePanClients.map((c: any) => c.id)]));
         }
       }
 
