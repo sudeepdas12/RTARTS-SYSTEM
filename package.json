@@ -19,11 +19,13 @@
     "test:run": "vitest run",
     "test:ui": "vitest --ui",
     "test:e2e": "playwright test",
-    "db:backup": "node ./scripts/backup-db.mjs",
-    "db:restore": "node ./scripts/restore-db.mjs",
-    "db:backup:ps": "powershell -ExecutionPolicy Bypass -File ./scripts/backup-db.ps1",
-    "db:restore:ps": "powershell -ExecutionPolicy Bypass -File ./scripts/restore-db.ps1",
-    "verify:edge": "node ./scripts/verify-edge-parity.mjs",
+    "db:backup": "node ./scripts/ops/backup-db.mjs",
+    "db:restore": "node ./scripts/ops/restore-db.mjs",
+    "db:backup:ps": "powershell -ExecutionPolicy Bypass -File ./scripts/ops/backup-db.ps1",
+    "db:restore:ps": "powershell -ExecutionPolicy Bypass -File ./scripts/ops/restore-db.ps1",
+    "verify:edge": "node ./scripts/ops/verify-edge-parity.mjs",
+    "audit:classifications": "node ./scripts/audit/audit-classifications.mjs",
+    "audit:summaries": "node ./scripts/audit/audit-all-summaries.mjs",
     "prepare": "husky"
   },
   "dependencies": {
