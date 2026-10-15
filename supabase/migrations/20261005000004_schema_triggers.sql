@@ -174,16 +174,10 @@ CREATE TRIGGER trg_dividend_classification_tax BEFORE INSERT OR UPDATE OF client
 -- Name: dividend_payables trg_dp_calc; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_dp_calc BEFORE INSERT OR UPDATE ON public.dividend_payables FOR EACH ROW EXECUTE FUNCTION public.calc_net_dividend();
+CREATE TRIGGER trg_dp_calc BEFORE INSERT OR UPDATE ON public.dividend_payables FOR EACH ROW EXECUTE FUNCTION public.calc_dividend_payable_safe();
 
 
 --
-
-
-
-
---
-
 -- Name: interest_payables trg_interest_classification_tax; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -191,19 +185,17 @@ CREATE TRIGGER trg_interest_classification_tax BEFORE INSERT OR UPDATE OF client
 
 
 --
-
 -- Name: interest_payables trg_ip_calc; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_ip_calc BEFORE INSERT OR UPDATE ON public.interest_payables FOR EACH ROW EXECUTE FUNCTION public.calc_net_payable();
+CREATE TRIGGER trg_ip_calc BEFORE INSERT OR UPDATE ON public.interest_payables FOR EACH ROW EXECUTE FUNCTION public.calc_interest_payable_safe();
 
 
 --
-
 -- Name: mutual_fund_payables trg_mfp_calc; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_mfp_calc BEFORE INSERT OR UPDATE ON public.mutual_fund_payables FOR EACH ROW EXECUTE FUNCTION public.calc_net_dividend();
+CREATE TRIGGER trg_mfp_calc BEFORE INSERT OR UPDATE ON public.mutual_fund_payables FOR EACH ROW EXECUTE FUNCTION public.calc_dividend_payable_safe();
 
 
 --

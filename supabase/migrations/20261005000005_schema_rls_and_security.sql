@@ -421,7 +421,7 @@ ALTER TABLE public.dividend_payables ENABLE ROW LEVEL SECURITY;
 -- Name: dividend_payables dp_delete; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY dp_delete ON public.dividend_payables FOR DELETE TO authenticated USING (public.has_role(auth.uid(), 'admin'::public.app_role));
+CREATE POLICY dp_delete ON public.dividend_payables FOR DELETE TO authenticated USING (public.has_role((SELECT auth.uid()), 'admin'::public.app_role));
 
 
 --
@@ -441,7 +441,7 @@ CREATE POLICY dp_read ON public.dividend_payables FOR SELECT TO authenticated US
 -- Name: dividend_payables dp_update; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY dp_update ON public.dividend_payables FOR UPDATE TO authenticated USING (public.has_any_role(auth.uid(), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role]));
+CREATE POLICY dp_update ON public.dividend_payables FOR UPDATE TO authenticated USING (public.has_any_role((SELECT auth.uid()), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role]));
 
 
 --
@@ -449,7 +449,7 @@ CREATE POLICY dp_update ON public.dividend_payables FOR UPDATE TO authenticated 
 -- Name: dividend_payables dp_write; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY dp_write ON public.dividend_payables FOR INSERT TO authenticated WITH CHECK (public.has_any_role(auth.uid(), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role]));
+CREATE POLICY dp_write ON public.dividend_payables FOR INSERT TO authenticated WITH CHECK (public.has_any_role((SELECT auth.uid()), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role]));
 
 
 --
@@ -529,7 +529,7 @@ ALTER TABLE public.interest_payables ENABLE ROW LEVEL SECURITY;
 -- Name: interest_payables ip_delete; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY ip_delete ON public.interest_payables FOR DELETE TO authenticated USING (public.has_role(auth.uid(), 'admin'::public.app_role));
+CREATE POLICY ip_delete ON public.interest_payables FOR DELETE TO authenticated USING (public.has_role((SELECT auth.uid()), 'admin'::public.app_role));
 
 
 --
@@ -549,7 +549,7 @@ CREATE POLICY ip_read ON public.interest_payables FOR SELECT TO authenticated US
 -- Name: interest_payables ip_update; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY ip_update ON public.interest_payables FOR UPDATE TO authenticated USING (public.has_any_role(auth.uid(), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role]));
+CREATE POLICY ip_update ON public.interest_payables FOR UPDATE TO authenticated USING (public.has_any_role((SELECT auth.uid()), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role]));
 
 
 --
@@ -557,7 +557,7 @@ CREATE POLICY ip_update ON public.interest_payables FOR UPDATE TO authenticated 
 -- Name: interest_payables ip_write; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY ip_write ON public.interest_payables FOR INSERT TO authenticated WITH CHECK (public.has_any_role(auth.uid(), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role]));
+CREATE POLICY ip_write ON public.interest_payables FOR INSERT TO authenticated WITH CHECK (public.has_any_role((SELECT auth.uid()), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role]));
 
 
 --
@@ -588,7 +588,7 @@ ALTER TABLE public.login_logs ENABLE ROW LEVEL SECURITY;
 -- Name: mutual_fund_payables mfp_delete; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY mfp_delete ON public.mutual_fund_payables FOR DELETE TO authenticated USING (public.has_role(auth.uid(), 'admin'::public.app_role));
+CREATE POLICY mfp_delete ON public.mutual_fund_payables FOR DELETE TO authenticated USING (public.has_role((SELECT auth.uid()), 'admin'::public.app_role));
 
 
 --
@@ -608,7 +608,7 @@ CREATE POLICY mfp_read ON public.mutual_fund_payables FOR SELECT TO authenticate
 -- Name: mutual_fund_payables mfp_update; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY mfp_update ON public.mutual_fund_payables FOR UPDATE TO authenticated USING (public.has_any_role(auth.uid(), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role]));
+CREATE POLICY mfp_update ON public.mutual_fund_payables FOR UPDATE TO authenticated USING (public.has_any_role((SELECT auth.uid()), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role]));
 
 
 --
@@ -616,7 +616,7 @@ CREATE POLICY mfp_update ON public.mutual_fund_payables FOR UPDATE TO authentica
 -- Name: mutual_fund_payables mfp_write; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY mfp_write ON public.mutual_fund_payables FOR INSERT TO authenticated WITH CHECK (public.has_any_role(auth.uid(), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role]));
+CREATE POLICY mfp_write ON public.mutual_fund_payables FOR INSERT TO authenticated WITH CHECK (public.has_any_role((SELECT auth.uid()), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role]));
 
 
 --
@@ -729,7 +729,7 @@ CREATE POLICY pay_read ON public.payments FOR SELECT TO authenticated USING ((( 
 -- Name: payments pay_update; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY pay_update ON public.payments FOR UPDATE TO authenticated USING (public.has_any_role(auth.uid(), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role, 'reconciliation_officer'::public.app_role]));
+CREATE POLICY pay_update ON public.payments FOR UPDATE TO authenticated USING (public.has_any_role((SELECT auth.uid()), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role, 'reconciliation_officer'::public.app_role]));
 
 
 --
@@ -737,7 +737,7 @@ CREATE POLICY pay_update ON public.payments FOR UPDATE TO authenticated USING (p
 -- Name: payments pay_write; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY pay_write ON public.payments FOR INSERT TO authenticated WITH CHECK (public.has_any_role(auth.uid(), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role, 'reconciliation_officer'::public.app_role]));
+CREATE POLICY pay_write ON public.payments FOR INSERT TO authenticated WITH CHECK (public.has_any_role((SELECT auth.uid()), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role, 'reconciliation_officer'::public.app_role]));
 
 
 --
@@ -781,7 +781,7 @@ ALTER TABLE public.payments ENABLE ROW LEVEL SECURITY;
 -- Name: payments payments_delete; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY payments_delete ON public.payments FOR DELETE TO authenticated USING (public.has_role(auth.uid(), 'admin'::public.app_role));
+CREATE POLICY payments_delete ON public.payments FOR DELETE TO authenticated USING (public.has_role((SELECT auth.uid()), 'admin'::public.app_role));
 
 
 --
@@ -969,7 +969,7 @@ CREATE POLICY uca_select ON public.user_company_access FOR SELECT TO authenticat
 -- Name: upload_errors ue_delete; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY ue_delete ON public.upload_errors FOR DELETE TO authenticated USING (public.has_role(auth.uid(), 'admin'::public.app_role));
+CREATE POLICY ue_delete ON public.upload_errors FOR DELETE TO authenticated USING (public.has_role((SELECT auth.uid()), 'admin'::public.app_role));
 
 
 --
@@ -979,7 +979,7 @@ CREATE POLICY ue_delete ON public.upload_errors FOR DELETE TO authenticated USIN
 
 CREATE POLICY ue_read ON public.upload_errors FOR SELECT TO authenticated USING (((upload_id IN ( SELECT upload_history.id
    FROM public.upload_history
-  WHERE (upload_history.user_id = auth.uid()))) OR public.has_any_role(auth.uid(), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role, 'auditor'::public.app_role])));
+  WHERE (upload_history.user_id = (SELECT auth.uid())))) OR public.has_any_role((SELECT auth.uid()), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role, 'auditor'::public.app_role])));
 
 
 --
@@ -989,7 +989,7 @@ CREATE POLICY ue_read ON public.upload_errors FOR SELECT TO authenticated USING 
 
 CREATE POLICY ue_write ON public.upload_errors FOR INSERT TO authenticated WITH CHECK (((upload_id IN ( SELECT upload_history.id
    FROM public.upload_history
-  WHERE (upload_history.user_id = auth.uid()))) OR public.has_any_role(auth.uid(), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role])));
+  WHERE (upload_history.user_id = (SELECT auth.uid())))) OR public.has_any_role((SELECT auth.uid()), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role])));
 
 
 --
@@ -997,7 +997,7 @@ CREATE POLICY ue_write ON public.upload_errors FOR INSERT TO authenticated WITH 
 -- Name: upload_history uh_delete; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY uh_delete ON public.upload_history FOR DELETE TO authenticated USING (public.has_role(auth.uid(), 'admin'::public.app_role));
+CREATE POLICY uh_delete ON public.upload_history FOR DELETE TO authenticated USING (public.has_role((SELECT auth.uid()), 'admin'::public.app_role));
 
 
 --
@@ -1005,7 +1005,7 @@ CREATE POLICY uh_delete ON public.upload_history FOR DELETE TO authenticated USI
 -- Name: upload_history uh_read; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY uh_read ON public.upload_history FOR SELECT TO authenticated USING (((user_id = auth.uid()) OR (user_id IS NULL) OR public.has_any_role(auth.uid(), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role])));
+CREATE POLICY uh_read ON public.upload_history FOR SELECT TO authenticated USING (((user_id = (SELECT auth.uid())) OR (user_id IS NULL) OR public.has_any_role((SELECT auth.uid()), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role])));
 
 
 --
@@ -1013,7 +1013,7 @@ CREATE POLICY uh_read ON public.upload_history FOR SELECT TO authenticated USING
 -- Name: upload_history uh_update; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY uh_update ON public.upload_history FOR UPDATE TO authenticated USING (((user_id IS NULL) OR (user_id = auth.uid()) OR public.has_any_role(auth.uid(), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role])));
+CREATE POLICY uh_update ON public.upload_history FOR UPDATE TO authenticated USING (((user_id IS NULL) OR (user_id = (SELECT auth.uid())) OR public.has_any_role((SELECT auth.uid()), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role])));
 
 
 --
@@ -1021,7 +1021,7 @@ CREATE POLICY uh_update ON public.upload_history FOR UPDATE TO authenticated USI
 -- Name: upload_history uh_write; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY uh_write ON public.upload_history FOR INSERT TO authenticated WITH CHECK (((user_id = auth.uid()) OR (user_id IS NULL) OR public.has_any_role(auth.uid(), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role])));
+CREATE POLICY uh_write ON public.upload_history FOR INSERT TO authenticated WITH CHECK (((user_id = (SELECT auth.uid())) OR (user_id IS NULL) OR public.has_any_role((SELECT auth.uid()), ARRAY['admin'::public.app_role, 'finance_operator'::public.app_role])));
 
 
 --

@@ -659,6 +659,8 @@ CREATE TABLE public.dividend_payables (
     bank_branch text,
     remarks text,
     bonus_rate numeric,
+    is_tax_manual boolean DEFAULT false,
+    tax_rate numeric(5,4),
     CONSTRAINT chk_div_balance_invariant CHECK ((abs(((gross_dividend - tax_amount) - net_payable)) <= 0.05)),
     CONSTRAINT chk_div_gross_nonneg CHECK ((gross_dividend >= (0)::numeric)),
     CONSTRAINT chk_div_net_le_gross CHECK ((net_payable <= (gross_dividend + 0.05))),
@@ -718,6 +720,8 @@ CREATE TABLE public.interest_payables (
     remarks text,
     shares_held numeric DEFAULT 0,
     kitta numeric DEFAULT 0,
+    is_tax_manual boolean DEFAULT false,
+    tax_rate numeric(5,4),
     CONSTRAINT chk_int_balance_invariant CHECK ((abs(((gross_interest - tax_amount) - net_payable)) <= 0.05)),
     CONSTRAINT chk_int_gross_nonneg CHECK ((gross_interest >= (0)::numeric)),
     CONSTRAINT chk_int_kitta_nonneg CHECK ((((kitta IS NULL) OR (kitta >= (0)::numeric)) AND ((shares_held IS NULL) OR (shares_held >= (0)::numeric)))),
@@ -771,6 +775,8 @@ CREATE TABLE public.mutual_fund_payables (
     bank_branch text,
     paid_amount numeric(15,2) DEFAULT 0,
     remaining_amount numeric(15,2),
+    is_tax_manual boolean DEFAULT false,
+    tax_rate numeric(5,4),
     CONSTRAINT chk_mf_balance_invariant CHECK ((abs(((gross_dividend - tax_amount) - net_payable)) <= 0.05)),
     CONSTRAINT chk_mf_gross_nonneg CHECK ((gross_dividend >= (0)::numeric)),
     CONSTRAINT chk_mf_net_le_gross CHECK ((net_payable <= (gross_dividend + 0.05))),
@@ -1130,6 +1136,7 @@ CREATE TABLE public.upload_history (
     file_type text,
     sheet_name text,
     total_rows integer DEFAULT 0 NOT NULL,
+    processed_rows integer DEFAULT 0 NOT NULL,
     success_rows integer DEFAULT 0 NOT NULL,
     error_rows integer DEFAULT 0 NOT NULL,
     target_table text,
@@ -1788,10 +1795,7 @@ CREATE INDEX idx_audit_user_time ON public.audit_logs USING btree (user_id, acti
 
 --
 
--- Name: idx_clients_boid; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_clients_boid ON public.clients USING btree (boid);
+-- Redundant idx_clients_boid removed (covered by clients_boid_key)
 
 
 --
@@ -2100,10 +2104,7 @@ CREATE INDEX idx_interest_payables_status ON public.interest_payables USING btre
 
 --
 
--- Name: idx_interest_status; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_interest_status ON public.interest_payables USING btree (payment_status);
+-- Redundant idx_interest_status removed (covered by idx_interest_payables_status)
 
 
 --
@@ -2196,10 +2197,7 @@ CREATE INDEX idx_mutual_fund_payables_status ON public.mutual_fund_payables USIN
 
 --
 
--- Name: idx_mutual_fund_status; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_mutual_fund_status ON public.mutual_fund_payables USING btree (payment_status);
+-- Redundant idx_mutual_fund_status removed (covered by idx_mutual_fund_payables_status)
 
 
 --
@@ -2244,10 +2242,7 @@ CREATE INDEX idx_payments_bank_account_no ON public.payments USING btree (bank_a
 
 --
 
--- Name: idx_payments_batch; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_payments_batch ON public.payments USING btree (batch_id);
+-- Redundant idx_payments_batch removed (covered by idx_payments_batch_id)
 
 
 --
@@ -2324,10 +2319,7 @@ CREATE INDEX idx_payments_status ON public.payments USING btree (status);
 
 --
 
--- Name: idx_recon_date; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_recon_date ON public.reconciliation_results USING btree (reconciliation_date);
+-- Redundant idx_recon_date removed (covered by idx_reconciliation_results_date)
 
 
 --
@@ -2340,10 +2332,7 @@ CREATE INDEX idx_recon_result ON public.reconciliation_results USING btree (resu
 
 --
 
--- Name: idx_reconciliation_company_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_reconciliation_company_id ON public.reconciliation_results USING btree (company_id);
+-- Redundant idx_reconciliation_company_id removed (covered by idx_reconciliation_results_company_id)
 
 
 --
@@ -2445,10 +2434,7 @@ CREATE UNIQUE INDEX uq_upload_history_active_file_hash ON public.upload_history 
 
 --
 
--- Name: uq_user_company_access; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX uq_user_company_access ON public.user_company_access USING btree (user_id, company_id);
+-- Redundant uq_user_company_access removed (covered by user_company_access_user_id_company_id_key)
 
 
 --
@@ -2991,4 +2977,124 @@ ALTER TABLE ONLY public.user_roles
     ADD CONSTRAINT user_roles_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
 
 
---
+-- ============================================================================
+-- Payment Duplicate Protection (Partial Unique Indexes)
+-- ============================================================================
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_active_payments_payable_id
+ON public.payments USING btree (payable_id)
+WHERE (status NOT IN ('Failed', 'Reversed', 'Cancelled') AND payable_id IS NOT NULL);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_active_payments_reference
+ON public.payments USING btree (payment_reference)
+WHERE (status NOT IN ('Failed', 'Reversed', 'Cancelled') AND payment_reference IS NOT NULL AND payment_reference <> '');
+
+
+-- ============================================================================
+-- Foreign Key Indexes (schema-foreign-key-indexes.md)
+-- ============================================================================
+
+CREATE INDEX IF NOT EXISTS idx_mutual_fund_payables_upload_id ON public.mutual_fund_payables (upload_id);
+CREATE INDEX IF NOT EXISTS idx_dividend_payables_upload_id ON public.dividend_payables (upload_id);
+CREATE INDEX IF NOT EXISTS idx_interest_payables_upload_id ON public.interest_payables (upload_id);
+CREATE INDEX IF NOT EXISTS idx_upload_errors_upload_id ON public.upload_errors (upload_id);
+CREATE INDEX IF NOT EXISTS idx_upload_history_user_id ON public.upload_history (user_id);
+
+CREATE INDEX IF NOT EXISTS idx_payments_processed_by ON public.payments (processed_by);
+CREATE INDEX IF NOT EXISTS idx_payments_approved_by ON public.payments (approved_by);
+CREATE INDEX IF NOT EXISTS idx_payments_reversed_by ON public.payments (reversed_by);
+CREATE INDEX IF NOT EXISTS idx_payments_created_by ON public.payments (created_by);
+CREATE INDEX IF NOT EXISTS idx_payment_batches_created_by ON public.payment_batches (created_by);
+CREATE INDEX IF NOT EXISTS idx_payment_batches_approved_by ON public.payment_batches (approved_by);
+CREATE INDEX IF NOT EXISTS idx_payment_logs_payment_id ON public.payment_logs (payment_id);
+CREATE INDEX IF NOT EXISTS idx_payment_logs_performed_by ON public.payment_logs (performed_by);
+
+CREATE INDEX IF NOT EXISTS idx_pending_approvals_requested_by ON public.pending_approvals (requested_by);
+CREATE INDEX IF NOT EXISTS idx_pending_approvals_reviewed_by ON public.pending_approvals (reviewed_by);
+CREATE INDEX IF NOT EXISTS idx_approval_logs_approval_id ON public.approval_logs (approval_id);
+CREATE INDEX IF NOT EXISTS idx_approval_logs_performed_by ON public.approval_logs (performed_by);
+
+CREATE INDEX IF NOT EXISTS idx_reconciliation_results_batch_id ON public.reconciliation_results (batch_id);
+CREATE INDEX IF NOT EXISTS idx_reconciliation_results_matched_by ON public.reconciliation_results (matched_by);
+
+CREATE INDEX IF NOT EXISTS idx_bank_statements_uploaded_by ON public.bank_statements (uploaded_by);
+CREATE INDEX IF NOT EXISTS idx_bank_transactions_uploaded_by ON public.bank_transactions (uploaded_by);
+
+CREATE INDEX IF NOT EXISTS idx_iaf_allocations_company_id ON public.iaf_allocations (company_id);
+CREATE INDEX IF NOT EXISTS idx_iaf_allocations_created_by ON public.iaf_allocations (created_by);
+
+CREATE INDEX IF NOT EXISTS idx_clients_created_by ON public.clients (created_by);
+CREATE INDEX IF NOT EXISTS idx_dividend_payables_created_by ON public.dividend_payables (created_by);
+CREATE INDEX IF NOT EXISTS idx_interest_payables_created_by ON public.interest_payables (created_by);
+CREATE INDEX IF NOT EXISTS idx_mutual_fund_payables_created_by ON public.mutual_fund_payables (created_by);
+
+CREATE INDEX IF NOT EXISTS idx_api_logs_user_id ON public.api_logs (user_id);
+CREATE INDEX IF NOT EXISTS idx_error_logs_user_id ON public.error_logs (user_id);
+CREATE INDEX IF NOT EXISTS idx_login_logs_user_id ON public.login_logs (user_id);
+CREATE INDEX IF NOT EXISTS idx_system_settings_updated_by ON public.system_settings (updated_by);
+
+
+-- ============================================================================
+-- Composite Query Hotpath Indexes (query-composite-indexes.md)
+-- ============================================================================
+
+CREATE INDEX IF NOT EXISTS idx_dividend_payables_comp_status_created 
+  ON public.dividend_payables (company_id, payment_status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_dividend_payables_comp_lookup 
+  ON public.dividend_payables (company_id, fiscal_year, payment_status);
+
+CREATE INDEX IF NOT EXISTS idx_dividend_payables_comp_client 
+  ON public.dividend_payables (company_id, client_id);
+
+CREATE INDEX IF NOT EXISTS idx_interest_payables_comp_status_created 
+  ON public.interest_payables (company_id, payment_status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_interest_payables_comp_lookup 
+  ON public.interest_payables (company_id, fiscal_year, payment_status);
+
+CREATE INDEX IF NOT EXISTS idx_interest_payables_comp_client 
+  ON public.interest_payables (company_id, client_id);
+
+CREATE INDEX IF NOT EXISTS idx_reconciliation_results_comp_lookup
+  ON public.reconciliation_results (company_id, reconciliation_date, result);
+
+
+-- ============================================================================
+-- Autovacuum Tuning for High-Churn Financial Tables (monitor-vacuum-analyze.md)
+-- ============================================================================
+
+ALTER TABLE public.upload_history SET (
+  autovacuum_vacuum_scale_factor = 0.05,
+  autovacuum_analyze_scale_factor = 0.02
+);
+
+ALTER TABLE public.mutual_fund_payables SET (
+  autovacuum_vacuum_scale_factor = 0.05,
+  autovacuum_analyze_scale_factor = 0.02
+);
+
+ALTER TABLE public.dividend_payables SET (
+  autovacuum_vacuum_scale_factor = 0.05,
+  autovacuum_analyze_scale_factor = 0.02
+);
+
+ALTER TABLE public.interest_payables SET (
+  autovacuum_vacuum_scale_factor = 0.05,
+  autovacuum_analyze_scale_factor = 0.02
+);
+
+ALTER TABLE public.payments SET (
+  autovacuum_vacuum_scale_factor = 0.05,
+  autovacuum_analyze_scale_factor = 0.02
+);
+
+ALTER TABLE public.reconciliation_results SET (
+  autovacuum_vacuum_scale_factor = 0.05,
+  autovacuum_analyze_scale_factor = 0.02
+);
+
+ALTER TABLE public.bank_transactions SET (
+  autovacuum_vacuum_scale_factor = 0.05,
+  autovacuum_analyze_scale_factor = 0.02
+);
