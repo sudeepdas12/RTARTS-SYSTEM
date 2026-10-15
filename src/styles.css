@@ -267,6 +267,17 @@
 }
 
 /*
+ * Universal Dialog & Modal Viewport Constraints
+ * Prevents any dialog from overflowing beyond the screen viewport on laptops and high-DPI displays.
+ */
+@media screen {
+  [role="dialog"]:not(.print-statement-modal) {
+    max-height: calc(100dvh - 2rem);
+    box-sizing: border-box;
+  }
+}
+
+/*
  * Dedicated Print Layout for Reports & Statements
  * Clean, high-contrast, document-ready styling for paper and PDF.
  */
@@ -351,4 +362,3 @@
     padding-bottom: 6px !important;
   }
 }
-

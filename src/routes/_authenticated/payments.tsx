@@ -1151,11 +1151,11 @@ function PaymentsRoute() {
                 New Payment Batch
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl">
-              <DialogHeader>
+            <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col p-0 gap-0">
+              <DialogHeader className="p-6 pb-4 border-b shrink-0">
                 <DialogTitle>Create Payment Batch</DialogTitle>
               </DialogHeader>
-              <div className="space-y-4 py-4">
+              <div className="flex-1 overflow-y-auto p-6 space-y-4">
                 <div className="space-y-2">
                   <Label>Batch Name</Label>
                   <Input
@@ -1471,7 +1471,7 @@ function PaymentsRoute() {
                   )}
                 </div>
               </div>
-              <DialogFooter className="flex sm:justify-between items-center w-full gap-2 pt-2 border-t">
+              <DialogFooter className="flex sm:justify-between items-center w-full gap-2 p-4 border-t bg-muted/20 shrink-0">
                 <Button
                   variant="outline"
                   type="button"
@@ -2651,11 +2651,11 @@ function PaymentsRoute() {
 
       {/* Edit Draft Batch Dialog */}
       <Dialog open={editBatchOpen} onOpenChange={setEditBatchOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
+        <DialogContent className="max-w-md max-h-[90vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="p-6 pb-3 border-b shrink-0">
             <DialogTitle>Edit Batch Settings</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 py-3">
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
             <div className="space-y-2">
               <Label>Batch Name</Label>
               <Input
@@ -2733,7 +2733,7 @@ function PaymentsRoute() {
               </div>
             </div>
           </div>
-          <DialogFooter className="flex justify-end gap-2">
+          <DialogFooter className="p-4 border-t bg-muted/20 shrink-0 flex justify-end gap-2">
             <Button variant="outline" onClick={() => setEditBatchOpen(false)}>
               Cancel
             </Button>
@@ -2804,8 +2804,8 @@ function PaymentsRoute() {
 
       {/* Shareholder SMS & Email Notification Broadcast Dialog */}
       <Dialog open={broadcastOpen} onOpenChange={setBroadcastOpen}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="p-5 pb-3 border-b shrink-0">
             <DialogTitle className="text-base font-semibold flex items-center gap-2">
               <Send className="h-5 w-5 text-purple-600" />
               Shareholder Notification & SMS Broadcast Engine
@@ -2813,7 +2813,7 @@ function PaymentsRoute() {
           </DialogHeader>
 
           {broadcastSummary && (
-            <div className="space-y-4">
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
               {/* Batch Metadata & Metric Strip */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="p-3 bg-muted/30 border rounded-lg">
@@ -2955,7 +2955,7 @@ function PaymentsRoute() {
             </div>
           )}
 
-          <DialogFooter className="pt-2 border-t flex flex-row items-center justify-between sm:justify-between w-full">
+          <DialogFooter className="p-4 border-t bg-muted/20 shrink-0 flex flex-row items-center justify-between sm:justify-between w-full">
             <Button variant="outline" size="sm" onClick={() => setBroadcastOpen(false)}>
               Close
             </Button>

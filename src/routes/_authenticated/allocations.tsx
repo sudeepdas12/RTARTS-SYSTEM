@@ -2122,13 +2122,13 @@ function AllocationsPage() {
 
       {/* Fund Allocation Modal */}
       <Dialog open={fundOpen} onOpenChange={setFundOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
+        <DialogContent className="max-w-md max-h-[90vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="p-5 pb-3 border-b shrink-0">
             <DialogTitle>
               {editingFund ? "Edit Fund Allocation" : "New Fund Allocation"}
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-3 text-xs">
+          <div className="flex-1 overflow-y-auto p-5 space-y-3 text-xs">
             <div>
               <Label className="text-xs">Company</Label>
               <Select
@@ -2192,7 +2192,7 @@ function AllocationsPage() {
               />
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="p-4 border-t bg-muted/20 shrink-0 flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={() => setFundOpen(false)}>
               Cancel
             </Button>

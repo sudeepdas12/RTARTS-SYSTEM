@@ -1088,307 +1088,314 @@ function MutualFundPage() {
                       <Plus className="mr-2 h-4 w-4" /> New Payable
                     </Button>
                   </DialogTrigger>
-                  <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-                    <DialogHeader>
+                  <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col p-0 gap-0">
+                    <DialogHeader className="p-6 pb-3 border-b shrink-0">
                       <DialogTitle>
                         {editing ? "Edit Mutual Fund Payable" : "New Mutual Fund Payable"}
                       </DialogTitle>
                     </DialogHeader>
-                    {editing && (
-                      <div className="rounded-md border bg-muted/30 p-3 mb-4">
-                        <div className="text-xs font-semibold text-muted-foreground mb-2">
-                          Client Details
-                        </div>
-                        <div className="grid gap-3 md:grid-cols-2">
-                          <div className="space-y-1.5">
-                            <div className="flex items-center justify-between">
-                              <Label>BOID (16 Digits)</Label>
-                              {form.client_boid &&
-                                form.client_boid.length > 0 &&
-                                form.client_boid.length < 16 && (
-                                  <span className="text-[10px] text-amber-600 font-mono">
-                                    {form.client_boid.length}/16 (will auto-pad)
+                    <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                      {/* Client Details (editable when editing) */}
+                      {editing && (
+                        <div className="rounded-md border bg-muted/30 p-3 mb-4">
+                          <div className="text-xs font-semibold text-muted-foreground mb-2">
+                            Client Details
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div className="space-y-1.5">
+                              <div className="flex items-center justify-between">
+                                <Label>BOID (16 Digits)</Label>
+                                {form.client_boid &&
+                                  form.client_boid.length > 0 &&
+                                  form.client_boid.length < 16 && (
+                                    <span className="text-[10px] text-amber-600 font-mono">
+                                      {form.client_boid.length}/16 (will auto-pad)
+                                    </span>
+                                  )}
+                                {form.client_boid && form.client_boid.length === 16 && (
+                                  <span className="text-[10px] text-emerald-600 font-mono">
+                                    ✓ 16 digits
                                   </span>
                                 )}
-                              {form.client_boid && form.client_boid.length === 16 && (
-                                <span className="text-[10px] text-emerald-600 font-mono">
-                                  ✓ 16 digits
-                                </span>
-                              )}
+                              </div>
+                              <Input
+                                value={form.client_boid}
+                                onChange={(e) => {
+                                  const clean = e.target.value
+                                    .replace(/[^0-9A-Za-z]/g, "")
+                                    .slice(0, 16);
+                                  setForm({ ...form, client_boid: clean });
+                                }}
+                                placeholder="13010200..."
+                                maxLength={16}
+                                className="font-mono"
+                              />
                             </div>
-                            <Input
-                              value={form.client_boid}
-                              onChange={(e) => {
-                                const clean = e.target.value
-                                  .replace(/[^0-9A-Za-z]/g, "")
-                                  .slice(0, 16);
-                                setForm({ ...form, client_boid: clean });
-                              }}
-                              placeholder="13010200..."
-                              maxLength={16}
-                              className="font-mono"
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label>Client Code</Label>
-                            <Input
-                              value={form.client_code}
-                              disabled
-                              onChange={(e) => setForm({ ...form, client_code: e.target.value })}
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label>Full Name</Label>
-                            <Input
-                              value={form.client_full_name}
-                              onChange={(e) =>
-                                setForm({ ...form, client_full_name: e.target.value })
-                              }
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label>Father's Name</Label>
-                            <Input
-                              value={form.client_father_name}
-                              onChange={(e) =>
-                                setForm({ ...form, client_father_name: e.target.value })
-                              }
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label>Grandfather's Name</Label>
-                            <Input
-                              value={form.client_grandfather_name}
-                              onChange={(e) =>
-                                setForm({ ...form, client_grandfather_name: e.target.value })
-                              }
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label>PAN Number</Label>
-                            <Input
-                              value={form.client_pan}
-                              onChange={(e) => setForm({ ...form, client_pan: e.target.value })}
-                              placeholder="9-digit PAN"
-                              className="font-mono"
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label>Citizenship Number</Label>
-                            <Input
-                              value={form.client_citizenship}
-                              onChange={(e) =>
-                                setForm({ ...form, client_citizenship: e.target.value })
-                              }
-                              placeholder="Citizenship No."
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label>NID Number (National ID)</Label>
-                            <Input
-                              value={form.client_nid}
-                              onChange={(e) => setForm({ ...form, client_nid: e.target.value })}
-                              placeholder="10-digit NID"
-                              className="font-mono"
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label>Address</Label>
-                            <Input
-                              value={form.client_address}
-                              onChange={(e) => setForm({ ...form, client_address: e.target.value })}
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label>District</Label>
-                            <Input
-                              value={form.client_district}
-                              onChange={(e) =>
-                                setForm({ ...form, client_district: e.target.value })
-                              }
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label>Phone</Label>
-                            <Input
-                              value={form.client_phone}
-                              onChange={(e) => setForm({ ...form, client_phone: e.target.value })}
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label>Bank Name</Label>
-                            <Input
-                              value={form.client_bank_name}
-                              onChange={(e) =>
-                                setForm({ ...form, client_bank_name: e.target.value })
-                              }
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label>Bank Account No</Label>
-                            <Input
-                              value={form.client_bank_account_no}
-                              onChange={(e) =>
-                                setForm({ ...form, client_bank_account_no: e.target.value })
-                              }
-                            />
+                            <div className="space-y-1.5">
+                              <Label>Client Code</Label>
+                              <Input
+                                value={form.client_code}
+                                disabled
+                                onChange={(e) => setForm({ ...form, client_code: e.target.value })}
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label>Full Name</Label>
+                              <Input
+                                value={form.client_full_name}
+                                onChange={(e) =>
+                                  setForm({ ...form, client_full_name: e.target.value })
+                                }
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label>Father's Name</Label>
+                              <Input
+                                value={form.client_father_name}
+                                onChange={(e) =>
+                                  setForm({ ...form, client_father_name: e.target.value })
+                                }
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label>Grandfather's Name</Label>
+                              <Input
+                                value={form.client_grandfather_name}
+                                onChange={(e) =>
+                                  setForm({ ...form, client_grandfather_name: e.target.value })
+                                }
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label>PAN Number</Label>
+                              <Input
+                                value={form.client_pan}
+                                onChange={(e) => setForm({ ...form, client_pan: e.target.value })}
+                                placeholder="9-digit PAN"
+                                className="font-mono"
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label>Citizenship Number</Label>
+                              <Input
+                                value={form.client_citizenship}
+                                onChange={(e) =>
+                                  setForm({ ...form, client_citizenship: e.target.value })
+                                }
+                                placeholder="Citizenship No."
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label>NID Number (National ID)</Label>
+                              <Input
+                                value={form.client_nid}
+                                onChange={(e) => setForm({ ...form, client_nid: e.target.value })}
+                                placeholder="10-digit NID"
+                                className="font-mono"
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label>Address</Label>
+                              <Input
+                                value={form.client_address}
+                                onChange={(e) =>
+                                  setForm({ ...form, client_address: e.target.value })
+                                }
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label>District</Label>
+                              <Input
+                                value={form.client_district}
+                                onChange={(e) =>
+                                  setForm({ ...form, client_district: e.target.value })
+                                }
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label>Phone</Label>
+                              <Input
+                                value={form.client_phone}
+                                onChange={(e) => setForm({ ...form, client_phone: e.target.value })}
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label>Bank Name</Label>
+                              <Input
+                                value={form.client_bank_name}
+                                onChange={(e) =>
+                                  setForm({ ...form, client_bank_name: e.target.value })
+                                }
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label>Bank Account No</Label>
+                              <Input
+                                value={form.client_bank_account_no}
+                                onChange={(e) =>
+                                  setForm({ ...form, client_bank_account_no: e.target.value })
+                                }
+                              />
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    )}
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <div className="space-y-1.5">
-                        <Label>Company *</Label>
-                        <Select
-                          value={form.company_id}
-                          onValueChange={(v) => setForm({ ...form, company_id: v })}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select company" />
-                          </SelectTrigger>
-                          <SelectContent className="max-h-60 overflow-y-auto">
-                            {relevantCompanies.map((c) => (
-                              <SelectItem key={c.id} value={c.id}>
-                                {c.company_code} — {c.company_name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>Client *</Label>
-                        <Select
-                          value={form.client_id}
-                          onValueChange={(v) => setForm({ ...form, client_id: v })}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select client" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {clients.map((c) => (
-                              <SelectItem key={c.id} value={c.id}>
-                                {c.full_name} {c.boid ? `(${c.boid})` : ""}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>Shares Held</Label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          value={form.shares_held}
-                          onChange={(e) => setForm({ ...form, shares_held: e.target.value })}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>Dividend Rate</Label>
-                        <Input
-                          type="number"
-                          step="0.0001"
-                          value={form.dividend_rate}
-                          onChange={(e) => setForm({ ...form, dividend_rate: e.target.value })}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>Gross Dividend</Label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          value={form.gross_dividend}
-                          onChange={(e) => setForm({ ...form, gross_dividend: e.target.value })}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>Tax Amount</Label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          value={form.tax_amount}
-                          onChange={(e) => setForm({ ...form, tax_amount: e.target.value })}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>Net Payable</Label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          value={form.net_payable}
-                          placeholder={String(previewNet || "")}
-                          onChange={(e) => setForm({ ...form, net_payable: e.target.value })}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>Fiscal Year</Label>
-                        <Input
-                          placeholder="2081/82"
-                          value={form.fiscal_year}
-                          inputMode="numeric"
-                          onChange={(e) => {
-                            const nextValue = e.target.value.replace(/[^0-9/]/g, "").slice(0, 9);
-                            setForm({ ...form, fiscal_year: nextValue });
-                          }}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>Payment Status</Label>
-                        <Select
-                          value={form.payment_status}
-                          onValueChange={(v) =>
-                            setForm({ ...form, payment_status: v as PaymentStatus })
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="Pending">Pending</SelectItem>
-                            <SelectItem value="Partial">Partial</SelectItem>
-                            <SelectItem value="Paid">Paid</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>Payment Date</Label>
-                        <Input
-                          type="date"
-                          value={form.payment_date}
-                          onChange={(e) => setForm({ ...form, payment_date: e.target.value })}
-                        />
-                      </div>
-                      <div className="space-y-1.5 md:col-span-2">
-                        <Label>Payment Reference</Label>
-                        <Input
-                          value={form.payment_reference}
-                          onChange={(e) => setForm({ ...form, payment_reference: e.target.value })}
-                        />
-                      </div>
-                      <div className="space-y-1.5 md:col-span-2">
-                        <Label>Bank Name</Label>
-                        <Input
-                          value={form.client_bank_name}
-                          onChange={(e) => setForm({ ...form, client_bank_name: e.target.value })}
-                        />
-                      </div>
-                      <div className="space-y-1.5 md:col-span-2">
-                        <Label>Bank Account No</Label>
-                        <Input
-                          value={form.client_bank_account_no}
-                          onChange={(e) =>
-                            setForm({ ...form, client_bank_account_no: e.target.value })
-                          }
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>Lot Name</Label>
-                        <Input
-                          value={form.lot_name}
-                          onChange={(e) => setForm({ ...form, lot_name: e.target.value })}
-                        />
+                      )}
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <Label>Company *</Label>
+                          <Select
+                            value={form.company_id}
+                            onValueChange={(v) => setForm({ ...form, company_id: v })}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select company" />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-60 overflow-y-auto">
+                              {relevantCompanies.map((c) => (
+                                <SelectItem key={c.id} value={c.id}>
+                                  {c.company_code} — {c.company_name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Client *</Label>
+                          <Select
+                            value={form.client_id}
+                            onValueChange={(v) => setForm({ ...form, client_id: v })}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select client" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {clients.map((c) => (
+                                <SelectItem key={c.id} value={c.id}>
+                                  {c.full_name} {c.boid ? `(${c.boid})` : ""}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Shares Held</Label>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            value={form.shares_held}
+                            onChange={(e) => setForm({ ...form, shares_held: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Dividend Rate</Label>
+                          <Input
+                            type="number"
+                            step="0.0001"
+                            value={form.dividend_rate}
+                            onChange={(e) => setForm({ ...form, dividend_rate: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Gross Dividend</Label>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            value={form.gross_dividend}
+                            onChange={(e) => setForm({ ...form, gross_dividend: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Tax Amount</Label>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            value={form.tax_amount}
+                            onChange={(e) => setForm({ ...form, tax_amount: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Net Payable</Label>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            value={form.net_payable}
+                            placeholder={String(previewNet || "")}
+                            onChange={(e) => setForm({ ...form, net_payable: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Fiscal Year</Label>
+                          <Input
+                            placeholder="2081/82"
+                            value={form.fiscal_year}
+                            inputMode="numeric"
+                            onChange={(e) => {
+                              const nextValue = e.target.value.replace(/[^0-9/]/g, "").slice(0, 9);
+                              setForm({ ...form, fiscal_year: nextValue });
+                            }}
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Payment Status</Label>
+                          <Select
+                            value={form.payment_status}
+                            onValueChange={(v) =>
+                              setForm({ ...form, payment_status: v as PaymentStatus })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="Pending">Pending</SelectItem>
+                              <SelectItem value="Partial">Partial</SelectItem>
+                              <SelectItem value="Paid">Paid</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Payment Date</Label>
+                          <Input
+                            type="date"
+                            value={form.payment_date}
+                            onChange={(e) => setForm({ ...form, payment_date: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-1.5 md:col-span-2">
+                          <Label>Payment Reference</Label>
+                          <Input
+                            value={form.payment_reference}
+                            onChange={(e) =>
+                              setForm({ ...form, payment_reference: e.target.value })
+                            }
+                          />
+                        </div>
+                        <div className="space-y-1.5 md:col-span-2">
+                          <Label>Bank Name</Label>
+                          <Input
+                            value={form.client_bank_name}
+                            onChange={(e) => setForm({ ...form, client_bank_name: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-1.5 md:col-span-2">
+                          <Label>Bank Account No</Label>
+                          <Input
+                            value={form.client_bank_account_no}
+                            onChange={(e) =>
+                              setForm({ ...form, client_bank_account_no: e.target.value })
+                            }
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Lot Name</Label>
+                          <Input
+                            value={form.lot_name}
+                            onChange={(e) => setForm({ ...form, lot_name: e.target.value })}
+                          />
+                        </div>
                       </div>
                     </div>
-                    <DialogFooter>
+                    <DialogFooter className="p-4 border-t bg-muted/20 shrink-0 flex justify-end gap-2">
                       <Button
                         variant="outline"
                         onClick={() => {

@@ -433,15 +433,15 @@ function ApprovalsPage() {
       </div>
 
       <Dialog open={!!viewing} onOpenChange={(o) => !o && setViewing(null)}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="p-6 pb-4 border-b shrink-0">
             <DialogTitle className="flex items-center gap-2">
               <ShieldCheck className="h-5 w-5 text-primary" />
               Approval Request Review
             </DialogTitle>
           </DialogHeader>
           {viewing && (
-            <div className="space-y-4">
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
               <div className="grid grid-cols-2 gap-3 text-xs bg-muted/40 p-3 rounded-lg border">
                 <div>
                   <span className="text-muted-foreground font-medium">Entity Type:</span>{" "}
@@ -487,7 +487,7 @@ function ApprovalsPage() {
               </div>
             </div>
           )}
-          <DialogFooter className="gap-2">
+          <DialogFooter className="p-4 border-t bg-muted/20 shrink-0 gap-2 flex justify-end">
             {viewing?.status === "Pending" && canApprove ? (
               <>
                 <Button
