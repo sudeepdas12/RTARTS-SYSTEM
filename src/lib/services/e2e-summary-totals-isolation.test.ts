@@ -12,11 +12,19 @@ const ANON_KEY =
   process.env.VITE_SUPABASE_ANON_KEY ||
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0";
 
-const adminClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false },
-});
+const isLiveDb =
+  !process.env.CI ||
+  Boolean(
+    process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.SUPABASE_URL !== "http://127.0.0.1:54321",
+  );
 
-describe("E2E Summary Totals & Tenant Isolation Invariants", () => {
+const adminClient = isLiveDb
+  ? createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+  : (null as any);
+
+describe.skipIf(!isLiveDb)("E2E Summary Totals & Tenant Isolation Invariants", () => {
   let companyAId: string;
   let companyBId: string;
   let testUserId: string;
