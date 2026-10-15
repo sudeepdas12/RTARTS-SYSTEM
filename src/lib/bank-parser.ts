@@ -8,7 +8,12 @@ const parseCsvRow = (row: string): string[] => {
   for (let i = 0; i < row.length; i += 1) {
     const char = row[i];
     if (char === '"') {
-      inQuotes = !inQuotes;
+      if (inQuotes && i + 1 < row.length && row[i + 1] === '"') {
+        current += '"';
+        i += 1; // skip second quote in escaped pair ""
+      } else {
+        inQuotes = !inQuotes;
+      }
       continue;
     }
     if (char === "," && !inQuotes) {

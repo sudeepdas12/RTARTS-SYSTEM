@@ -1,4 +1,5 @@
-import { normalizeTaxRate, roundToPaisa } from "./dividend-calculator";
+import { normalizeTaxRate } from "./dividend-calculator";
+import { roundToPaisa } from "./currency";
 
 export interface InterestCalculationParams {
   debentureKitta: number; // Number of debentures held

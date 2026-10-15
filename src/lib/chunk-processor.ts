@@ -30,6 +30,20 @@ export interface ChunkOptions {
   userId?: string;
   isPreCalculated?: boolean;
   isRawInputFile?: boolean;
+  queryClient?: any;
+}
+
+/**
+ * Normalizes Nepali fiscal year strings ("2081/2082" -> "2081/82").
+ */
+export function normalizeFiscalYear(fy?: string): string | undefined {
+  if (!fy) return undefined;
+  const trimmed = fy.trim();
+  const m = trimmed.match(/^(\d{4})\/(\d{2})(\d{2})?$/);
+  if (!m) return trimmed;
+  const yr = m[1];
+  const end = m[3] ? m[2] + m[3] : m[2];
+  return `${yr}/${end.slice(-2)}`;
 }
 
 /** JSON-safe copy of raw row data for the upload_errors.raw_data (JSONB) column. */
@@ -105,7 +119,7 @@ export const ChunkProcessor = {
     uploadId: string,
     rows: any[],
     targetTable: string,
-    chunkSize = 1000,
+    chunkSize = 250,
     onProgress?: (progress: ChunkProgress) => void,
     options?: ChunkOptions,
     externalSharedContext?: ChunkSharedContext,
@@ -114,12 +128,10 @@ export const ChunkProcessor = {
     let success = 0;
     let errors = 0;
     let clientsCreated = 0;
-    if (chunkSize && chunkSize < 250) {
-      console.warn(
-        `[ChunkProcessor] Requested chunkSize (${chunkSize}) is below minimum threshold (250). Adjusted to 250 for optimal bulk database operations.`,
-      );
+    const effectiveChunkSize = Math.max(50, chunkSize || 250);
+    if (options?.fiscalYear) {
+      options.fiscalYear = normalizeFiscalYear(options.fiscalYear);
     }
-    const effectiveChunkSize = Math.max(250, chunkSize || 1000);
     const sharedContext: ChunkSharedContext = externalSharedContext || {
       companyId: options?.companyId || "", // Use direct ID if provided (bypasses name lookup)
       clientIdCache: new Map<string, string>(),
@@ -135,6 +147,8 @@ export const ChunkProcessor = {
     for (let i = 0; i < totalChunks; i++) {
       const chunk = rows.slice(i * effectiveChunkSize, (i + 1) * effectiveChunkSize);
       let rowErrorCount = 0;
+      let chunkSuccess = 0;
+      let chunkErrors = 0;
 
       try {
         const result = await ImportService.processChunk(
@@ -146,14 +160,14 @@ export const ChunkProcessor = {
         );
         // Use explicit inserted/processed counts from the processor (edge/RPC/fallback).
         // Default to 0 rather than assuming the entire chunk succeeded.
-        const chunkSuccess = Number(result?.rowsProcessed ?? result?.inserted ?? 0);
+        chunkSuccess = Number(result?.rowsProcessed ?? result?.inserted ?? 0);
         clientsCreated += Number(result?.clientsCreated ?? 0);
         // Count errors ONLY from the per-row error list returned by the processor.
         // Footer/total rows are silently filtered out by the processor and should NOT
         // be counted as errors. A chunk that was entirely footer rows returns
         // rowsProcessed: 0 with no errors — that's a successful skip, not a failure.
         rowErrorCount = Array.isArray(result?.errors) ? result.errors.length : 0;
-        const chunkErrors = rowErrorCount > 0 ? rowErrorCount : 0;
+        chunkErrors = rowErrorCount > 0 ? rowErrorCount : 0;
         success += chunkSuccess;
         errors += chunkErrors;
 
@@ -202,6 +216,19 @@ export const ChunkProcessor = {
 
       processed += chunk.length;
 
+      // Update upload_history atomically to eliminate stuck "Processing" states
+      try {
+        await (supabase as any).rpc("increment_upload_progress_atomic", {
+          p_upload_id: uploadId,
+          p_processed_inc: chunk.length,
+          p_success_inc: chunkSuccess,
+          p_error_inc: chunkErrors,
+          p_error_message: rowErrorCount > 0 ? `${rowErrorCount} errors in chunk ${i + 1}` : null,
+        });
+      } catch {
+        // Fall back gracefully if atomic RPC is not yet created in local DB
+      }
+
       if (onProgress) {
         onProgress({
           totalRows: rows.length,
@@ -232,6 +259,34 @@ export const ChunkProcessor = {
       await UploadService.updateUploadStatus(uploadId, finalStatus, updates);
     } catch (err) {
       console.warn("Could not update upload_history status (table may not exist yet):", err);
+    }
+
+    // Invalidate dependent queries to ensure immediate visibility ("seen") after upload
+    try {
+      if (options?.queryClient?.invalidateQueries) {
+        await Promise.allSettled([
+          options.queryClient.invalidateQueries({ queryKey: ["companies"] }),
+          options.queryClient.invalidateQueries({ queryKey: ["clients"] }),
+          options.queryClient.invalidateQueries({ queryKey: ["dividend_payables"] }),
+          options.queryClient.invalidateQueries({ queryKey: ["interest_payables"] }),
+          options.queryClient.invalidateQueries({ queryKey: ["mutual_fund_payables"] }),
+          options.queryClient.invalidateQueries({ queryKey: ["upload_history"] }),
+          options.queryClient.invalidateQueries({ queryKey: ["payable-summary"] }),
+        ]);
+      }
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("rtarts:upload-completed", {
+            detail: {
+              uploadId,
+              companyId: options?.companyId,
+              fiscalYear: options?.fiscalYear,
+            },
+          }),
+        );
+      }
+    } catch (invErr) {
+      console.warn("Could not invalidate query caches upon upload completion:", invErr);
     }
 
     return {

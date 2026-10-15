@@ -118,11 +118,6 @@ const COLUMN_ALIASES: Record<keyof ColumnMapping, string[]> = {
     "BENEFICIARY NO",
     "BENEFICIARY NO.",
     "BENEFICIARY",
-    "BENEFICIARY ACC NO",
-    "BENEFICIARY ACCOUNT NO",
-    "BENEFICIARY ACCOUNT NUMBER",
-    "BENEFICIARY A/C",
-    "BENEFICIARY A/C NO",
     "CLIENT CODE",
     "CLIENT_CODE",
     "CLIENTCODE",
@@ -900,6 +895,22 @@ export const ExcelParser = {
       const mapping: Record<string, keyof ColumnMapping> = {};
       // Priority order for fields that could have multiple matching columns
       const fieldPriority: Record<string, string[]> = {
+        boid: [
+          "BOID",
+          "BOID NO",
+          "BOID NO.",
+          "BENEFICIARY ID",
+          "BENEFICIARY_ID",
+          "DP CLIENT ID",
+          "DP_CLIENT_ID",
+          "CLIENT ID",
+          "DEMAT ACCOUNT",
+          "DEMAT A/C",
+          "DMAT",
+          "FOLIO NO",
+          "FOLIO",
+          "CLIENT CODE",
+        ],
         net_payable: [
           "NET_DIV.",
           "NET PAYABLE",
@@ -1075,6 +1086,49 @@ export const ExcelParser = {
         }
       }
 
+      // Disambiguate BOID by validating 16-digit 130... BOID sample patterns
+      const sampleDataRows = json.slice(
+        headerRowIndex + 1,
+        Math.min(headerRowIndex + 25, json.length),
+      );
+      if (sampleDataRows.length > 0) {
+        const isBoidSample = (val: any) => {
+          if (val === null || val === undefined) return false;
+          const clean = String(val)
+            .trim()
+            .replace(/[^0-9]/g, "");
+          return clean.length === 16 && clean.startsWith("130");
+        };
+
+        const currentBoidEntry = Object.entries(mapping).find(([, f]) => f === "boid");
+        const boidCol = currentBoidEntry?.[0];
+        let hasValid16DigitSamples = false;
+
+        if (boidCol) {
+          const colIdx = headers.indexOf(boidCol);
+          if (colIdx >= 0) {
+            hasValid16DigitSamples = sampleDataRows.some(
+              (r) => Array.isArray(r) && isBoidSample(r[colIdx]),
+            );
+          }
+        }
+
+        if (!hasValid16DigitSamples) {
+          for (let c = 0; c < headers.length; c++) {
+            const h = headers[c];
+            if (!h) continue;
+            const matches = sampleDataRows.filter(
+              (r) => Array.isArray(r) && isBoidSample(r[c]),
+            ).length;
+            if (matches >= 2 || (sampleDataRows.length === 1 && matches === 1)) {
+              if (boidCol) delete mapping[boidCol];
+              mapping[h] = "boid";
+              break;
+            }
+          }
+        }
+      }
+
       // Report-only / reference sheets (e.g. bank totals, VAT, cover tabs) have
       // no investor identity and no shareholder holdings. Skip them so they are
       // never shown for validation or sent to the import pipeline.
@@ -1129,6 +1183,26 @@ export const ExcelParser = {
           if (row[colName] !== undefined && row[mappedField] === undefined) {
             row[mappedField] = row[colName];
           }
+        }
+
+        // Return null for blank/empty tax cells so tax is not coerced to 0
+        const divTaxCol = Object.entries(mapping).find(([, f]) => f === "div_tax")?.[0];
+        if (
+          divTaxCol &&
+          (row[divTaxCol] === undefined ||
+            row[divTaxCol] === null ||
+            String(row[divTaxCol]).trim() === "")
+        ) {
+          row.div_tax = null;
+        }
+        const bonTaxCol = Object.entries(mapping).find(([, f]) => f === "bon_tax")?.[0];
+        if (
+          bonTaxCol &&
+          (row[bonTaxCol] === undefined ||
+            row[bonTaxCol] === null ||
+            String(row[bonTaxCol]).trim() === "")
+        ) {
+          row.bon_tax = null;
         }
 
         rawRows.push(row);

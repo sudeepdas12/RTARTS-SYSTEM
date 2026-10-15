@@ -2,6 +2,18 @@ import { supabase } from "@/integrations/supabase/client";
 import { fetchAllRows } from "./services/database";
 import { ParsedExcelData } from "./excel-parser";
 import { RECONCILIATION_TOLERANCE_NPR, BULK_CHUNK_SIZE } from "./constants";
+import { toPaisa, fromPaisa, roundToPaisa } from "./currency";
+
+/**
+ * Compares two amounts in integer paisa to eliminate IEEE 754 float drift.
+ */
+export const amountEqualsPaisa = (
+  amt1: number,
+  amt2: number,
+  tolerancePaisa: number = Math.round(RECONCILIATION_TOLERANCE_NPR * 100),
+): boolean => {
+  return Math.abs(toPaisa(amt1) - toPaisa(amt2)) <= tolerancePaisa;
+};
 
 export interface CategorySummary {
   categoryName: string;
@@ -576,13 +588,10 @@ export const ReconciliationEngine = {
 
         const matchesPayableAmount = (p: PayableRow, amt: number): boolean => {
           const { full, prorated, prorated182, remaining } = getPayableAmounts(p);
-          if (Math.abs(full - amt) <= RECONCILIATION_TOLERANCE_NPR) return true;
-          if (prorated !== null && Math.abs(prorated - amt) <= RECONCILIATION_TOLERANCE_NPR)
-            return true;
-          if (prorated182 !== null && Math.abs(prorated182 - amt) <= RECONCILIATION_TOLERANCE_NPR)
-            return true;
-          if (remaining !== null && Math.abs(remaining - amt) <= RECONCILIATION_TOLERANCE_NPR)
-            return true;
+          if (amountEqualsPaisa(full, amt)) return true;
+          if (prorated !== null && amountEqualsPaisa(prorated, amt)) return true;
+          if (prorated182 !== null && amountEqualsPaisa(prorated182, amt)) return true;
+          if (remaining !== null && amountEqualsPaisa(remaining, amt)) return true;
           return false;
         };
 
@@ -990,13 +999,10 @@ export const ReconciliationEngine = {
 
     const matchesPayableAmount = (p: any, amt: number): boolean => {
       const { full, prorated, prorated182, remaining } = getPayableAmounts(p);
-      if (Math.abs(full - amt) <= RECONCILIATION_TOLERANCE_NPR) return true;
-      if (prorated !== null && Math.abs(prorated - amt) <= RECONCILIATION_TOLERANCE_NPR)
-        return true;
-      if (prorated182 !== null && Math.abs(prorated182 - amt) <= RECONCILIATION_TOLERANCE_NPR)
-        return true;
-      if (remaining !== null && Math.abs(remaining - amt) <= RECONCILIATION_TOLERANCE_NPR)
-        return true;
+      if (amountEqualsPaisa(full, amt)) return true;
+      if (prorated !== null && amountEqualsPaisa(prorated, amt)) return true;
+      if (prorated182 !== null && amountEqualsPaisa(prorated182, amt)) return true;
+      if (remaining !== null && amountEqualsPaisa(remaining, amt)) return true;
       return false;
     };
 
@@ -1129,20 +1135,20 @@ export const ReconciliationEngine = {
       const { full, prorated, prorated182, remaining } = getPayableAmounts(p);
       if (
         remaining !== null &&
-        Math.abs(remaining - amt) <= RECONCILIATION_TOLERANCE_NPR &&
+        amountEqualsPaisa(remaining, amt) &&
         p.payment_status === "Partial"
       ) {
         return true;
       }
       if (p.payable_type !== "interest") return true;
       const periods = payableMatchedPeriods.get(p.id) || new Set<number>();
-      if (Math.abs(full - amt) <= RECONCILIATION_TOLERANCE_NPR) {
+      if (amountEqualsPaisa(full, amt)) {
         return periods.size === 0;
       }
-      if (prorated !== null && Math.abs(prorated - amt) <= RECONCILIATION_TOLERANCE_NPR) {
+      if (prorated !== null && amountEqualsPaisa(prorated, amt)) {
         return !periods.has(183);
       }
-      if (prorated182 !== null && Math.abs(prorated182 - amt) <= RECONCILIATION_TOLERANCE_NPR) {
+      if (prorated182 !== null && amountEqualsPaisa(prorated182, amt)) {
         return !periods.has(182);
       }
       return true;
@@ -1156,7 +1162,7 @@ export const ReconciliationEngine = {
       }
       if (
         remaining !== null &&
-        Math.abs(remaining - amt) <= RECONCILIATION_TOLERANCE_NPR &&
+        amountEqualsPaisa(remaining, amt) &&
         p.payment_status === "Partial"
       ) {
         usedPayableIds.add(p.id);
@@ -1167,12 +1173,9 @@ export const ReconciliationEngine = {
         payableMatchedPeriods.set(p.id, new Set<number>());
       }
       const periods = payableMatchedPeriods.get(p.id)!;
-      if (prorated !== null && Math.abs(prorated - amt) <= RECONCILIATION_TOLERANCE_NPR) {
+      if (prorated !== null && amountEqualsPaisa(prorated, amt)) {
         periods.add(183);
-      } else if (
-        prorated182 !== null &&
-        Math.abs(prorated182 - amt) <= RECONCILIATION_TOLERANCE_NPR
-      ) {
+      } else if (prorated182 !== null && amountEqualsPaisa(prorated182, amt)) {
         periods.add(182);
       } else {
         periods.add(182);
@@ -1212,9 +1215,9 @@ export const ReconciliationEngine = {
           refPayments.find(
             (p) =>
               !usedPaymentIds.has(p.id) &&
-              (Math.abs(Number(p.net_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR ||
+              (amountEqualsPaisa(Number(p.net_amount), amount) ||
                 (Number(p.paid_amount || 0) > 0 &&
-                  Math.abs(Number(p.paid_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR)),
+                  amountEqualsPaisa(Number(p.paid_amount), amount))),
           ) || null;
       }
       if (!bestPayment && txn.description) {
@@ -1227,9 +1230,9 @@ export const ReconciliationEngine = {
             refPayments.find(
               (p) =>
                 !usedPaymentIds.has(p.id) &&
-                (Math.abs(Number(p.net_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR ||
+                (amountEqualsPaisa(Number(p.net_amount), amount) ||
                   (Number(p.paid_amount || 0) > 0 &&
-                    Math.abs(Number(p.paid_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR)),
+                    amountEqualsPaisa(Number(p.paid_amount), amount))),
             ) || null;
         }
       }
@@ -1241,9 +1244,9 @@ export const ReconciliationEngine = {
           acctPayments.find(
             (p) =>
               !usedPaymentIds.has(p.id) &&
-              (Math.abs(Number(p.net_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR ||
+              (amountEqualsPaisa(Number(p.net_amount), amount) ||
                 (Number(p.paid_amount || 0) > 0 &&
-                  Math.abs(Number(p.paid_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR)),
+                  amountEqualsPaisa(Number(p.paid_amount), amount))),
           ) || null;
       }
 
@@ -1266,9 +1269,9 @@ export const ReconciliationEngine = {
           namePayments.find(
             (p) =>
               !usedPaymentIds.has(p.id) &&
-              (Math.abs(Number(p.net_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR ||
+              (amountEqualsPaisa(Number(p.net_amount), amount) ||
                 (Number(p.paid_amount || 0) > 0 &&
-                  Math.abs(Number(p.paid_amount) - amount) <= RECONCILIATION_TOLERANCE_NPR)),
+                  amountEqualsPaisa(Number(p.paid_amount), amount))),
           ) || null;
       }
 
@@ -1450,14 +1453,14 @@ export const ReconciliationEngine = {
         systemAmount = Number(matchedBatch.total_net || matchedBatch.total_amount || 0);
       }
 
-      const difference = Number((systemAmount - amount).toFixed(2));
+      const difference = fromPaisa(toPaisa(systemAmount) - toPaisa(amount));
       let status: ReconciliationMatch["status"] = "Missing";
 
       if (isBankReject) {
         status = "Rejected";
         grandTotal.rejectedCount += 1;
       } else if (matchSources.length > 0) {
-        if (Math.abs(difference) <= RECONCILIATION_TOLERANCE_NPR) {
+        if (amountEqualsPaisa(systemAmount, amount)) {
           status = "Matched";
           grandTotal.matchedRecords += 1;
           if (matchSources.includes("payment")) summary.matchedFromPayment += 1;

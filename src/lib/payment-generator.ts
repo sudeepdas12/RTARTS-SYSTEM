@@ -121,18 +121,58 @@ export const PaymentGenerator = {
   },
 
   /**
+   * Validates payments for ConnectIPS export requirements.
+   * Returns list of invalid records missing a valid 16-digit CDSC BOID.
+   */
+  validateConnectIPS(payments: PaymentExportRecord[]): {
+    valid: boolean;
+    errors: { index: number; name: string; boid: string; reason: string }[];
+  } {
+    const errors: { index: number; name: string; boid: string; reason: string }[] = [];
+    payments.forEach((p, idx) => {
+      const name =
+        p.clients?.full_name || p.clients?.name || p.shareholderName || p.full_name || "Unknown";
+      const rawBoid = String(p.clients?.boid || p.boid || "")
+        .trim()
+        .replace(/[^0-9]/g, "");
+      if (!rawBoid || rawBoid.length !== 16) {
+        errors.push({
+          index: idx + 1,
+          name,
+          boid: rawBoid,
+          reason: !rawBoid
+            ? "Missing BOID"
+            : `Invalid length (${rawBoid.length} digits, must be 16)`,
+        });
+      }
+    });
+    return { valid: errors.length === 0, errors };
+  },
+
+  /**
    * Generates ConnectIPS specific CSV format for bulk batch upload.
-   * ConnectIPS format: batch header + beneficiary rows with destination bank routing
+   * ConnectIPS format: batch header + beneficiary rows with destination bank routing.
+   * Blocks export if any records have missing or invalid 16-digit BOIDs.
    */
   generateConnectIPS(payments: PaymentExportRecord[], batchName: string): string {
+    const validation = this.validateConnectIPS(payments);
+    if (!validation.valid) {
+      const first = validation.errors[0];
+      throw new Error(
+        `ConnectIPS export blocked: ${validation.errors.length} record(s) missing valid 16-digit BOID. First violation: Record #${first.index} (${first.name}) - ${first.reason}.`,
+      );
+    }
+
     let fileContent = `BENEFICIARY_ID,BANK_NAME,ACCOUNT_NUMBER,BENEFICIARY_NAME,AMOUNT,PAYMENT_TYPE,NARRATION\n`;
 
-    payments.forEach((p, index) => {
+    payments.forEach((p) => {
       const name =
         p.clients?.full_name || p.clients?.name || p.shareholderName || p.full_name || "Unknown";
       const accountNo = p.bank_account_no || p.bankAccountNo || "";
       const bankName = p.bank_name || p.bankName || "";
-      const boid = p.clients?.boid || p.boid || String(index + 1);
+      const boid = String(p.clients?.boid || p.boid || "")
+        .trim()
+        .replace(/[^0-9]/g, "");
       const rawAmount = Number(p.net_amount ?? p.netAmount ?? p.excelAmount ?? p.net_payable ?? 0);
       const amount = Math.max(0, isNaN(rawAmount) ? 0 : rawAmount);
       const payableType = (p.payable_type || "dividend").toUpperCase();
