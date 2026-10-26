@@ -457,40 +457,47 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Verify caller session using the token
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser(token);
+    // Verify caller session using the token or allow service_role key
+    let user: any = null;
 
-    if (userError || !user) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "Unauthorized: invalid caller authentication token",
-        }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    if (token === supabaseKey) {
+      user = { id: "00000000-0000-0000-0000-000000000000" };
+    } else {
+      const {
+        data: { user: authUser },
+        error: userError,
+      } = await supabase.auth.getUser(token);
+
+      if (userError || !authUser) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "Unauthorized: invalid caller authentication token",
+          }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      user = authUser;
+
+      // Verify caller has role permission (admin, supervisor, finance_operator)
+      const { data: roles, error: rolesError } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", user.id);
+
+      const hasAllowedRole = (roles || []).some((r: any) =>
+        ["admin", "supervisor", "finance_operator"].includes(r.role),
       );
-    }
 
-    // Verify caller has role permission (admin, supervisor, finance_operator)
-    const { data: roles, error: rolesError } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", user.id);
-
-    const hasAllowedRole = (roles || []).some((r: any) =>
-      ["admin", "supervisor", "finance_operator"].includes(r.role),
-    );
-
-    if (rolesError || !hasAllowedRole) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "Forbidden: caller lacks required role (admin, supervisor, finance_operator)",
-        }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      if (rolesError || !hasAllowedRole) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "Forbidden: caller lacks required role (admin, supervisor, finance_operator)",
+          }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
     }
 
     const payload: ChunkPayload = await req.json();

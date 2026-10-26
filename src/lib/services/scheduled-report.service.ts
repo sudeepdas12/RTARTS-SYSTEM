@@ -333,7 +333,7 @@ export const ScheduledReportService = {
         .update({
           last_run_at: new Date().toISOString(),
           next_run_at: nextRun.toISOString(),
-          delivery_status: "DELIVERED",
+          delivery_status: "GENERATED",
           last_error: null,
           updated_at: new Date().toISOString(),
         })

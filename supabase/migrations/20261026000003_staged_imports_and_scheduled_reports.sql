@@ -20,10 +20,14 @@ CREATE TABLE IF NOT EXISTS public.import_staging (
     staged_rows jsonb NOT NULL,
     options jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_by uuid DEFAULT auth.uid(),
+    upload_id uuid REFERENCES public.upload_history(id) ON DELETE SET NULL,
     status text DEFAULT 'STAGED' CHECK (status IN ('STAGED', 'COMMITTED', 'REJECTED')),
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     committed_at timestamp with time zone
 );
+
+ALTER TABLE public.import_staging ADD COLUMN IF NOT EXISTS upload_id uuid REFERENCES public.upload_history(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_import_staging_upload_id ON public.import_staging(upload_id);
 
 CREATE INDEX IF NOT EXISTS idx_import_staging_company_id ON public.import_staging(company_id);
 CREATE INDEX IF NOT EXISTS idx_import_staging_approval_id ON public.import_staging(approval_id);
@@ -235,6 +239,23 @@ CREATE POLICY report_presets_delete ON public.report_presets
         )
     );
 
+-- Client Multi-Tenant Isolation Constraints: Scope uniqueness per company
+ALTER TABLE public.clients DROP CONSTRAINT IF EXISTS clients_boid_key;
+ALTER TABLE public.clients DROP CONSTRAINT IF EXISTS clients_client_code_key;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'uq_clients_company_client_code'
+    ) THEN
+        ALTER TABLE public.clients ADD CONSTRAINT uq_clients_company_client_code UNIQUE (company_id, client_code);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'uq_clients_company_boid'
+    ) THEN
+        ALTER TABLE public.clients ADD CONSTRAINT uq_clients_company_boid UNIQUE (company_id, boid);
+    END IF;
+END $$;
+
 -- 5. Atomic RPC: Commit Staged Import
 CREATE OR REPLACE FUNCTION public.commit_staged_import(
     p_approval_id uuid,
@@ -250,6 +271,7 @@ DECLARE
     v_approval public.pending_approvals%ROWTYPE;
     v_user_id uuid := auth.uid();
     v_is_authorized boolean := false;
+    v_upload_id uuid;
     v_row jsonb;
     v_boid text;
     v_client_code text;
@@ -318,7 +340,40 @@ BEGIN
         RAISE EXCEPTION 'Unauthorized: Checker has no access to target company';
     END IF;
 
-    -- 7. Unpack staged rows and insert atomically into target ledger table
+    -- 7. Integrate with upload_history lifecycle (enabling duplicate check, audit, error, and rollback)
+    INSERT INTO public.upload_history (
+        user_id,
+        file_name,
+        file_size,
+        file_hash,
+        file_type,
+        sheet_name,
+        total_rows,
+        success_rows,
+        error_rows,
+        target_table,
+        status,
+        started_at,
+        completed_at,
+        created_at
+    ) VALUES (
+        v_staged.created_by,
+        v_staged.file_name,
+        0,
+        v_staged.file_hash,
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        v_staged.sheet_name,
+        jsonb_array_length(v_staged.staged_rows),
+        0,
+        0,
+        v_staged.target_table,
+        'Processing',
+        v_staged.created_at,
+        NULL,
+        now()
+    ) RETURNING id INTO v_upload_id;
+
+    -- 8. Unpack staged rows and insert atomically into target ledger table
     v_fiscal_year := COALESCE(v_staged.options->>'fiscalYear', '2080/81');
     v_dividend_type := COALESCE(v_staged.options->>'dividendType', 'Cash');
     v_dividend_rate := COALESCE((v_staged.options->>'dividendRate')::numeric, 0);
@@ -355,11 +410,20 @@ BEGIN
         v_bank_name := COALESCE(v_row->>'bank_name', v_row->>'BANK NAME', v_row->>'bank');
         v_bank_account := COALESCE(v_row->>'bank_account_number', v_row->>'ACCOUNT NO', v_row->>'account_no', v_row->>'bank_account');
 
-        -- Upsert client: find existing by boid or client_code, or insert new
-        SELECT id INTO v_client_id FROM public.clients WHERE boid = v_boid LIMIT 1;
+        -- Upsert client: strictly scoped to v_staged.company_id to avoid touching other tenant clients
+        v_client_id := NULL;
+        IF v_boid IS NOT NULL AND v_boid <> '' THEN
+            SELECT id INTO v_client_id 
+            FROM public.clients 
+            WHERE company_id = v_staged.company_id AND boid = v_boid 
+            LIMIT 1;
+        END IF;
 
-        IF v_client_id IS NULL THEN
-            SELECT id INTO v_client_id FROM public.clients WHERE client_code = v_client_code LIMIT 1;
+        IF v_client_id IS NULL AND v_client_code IS NOT NULL AND v_client_code <> '' THEN
+            SELECT id INTO v_client_id 
+            FROM public.clients 
+            WHERE company_id = v_staged.company_id AND client_code = v_client_code 
+            LIMIT 1;
         END IF;
 
         IF v_client_id IS NOT NULL THEN
@@ -369,7 +433,7 @@ BEGIN
                 bank_name = COALESCE(v_bank_name, public.clients.bank_name),
                 bank_account_no = COALESCE(v_bank_account, public.clients.bank_account_no),
                 updated_at = now()
-            WHERE id = v_client_id;
+            WHERE id = v_client_id AND company_id = v_staged.company_id;
         ELSE
             INSERT INTO public.clients (
                 company_id,
@@ -429,11 +493,12 @@ BEGIN
             (v_gross - v_tax)
         );
 
-        -- Insert into target ledger table
+        -- Insert into target ledger table with upload_id
         IF v_staged.target_table = 'interest_payables' THEN
             INSERT INTO public.interest_payables (
                 company_id,
                 client_id,
+                upload_id,
                 gross_interest,
                 tax_amount,
                 net_payable,
@@ -445,6 +510,7 @@ BEGIN
             ) VALUES (
                 v_staged.company_id,
                 v_client_id,
+                v_upload_id,
                 v_gross,
                 v_tax,
                 v_net,
@@ -458,6 +524,7 @@ BEGIN
             INSERT INTO public.mutual_fund_payables (
                 company_id,
                 client_id,
+                upload_id,
                 units_held,
                 nav,
                 gross_amount,
@@ -471,6 +538,7 @@ BEGIN
             ) VALUES (
                 v_staged.company_id,
                 v_client_id,
+                v_upload_id,
                 v_shares_held,
                 10.0,
                 v_gross,
@@ -487,6 +555,7 @@ BEGIN
             INSERT INTO public.dividend_payables (
                 company_id,
                 client_id,
+                upload_id,
                 shares_held,
                 dividend_rate,
                 gross_dividend,
@@ -504,6 +573,7 @@ BEGIN
             ) VALUES (
                 v_staged.company_id,
                 v_client_id,
+                v_upload_id,
                 v_shares_held,
                 v_dividend_rate,
                 v_gross,
@@ -529,7 +599,15 @@ BEGIN
         v_inserted_count := v_inserted_count + 1;
     END LOOP;
 
-    -- 8. Mark approval Approved
+    -- 9. Update upload_history completion
+    UPDATE public.upload_history
+    SET
+        status = 'Completed',
+        success_rows = v_inserted_count,
+        completed_at = now()
+    WHERE id = v_upload_id;
+
+    -- 10. Mark approval Approved
     UPDATE public.pending_approvals
     SET
         status = 'Approved',
@@ -538,14 +616,15 @@ BEGIN
         reviewed_at = now()
     WHERE id = p_approval_id;
 
-    -- 9. Mark staging COMMITTED
+    -- 11. Mark staging COMMITTED and link generated upload_id
     UPDATE public.import_staging
     SET
         status = 'COMMITTED',
+        upload_id = v_upload_id,
         committed_at = now()
     WHERE id = v_staged.id;
 
-    -- 10. Record approval log
+    -- 12. Record approval log
     INSERT INTO public.approval_logs (
         approval_id,
         action,
@@ -564,7 +643,7 @@ BEGIN
         now()
     );
 
-    -- 11. Record system audit log
+    -- 13. Record system audit log
     INSERT INTO public.audit_logs (
         user_id,
         action,
@@ -580,6 +659,7 @@ BEGIN
         jsonb_build_object(
             'approval_id', p_approval_id,
             'company_id', v_staged.company_id,
+            'upload_id', v_upload_id,
             'rows_committed', v_inserted_count,
             'target_table', v_staged.target_table,
             'file_name', v_staged.file_name,
@@ -592,6 +672,7 @@ BEGIN
         'success', true,
         'approval_id', p_approval_id,
         'staging_id', v_staged.id,
+        'upload_id', v_upload_id,
         'target_table', v_staged.target_table,
         'rows_committed', v_inserted_count,
         'status', 'Approved'
@@ -692,14 +773,253 @@ COMMENT ON FUNCTION public.commit_staged_import IS 'Atomic verification, maker-c
 COMMENT ON FUNCTION public.reject_staged_import IS 'Checker rejection for material staged imports with audit logging.';
 
 REVOKE EXECUTE ON FUNCTION public.commit_staged_import(uuid, text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.commit_staged_import(uuid, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.commit_staged_import(uuid, text) TO authenticated, service_role;
 
 REVOKE EXECUTE ON FUNCTION public.reject_staged_import(uuid, text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.reject_staged_import(uuid, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.reject_staged_import(uuid, text) TO authenticated, service_role;
 
 -- 7. Table Grants for authenticated and service_role
 GRANT ALL ON TABLE public.import_staging TO authenticated, service_role;
 GRANT ALL ON TABLE public.scheduled_reports TO authenticated, service_role;
 GRANT ALL ON TABLE public.report_versions TO authenticated, service_role;
 GRANT ALL ON TABLE public.report_presets TO authenticated, service_role;
+
+-- 9. Scoped promote_agm_clients_and_payables for company-level multi-tenancy
+CREATE OR REPLACE FUNCTION public.promote_agm_clients_and_payables(p_company_id uuid, p_clients jsonb, p_payables jsonb) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_user_id UUID := auth.uid();
+  v_client_rec jsonb;
+  v_pay_rec jsonb;
+  v_boid text;
+  v_client_id uuid;
+  v_upserted_clients integer := 0;
+  v_inserted_payables integer := 0;
+  v_boid_to_id_map jsonb := '{}'::jsonb;
+  v_target_fiscal_year text;
+BEGIN
+  IF p_company_id IS NULL THEN
+    RAISE EXCEPTION 'p_company_id is required';
+  END IF;
+
+  -- 1. Upsert Clients with company isolation
+  FOR v_client_rec IN SELECT * FROM jsonb_array_elements(p_clients)
+  LOOP
+    v_boid := TRIM(v_client_rec->>'boid');
+
+    IF v_boid IN ('REMCONVERSION', 'REMBONUSFY20767778', 'FOLIO-REMPOOL')
+       OR v_boid ILIKE 'FOLIO-REM%'
+       OR v_boid ILIKE 'REM%' THEN
+      CONTINUE;
+    END IF;
+
+    INSERT INTO public.clients (
+      company_id,
+      client_code,
+      boid,
+      full_name,
+      father_name,
+      grandfather_name,
+      citizenship_no,
+      pan_no,
+      address,
+      phone,
+      bank_name,
+      bank_account_no,
+      holder_type,
+      kitta,
+      status
+    ) VALUES (
+      p_company_id,
+      COALESCE(v_client_rec->>'client_code', v_client_rec->>'client_id', v_boid),
+      v_boid,
+      COALESCE(v_client_rec->>'full_name', v_client_rec->>'name', 'Unknown Client'),
+      v_client_rec->>'father_name',
+      v_client_rec->>'grandfather_name',
+      v_client_rec->>'citizenship_no',
+      v_client_rec->>'pan_no',
+      v_client_rec->>'address',
+      COALESCE(v_client_rec->>'phone', v_client_rec->>'contact_number'),
+      v_client_rec->>'bank_name',
+      COALESCE(v_client_rec->>'bank_account_no', v_client_rec->>'bank_account_number'),
+      (CASE 
+        WHEN v_client_rec->>'holder_type' IN ('Promoter', 'PROMOTER') THEN 'Promoter'::holder_type
+        WHEN v_client_rec->>'holder_type' IN ('Mutual Fund', 'MUTUAL_FUND') THEN 'Mutual Fund'::holder_type
+        WHEN v_client_rec->>'holder_type' IN ('Institution', 'Legal Person') THEN 'Legal Person'::holder_type
+        ELSE 'Public'::holder_type
+      END),
+      COALESCE((v_client_rec->>'total_kitta')::numeric, (v_client_rec->>'kitta')::numeric, 0),
+      'Active'
+    )
+    ON CONFLICT (company_id, boid) DO UPDATE
+    SET full_name = EXCLUDED.full_name,
+        client_code = COALESCE(public.clients.client_code, EXCLUDED.client_code),
+        father_name = COALESCE(EXCLUDED.father_name, public.clients.father_name),
+        grandfather_name = COALESCE(EXCLUDED.grandfather_name, public.clients.grandfather_name),
+        citizenship_no = COALESCE(EXCLUDED.citizenship_no, public.clients.citizenship_no),
+        pan_no = COALESCE(EXCLUDED.pan_no, public.clients.pan_no),
+        address = COALESCE(EXCLUDED.address, public.clients.address),
+        phone = COALESCE(EXCLUDED.phone, public.clients.phone),
+        bank_name = COALESCE(EXCLUDED.bank_name, public.clients.bank_name),
+        bank_account_no = COALESCE(EXCLUDED.bank_account_no, public.clients.bank_account_no),
+        holder_type = EXCLUDED.holder_type,
+        kitta = EXCLUDED.kitta,
+        status = 'Active',
+        updated_at = now()
+    RETURNING id INTO v_client_id;
+
+    v_upserted_clients := v_upserted_clients + 1;
+    v_boid_to_id_map := jsonb_set(v_boid_to_id_map, ARRAY[v_boid], to_jsonb(v_client_id::text));
+  END LOOP;
+
+  -- 2. Handle fraction dividend payables atomically if present
+  IF jsonb_array_length(p_payables) > 0 THEN
+    v_target_fiscal_year := (p_payables->0)->>'fiscal_year';
+
+    DELETE FROM public.dividend_payables dp
+    WHERE dp.company_id = p_company_id
+      AND dp.fiscal_year = v_target_fiscal_year
+      AND dp.remarks ILIKE '%fraction remainder%'
+      AND dp.client_id IN (
+        SELECT (v_boid_to_id_map->>c_boid)::uuid
+        FROM (SELECT DISTINCT value->>'boid' AS c_boid FROM jsonb_array_elements(p_payables)) t
+        WHERE v_boid_to_id_map ? c_boid
+      );
+
+    FOR v_pay_rec IN SELECT * FROM jsonb_array_elements(p_payables)
+    LOOP
+      v_boid := TRIM(v_pay_rec->>'boid');
+
+      IF v_boid IN ('REMCONVERSION', 'REMBONUSFY20767778', 'FOLIO-REMPOOL')
+         OR v_boid ILIKE 'FOLIO-REM%'
+         OR v_boid ILIKE 'REM%' THEN
+        CONTINUE;
+      END IF;
+
+      v_client_id := (v_boid_to_id_map->>v_boid)::uuid;
+      IF v_client_id IS NOT NULL THEN
+        INSERT INTO public.dividend_payables (
+          company_id,
+          client_id,
+          fiscal_year,
+          shares_held,
+          fraction_shares,
+          gross_dividend,
+          tax_amount,
+          net_payable,
+          payment_status,
+          remarks
+        ) VALUES (
+          p_company_id,
+          v_client_id,
+          v_pay_rec->>'fiscal_year',
+          COALESCE((v_pay_rec->>'shares_held')::numeric, 0),
+          COALESCE((v_pay_rec->>'fraction_shares')::numeric, 0),
+          COALESCE((v_pay_rec->>'gross_dividend')::numeric, 0),
+          COALESCE((v_pay_rec->>'tax_amount')::numeric, 0),
+          COALESCE((v_pay_rec->>'net_payable')::numeric, 0),
+          'Pending',
+          v_pay_rec->>'remarks'
+        );
+        v_inserted_payables := v_inserted_payables + 1;
+      END IF;
+    END LOOP;
+  END IF;
+
+  -- 3. Write immutable audit log entry within the same transaction
+  INSERT INTO public.audit_logs (
+    user_id,
+    action,
+    table_name,
+    record_id,
+    new_value,
+    action_time
+  ) VALUES (
+    v_user_id,
+    'PROMOTE_HISTORICAL_CLIENTS',
+    'clients',
+    p_company_id::text,
+    jsonb_build_object(
+      'company_id', p_company_id,
+      'clients_upserted', v_upserted_clients,
+      'payables_inserted', v_inserted_payables
+    ),
+    now()
+  );
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'clientsUpserted', v_upserted_clients,
+    'payablesInserted', v_inserted_payables
+  );
+END;
+$$;
+
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+CREATE EXTENSION IF NOT EXISTS pg_net;
+
+CREATE OR REPLACE FUNCTION public.trigger_process_scheduled_reports()
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions, cron
+AS $$
+DECLARE
+    v_url text;
+    v_cron_secret text;
+    v_request_id bigint;
+BEGIN
+    v_url := coalesce(
+        current_setting('app.settings.edge_function_url', true),
+        'http://supabase_kong_illokcvaflhzrpxlwhtj:8000/functions/v1/process-scheduled-reports'
+    );
+    v_cron_secret := coalesce(
+        current_setting('app.settings.cron_secret', true),
+        'rtarts-internal-cron-secret'
+    );
+
+    SELECT net.http_post(
+        url := v_url,
+        headers := jsonb_build_object(
+            'Content-Type', 'application/json',
+            'x-cron-secret', v_cron_secret
+        ),
+        body := '{}'::jsonb
+    ) INTO v_request_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'request_id', v_request_id,
+        'endpoint', v_url,
+        'triggered_at', now()
+    );
+EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object(
+        'success', false,
+        'error', SQLERRM,
+        'endpoint', v_url
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.trigger_process_scheduled_reports() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.trigger_process_scheduled_reports() TO service_role, postgres;
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'process-scheduled-reports-job') THEN
+        PERFORM cron.unschedule('process-scheduled-reports-job');
+    END IF;
+
+    PERFORM cron.schedule(
+        'process-scheduled-reports-job',
+        '*/15 * * * *',
+        'SELECT public.trigger_process_scheduled_reports();'
+    );
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'Could not schedule cron job: %', SQLERRM;
+END $$;
+
 

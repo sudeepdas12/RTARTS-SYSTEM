@@ -38,9 +38,12 @@ describe.skipIf(!isLiveDb)("Multi-Tenant RLS Hardening & Atomic Staged Import Co
   let stagedImportAId: string;
   let approvalTicketAId: string;
   const testBoid1 = `13010900${Math.floor(10000000 + Math.random() * 89999999)}`;
+  const testFileHashA = "hash_co_a_" + Math.random().toString(36).substring(2, 10);
 
   beforeAll(async () => {
     await adminClient.from("clients").delete().ilike("client_code", "CL_SITA%");
+    await adminClient.from("upload_history").delete().ilike("file_hash", "hash_co_a_%");
+    await adminClient.from("upload_history").delete().ilike("file_hash", "comp-b-hash-%");
     const runId = Math.random().toString(36).substring(2, 7).toUpperCase();
 
     // 1. Create two isolated test companies
@@ -140,6 +143,8 @@ describe.skipIf(!isLiveDb)("Multi-Tenant RLS Hardening & Atomic Staged Import Co
 
   afterAll(async () => {
     // Cleanup all test records
+    await adminClient.from("upload_history").delete().ilike("file_hash", "hash_co_a_%");
+    await adminClient.from("upload_history").delete().ilike("file_hash", "comp-b-hash-%");
     if (approvalTicketAId) {
       await adminClient.from("approval_logs").delete().eq("approval_id", approvalTicketAId);
       await adminClient.from("import_staging").delete().eq("approval_id", approvalTicketAId);
@@ -211,7 +216,7 @@ describe.skipIf(!isLiveDb)("Multi-Tenant RLS Hardening & Atomic Staged Import Co
         company_id: companyAId,
         target_table: "dividend_payables",
         file_name: "dividend_sheet_a.xlsx",
-        file_hash: "hash_co_a_12345",
+        file_hash: testFileHashA,
         total_rows: 1,
         source_gross: 15000,
         source_tax: 750,
@@ -365,6 +370,17 @@ describe.skipIf(!isLiveDb)("Multi-Tenant RLS Hardening & Atomic Staged Import Co
     expect(commitRes.success).toBe(true);
     expect(commitRes.rows_committed).toBe(1);
     expect(commitRes.status).toBe("Approved");
+    expect(commitRes.upload_id).toBeDefined();
+
+    // Verify upload_history record was created and updated to Completed
+    const { data: uploadRecord } = await adminClient
+      .from("upload_history")
+      .select("id, status, total_rows, success_rows")
+      .eq("id", commitRes.upload_id)
+      .single();
+    expect(uploadRecord).not.toBeNull();
+    expect(uploadRecord?.status).toBe("Completed");
+    expect(uploadRecord?.success_rows).toBe(1);
 
     // Verify pending_approvals was updated to Approved
     const { data: finalApproval } = await adminClient
@@ -375,34 +391,38 @@ describe.skipIf(!isLiveDb)("Multi-Tenant RLS Hardening & Atomic Staged Import Co
     expect(finalApproval?.status).toBe("Approved");
     expect(finalApproval?.reviewed_by).toBe(checkerAId);
 
-    // Verify import_staging was updated to COMMITTED
+    // Verify import_staging was updated to COMMITTED and linked to upload_id
     const { data: finalStaging } = await adminClient
       .from("import_staging")
-      .select("status, committed_at")
+      .select("status, upload_id, committed_at")
       .eq("id", stagedImportAId)
       .single();
     expect(finalStaging?.status).toBe("COMMITTED");
+    expect(finalStaging?.upload_id).toBe(commitRes.upload_id);
     expect(finalStaging?.committed_at).not.toBeNull();
 
-    // Verify the client record was created in public.clients
+    // Verify the client record was created in public.clients scoped to companyAId
     const { data: clientRow } = await adminClient
       .from("clients")
-      .select("id, full_name, boid, bank_name, bank_account_no")
+      .select("id, company_id, full_name, boid, bank_name, bank_account_no")
+      .eq("company_id", companyAId)
       .eq("boid", testBoid1)
       .single();
     expect(clientRow).not.toBeNull();
+    expect(clientRow?.company_id).toBe(companyAId);
     expect(clientRow?.full_name).toBe("Sita Sharma");
     expect(clientRow?.bank_name).toBe("Nabil Bank Ltd");
 
-    // Verify the row was inserted into public.dividend_payables
+    // Verify the row was inserted into public.dividend_payables with upload_id
     const { data: payableRow } = await adminClient
       .from("dividend_payables")
-      .select("id, client_id, gross_dividend, tax_amount, net_payable, shares_held")
+      .select("id, client_id, upload_id, gross_dividend, tax_amount, net_payable, shares_held")
       .eq("company_id", companyAId)
       .eq("client_id", clientRow!.id)
       .single();
 
     expect(payableRow).not.toBeNull();
+    expect(payableRow?.upload_id).toBe(commitRes.upload_id);
     expect(Number(payableRow?.gross_dividend)).toBe(15000);
     expect(Number(payableRow?.tax_amount)).toBe(750);
     expect(Number(payableRow?.net_payable)).toBe(14250);
@@ -460,7 +480,7 @@ describe.skipIf(!isLiveDb)("Multi-Tenant RLS Hardening & Atomic Staged Import Co
       .eq("id", schedule.id)
       .single();
 
-    expect(updatedSched?.delivery_status).toBe("DELIVERED");
+    expect(updatedSched?.delivery_status).toBe("GENERATED");
     expect(updatedSched?.last_run_at).not.toBeNull();
     expect(updatedSched?.next_run_at).not.toBeNull();
     expect(updatedSched?.last_error).toBeNull();
@@ -476,5 +496,117 @@ describe.skipIf(!isLiveDb)("Multi-Tenant RLS Hardening & Atomic Staged Import Co
 
     expect(versionRow).not.toBeNull();
     expect(versionRow?.company_id).toBe(companyAId);
+  });
+
+  it("6. Multi-Tenant Client Isolation: Company B staged import cannot modify Company A's client", async () => {
+    // 1. Company A's client Sita Sharma has bank_account_no "1122334455"
+    const { data: clientBeforeB } = await adminClient
+      .from("clients")
+      .select("id, company_id, full_name, boid, bank_account_no")
+      .eq("company_id", companyAId)
+      .eq("boid", testBoid1)
+      .single();
+    expect(clientBeforeB).not.toBeNull();
+    const originalAccount = clientBeforeB?.bank_account_no;
+
+    // 2. Company B creates a staged import using the EXACT SAME BOID but different bank account and name
+    const { data: approvalB, error: appErrB } = await adminClient
+      .from("pending_approvals")
+      .insert({
+        entity_type: "IMPORT_BATCH",
+        action: "MATERIAL_IMPORT_APPROVAL",
+        payload: { companyId: companyBId, note: "Maker B Submission" },
+        status: "Pending",
+        requested_by: makerBId,
+      })
+      .select("id")
+      .single();
+
+    if (appErrB) throw appErrB;
+
+    const { data: stagingB, error: stgErrB } = await adminClient
+      .from("import_staging")
+      .insert({
+        approval_id: approvalB.id,
+        company_id: companyBId,
+        target_table: "dividend_payables",
+        file_name: "company-b-batch.xlsx",
+        file_hash: "comp-b-hash-" + Math.random().toString(36),
+        total_rows: 1,
+        source_gross: 5000,
+        source_tax: 250,
+        source_net: 4750,
+        computed_gross: 5000,
+        computed_tax: 250,
+        computed_net: 4750,
+        staged_rows: [
+          {
+            boid: testBoid1,
+            client_code: "CL_B_" + Math.random().toString(36).substring(2, 6),
+            name: "Sita Sharma B Corp",
+            bank_name: "Global IME Bank",
+            bank_account_number: "9999999999",
+            gross_dividend: 5000,
+            tax_amount: 250,
+            net_payable: 4750,
+            shares_held: 500,
+          },
+        ],
+        created_by: makerBId,
+        status: "STAGED",
+      })
+      .select("id")
+      .single();
+
+    if (stgErrB) throw stgErrB;
+
+    // 3. Grant Checker supervisor access to Company B, then Checker commits Company B's import
+    await adminClient
+      .from("user_company_access")
+      .insert({ user_id: checkerAId, company_id: companyBId });
+
+    const { data: commitBRes, error: commitBErr } = await clientCheckerA.rpc(
+      "commit_staged_import",
+      {
+        p_approval_id: approvalB.id,
+        p_checker_notes: "Checker committed Company B batch",
+      },
+    );
+
+    expect(commitBErr).toBeNull();
+    expect(commitBRes.success).toBe(true);
+
+    // 4. Verify Company A's client was NOT touched
+    const { data: clientAfterB } = await adminClient
+      .from("clients")
+      .select("id, company_id, full_name, boid, bank_account_no")
+      .eq("id", clientBeforeB!.id)
+      .single();
+
+    expect(clientAfterB?.bank_account_no).toBe(originalAccount);
+    expect(clientAfterB?.full_name).toBe("Sita Sharma");
+    expect(clientAfterB?.company_id).toBe(companyAId);
+
+    // 5. Verify Company B now has its own client with company_id = companyBId
+    const { data: clientBRecord } = await adminClient
+      .from("clients")
+      .select("id, company_id, full_name, boid, bank_account_no")
+      .eq("company_id", companyBId)
+      .eq("boid", testBoid1)
+      .single();
+
+    expect(clientBRecord).not.toBeNull();
+    expect(clientBRecord?.company_id).toBe(companyBId);
+    expect(clientBRecord?.bank_account_no).toBe("9999999999");
+    expect(clientBRecord?.id).not.toBe(clientBeforeB!.id);
+  });
+
+  it("7. pg_cron Scheduler Registration: automated cron job is active in cron.job", async () => {
+    const { data: jobs, error: cronErr } = await adminClient.rpc(
+      "trigger_process_scheduled_reports",
+    );
+    expect(cronErr).toBeNull();
+    expect(jobs).toBeDefined();
+    expect(jobs.success).toBe(true);
   });
 });

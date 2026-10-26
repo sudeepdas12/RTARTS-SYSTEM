@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-26T06:10:46.692Z",
+  "timestamp": "2026-10-26T08:04:49.335Z",
   "mode": "SOURCE_RELEASE_AUDIT",
   "gates": [
     {
@@ -46,6 +46,41 @@
       "name": "Investor category classification mapping active",
       "passed": true,
       "detail": "Classification resolver active"
+    },
+    {
+      "name": "Edge Function enforces constant-time x-cron-secret verification",
+      "passed": true,
+      "detail": "Timing-safe header comparison implemented"
+    },
+    {
+      "name": "Edge Function enforces JWT & RBAC for manual execution",
+      "passed": true,
+      "detail": "Validates user identity and role"
+    },
+    {
+      "name": "Edge Function uses GENERATED delivery status until dispatched",
+      "passed": true,
+      "detail": "Default status is GENERATED when email is not confirmed delivered"
+    },
+    {
+      "name": "Edge Function restricts browser CORS origin",
+      "passed": true,
+      "detail": "Permissive wildcard Access-Control-Allow-Origin removed"
+    },
+    {
+      "name": "Database enforces multi-tenant client lookup & company uniqueness",
+      "passed": true,
+      "detail": "Client lookup and constraints scoped to company_id"
+    },
+    {
+      "name": "Staged imports integrate with upload_history lifecycle",
+      "passed": true,
+      "detail": "Creates upload_history record and links payables for rollback/audit"
+    },
+    {
+      "name": "pg_cron automated scheduler configured for scheduled reports",
+      "passed": true,
+      "detail": "Configures pg_cron job process-scheduled-reports-job every 15 minutes"
     }
   ],
   "verdict": "PASSED_RELEASE_GATE"

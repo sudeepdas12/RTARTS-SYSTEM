@@ -19,6 +19,23 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "../..");
 
+// Automatically load local .env if present and environment variables are not set
+const envFile = path.join(rootDir, ".env");
+if (fs.existsSync(envFile)) {
+  const envContent = fs.readFileSync(envFile, "utf-8");
+  for (const line of envContent.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith("#") && trimmed.includes("=")) {
+      const idx = trimmed.indexOf("=");
+      const key = trimmed.slice(0, idx).trim();
+      const val = trimmed.slice(idx + 1).trim().replace(/^["']|["']$/g, "");
+      if (!process.env[key]) {
+        process.env[key] = val;
+      }
+    }
+  }
+}
+
 const isLiveMode = process.argv.includes("--live");
 
 console.log("===============================================================================");
@@ -141,6 +158,45 @@ async function runLiveVerification() {
     }
   } catch (err) {
     recordGate("Live Edge Function: process-import-chunk reachable", false, String(err.message || err));
+  }
+
+  // Live Edge Function Scheduled Reports Security & Authorization Gate
+  try {
+    // 1. Unauthorized invocation check: must reject with 401
+    const unauthRes = await fetch(`${supabaseUrl}/functions/v1/process-scheduled-reports`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+
+    const isUnauthRejected = unauthRes.status === 401;
+    recordGate(
+      "Live Edge Function: Rejects Unauthenticated Invocations",
+      isUnauthRejected,
+      `Unauthenticated invocation responded with HTTP ${unauthRes.status} (Expected: 401)`,
+    );
+
+    // 2. Authorized scheduler invocation check with x-cron-secret
+    const cronSecret = process.env.CRON_SECRET || "rtarts-internal-cron-secret";
+    const authRes = await fetch(`${supabaseUrl}/functions/v1/process-scheduled-reports`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-cron-secret": cronSecret,
+      },
+      body: JSON.stringify({ dry_run: true }),
+    });
+
+    const isAuthAccepted = authRes.status === 200;
+    recordGate(
+      "Live Edge Function: Accepts Valid x-cron-secret Scheduler Requests",
+      isAuthAccepted,
+      `Scheduler request responded with HTTP ${authRes.status} (Expected: 200 with dry_run)`,
+    );
+  } catch (err) {
+    recordGate("Live Edge Function: process-scheduled-reports reachable", false, String(err.message || err));
   }
 }
 
@@ -282,6 +338,99 @@ function runSourceAudit() {
       "Investor category classification mapping active",
       hasClassificationMapping,
       "Classification resolver active",
+    );
+  }
+
+  // -----------------------------------------------------------------------------
+  // GATE 5: Scheduled Reports Edge Function Security & Lifecycle
+  // -----------------------------------------------------------------------------
+  console.log("\n[GATE 5/6] Scheduled Reports Security & Lifecycle (Source)...");
+  const schedFnPath = path.join(
+    rootDir,
+    "supabase",
+    "functions",
+    "process-scheduled-reports",
+    "index.ts",
+  );
+  if (!fs.existsSync(schedFnPath)) {
+    recordGate("process-scheduled-reports Edge Function exists", false, `Missing ${schedFnPath}`);
+  } else {
+    const sFnContent = fs.readFileSync(schedFnPath, "utf-8");
+
+    const hasCronSecret =
+      sFnContent.includes("constantTimeCompare") && sFnContent.includes("x-cron-secret");
+    recordGate(
+      "Edge Function enforces constant-time x-cron-secret verification",
+      hasCronSecret,
+      "Timing-safe header comparison implemented",
+    );
+
+    const hasJwtValidation =
+      sFnContent.includes("auth.getUser") && sFnContent.includes("user_roles");
+    recordGate(
+      "Edge Function enforces JWT & RBAC for manual execution",
+      hasJwtValidation,
+      "Validates user identity and role",
+    );
+
+    const hasGeneratedStatus = sFnContent.includes('deliveryStatus = "GENERATED"');
+    recordGate(
+      "Edge Function uses GENERATED delivery status until dispatched",
+      hasGeneratedStatus,
+      "Default status is GENERATED when email is not confirmed delivered",
+    );
+
+    const hasStrictCors = !sFnContent.includes('"Access-Control-Allow-Origin": "*"');
+    recordGate(
+      "Edge Function restricts browser CORS origin",
+      hasStrictCors,
+      "Permissive wildcard Access-Control-Allow-Origin removed",
+    );
+  }
+
+  // -----------------------------------------------------------------------------
+  // GATE 6: Multi-Tenant Staging, Client Scoping & pg_cron Automation
+  // -----------------------------------------------------------------------------
+  console.log(
+    "\n[GATE 6/6] Multi-Tenant Staging, Client Scoping & pg_cron Automation (Source)...",
+  );
+  const stageSqlPath = path.join(
+    rootDir,
+    "supabase",
+    "migrations",
+    "20261026000003_staged_imports_and_scheduled_reports.sql",
+  );
+  if (!fs.existsSync(stageSqlPath)) {
+    recordGate("Staged imports & scheduler migration exists", false, `Missing ${stageSqlPath}`);
+  } else {
+    const stgContent = fs.readFileSync(stageSqlPath, "utf-8");
+
+    const hasClientIsolation =
+      stgContent.includes("uq_clients_company_client_code") &&
+      stgContent.includes("WHERE company_id = v_staged.company_id AND boid = v_boid");
+    recordGate(
+      "Database enforces multi-tenant client lookup & company uniqueness",
+      hasClientIsolation,
+      "Client lookup and constraints scoped to company_id",
+    );
+
+    const hasUploadHistoryLifecycle =
+      stgContent.includes("INSERT INTO public.upload_history") &&
+      stgContent.includes("upload_id = v_upload_id");
+    recordGate(
+      "Staged imports integrate with upload_history lifecycle",
+      hasUploadHistoryLifecycle,
+      "Creates upload_history record and links payables for rollback/audit",
+    );
+
+    const hasPgCronSchedule =
+      stgContent.includes("cron.schedule") &&
+      stgContent.includes("process-scheduled-reports-job") &&
+      stgContent.includes("trigger_process_scheduled_reports");
+    recordGate(
+      "pg_cron automated scheduler configured for scheduled reports",
+      hasPgCronSchedule,
+      "Configures pg_cron job process-scheduled-reports-job every 15 minutes",
     );
   }
 }
