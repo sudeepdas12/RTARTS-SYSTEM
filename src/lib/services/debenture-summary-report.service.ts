@@ -456,7 +456,7 @@ export const DebentureSummaryReportService = {
   /**
    * Export debenture summary report to PDF
    */
-  exportToPdf(report: DebentureSummaryReport): void {
+  async exportToPdf(report: DebentureSummaryReport): Promise<void> {
     const fmtNr = (n: number) =>
       Number(n || 0).toLocaleString("en-IN", {
         minimumFractionDigits: 2,
@@ -496,7 +496,7 @@ export const DebentureSummaryReportService = {
       netInterestPayable: fmtNr(report.total.netInterestPayable),
     });
 
-    PdfGenerator.generate(
+    await PdfGenerator.generate(
       {
         title: "Debenture Interest Distribution Summary Report",
         subtitle:

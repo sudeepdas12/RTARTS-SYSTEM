@@ -104,7 +104,7 @@ async function loadSmtpConfig(): Promise<SmtpConfig> {
 // Lightweight authorization guard: verifies SEND_EMAIL_TOKEN or user session JWT.
 // This prevents anyone from using the public anon key to trigger emails/spam through your SMTP account.
 async function isAuthorized(req: Request): Promise<boolean> {
-  const token = Deno.env.get("SEND_EMAIL_TOKEN");
+  const token = Deno.env.get("SEND_EMAIL_TOKEN") || Deno.env.get("X_SEND_TOKEN");
   const provided = req.headers.get("x-send-token") || "";
   if (token && provided && provided.length === token.length) {
     let diff = 0;
@@ -115,9 +115,12 @@ async function isAuthorized(req: Request): Promise<boolean> {
   // Check Bearer token with Supabase Auth
   const authHeader = req.headers.get("Authorization") || "";
   const jwt = authHeader.replace(/^Bearer\s+/i, "");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (jwt && serviceKey && jwt === serviceKey) return true;
   if (jwt) {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const supabaseKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const supabaseKey =
+      Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (supabaseUrl && supabaseKey) {
       try {
         const supabase = createClient(supabaseUrl, supabaseKey);

@@ -319,12 +319,39 @@ export const ScheduledReportService = {
     for (const s of schedules) {
       const nextRun = new Date();
       nextRun.setDate(nextRun.getDate() + 1);
+
+      const timestamp = Date.now();
+      const storagePath = `${s.company_id}/${s.id}_${timestamp}.csv`;
+      const fallbackCsv = `id,report_name,status\r\n${s.id},"${s.report_name}",GENERATED\r\n`;
+      let fileUrl: string | null = null;
+      const fileBytes = new TextEncoder().encode(fallbackCsv);
+      const fileSize = fileBytes.byteLength;
+
+      try {
+        const { error: upErr } = await client.storage
+          .from("reports")
+          .upload(storagePath, fileBytes, {
+            contentType: "text/csv; charset=utf-8",
+            upsert: true,
+          });
+        if (!upErr) {
+          const { data: sData } = await client.storage
+            .from("reports")
+            .createSignedUrl(storagePath, 60 * 60 * 24 * 7);
+          fileUrl = sData?.signedUrl || null;
+        }
+      } catch {
+        // Storage upload fallback
+      }
+
       await client.from("report_versions").insert({
         company_id: s.company_id,
         report_type: s.report_type,
         report_name: s.report_name,
         filters: s.filters || {},
         export_format: s.export_format || "excel",
+        file_url: fileUrl,
+        file_size: fileSize,
         record_count: 1,
         generated_by: s.created_by,
       });

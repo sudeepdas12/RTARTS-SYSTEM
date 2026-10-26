@@ -32,7 +32,7 @@ export const ExportService = {
       dataKey: key,
     }));
 
-    PdfGenerator.generate(
+    await PdfGenerator.generate(
       {
         title: title || fileName.replace(/_/g, " "),
         companyName: "RTARTS System",

@@ -178,8 +178,8 @@ async function runLiveVerification() {
       `Unauthenticated invocation responded with HTTP ${unauthRes.status} (Expected: 401)`,
     );
 
-    // 2. Authorized scheduler invocation check with x-cron-secret
-    const cronSecret = process.env.CRON_SECRET || "rtarts-internal-cron-secret";
+    // 2. Authorized scheduler invocation check with x-cron-secret (injected only, no fallback)
+    const cronSecret = process.env.CRON_SECRET || "";
     const authRes = await fetch(`${supabaseUrl}/functions/v1/process-scheduled-reports`, {
       method: "POST",
       headers: {
@@ -386,6 +386,28 @@ function runSourceAudit() {
       hasStrictCors,
       "Permissive wildcard Access-Control-Allow-Origin removed",
     );
+
+    const noHardcodedCronSecret = !sFnContent.includes("rtarts-internal-cron-secret");
+    recordGate(
+      "Edge Function has no hardcoded cron-secret fallback",
+      noHardcodedCronSecret,
+      "Requires injected secret only",
+    );
+
+    const usesSendEmailToken = sFnContent.includes("x-send-token") && sFnContent.includes("SEND_EMAIL_TOKEN");
+    recordGate(
+      "Edge Function sends x-send-token to email delivery service",
+      usesSendEmailToken,
+      "Explicit x-send-token header dispatched to send-email",
+    );
+
+    const generatesStoredReportFile =
+      sFnContent.includes('.from("reports")') && sFnContent.includes("createSignedUrl");
+    recordGate(
+      "Edge Function generates and stores real report file with signed URL",
+      generatesStoredReportFile,
+      "Uploads file artifact to reports bucket and records signed URL",
+    );
   }
 
   // -----------------------------------------------------------------------------
@@ -394,6 +416,31 @@ function runSourceAudit() {
   console.log(
     "\n[GATE 6/6] Multi-Tenant Staging, Client Scoping & pg_cron Automation (Source)...",
   );
+  const fixMigPath = path.join(
+    rootDir,
+    "supabase",
+    "migrations",
+    "20261026000004_fix_cron_secret_and_investor_classification.sql",
+  );
+  if (fs.existsSync(fixMigPath)) {
+    const fixContent = fs.readFileSync(fixMigPath, "utf-8");
+    const preservesInvestorClassification =
+      fixContent.includes("v_payee_classification") &&
+      fixContent.includes("v_holder_type") &&
+      fixContent.includes("public.clients.payee_classification");
+    recordGate(
+      "Forward migration preserves investor classification in staged imports",
+      preservesInvestorClassification,
+      "Maps payee_classification and holder_type from staged rows",
+    );
+
+    const noDbCronFallback = !fixContent.includes("rtarts-internal-cron-secret") && fixContent.includes("app.settings.cron_secret is not configured");
+    recordGate(
+      "Database trigger_process_scheduled_reports enforces injected cron secret",
+      noDbCronFallback,
+      "Hardcoded fallback removed from database stored procedure",
+    );
+  }
   const stageSqlPath = path.join(
     rootDir,
     "supabase",

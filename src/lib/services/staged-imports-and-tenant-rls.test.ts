@@ -197,6 +197,7 @@ describe.skipIf(!isLiveDb)("Multi-Tenant RLS Hardening & Atomic Staged Import Co
     expect(paErr).toBeNull();
     approvalTicketAId = paData.id;
 
+    const testBoidInst = `13010900${Math.floor(10000000 + Math.random() * 89999999)}`;
     const stagedRow = {
       boid: testBoid1,
       name: "Sita Sharma",
@@ -207,6 +208,21 @@ describe.skipIf(!isLiveDb)("Multi-Tenant RLS Hardening & Atomic Staged Import Co
       net: 14250,
       bank_name: "Nabil Bank Ltd",
       bank_account_number: "0010017500001",
+      holder_type: "Natural Person - Public",
+      payee_classification: "NATURAL_PERSON",
+    };
+    const stagedRowInst = {
+      boid: testBoidInst,
+      name: "Everest Capital Corp",
+      client_code: `CL_INST_${testBoidInst.slice(-6)}`,
+      kitta: 10000,
+      gross: 100000,
+      tax: 15000,
+      net: 85000,
+      bank_name: "Standard Chartered Bank",
+      bank_account_number: "0020027500002",
+      holder_type: "Legal Person",
+      payee_classification: "COMPANY_INSTITUTION",
     };
 
     const { data: stageData, error: stageErr } = await clientMakerA
@@ -217,14 +233,14 @@ describe.skipIf(!isLiveDb)("Multi-Tenant RLS Hardening & Atomic Staged Import Co
         target_table: "dividend_payables",
         file_name: "dividend_sheet_a.xlsx",
         file_hash: testFileHashA,
-        total_rows: 1,
-        source_gross: 15000,
-        source_tax: 750,
-        source_net: 14250,
-        computed_gross: 15000,
-        computed_tax: 750,
-        computed_net: 14250,
-        staged_rows: [stagedRow],
+        total_rows: 2,
+        source_gross: 115000,
+        source_tax: 15750,
+        source_net: 99250,
+        computed_gross: 115000,
+        computed_tax: 15750,
+        computed_net: 99250,
+        staged_rows: [stagedRow, stagedRowInst],
         options: {
           fiscalYear: "2080/81",
           dividendType: "Cash",
@@ -368,7 +384,7 @@ describe.skipIf(!isLiveDb)("Multi-Tenant RLS Hardening & Atomic Staged Import Co
 
     expect(commitErr).toBeNull();
     expect(commitRes.success).toBe(true);
-    expect(commitRes.rows_committed).toBe(1);
+    expect(commitRes.rows_committed).toBe(2);
     expect(commitRes.status).toBe("Approved");
     expect(commitRes.upload_id).toBeDefined();
 
@@ -380,7 +396,7 @@ describe.skipIf(!isLiveDb)("Multi-Tenant RLS Hardening & Atomic Staged Import Co
       .single();
     expect(uploadRecord).not.toBeNull();
     expect(uploadRecord?.status).toBe("Completed");
-    expect(uploadRecord?.success_rows).toBe(1);
+    expect(uploadRecord?.success_rows).toBe(2);
 
     // Verify pending_approvals was updated to Approved
     const { data: finalApproval } = await adminClient
@@ -401,10 +417,12 @@ describe.skipIf(!isLiveDb)("Multi-Tenant RLS Hardening & Atomic Staged Import Co
     expect(finalStaging?.upload_id).toBe(commitRes.upload_id);
     expect(finalStaging?.committed_at).not.toBeNull();
 
-    // Verify the client record was created in public.clients scoped to companyAId
+    // Verify Natural Person client record
     const { data: clientRow } = await adminClient
       .from("clients")
-      .select("id, company_id, full_name, boid, bank_name, bank_account_no")
+      .select(
+        "id, company_id, full_name, boid, bank_name, bank_account_no, holder_type, payee_classification",
+      )
       .eq("company_id", companyAId)
       .eq("boid", testBoid1)
       .single();
@@ -412,21 +430,57 @@ describe.skipIf(!isLiveDb)("Multi-Tenant RLS Hardening & Atomic Staged Import Co
     expect(clientRow?.company_id).toBe(companyAId);
     expect(clientRow?.full_name).toBe("Sita Sharma");
     expect(clientRow?.bank_name).toBe("Nabil Bank Ltd");
+    expect(clientRow?.payee_classification).toBe("NATURAL_PERSON");
+    expect(clientRow?.holder_type).toBe("Natural Person - Public");
 
-    // Verify the row was inserted into public.dividend_payables with upload_id
+    // Verify Institutional client record and preserved classification
+    const { data: clientInstRow } = await adminClient
+      .from("clients")
+      .select(
+        "id, company_id, full_name, boid, bank_name, bank_account_no, holder_type, payee_classification",
+      )
+      .eq("company_id", companyAId)
+      .ilike("full_name", "Everest Capital Corp%")
+      .single();
+    expect(clientInstRow).not.toBeNull();
+    expect(clientInstRow?.payee_classification).toBe("COMPANY_INSTITUTION");
+    expect(clientInstRow?.holder_type).toBe("Legal Person");
+
+    // Verify Natural Person dividend payable
     const { data: payableRow } = await adminClient
       .from("dividend_payables")
-      .select("id, client_id, upload_id, gross_dividend, tax_amount, net_payable, shares_held")
+      .select(
+        "id, client_id, upload_id, gross_dividend, tax_amount, net_payable, shares_held, payee_classification",
+      )
       .eq("company_id", companyAId)
       .eq("client_id", clientRow!.id)
       .single();
 
     expect(payableRow).not.toBeNull();
     expect(payableRow?.upload_id).toBe(commitRes.upload_id);
+    expect(payableRow?.payee_classification).toBe("NATURAL_PERSON");
     expect(Number(payableRow?.gross_dividend)).toBe(15000);
     expect(Number(payableRow?.tax_amount)).toBe(750);
     expect(Number(payableRow?.net_payable)).toBe(14250);
     expect(Number(payableRow?.shares_held)).toBe(1500);
+
+    // Verify Institutional dividend payable with preserved 15% TDS category
+    const { data: payableInstRow } = await adminClient
+      .from("dividend_payables")
+      .select(
+        "id, client_id, upload_id, gross_dividend, tax_amount, net_payable, shares_held, payee_classification",
+      )
+      .eq("company_id", companyAId)
+      .eq("client_id", clientInstRow!.id)
+      .single();
+
+    expect(payableInstRow).not.toBeNull();
+    expect(payableInstRow?.upload_id).toBe(commitRes.upload_id);
+    expect(payableInstRow?.payee_classification).toBe("COMPANY_INSTITUTION");
+    expect(Number(payableInstRow?.gross_dividend)).toBe(100000);
+    expect(Number(payableInstRow?.tax_amount)).toBe(15000);
+    expect(Number(payableInstRow?.net_payable)).toBe(85000);
+    expect(Number(payableInstRow?.shares_held)).toBe(10000);
 
     // Verify audit log exists
     const { data: auditLog } = await adminClient
@@ -485,18 +539,22 @@ describe.skipIf(!isLiveDb)("Multi-Tenant RLS Hardening & Atomic Staged Import Co
     expect(updatedSched?.next_run_at).not.toBeNull();
     expect(updatedSched?.last_error).toBeNull();
 
-    // Verify report_versions snapshot was created
+    // Verify report_versions snapshot was created with real stored file artifact URL
     const { data: versionRow } = await adminClient
       .from("report_versions")
-      .select("company_id, report_type, report_name")
+      .select("company_id, report_type, report_name, file_url, file_size")
       .eq("company_id", companyAId)
       .eq("report_type", "tax-register")
+      .order("generated_at", { ascending: false })
       .limit(1)
       .single();
 
     expect(versionRow).not.toBeNull();
     expect(versionRow?.company_id).toBe(companyAId);
-  });
+    expect(versionRow?.file_url).not.toBeNull();
+    expect(typeof versionRow?.file_url).toBe("string");
+    expect(versionRow?.file_size).toBeGreaterThan(0);
+  }, 60000);
 
   it("6. Multi-Tenant Client Isolation: Company B staged import cannot modify Company A's client", async () => {
     // 1. Company A's client Sita Sharma has bank_account_no "1122334455"

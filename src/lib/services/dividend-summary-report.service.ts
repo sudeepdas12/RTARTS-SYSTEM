@@ -45,12 +45,7 @@ export interface AgmDividendSummaryReport {
 }
 
 export type AgmParticular =
-  | "PUBLIC"
-  | "INSTITUTION"
-  | "MUTUAL FUND"
-  | "PROMOTER"
-  | "LOCAL"
-  | "EMPLOYEE";
+  "PUBLIC" | "INSTITUTION" | "MUTUAL FUND" | "PROMOTER" | "LOCAL" | "EMPLOYEE";
 
 export function determineParticular(p: any): string {
   return determineAgmCategory(p);
@@ -568,7 +563,7 @@ export const AgmDividendSummaryReportService = {
   /**
    * Exports the summary report to a clean, landscape PDF report
    */
-  exportToPdf(report: AgmDividendSummaryReport): void {
+  async exportToPdf(report: AgmDividendSummaryReport): Promise<void> {
     const bonusColHeader = report.detectedBonusRate
       ? `ACTUAL_BONUS ${report.detectedBonusRate}%`
       : "ACTUAL_BONUS";
@@ -627,7 +622,7 @@ export const AgmDividendSummaryReportService = {
       composition: `${report.total.composition.toFixed(2)}%`,
     });
 
-    PdfGenerator.generate(
+    await PdfGenerator.generate(
       {
         title: "AGM Dividend & Bonus Distribution Summary Report",
         subtitle: `${report.companyName} (${report.companyCode}) — FY ${report.fiscalYear || "All"}`,

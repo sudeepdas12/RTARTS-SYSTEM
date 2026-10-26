@@ -911,7 +911,7 @@ function ReportsRoute() {
         const MAX_PDF_ROWS = 3000;
         const exportData = data.length > MAX_PDF_ROWS ? data.slice(0, MAX_PDF_ROWS) : data;
 
-        PdfGenerator.generate(
+        await PdfGenerator.generate(
           {
             title,
             subtitle:

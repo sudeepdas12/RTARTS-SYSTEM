@@ -587,11 +587,11 @@ export const SummaryReportService = {
   /**
    * Export the mutual-fund summary to PDF
    */
-  exportMutualFundSummaryToPdf(
+  async exportMutualFundSummaryToPdf(
     data: MutualFundSummaryRow[],
     companyName = "RTARTS System",
     subtitle = "Mutual Fund Distribution Summary",
-  ): void {
+  ): Promise<void> {
     const total = data.reduce(
       (acc, r) => ({
         transaction_count: acc.transaction_count + r.transaction_count,
@@ -639,7 +639,7 @@ export const SummaryReportService = {
       composition: "100.00%",
     });
 
-    PdfGenerator.generate(
+    await PdfGenerator.generate(
       {
         title: "Mutual Fund Distribution Summary Report",
         subtitle,

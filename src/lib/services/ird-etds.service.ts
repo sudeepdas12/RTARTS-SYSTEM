@@ -8,9 +8,6 @@
  */
 
 import { supabase } from "@/integrations/supabase/client";
-import * as XLSX from "xlsx";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
 
 export interface IrdAnnex10Row {
   sn: number;
@@ -300,10 +297,11 @@ export const IrdEtdsService = {
   /**
    * Generates formatted Excel file for IRD Annex-10 e-TDS return upload.
    */
-  exportAnnex10Excel(summary: IrdAnnex10Summary, fileName?: string): void {
+  async exportAnnex10Excel(summary: IrdAnnex10Summary, fileName?: string): Promise<void> {
     // Assert report invariants before generating workbook
     this.assertReportInvariants(summary);
 
+    const XLSX = await import("xlsx");
     const wb = XLSX.utils.book_new();
 
     // Sheet 1: IRD Annex-10 e-TDS Return
@@ -437,7 +435,12 @@ export const IrdEtdsService = {
   /**
    * Generates a formal printable TDS Withholding Certificate PDF for an investor.
    */
-  generateTdsCertificatePdf(data: TdsCertificateData): void {
+  async generateTdsCertificatePdf(data: TdsCertificateData): Promise<void> {
+    const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+      import("jspdf"),
+      import("jspdf-autotable"),
+    ]);
+
     const doc = new jsPDF({
       orientation: "portrait",
       unit: "mm",

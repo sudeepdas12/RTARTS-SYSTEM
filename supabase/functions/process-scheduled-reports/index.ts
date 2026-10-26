@@ -88,11 +88,22 @@ serve(async (req: Request) => {
   });
 
   // 1. Enforce Authentication (constant-time x-cron-secret check OR authenticated JWT with RBAC)
-  const cronSecret =
-    Deno.env.get("CRON_SECRET") || Deno.env.get("X_CRON_SECRET") || "rtarts-internal-cron-secret";
-  const providedCronSecret = req.headers.get("x-cron-secret") || "";
+  // Hardcoded fallback removed: an injected secret is strictly required for scheduler access.
+  let cronSecret = (Deno.env.get("CRON_SECRET") || Deno.env.get("X_CRON_SECRET") || "").trim();
+  if (!cronSecret) {
+    try {
+      const { data: dbSecret } = await supabaseAdmin.rpc("get_cron_secret");
+      if (typeof dbSecret === "string") {
+        cronSecret = dbSecret.trim();
+      }
+    } catch {
+      // Database secret lookup fallback
+    }
+  }
+
+  const providedCronSecret = (req.headers.get("x-cron-secret") || "").trim();
   const isCronAuthorized = Boolean(
-    providedCronSecret && constantTimeCompare(providedCronSecret, cronSecret),
+    cronSecret && providedCronSecret && constantTimeCompare(providedCronSecret, cronSecret),
   );
 
   let authenticatedUserId: string | null = null;
@@ -253,28 +264,86 @@ serve(async (req: Request) => {
           continue;
         }
 
-        // 5. Generate actual report summary artifact from database records
-        const { data: sampleRows } = await supabaseAdmin
+        // 5. Generate actual report file artifact from database records
+        const { data: reportRecords } = await supabaseAdmin
           .from(targetTable)
-          .select("id, client_id, gross_dividend, tax_amount, net_payable, payment_status")
+          .select("*")
           .eq("company_id", schedule.company_id)
-          .limit(50);
+          .limit(2000);
+
+        // Helper to format rows into standard RFC 4180 CSV
+        const formatAsCsv = (records: Record<string, unknown>[]): string => {
+          if (!records || records.length === 0) return "No records found\r\n";
+          const keys = Object.keys(records[0]);
+          const escapeCell = (val: unknown): string => {
+            if (val === null || val === undefined) return "";
+            const str = typeof val === "object" ? JSON.stringify(val) : String(val);
+            if (
+              str.includes(",") ||
+              str.includes('"') ||
+              str.includes("\n") ||
+              str.includes("\r")
+            ) {
+              return `"${str.replace(/"/g, '""')}"`;
+            }
+            return str;
+          };
+          const header = keys.map(escapeCell).join(",");
+          const lines = records.map((row) => keys.map((k) => escapeCell(row[k])).join(","));
+          return [header, ...lines].join("\r\n");
+        };
+
+        const fileContent = formatAsCsv(reportRecords || []);
+        const fileBytes = new TextEncoder().encode(fileContent);
+        const fileSize = fileBytes.byteLength;
+        const requestedFormat = (schedule.export_format || "csv").toLowerCase();
+        const fileExt =
+          requestedFormat === "excel" || requestedFormat === "xlsx" ? "csv" : requestedFormat;
+        const timestamp = Date.now();
+        const storagePath = `${schedule.company_id}/${schedule.id}_${timestamp}.${fileExt}`;
+
+        let signedFileUrl: string | null = null;
+        try {
+          const { error: uploadErr } = await supabaseAdmin.storage
+            .from("reports")
+            .upload(storagePath, fileBytes, {
+              contentType: "text/csv",
+              upsert: true,
+            });
+
+          if (!uploadErr) {
+            const { data: signedData } = await supabaseAdmin.storage
+              .from("reports")
+              .createSignedUrl(storagePath, 60 * 60 * 24 * 7); // 7-day secure access link
+            signedFileUrl = signedData?.signedUrl || null;
+          } else {
+            console.warn(`Storage upload warning for schedule ${schedule.id}:`, uploadErr.message);
+          }
+        } catch (storageErr: any) {
+          console.warn(
+            `Storage upload exception for schedule ${schedule.id}:`,
+            storageErr?.message,
+          );
+        }
 
         const artifactSummary = {
           target_table: targetTable,
           total_records: recordCount,
-          sample_preview_count: sampleRows?.length || 0,
-          sample_preview: sampleRows || [],
+          records_in_artifact: reportRecords?.length || 0,
+          storage_path: storagePath,
+          file_size_bytes: fileSize,
           generated_at: new Date().toISOString(),
         };
 
-        // 6. Record report_versions row
+        // 6. Record report_versions row with durable file_url & file_size
         const { error: versionErr } = await supabaseAdmin.from("report_versions").insert({
           company_id: schedule.company_id,
           report_type: schedule.report_type,
           report_name: schedule.report_name,
           filters: schedule.filters || {},
           export_format: schedule.export_format || "excel",
+          file_url: signedFileUrl,
+          file_size: fileSize,
           record_count: recordCount,
           generated_by: authenticatedUserId || schedule.created_by || null,
           parameters: {
@@ -282,6 +351,7 @@ serve(async (req: Request) => {
             recipients: schedule.recipients,
             schedule_type: schedule.schedule_type,
             artifact_summary: artifactSummary,
+            storage_path: storagePath,
           },
         });
 
@@ -296,7 +366,7 @@ serve(async (req: Request) => {
           schedule.schedule_day,
         );
 
-        // 8. Attempt email dispatch if recipients configured, otherwise set status to 'GENERATED'
+        // 8. Attempt email dispatch using explicit x-send-token if recipients configured
         let deliveryStatus = "GENERATED";
         let deliveryNotes = "Report version generated and archived";
 
@@ -313,16 +383,48 @@ serve(async (req: Request) => {
             const hasSmtp = Boolean(v.smtp_user && v.smtp_pass);
 
             if (hasSmtp) {
+              const sendEmailToken = (
+                Deno.env.get("SEND_EMAIL_TOKEN") ||
+                Deno.env.get("X_SEND_TOKEN") ||
+                ""
+              ).trim();
+
+              const emailHeaders: Record<string, string> = {
+                Authorization: `Bearer ${serviceRoleKey}`,
+                "Content-Type": "application/json",
+              };
+              if (sendEmailToken) {
+                emailHeaders["x-send-token"] = sendEmailToken;
+              }
+
+              const downloadHtml = signedFileUrl
+                ? `<div style="margin: 20px 0; padding: 16px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;">
+                     <p style="margin: 0 0 12px 0; font-weight: 600; color: #1e293b;">Your report is compiled and ready to download:</p>
+                     <a href="${signedFileUrl}" style="display: inline-block; background-color: #0f172a; color: #ffffff; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px;">
+                       Download ${schedule.report_name} (${(fileSize / 1024).toFixed(1)} KB)
+                     </a>
+                     <p style="margin: 8px 0 0 0; font-size: 12px; color: #64748b;">This secure download link is valid for 7 days.</p>
+                   </div>`
+                : `<p style="color: #64748b;">Report data archived in system database.</p>`;
+
               const emailRes = await fetch(`${supabaseUrl}/functions/v1/send-email`, {
                 method: "POST",
-                headers: {
-                  Authorization: `Bearer ${serviceRoleKey}`,
-                  "Content-Type": "application/json",
-                },
+                headers: emailHeaders,
                 body: JSON.stringify({
                   to: recipients,
                   subject: `[RTARTS Automated Report] ${schedule.report_name}`,
-                  html: `<h3>Automated Report: ${schedule.report_name}</h3><p>Records compiled: ${recordCount}</p><p>Status: Generated</p>`,
+                  html: `
+                    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 8px;">
+                      <h2 style="color: #0f172a; margin-top: 0;">Automated Report Delivery</h2>
+                      <p><strong>Report:</strong> ${schedule.report_name}</p>
+                      <p><strong>Type:</strong> ${schedule.report_type}</p>
+                      <p><strong>Total Records:</strong> ${recordCount.toLocaleString()}</p>
+                      <p><strong>Generated At:</strong> ${new Date().toUTCString()}</p>
+                      ${downloadHtml}
+                      <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+                      <p style="font-size: 11px; color: #94a3b8; margin: 0;">This is an automated notification from the RBB Merchant Banking Limited RTARTS Management System.</p>
+                    </div>
+                  `,
                 }),
               });
 

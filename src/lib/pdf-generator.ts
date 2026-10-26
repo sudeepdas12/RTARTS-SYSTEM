@@ -1,6 +1,3 @@
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
-
 export interface PdfReportOptions {
   title: string;
   subtitle?: string;
@@ -25,7 +22,15 @@ export const PdfGenerator = {
   /**
    * Generates a professional PDF report with header, footer, watermark, and data table.
    */
-  generate(options: PdfReportOptions, columns: PdfColumn[], data: Record<string, unknown>[]): void {
+  async generate(
+    options: PdfReportOptions,
+    columns: PdfColumn[],
+    data: Record<string, unknown>[],
+  ): Promise<void> {
+    const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+      import("jspdf"),
+      import("jspdf-autotable"),
+    ]);
     const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
