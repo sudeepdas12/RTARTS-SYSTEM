@@ -14,6 +14,8 @@ export default tseslint.config(
       "supabase/**",
       "scripts/**",
       "node_modules/**",
+      "node_modules_old/**",
+      "corrupted_trash/**",
       "src/routeTree.gen.ts",
     ],
   },

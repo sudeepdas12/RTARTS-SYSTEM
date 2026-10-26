@@ -9,38 +9,42 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
-import { Route as AuthRouteImport } from './routes/auth'
-import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as AuthenticatedUsersRouteImport } from './routes/_authenticated/users'
-import { Route as AuthenticatedUploadsRouteImport } from './routes/_authenticated/uploads'
-import { Route as AuthenticatedUploadHistoryRouteImport } from './routes/_authenticated/upload-history'
-import { Route as AuthenticatedUploadRouteImport } from './routes/_authenticated/upload'
-import { Route as AuthenticatedReportsRouteImport } from './routes/_authenticated/reports'
-import { Route as AuthenticatedReconciliationRouteImport } from './routes/_authenticated/reconciliation'
-import { Route as AuthenticatedPaymentsRouteImport } from './routes/_authenticated/payments'
-import { Route as AuthenticatedMutualFundRouteImport } from './routes/_authenticated/mutual-fund'
-import { Route as AuthenticatedInterestRouteImport } from './routes/_authenticated/interest'
-import { Route as AuthenticatedDividendRouteImport } from './routes/_authenticated/dividend'
-import { Route as AuthenticatedDataManagementRouteImport } from './routes/_authenticated/data-management'
-import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
-import { Route as AuthenticatedCompaniesRouteImport } from './routes/_authenticated/companies'
-import { Route as AuthenticatedClientsRouteImport } from './routes/_authenticated/clients'
-import { Route as AuthenticatedClassificationReviewRouteImport } from './routes/_authenticated/classification-review'
-import { Route as AuthenticatedBackupRouteImport } from './routes/_authenticated/backup'
-import { Route as AuthenticatedAuditLogsRouteImport } from './routes/_authenticated/audit-logs'
-import { Route as AuthenticatedAuditRouteImport } from './routes/_authenticated/audit'
-import { Route as AuthenticatedApprovalsRouteImport } from './routes/_authenticated/approvals'
-import { Route as AuthenticatedAnalyticsRouteImport } from './routes/_authenticated/analytics'
-import { Route as AuthenticatedAllocationsRouteImport } from './routes/_authenticated/allocations'
+import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
+import { Route as AuthRouteImport } from './routes/auth'
+import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
 import { Route as AuthenticatedAgmStudioRouteImport } from './routes/_authenticated/agm-studio'
+import { Route as AuthenticatedAllocationsRouteImport } from './routes/_authenticated/allocations'
+import { Route as AuthenticatedAnalyticsRouteImport } from './routes/_authenticated/analytics'
+import { Route as AuthenticatedApprovalsRouteImport } from './routes/_authenticated/approvals'
+import { Route as AuthenticatedAuditRouteImport } from './routes/_authenticated/audit'
+import { Route as AuthenticatedAuditLogsRouteImport } from './routes/_authenticated/audit-logs'
+import { Route as AuthenticatedBackupRouteImport } from './routes/_authenticated/backup'
+import { Route as AuthenticatedClassificationReviewRouteImport } from './routes/_authenticated/classification-review'
+import { Route as AuthenticatedClientsRouteImport } from './routes/_authenticated/clients'
+import { Route as AuthenticatedCompaniesRouteImport } from './routes/_authenticated/companies'
+import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
+import { Route as AuthenticatedDataManagementRouteImport } from './routes/_authenticated/data-management'
+import { Route as AuthenticatedDividendRouteImport } from './routes/_authenticated/dividend'
+import { Route as AuthenticatedInterestRouteImport } from './routes/_authenticated/interest'
+import { Route as AuthenticatedMutualFundRouteImport } from './routes/_authenticated/mutual-fund'
+import { Route as AuthenticatedPaymentsRouteImport } from './routes/_authenticated/payments'
+import { Route as AuthenticatedReconciliationRouteImport } from './routes/_authenticated/reconciliation'
+import { Route as AuthenticatedReportsRouteImport } from './routes/_authenticated/reports'
+import { Route as AuthenticatedUploadRouteImport } from './routes/_authenticated/upload'
+import { Route as AuthenticatedUploadHistoryRouteImport } from './routes/_authenticated/upload-history'
+import { Route as AuthenticatedUploadsRouteImport } from './routes/_authenticated/uploads'
+import { Route as AuthenticatedUsersRouteImport } from './routes/_authenticated/users'
 import { Route as AuthenticatedSettingsIndexRouteImport } from './routes/_authenticated/settings.index'
 import { Route as AuthenticatedSettingsFiscalYearsRouteImport } from './routes/_authenticated/settings.fiscal-years'
 
-const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
-  id: '/sitemap.xml',
-  path: '/sitemap.xml',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedRouteRoute = AuthenticatedRouteRouteImport.update({
+  id: '/_authenticated',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthRoute = AuthRouteImport.update({
@@ -48,117 +52,14 @@ const AuthRoute = AuthRouteImport.update({
   path: '/auth',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthenticatedRouteRoute = AuthenticatedRouteRouteImport.update({
-  id: '/_authenticated',
+const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
+  id: '/sitemap.xml',
+  path: '/sitemap.xml',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AuthenticatedUsersRoute = AuthenticatedUsersRouteImport.update({
-  id: '/users',
-  path: '/users',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
-const AuthenticatedUploadsRoute = AuthenticatedUploadsRouteImport.update({
-  id: '/uploads',
-  path: '/uploads',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
-const AuthenticatedUploadHistoryRoute =
-  AuthenticatedUploadHistoryRouteImport.update({
-    id: '/upload-history',
-    path: '/upload-history',
-    getParentRoute: () => AuthenticatedRouteRoute,
-  } as any)
-const AuthenticatedUploadRoute = AuthenticatedUploadRouteImport.update({
-  id: '/upload',
-  path: '/upload',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
-const AuthenticatedReportsRoute = AuthenticatedReportsRouteImport.update({
-  id: '/reports',
-  path: '/reports',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
-const AuthenticatedReconciliationRoute =
-  AuthenticatedReconciliationRouteImport.update({
-    id: '/reconciliation',
-    path: '/reconciliation',
-    getParentRoute: () => AuthenticatedRouteRoute,
-  } as any)
-const AuthenticatedPaymentsRoute = AuthenticatedPaymentsRouteImport.update({
-  id: '/payments',
-  path: '/payments',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
-const AuthenticatedMutualFundRoute = AuthenticatedMutualFundRouteImport.update({
-  id: '/mutual-fund',
-  path: '/mutual-fund',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
-const AuthenticatedInterestRoute = AuthenticatedInterestRouteImport.update({
-  id: '/interest',
-  path: '/interest',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
-const AuthenticatedDividendRoute = AuthenticatedDividendRouteImport.update({
-  id: '/dividend',
-  path: '/dividend',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
-const AuthenticatedDataManagementRoute =
-  AuthenticatedDataManagementRouteImport.update({
-    id: '/data-management',
-    path: '/data-management',
-    getParentRoute: () => AuthenticatedRouteRoute,
-  } as any)
-const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
-  id: '/dashboard',
-  path: '/dashboard',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
-const AuthenticatedCompaniesRoute = AuthenticatedCompaniesRouteImport.update({
-  id: '/companies',
-  path: '/companies',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
-const AuthenticatedClientsRoute = AuthenticatedClientsRouteImport.update({
-  id: '/clients',
-  path: '/clients',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
-const AuthenticatedClassificationReviewRoute =
-  AuthenticatedClassificationReviewRouteImport.update({
-    id: '/classification-review',
-    path: '/classification-review',
-    getParentRoute: () => AuthenticatedRouteRoute,
-  } as any)
-const AuthenticatedBackupRoute = AuthenticatedBackupRouteImport.update({
-  id: '/backup',
-  path: '/backup',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
-const AuthenticatedAuditLogsRoute = AuthenticatedAuditLogsRouteImport.update({
-  id: '/audit-logs',
-  path: '/audit-logs',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
-const AuthenticatedAuditRoute = AuthenticatedAuditRouteImport.update({
-  id: '/audit',
-  path: '/audit',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
-const AuthenticatedApprovalsRoute = AuthenticatedApprovalsRouteImport.update({
-  id: '/approvals',
-  path: '/approvals',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
-const AuthenticatedAnalyticsRoute = AuthenticatedAnalyticsRouteImport.update({
-  id: '/analytics',
-  path: '/analytics',
+const AuthenticatedAgmStudioRoute = AuthenticatedAgmStudioRouteImport.update({
+  id: '/agm-studio',
+  path: '/agm-studio',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedAllocationsRoute =
@@ -167,9 +68,108 @@ const AuthenticatedAllocationsRoute =
     path: '/allocations',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
-const AuthenticatedAgmStudioRoute = AuthenticatedAgmStudioRouteImport.update({
-  id: '/agm-studio',
-  path: '/agm-studio',
+const AuthenticatedAnalyticsRoute = AuthenticatedAnalyticsRouteImport.update({
+  id: '/analytics',
+  path: '/analytics',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedApprovalsRoute = AuthenticatedApprovalsRouteImport.update({
+  id: '/approvals',
+  path: '/approvals',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedAuditRoute = AuthenticatedAuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedAuditLogsRoute = AuthenticatedAuditLogsRouteImport.update({
+  id: '/audit-logs',
+  path: '/audit-logs',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedBackupRoute = AuthenticatedBackupRouteImport.update({
+  id: '/backup',
+  path: '/backup',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedClassificationReviewRoute =
+  AuthenticatedClassificationReviewRouteImport.update({
+    id: '/classification-review',
+    path: '/classification-review',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedClientsRoute = AuthenticatedClientsRouteImport.update({
+  id: '/clients',
+  path: '/clients',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedCompaniesRoute = AuthenticatedCompaniesRouteImport.update({
+  id: '/companies',
+  path: '/companies',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedDataManagementRoute =
+  AuthenticatedDataManagementRouteImport.update({
+    id: '/data-management',
+    path: '/data-management',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedDividendRoute = AuthenticatedDividendRouteImport.update({
+  id: '/dividend',
+  path: '/dividend',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedInterestRoute = AuthenticatedInterestRouteImport.update({
+  id: '/interest',
+  path: '/interest',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedMutualFundRoute = AuthenticatedMutualFundRouteImport.update({
+  id: '/mutual-fund',
+  path: '/mutual-fund',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedPaymentsRoute = AuthenticatedPaymentsRouteImport.update({
+  id: '/payments',
+  path: '/payments',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedReconciliationRoute =
+  AuthenticatedReconciliationRouteImport.update({
+    id: '/reconciliation',
+    path: '/reconciliation',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedReportsRoute = AuthenticatedReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedUploadRoute = AuthenticatedUploadRouteImport.update({
+  id: '/upload',
+  path: '/upload',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedUploadHistoryRoute =
+  AuthenticatedUploadHistoryRouteImport.update({
+    id: '/upload-history',
+    path: '/upload-history',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedUploadsRoute = AuthenticatedUploadsRouteImport.update({
+  id: '/uploads',
+  path: '/uploads',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedUsersRoute = AuthenticatedUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedSettingsIndexRoute =
@@ -374,18 +374,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/sitemap.xml': {
-      id: '/sitemap.xml'
-      path: '/sitemap.xml'
-      fullPath: '/sitemap.xml'
-      preLoaderRoute: typeof SitemapDotxmlRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/auth': {
-      id: '/auth'
-      path: '/auth'
-      fullPath: '/auth'
-      preLoaderRoute: typeof AuthRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated': {
@@ -395,151 +388,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/auth': {
+      id: '/auth'
+      path: '/auth'
+      fullPath: '/auth'
+      preLoaderRoute: typeof AuthRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_authenticated/users': {
-      id: '/_authenticated/users'
-      path: '/users'
-      fullPath: '/users'
-      preLoaderRoute: typeof AuthenticatedUsersRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
+    '/sitemap.xml': {
+      id: '/sitemap.xml'
+      path: '/sitemap.xml'
+      fullPath: '/sitemap.xml'
+      preLoaderRoute: typeof SitemapDotxmlRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/_authenticated/uploads': {
-      id: '/_authenticated/uploads'
-      path: '/uploads'
-      fullPath: '/uploads'
-      preLoaderRoute: typeof AuthenticatedUploadsRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/upload-history': {
-      id: '/_authenticated/upload-history'
-      path: '/upload-history'
-      fullPath: '/upload-history'
-      preLoaderRoute: typeof AuthenticatedUploadHistoryRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/upload': {
-      id: '/_authenticated/upload'
-      path: '/upload'
-      fullPath: '/upload'
-      preLoaderRoute: typeof AuthenticatedUploadRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/reports': {
-      id: '/_authenticated/reports'
-      path: '/reports'
-      fullPath: '/reports'
-      preLoaderRoute: typeof AuthenticatedReportsRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/reconciliation': {
-      id: '/_authenticated/reconciliation'
-      path: '/reconciliation'
-      fullPath: '/reconciliation'
-      preLoaderRoute: typeof AuthenticatedReconciliationRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/payments': {
-      id: '/_authenticated/payments'
-      path: '/payments'
-      fullPath: '/payments'
-      preLoaderRoute: typeof AuthenticatedPaymentsRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/mutual-fund': {
-      id: '/_authenticated/mutual-fund'
-      path: '/mutual-fund'
-      fullPath: '/mutual-fund'
-      preLoaderRoute: typeof AuthenticatedMutualFundRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/interest': {
-      id: '/_authenticated/interest'
-      path: '/interest'
-      fullPath: '/interest'
-      preLoaderRoute: typeof AuthenticatedInterestRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/dividend': {
-      id: '/_authenticated/dividend'
-      path: '/dividend'
-      fullPath: '/dividend'
-      preLoaderRoute: typeof AuthenticatedDividendRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/data-management': {
-      id: '/_authenticated/data-management'
-      path: '/data-management'
-      fullPath: '/data-management'
-      preLoaderRoute: typeof AuthenticatedDataManagementRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/dashboard': {
-      id: '/_authenticated/dashboard'
-      path: '/dashboard'
-      fullPath: '/dashboard'
-      preLoaderRoute: typeof AuthenticatedDashboardRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/companies': {
-      id: '/_authenticated/companies'
-      path: '/companies'
-      fullPath: '/companies'
-      preLoaderRoute: typeof AuthenticatedCompaniesRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/clients': {
-      id: '/_authenticated/clients'
-      path: '/clients'
-      fullPath: '/clients'
-      preLoaderRoute: typeof AuthenticatedClientsRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/classification-review': {
-      id: '/_authenticated/classification-review'
-      path: '/classification-review'
-      fullPath: '/classification-review'
-      preLoaderRoute: typeof AuthenticatedClassificationReviewRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/backup': {
-      id: '/_authenticated/backup'
-      path: '/backup'
-      fullPath: '/backup'
-      preLoaderRoute: typeof AuthenticatedBackupRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/audit-logs': {
-      id: '/_authenticated/audit-logs'
-      path: '/audit-logs'
-      fullPath: '/audit-logs'
-      preLoaderRoute: typeof AuthenticatedAuditLogsRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/audit': {
-      id: '/_authenticated/audit'
-      path: '/audit'
-      fullPath: '/audit'
-      preLoaderRoute: typeof AuthenticatedAuditRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/approvals': {
-      id: '/_authenticated/approvals'
-      path: '/approvals'
-      fullPath: '/approvals'
-      preLoaderRoute: typeof AuthenticatedApprovalsRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/analytics': {
-      id: '/_authenticated/analytics'
-      path: '/analytics'
-      fullPath: '/analytics'
-      preLoaderRoute: typeof AuthenticatedAnalyticsRouteImport
+    '/_authenticated/agm-studio': {
+      id: '/_authenticated/agm-studio'
+      path: '/agm-studio'
+      fullPath: '/agm-studio'
+      preLoaderRoute: typeof AuthenticatedAgmStudioRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/allocations': {
@@ -549,11 +416,144 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAllocationsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/_authenticated/agm-studio': {
-      id: '/_authenticated/agm-studio'
-      path: '/agm-studio'
-      fullPath: '/agm-studio'
-      preLoaderRoute: typeof AuthenticatedAgmStudioRouteImport
+    '/_authenticated/analytics': {
+      id: '/_authenticated/analytics'
+      path: '/analytics'
+      fullPath: '/analytics'
+      preLoaderRoute: typeof AuthenticatedAnalyticsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/approvals': {
+      id: '/_authenticated/approvals'
+      path: '/approvals'
+      fullPath: '/approvals'
+      preLoaderRoute: typeof AuthenticatedApprovalsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/audit': {
+      id: '/_authenticated/audit'
+      path: '/audit'
+      fullPath: '/audit'
+      preLoaderRoute: typeof AuthenticatedAuditRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/audit-logs': {
+      id: '/_authenticated/audit-logs'
+      path: '/audit-logs'
+      fullPath: '/audit-logs'
+      preLoaderRoute: typeof AuthenticatedAuditLogsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/backup': {
+      id: '/_authenticated/backup'
+      path: '/backup'
+      fullPath: '/backup'
+      preLoaderRoute: typeof AuthenticatedBackupRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/classification-review': {
+      id: '/_authenticated/classification-review'
+      path: '/classification-review'
+      fullPath: '/classification-review'
+      preLoaderRoute: typeof AuthenticatedClassificationReviewRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/clients': {
+      id: '/_authenticated/clients'
+      path: '/clients'
+      fullPath: '/clients'
+      preLoaderRoute: typeof AuthenticatedClientsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/companies': {
+      id: '/_authenticated/companies'
+      path: '/companies'
+      fullPath: '/companies'
+      preLoaderRoute: typeof AuthenticatedCompaniesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/dashboard': {
+      id: '/_authenticated/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof AuthenticatedDashboardRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/data-management': {
+      id: '/_authenticated/data-management'
+      path: '/data-management'
+      fullPath: '/data-management'
+      preLoaderRoute: typeof AuthenticatedDataManagementRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/dividend': {
+      id: '/_authenticated/dividend'
+      path: '/dividend'
+      fullPath: '/dividend'
+      preLoaderRoute: typeof AuthenticatedDividendRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/interest': {
+      id: '/_authenticated/interest'
+      path: '/interest'
+      fullPath: '/interest'
+      preLoaderRoute: typeof AuthenticatedInterestRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/mutual-fund': {
+      id: '/_authenticated/mutual-fund'
+      path: '/mutual-fund'
+      fullPath: '/mutual-fund'
+      preLoaderRoute: typeof AuthenticatedMutualFundRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/payments': {
+      id: '/_authenticated/payments'
+      path: '/payments'
+      fullPath: '/payments'
+      preLoaderRoute: typeof AuthenticatedPaymentsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/reconciliation': {
+      id: '/_authenticated/reconciliation'
+      path: '/reconciliation'
+      fullPath: '/reconciliation'
+      preLoaderRoute: typeof AuthenticatedReconciliationRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/reports': {
+      id: '/_authenticated/reports'
+      path: '/reports'
+      fullPath: '/reports'
+      preLoaderRoute: typeof AuthenticatedReportsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/upload': {
+      id: '/_authenticated/upload'
+      path: '/upload'
+      fullPath: '/upload'
+      preLoaderRoute: typeof AuthenticatedUploadRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/upload-history': {
+      id: '/_authenticated/upload-history'
+      path: '/upload-history'
+      fullPath: '/upload-history'
+      preLoaderRoute: typeof AuthenticatedUploadHistoryRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/uploads': {
+      id: '/_authenticated/uploads'
+      path: '/uploads'
+      fullPath: '/uploads'
+      preLoaderRoute: typeof AuthenticatedUploadsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/users': {
+      id: '/_authenticated/users'
+      path: '/users'
+      fullPath: '/users'
+      preLoaderRoute: typeof AuthenticatedUsersRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/settings/': {

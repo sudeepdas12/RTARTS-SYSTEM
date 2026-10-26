@@ -438,7 +438,6 @@ describe("AGM Studio — Phase 7 Real Database & Financial Invariants Integratio
 
       const res = await AgmStudioService.promoteHistoricalDataToDatabase(
         mixedProfiles,
-        undefined,
         testCompanyId,
       );
 

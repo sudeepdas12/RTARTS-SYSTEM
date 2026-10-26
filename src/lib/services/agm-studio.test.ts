@@ -1551,11 +1551,14 @@ describe("AgmStudioService — Multi-Year AGM & Multi-Company Universal Reconcil
           const chain: any = {
             eq: vi.fn().mockReturnThis(),
             not: vi.fn().mockReturnThis(),
-            then: (resolve: any) => resolve({ error: null }),
+            is: vi.fn().mockReturnThis(),
+            select: vi.fn().mockReturnThis(),
+            then: (resolve: any) => resolve({ data: [], count: 0, error: null }),
           };
           return {
             delete: vi.fn().mockReturnValue(chain),
             upsert: vi.fn().mockResolvedValue({ error: null }),
+            select: vi.fn().mockReturnValue(chain),
           };
         }
         if (table === "agm_fiscal_year_meta") {

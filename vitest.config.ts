@@ -13,6 +13,8 @@ export default defineConfig(({ mode }) => {
       globals: true,
       setupFiles: ["./src/test/setup.ts"],
       include: ["src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}"],
+      testTimeout: 30000,
+      hookTimeout: 30000,
       env,
     },
   };

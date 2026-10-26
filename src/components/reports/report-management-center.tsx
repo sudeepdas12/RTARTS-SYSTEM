@@ -280,6 +280,7 @@ export function ReportManagementCenter({
 
       // 1. Create durable scheduled_reports record via ScheduledReportService
       const scheduledResult = await ScheduledReportService.createScheduledReport({
+        company_id: currentCompanyId,
         report_type: currentReportId,
         report_name: `${currentReportId.toUpperCase()} (${scheduleFreq.toUpperCase()}) - ${currentCompanyName}`,
         filters: {

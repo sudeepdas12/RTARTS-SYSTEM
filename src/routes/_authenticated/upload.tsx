@@ -2446,6 +2446,7 @@ function UploadRoute() {
         selectedSheetIndex={importReviewMode === "all" ? -1 : selectedSheetIndex}
         dividendType={dividendType}
         dividendRate={dividendRate}
+        companyId={selectedCompanyId}
         companyName={
           companies.find((c: any) => c.id === selectedCompanyId)?.company_name ||
           parsedData?.detectedCompanyName ||

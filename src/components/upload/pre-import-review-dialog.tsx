@@ -42,6 +42,7 @@ export interface PreImportReviewDialogProps {
   selectedSheetIndex: number; // -1 indicates ALL data sheets
   dividendType?: string;
   dividendRate?: number | string;
+  companyId?: string;
   companyName: string;
   companyCode: string;
   fiscalYear: string;
@@ -73,6 +74,7 @@ export function PreImportReviewDialog({
   selectedSheetIndex,
   dividendType = "Dividend",
   dividendRate = 0,
+  companyId,
   companyName,
   companyCode,
   fiscalYear,
@@ -287,6 +289,20 @@ export function PreImportReviewDialog({
       if (paError) throw paError;
 
       // 2. Persist durable staging records in import_staging
+      let targetCompanyId = companyId;
+      if (!targetCompanyId) {
+        const { data: comp } = await (supabase as any)
+          .from("companies")
+          .select("id")
+          .or(`company_code.eq.${companyCode},company_name.eq.${companyName}`)
+          .maybeSingle();
+        targetCompanyId = comp?.id;
+      }
+
+      if (!targetCompanyId) {
+        throw new Error("Target company ID is required to stage import");
+      }
+
       const targetTable = isDebenture
         ? "interest_payables"
         : isMutualFund
@@ -296,6 +312,7 @@ export function PreImportReviewDialog({
 
       const { error: stageErr } = await (supabase as any).from("import_staging").insert({
         approval_id: paData.id,
+        company_id: targetCompanyId,
         target_table: targetTable,
         file_name: file?.name || "import.xlsx",
         file_hash: fileHash,
