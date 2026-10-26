@@ -76,6 +76,16 @@ export default defineConfig(({ mode }) => {
     server: {
       host: "::",
       port: 8080,
+      watch: {
+        ignored: [
+          "**/node_modules_old/**",
+          "**/node_modules/**",
+          "**/.git/**",
+          "**/backups/**",
+          "**/.output/**",
+          "**/test-results/**",
+        ],
+      },
     },
   };
 
