@@ -11,12 +11,16 @@ if (fs.existsSync(envPath)) {
     if (!trimmed || trimmed.startsWith("#")) continue;
     const [key, ...rest] = trimmed.split("=");
     if (key && rest.length > 0 && !process.env[key.trim()]) {
-      process.env[key.trim()] = rest.join("=").trim().replace(/^["']|["']$/g, "");
+      process.env[key.trim()] = rest
+        .join("=")
+        .trim()
+        .replace(/^["']|["']$/g, "");
     }
   }
 }
 
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "http://127.0.0.1:54321";
+const SUPABASE_URL =
+  process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "http://127.0.0.1:54321";
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
@@ -40,26 +44,34 @@ async function auditCompany(company) {
   // 1. Tax Exempt payables
   const { data: taxExemptRows, count: taxExemptCount } = await supabase
     .from("mutual_fund_payables")
-    .select("id, client_id, shares_held, gross_dividend, tax_amount, net_payable, tds_rate, payee_classification, client:clients(full_name, boid)", { count: "exact" })
+    .select(
+      "id, client_id, shares_held, gross_dividend, tax_amount, net_payable, tds_rate, payee_classification, client:clients(full_name, boid)",
+      { count: "exact" },
+    )
     .eq("company_id", company.id)
     .eq("payee_classification", "TAX_EXEMPT");
 
   console.log(`- Tax-Exempt Rows: ${taxExemptCount || taxExemptRows?.length || 0}`);
   if (taxExemptRows && taxExemptRows.length > 0) {
-    console.table(taxExemptRows.slice(0, 5).map(r => ({
-      BOID: r.client?.boid,
-      Name: r.client?.full_name,
-      Shares: r.shares_held,
-      Gross: r.gross_dividend,
-      Tax: r.tax_amount,
-      Net: r.net_payable,
-    })));
+    console.table(
+      taxExemptRows.slice(0, 5).map((r) => ({
+        BOID: r.client?.boid,
+        Name: r.client?.full_name,
+        Shares: r.shares_held,
+        Gross: r.gross_dividend,
+        Tax: r.tax_amount,
+        Net: r.net_payable,
+      })),
+    );
   }
 
   // 2. Top Institutional Payees
   const { data: instRows, count: instCount } = await supabase
     .from("mutual_fund_payables")
-    .select("id, client_id, shares_held, gross_dividend, tax_amount, net_payable, tds_rate, payee_classification, client:clients(full_name, boid)", { count: "exact" })
+    .select(
+      "id, client_id, shares_held, gross_dividend, tax_amount, net_payable, tds_rate, payee_classification, client:clients(full_name, boid)",
+      { count: "exact" },
+    )
     .eq("company_id", company.id)
     .eq("payee_classification", "COMPANY_INSTITUTION")
     .order("shares_held", { ascending: false })
@@ -67,14 +79,16 @@ async function auditCompany(company) {
 
   console.log(`- Institutional Payees Count: ${instCount || 0} (Showing Top 5)`);
   if (instRows && instRows.length > 0) {
-    console.table(instRows.map(r => ({
-      BOID: r.client?.boid,
-      Name: r.client?.full_name,
-      Shares: r.shares_held,
-      Gross: r.gross_dividend,
-      Tax: r.tax_amount,
-      TDS_Rate: r.tds_rate,
-    })));
+    console.table(
+      instRows.map((r) => ({
+        BOID: r.client?.boid,
+        Name: r.client?.full_name,
+        Shares: r.shares_held,
+        Gross: r.gross_dividend,
+        Tax: r.tax_amount,
+        TDS_Rate: r.tds_rate,
+      })),
+    );
   }
 
   // 3. Scan for Potential Misclassifications
@@ -101,14 +115,15 @@ async function main() {
   let selectedCompanies = companies;
   if (targetCompanyArg && targetCompanyArg.toLowerCase() !== "all") {
     selectedCompanies = companies.filter(
-      c => c.id === targetCompanyArg || 
-           c.company_code?.toLowerCase() === targetCompanyArg.toLowerCase() ||
-           c.company_name?.toLowerCase().includes(targetCompanyArg.toLowerCase())
+      (c) =>
+        c.id === targetCompanyArg ||
+        c.company_code?.toLowerCase() === targetCompanyArg.toLowerCase() ||
+        c.company_name?.toLowerCase().includes(targetCompanyArg.toLowerCase()),
     );
 
     if (selectedCompanies.length === 0) {
       console.error(`Company "${targetCompanyArg}" not found. Available companies:`);
-      companies.forEach(c => console.log(` - ${c.company_code || c.id}: ${c.company_name}`));
+      companies.forEach((c) => console.log(` - ${c.company_code || c.id}: ${c.company_name}`));
       process.exit(1);
     }
   }

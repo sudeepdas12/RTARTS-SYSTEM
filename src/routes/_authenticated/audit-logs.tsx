@@ -97,7 +97,12 @@ export const Route = createFileRoute("/_authenticated/audit-logs")({
 const PAGE_SIZE = 25;
 
 type DomainCategory =
-  "ALL" | "PAYABLES" | "SHAREHOLDERS" | "RECONCILIATION" | "PAYMENTS" | "SYSTEM";
+  | "ALL"
+  | "PAYABLES"
+  | "SHAREHOLDERS"
+  | "RECONCILIATION"
+  | "PAYMENTS"
+  | "SYSTEM";
 type DatePreset = "ALL" | "TODAY" | "7D" | "30D" | "CUSTOM";
 
 const DOMAIN_TABLE_MAP: Record<DomainCategory, string[]> = {

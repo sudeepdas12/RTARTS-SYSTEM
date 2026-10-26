@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo, useEffect } from "react";
+import { useDebounce } from "@/hooks/use-debounce";
 import { PageHeader } from "@/components/page-header";
 import { supabase } from "@/integrations/supabase/client";
 import { PaymentGenerator } from "@/lib/payment-generator";
@@ -157,55 +158,67 @@ function PaymentsRoute() {
 
   // Individual Shareholder Transactions Query
   const [shareholderSearch, setShareholderSearch] = useState<string>("");
+  const debouncedShareholderSearch = useDebounce(shareholderSearch, 350);
   const [shareholderCompany, setShareholderCompany] = useState<string>("all");
   const [shareholderStatus, setShareholderStatus] = useState<string>("all");
+  const [shareholderPage, setShareholderPage] = useState<number>(1);
+  const [shareholderPageSize, setShareholderPageSize] = useState<number>(15);
 
-  const { data: allIndividualPayments = [], isLoading: isIndividualLoading } = useQuery({
-    queryKey: ["all-individual-payments", shareholderCompany, shareholderStatus],
+  const { data: shareholderQueryResult, isLoading: isIndividualLoading } = useQuery({
+    queryKey: [
+      "payments-individual-server",
+      shareholderCompany,
+      shareholderStatus,
+      debouncedShareholderSearch,
+      shareholderPage,
+      shareholderPageSize,
+    ],
     queryFn: async () => {
-      return fetchAllRows<any>(async (from, to) => {
-        let q = (supabase as any)
-          .from("payments")
-          .select(
-            `
-            *,
-            client:clients(id, full_name, boid, bank_name, bank_account_no, pan_no, citizenship_no, phone, holder_type),
-            company:companies(id, company_name, company_code)
-          `,
-          )
-          .order("created_at", { ascending: false })
-          .order("id", { ascending: true })
-          .range(from, to);
+      let q = (supabase as any)
+        .from("payments")
+        .select(
+          `
+          *,
+          client:clients(id, full_name, boid, bank_name, bank_account_no, pan_no, citizenship_no, phone, holder_type),
+          company:companies(id, company_name, company_code)
+        `,
+          { count: "exact" },
+        )
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true });
 
-        if (shareholderCompany !== "all") q = q.eq("company_id", shareholderCompany);
-        if (shareholderStatus !== "all") q = q.eq("status", shareholderStatus);
-        const { data, error } = await q;
-        if (error) {
-          console.error("Error fetching individual payments:", error);
-          throw error;
-        }
-        return { data, error: null };
-      });
+      if (shareholderCompany !== "all") q = q.eq("company_id", shareholderCompany);
+      if (shareholderStatus !== "all") q = q.eq("status", shareholderStatus);
+
+      if (debouncedShareholderSearch) {
+        const term = debouncedShareholderSearch.trim();
+        q = q.or(
+          `bank_account_no.ilike.%${term}%,payment_reference.ilike.%${term}%,connectips_ref.ilike.%${term}%`,
+        );
+      }
+
+      const from = (shareholderPage - 1) * shareholderPageSize;
+      const to = from + shareholderPageSize - 1;
+      q = q.range(from, to);
+
+      const { data, count, error } = await q;
+      if (error) {
+        console.error("Error fetching individual payments paged:", error);
+        throw error;
+      }
+      return {
+        items: data || [],
+        total: count || 0,
+      };
     },
+    staleTime: 10_000,
   });
 
-  const filteredIndividualPayments = useMemo(() => {
-    const q = (shareholderSearch || tableSearch).toLowerCase().trim();
-    if (!q) return allIndividualPayments;
-    return allIndividualPayments.filter((p: any) => {
-      return (
-        (p.client?.boid && p.client.boid.toLowerCase().includes(q)) ||
-        (p.client?.full_name && p.client.full_name.toLowerCase().includes(q)) ||
-        (p.client?.bank_account_no && p.client.bank_account_no.toLowerCase().includes(q)) ||
-        (p.bank_account_no && p.bank_account_no.toLowerCase().includes(q)) ||
-        (p.payment_reference && p.payment_reference.toLowerCase().includes(q)) ||
-        (p.connectips_ref && p.connectips_ref.toLowerCase().includes(q)) ||
-        (p.client?.citizenship_no && p.client.citizenship_no.toLowerCase().includes(q)) ||
-        (p.client?.pan_no && p.client.pan_no.toLowerCase().includes(q)) ||
-        (p.company?.company_name && p.company.company_name.toLowerCase().includes(q))
-      );
-    });
-  }, [allIndividualPayments, shareholderSearch, tableSearch]);
+  const paginatedShareholders = shareholderQueryResult?.items || [];
+  const totalShareholders = shareholderQueryResult?.total || 0;
+  const filteredIndividualPayments = paginatedShareholders;
+  const shareholderTotalPages = Math.max(1, Math.ceil(totalShareholders / shareholderPageSize));
+  const safeShareholderPage = Math.min(shareholderPage, shareholderTotalPages);
 
   const { data: payments, isLoading } = useQuery({
     queryKey: ["payments"],
@@ -1090,17 +1103,6 @@ function PaymentsRoute() {
     const start = (safeBatchesPage - 1) * batchesPageSize;
     return filteredBatches.slice(start, start + batchesPageSize);
   }, [filteredBatches, safeBatchesPage, batchesPageSize]);
-
-  // Pagination for Individual Shareholder Payments Table
-  const [shareholderPage, setShareholderPage] = useState<number>(1);
-  const [shareholderPageSize, setShareholderPageSize] = useState<number>(15);
-  const totalShareholders = filteredIndividualPayments.length;
-  const shareholderTotalPages = Math.max(1, Math.ceil(totalShareholders / shareholderPageSize));
-  const safeShareholderPage = Math.min(shareholderPage, shareholderTotalPages);
-  const paginatedShareholders = useMemo(() => {
-    const start = (safeShareholderPage - 1) * shareholderPageSize;
-    return filteredIndividualPayments.slice(start, start + shareholderPageSize);
-  }, [filteredIndividualPayments, safeShareholderPage, shareholderPageSize]);
 
   // Pagination for Active Batch Line Items in Modal
   const [lineItemsPage, setLineItemsPage] = useState<number>(1);

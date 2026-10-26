@@ -25,7 +25,7 @@ function findSupabaseContainer() {
   try {
     const output = execSync(
       'docker ps --filter "name=supabase_db_" --filter "status=running" --format "{{.Names}}"',
-      { encoding: "utf8" }
+      { encoding: "utf8" },
     ).trim();
     if (!output) return null;
     return output.split("\n")[0].trim();
@@ -82,8 +82,13 @@ async function main() {
       process.exit(1);
     }
 
-    const files = fs.readdirSync(backupDir)
-      .filter((f) => f.startsWith("rtarts_backup_") && (f.endsWith(".gz") || f.endsWith(".zip") || f.endsWith(".sql")))
+    const files = fs
+      .readdirSync(backupDir)
+      .filter(
+        (f) =>
+          f.startsWith("rtarts_backup_") &&
+          (f.endsWith(".gz") || f.endsWith(".zip") || f.endsWith(".sql")),
+      )
       .map((f) => {
         const fullPath = path.join(backupDir, f);
         return { name: f, fullPath, mtime: fs.statSync(fullPath).mtimeMs };
@@ -108,7 +113,9 @@ async function main() {
 
   // Step 3: Safety Confirmation
   if (!forceFlag) {
-    console.log("\n⚠️  WARNING: Restoring will overwrite existing database records with the backup state.");
+    console.log(
+      "\n⚠️  WARNING: Restoring will overwrite existing database records with the backup state.",
+    );
     const answer = await prompt("Are you sure you want to proceed? (Type 'YES' to confirm): ");
     if (answer !== "YES") {
       console.log("Restore operation aborted by user.");
@@ -133,7 +140,9 @@ async function main() {
     if (process.platform === "win32") {
       const tempExtractDir = path.join(os.tmpdir(), `rtarts_extract_${Date.now()}`);
       fs.mkdirSync(tempExtractDir, { recursive: true });
-      execSync(`powershell -Command "Expand-Archive -Path '${targetFile}' -DestinationPath '${tempExtractDir}' -Force"`);
+      execSync(
+        `powershell -Command "Expand-Archive -Path '${targetFile}' -DestinationPath '${tempExtractDir}' -Force"`,
+      );
       const extractedFiles = fs.readdirSync(tempExtractDir).filter((f) => f.endsWith(".sql"));
       if (extractedFiles.length === 0) {
         throw new Error("No .sql file found inside ZIP archive");
@@ -150,9 +159,12 @@ async function main() {
   const containerTmpSql = "/tmp/rtarts_restore.sql";
   try {
     execSync(`docker cp "${sqlToRestore}" "${containerId}:${containerTmpSql}"`);
-    execSync(`docker exec ${containerId} psql -U supabase_admin -d postgres -f ${containerTmpSql}`, {
-      stdio: "pipe",
-    });
+    execSync(
+      `docker exec ${containerId} psql -U supabase_admin -d postgres -f ${containerTmpSql}`,
+      {
+        stdio: "pipe",
+      },
+    );
     execSync(`docker exec ${containerId} rm -f ${containerTmpSql}`);
     console.log("  ✓ Database dump applied successfully.");
   } catch (err) {
@@ -160,7 +172,9 @@ async function main() {
     process.exit(1);
   } finally {
     if (tempSqlFile && fs.existsSync(tempSqlFile)) {
-      try { fs.unlinkSync(tempSqlFile); } catch {}
+      try {
+        fs.unlinkSync(tempSqlFile);
+      } catch {}
     }
   }
 
@@ -176,9 +190,12 @@ async function main() {
       ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role, authenticator;
       ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO anon, authenticated, service_role, authenticator;
     `;
-    execSync(`docker exec ${containerId} psql -U supabase_admin -d postgres -c "${grantSql.replace(/\n/g, " ")}"`, {
-      stdio: "pipe",
-    });
+    execSync(
+      `docker exec ${containerId} psql -U supabase_admin -d postgres -c "${grantSql.replace(/\n/g, " ")}"`,
+      {
+        stdio: "pipe",
+      },
+    );
     console.log("  ✓ Permissions verified and restored.");
   } catch (err) {
     console.warn(`  [WARN] Grant permissions encountered a notice: ${err.message}`);

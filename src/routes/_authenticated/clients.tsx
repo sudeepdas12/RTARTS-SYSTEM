@@ -90,7 +90,11 @@ type Status = "Active" | "Inactive";
 type Residency = "Resident" | "Non-Resident";
 type Verification = "Pending" | "Verified" | "Rejected";
 type PayeeClassification =
-  "NATURAL_PERSON" | "PUBLIC_LEGAL_PERSON" | "COMPANY_INSTITUTION" | "TAX_EXEMPT" | "UNCLASSIFIED";
+  | "NATURAL_PERSON"
+  | "PUBLIC_LEGAL_PERSON"
+  | "COMPANY_INSTITUTION"
+  | "TAX_EXEMPT"
+  | "UNCLASSIFIED";
 
 function classificationBadge(c: PayeeClassification | null, holderType?: string | null) {
   switch (c) {

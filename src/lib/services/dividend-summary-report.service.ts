@@ -45,7 +45,12 @@ export interface AgmDividendSummaryReport {
 }
 
 export type AgmParticular =
-  "PUBLIC" | "INSTITUTION" | "MUTUAL FUND" | "PROMOTER" | "LOCAL" | "EMPLOYEE";
+  | "PUBLIC"
+  | "INSTITUTION"
+  | "MUTUAL FUND"
+  | "PROMOTER"
+  | "LOCAL"
+  | "EMPLOYEE";
 
 export function determineParticular(p: any): string {
   return determineAgmCategory(p);

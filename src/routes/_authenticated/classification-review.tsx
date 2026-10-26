@@ -23,6 +23,8 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ClassificationExplainabilityDialog } from "@/components/classification/classification-explainability-dialog";
 import {
   ClipboardCheck,
   AlertTriangle,
@@ -155,10 +157,16 @@ function ReviewRow({
   client,
   onConfirmed,
   isPending,
+  isSelected,
+  onToggleSelect,
+  onExplain,
 }: {
   client: any;
   onConfirmed: (id: string, classification: PayeeClassification, segment?: string) => void;
   isPending: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (id: string) => void;
+  onExplain?: (client: any) => void;
 }) {
   const [classification, setClassification] = useState<PayeeClassification>(
     (["NATURAL_PERSON", "PUBLIC_LEGAL_PERSON", "COMPANY_INSTITUTION", "TAX_EXEMPT"].includes(
@@ -181,7 +189,16 @@ function ReviewRow({
   }, [client.id, client.payee_classification, client.payee_segment]);
 
   return (
-    <TableRow key={client.id} className="hover:bg-muted/30">
+    <TableRow key={client.id} className={`hover:bg-muted/30 ${isSelected ? "bg-muted/50" : ""}`}>
+      <TableCell className="pl-4 pr-1 w-10">
+        {onToggleSelect && (
+          <Checkbox
+            checked={isSelected}
+            onCheckedChange={() => onToggleSelect(client.id)}
+            aria-label={`Select ${client.full_name}`}
+          />
+        )}
+      </TableCell>
       <TableCell className="font-medium text-sm">
         <div>{client.full_name}</div>
         {client.pan_or_citizenship && (
@@ -197,12 +214,12 @@ function ReviewRow({
       <TableCell>{classBadge(client.payee_classification)}</TableCell>
       <TableCell>{statusBadge(client.classification_status)}</TableCell>
       <TableCell>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           <Select
             value={classification}
             onValueChange={(v) => setClassification(v as PayeeClassification)}
           >
-            <SelectTrigger className="h-8 w-[190px] text-xs">
+            <SelectTrigger className="h-8 w-[170px] text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -214,7 +231,7 @@ function ReviewRow({
             </SelectContent>
           </Select>
           <Select value={segment} onValueChange={setSegment}>
-            <SelectTrigger className="h-8 w-[130px] text-xs">
+            <SelectTrigger className="h-8 w-[110px] text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -227,7 +244,7 @@ function ReviewRow({
           </Select>
           <Button
             size="sm"
-            className="h-8 text-xs"
+            className="h-8 text-xs px-2.5"
             disabled={isPending}
             onClick={() =>
               onConfirmed(client.id, classification, segment === "" ? undefined : segment)
@@ -235,6 +252,17 @@ function ReviewRow({
           >
             <ShieldCheck className="w-3.5 h-3.5 mr-1" /> Confirm
           </Button>
+          {onExplain && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs px-2 text-primary border-primary/30 hover:bg-primary/10 gap-1"
+              onClick={() => onExplain(client)}
+              title="View source fields, tax rule rationale, and financial impact"
+            >
+              <Sparkles className="w-3.5 h-3.5" /> Explain
+            </Button>
+          )}
         </div>
       </TableCell>
     </TableRow>
@@ -348,6 +376,57 @@ function ClassificationReviewPage() {
     (currentPage - 1) * PAGE_SIZE,
     currentPage * PAGE_SIZE,
   );
+
+  const [explainClient, setExplainClient] = useState<any | null>(null);
+  const [selectedClientIds, setSelectedClientIds] = useState<Set<string>>(new Set());
+  const [bulkClassification, setBulkClassification] =
+    useState<PayeeClassification>("NATURAL_PERSON");
+  const [bulkSegment, setBulkSegment] = useState<string>("");
+  const [isBulkApplying, setIsBulkApplying] = useState(false);
+
+  const toggleSelectClient = (id: string) => {
+    setSelectedClientIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleSelectAllOnPage = () => {
+    const pageIds = pagedClients.map((c) => c.id);
+    const allSelected = pageIds.length > 0 && pageIds.every((id) => selectedClientIds.has(id));
+    setSelectedClientIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        pageIds.forEach((id) => next.delete(id));
+      } else {
+        pageIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const handleBulkApply = async () => {
+    if (selectedClientIds.size === 0) return;
+    setIsBulkApplying(true);
+    try {
+      const ids = Array.from(selectedClientIds);
+      for (const id of ids) {
+        await confirmMutation.mutateAsync({
+          clientId: id,
+          classification: bulkClassification,
+          segment: bulkSegment === "" ? undefined : bulkSegment,
+        });
+      }
+      toast.success(`Successfully confirmed ${ids.length} shareholders as ${bulkClassification}`);
+      setSelectedClientIds(new Set());
+    } catch (err: any) {
+      toast.error(`Bulk update error: ${err?.message || err}`);
+    } finally {
+      setIsBulkApplying(false);
+    }
+  };
 
   const handleExportReviewList = () => {
     if (filteredClients.length === 0) return;
@@ -575,16 +654,72 @@ function ClassificationReviewPage() {
                 </div>
               ) : (
                 <>
+                  {selectedClientIds.size > 0 && (
+                    <div className="flex flex-wrap items-center justify-between gap-3 p-3 mx-6 mb-3 bg-muted/60 rounded-lg border border-primary/20 text-xs">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary" className="font-bold">
+                          {selectedClientIds.size} selected
+                        </Badge>
+                        <span className="text-muted-foreground">Bulk assign classification:</span>
+                        <Select
+                          value={bulkClassification}
+                          onValueChange={(v) => setBulkClassification(v as PayeeClassification)}
+                        >
+                          <SelectTrigger className="h-8 w-[190px] text-xs bg-background">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {CLASSIFICATION_OPTIONS.map((o) => (
+                              <SelectItem key={o.value} value={o.value} className="text-xs">
+                                {o.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 text-xs"
+                          onClick={() => setSelectedClientIds(new Set())}
+                        >
+                          Clear Selection
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+                          disabled={isBulkApplying}
+                          onClick={handleBulkApply}
+                        >
+                          {isBulkApplying
+                            ? "Applying..."
+                            : `Apply to Selected (${selectedClientIds.size})`}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="overflow-x-auto">
                     <Table>
                       <TableHeader>
                         <TableRow className="hover:bg-transparent">
-                          <TableHead className="pl-6">Shareholder</TableHead>
+                          <TableHead className="pl-4 pr-1 w-10">
+                            <Checkbox
+                              checked={
+                                pagedClients.length > 0 &&
+                                pagedClients.every((c) => selectedClientIds.has(c.id))
+                              }
+                              onCheckedChange={handleSelectAllOnPage}
+                              aria-label="Select all on page"
+                            />
+                          </TableHead>
+                          <TableHead>Shareholder</TableHead>
                           <TableHead>BOID</TableHead>
                           <TableHead>Company</TableHead>
                           <TableHead>Current</TableHead>
                           <TableHead>Status</TableHead>
-                          <TableHead className="pr-6 w-[430px]">
+                          <TableHead className="pr-6 w-[480px]">
                             Confirm Classification & Segment
                           </TableHead>
                         </TableRow>
@@ -596,6 +731,9 @@ function ClassificationReviewPage() {
                             client={client}
                             onConfirmed={onConfirmed}
                             isPending={confirmMutation.isPending}
+                            isSelected={selectedClientIds.has(client.id)}
+                            onToggleSelect={toggleSelectClient}
+                            onExplain={setExplainClient}
                           />
                         ))}
                       </TableBody>
@@ -776,6 +914,16 @@ function ClassificationReviewPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <ClassificationExplainabilityDialog
+        open={Boolean(explainClient)}
+        onOpenChange={(open) => {
+          if (!open) setExplainClient(null);
+        }}
+        client={explainClient}
+        onConfirmClassification={onConfirmed}
+        isPending={confirmMutation.isPending}
+      />
     </div>
   );
 }

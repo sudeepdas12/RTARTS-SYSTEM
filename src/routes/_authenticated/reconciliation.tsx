@@ -62,6 +62,8 @@ import {
   AccountRemediationDialog,
   type RejectedAccountItem,
 } from "@/components/account-remediation-dialog";
+import { ReconciliationPostingModal } from "@/components/reconciliation/reconciliation-posting-modal";
+import { ReconciliationDashboard } from "@/components/reconciliation/reconciliation-dashboard";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/reconciliation")({
@@ -80,6 +82,8 @@ export function ReconciliationRoute() {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [remediationDialogOpen, setRemediationDialogOpen] = useState(false);
   const [remediationItems, setRemediationItems] = useState<RejectedAccountItem[]>([]);
+  const [showPostingModal, setShowPostingModal] = useState(false);
+  const [postingIsAll, setPostingIsAll] = useState(true);
 
   const headerExcelInputRef = useRef<HTMLInputElement>(null);
   const headerBankInputRef = useRef<HTMLInputElement>(null);
@@ -99,7 +103,7 @@ export function ReconciliationRoute() {
     Record<string, "all" | "matched" | "rejected" | "discrepancy">
   >({});
 
-  const { hasAny, isAdmin } = useAuth();
+  const { hasAny, isAdmin, user, roles } = useAuth();
   const canApply = hasAny(["admin", "finance_operator", "reconciliation_officer"]);
   const canDelete = isAdmin;
 
@@ -754,7 +758,7 @@ export function ReconciliationRoute() {
     }
   };
 
-  const handleApplyReconciliation = async () => {
+  const handleApplyReconciliation = () => {
     if (!canApply) {
       toast.error("Unauthorized: You do not have permission to apply reconciliation.");
       return;
@@ -778,18 +782,19 @@ export function ReconciliationRoute() {
       return;
     }
 
-    const confirmMsg =
-      `Apply Reconciliation Breakdown:\n` +
-      `• ${matchedCount} records will be updated to "Paid"\n` +
-      (partialCount > 0 ? `• ${partialCount} records will be updated to "Partial"\n` : "") +
-      (rejectCount > 0 ? `• ${rejectCount} rejected records will be flagged\n` : "") +
-      `\nProceed with atomic database update?`;
+    setPostingIsAll(true);
+    setShowPostingModal(true);
+  };
 
-    if (!window.confirm(confirmMsg)) return;
+  const handleConfirmPosting = async () => {
+    if (!report?.matches) return;
+    const targetMatches = postingIsAll
+      ? report.matches
+      : report.matches.filter((m) => selectedMatchIds.has(m.id));
 
     setIsApplying(true);
     try {
-      const results = buildResults(report.matches);
+      const results = buildResults(targetMatches);
       const applyRes = await ReconciliationService.applyReconciliation(
         results as unknown as ReconciliationResultRow[],
       );
@@ -838,9 +843,27 @@ export function ReconciliationRoute() {
       qc.invalidateQueries({ queryKey: ["dividend_payables"] });
       qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
       qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+
+      // Update in-memory matches
+      setReport((prev) => {
+        if (!prev) return null;
+        const targetIds = new Set(targetMatches.map((m) => m.id));
+        return {
+          ...prev,
+          matches: prev.matches.map((m) => {
+            if (!targetIds.has(m.id)) return m;
+            if (m.status === "Matched") return { ...m, status: "Paid" as any };
+            return m;
+          }),
+        };
+      });
+
+      if (!postingIsAll) {
+        setSelectedMatchIds(new Set());
+      }
       await loadHistory();
     } catch (err: any) {
-      console.error("Failed to apply reconciliation:", err);
+      console.error("Reconciliation apply error:", err);
       toast.error(`Failed to apply reconciliation: ${err?.message || err}`);
     } finally {
       setIsApplying(false);
@@ -1042,7 +1065,7 @@ export function ReconciliationRoute() {
     setSelectedMatchIds(new Set());
   };
 
-  const handleApplySelected = async () => {
+  const handleApplySelected = () => {
     if (!canApply) {
       toast.error("Unauthorized: You do not have permission to apply reconciliation.");
       return;
@@ -1051,81 +1074,8 @@ export function ReconciliationRoute() {
     const selectedMatches = (report?.matches || []).filter((m) => selectedMatchIds.has(m.id));
     if (selectedMatches.length === 0) return;
 
-    const matchedCount = selectedMatches.filter((m) => m.status === "Matched").length;
-    const partialCount = selectedMatches.filter(
-      (m) => m.status === "Over_Paid" || m.status === "Under_Paid",
-    ).length;
-    const rejectCount = selectedMatches.filter((m) => m.status === "Rejected").length;
-
-    const confirmMsg =
-      `Apply ${selectedMatches.length} Selected Records:\n` +
-      `• ${matchedCount} records will be updated to "Paid"\n` +
-      (partialCount > 0 ? `• ${partialCount} records will be updated to "Partial"\n` : "") +
-      (rejectCount > 0 ? `• ${rejectCount} rejected records will be flagged\n` : "") +
-      `\nProceed with atomic database update?`;
-
-    if (!window.confirm(confirmMsg)) return;
-
-    setIsApplying(true);
-    try {
-      const allSelectedResults = buildResults(selectedMatches);
-      const applyRes = await ReconciliationService.applyReconciliation(
-        allSelectedResults as unknown as ReconciliationResultRow[],
-      );
-      let historySaved = true;
-      try {
-        await ReconciliationService.saveResults(allSelectedResults);
-      } catch (saveErr: any) {
-        historySaved = false;
-        console.error("Ledger updated but failed to save reconciliation history:", saveErr);
-        toast.error(
-          `Ledger updated (${applyRes.updated} payables), but saving reconciliation history failed: ${saveErr?.message || saveErr}`,
-        );
-      }
-      const rejectedCount = allSelectedResults.filter((r) => r.result === "Rejected").length;
-      if (!historySaved) {
-        // History saving failed; do not show success toast
-      } else if (
-        applyRes.updated === 0 &&
-        applyRes.paymentsCreated === 0 &&
-        (applyRes.alreadyPaid ?? 0) > 0
-      ) {
-        toast.info(
-          `All ${applyRes.alreadyPaid} selected records are already marked as Paid / Completed in the system.`,
-        );
-      } else if (
-        applyRes.updated === 0 &&
-        applyRes.paymentsCreated === 0 &&
-        applyRes.errors?.length > 0
-      ) {
-        toast.error(`Reconciliation apply skipped: ${applyRes.errors[0]}`);
-      } else if (applyRes.updated === 0 && applyRes.paymentsCreated === 0) {
-        toast.warning(
-          "Applied reconciliation: 0 payables updated. Check that records have matching pending payables in the system.",
-        );
-      } else {
-        const alreadyNote =
-          (applyRes.alreadyPaid ?? 0) > 0 ? ` (${applyRes.alreadyPaid} already paid)` : "";
-        const skippedNote =
-          applyRes.errors?.length > 0 ? ` (${applyRes.errors.length} unlinked items skipped)` : "";
-        toast.success(
-          `Applied ${allSelectedResults.length} records: ${applyRes.updated} payables updated${rejectedCount > 0 ? `, ${rejectedCount} rejected recorded in history` : ""}${alreadyNote}${skippedNote}.`,
-        );
-      }
-      qc.invalidateQueries({ queryKey: ["payments"] });
-      qc.invalidateQueries({ queryKey: ["payables"] });
-      qc.invalidateQueries({ queryKey: ["interest_payables"] });
-      qc.invalidateQueries({ queryKey: ["dividend_payables"] });
-      qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
-      qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
-      await loadHistory();
-      clearSelection();
-    } catch (err: any) {
-      console.error("Failed to apply selected:", err);
-      toast.error(`Failed to apply selected records: ${err?.message || err}`);
-    } finally {
-      setIsApplying(false);
-    }
+    setPostingIsAll(false);
+    setShowPostingModal(true);
   };
 
   const handleExportSelected = () => {
@@ -1577,6 +1527,8 @@ export function ReconciliationRoute() {
               </Button>
             </div>
           </div>
+
+          <ReconciliationDashboard report={report} />
 
           {report.summary && (
             <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
@@ -2910,6 +2862,18 @@ export function ReconciliationRoute() {
             ? companiesList.find((c) => c.id === reconCompanyId)?.company_name
             : "Selected Entity"
         }
+      />
+
+      <ReconciliationPostingModal
+        open={showPostingModal}
+        onOpenChange={setShowPostingModal}
+        report={report}
+        selectedMatchIds={selectedMatchIds}
+        isApplying={isApplying}
+        onConfirmApply={handleConfirmPosting}
+        operatorName={user?.user_metadata?.full_name || user?.email || "Authorized Operator"}
+        operatorRole={roles?.[0] || "Checker / Approver"}
+        isAll={postingIsAll}
       />
     </div>
   );

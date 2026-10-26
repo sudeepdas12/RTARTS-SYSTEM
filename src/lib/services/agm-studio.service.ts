@@ -111,7 +111,12 @@ export interface YoYChainReport {
 }
 
 export type CurrentFyStatus =
-  "ACTIVE" | "EXITED" | "NOT_PRESENT_IN_IMPORT" | "NEW_ENTRANT" | "ESCROW" | "PHYSICAL_PENDING";
+  | "ACTIVE"
+  | "EXITED"
+  | "NOT_PRESENT_IN_IMPORT"
+  | "NEW_ENTRANT"
+  | "ESCROW"
+  | "PHYSICAL_PENDING";
 
 export interface MultiYearShareholderProfile {
   companyId?: string;
@@ -1258,7 +1263,11 @@ export const AgmStudioService = {
         upperSheet.includes("CLEARING");
 
       const defaultHolderType:
-        "PROMOTER" | "PUBLIC" | "MUTUAL_FUND" | "CLEARING_POOL" | "PHYSICAL" = isExclusionSheet
+        | "PROMOTER"
+        | "PUBLIC"
+        | "MUTUAL_FUND"
+        | "CLEARING_POOL"
+        | "PHYSICAL" = isExclusionSheet
         ? "CLEARING_POOL"
         : isPhysicalSheet
           ? "PHYSICAL"

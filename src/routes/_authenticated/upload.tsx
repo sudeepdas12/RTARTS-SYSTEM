@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/page-header";
 import { DragDropZone } from "@/components/upload/drag-drop-zone";
 import { ImportPreview } from "@/components/upload/import-preview";
+import { PreImportReviewDialog } from "@/components/upload/pre-import-review-dialog";
 import { ExcelParser, ParsedExcelData, DetectedSheetType } from "@/lib/excel-parser";
 import { ChunkProcessor, ChunkProgress } from "@/lib/chunk-processor";
 import { ImportService } from "@/lib/services/import.service";
@@ -182,10 +183,18 @@ interface AllSheetsProgress {
 function UploadRoute() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { hasAny, isAdmin } = useAuth();
+  const { hasAny, isAdmin, user, roles } = useAuth();
   const canWrite = isAdmin || hasAny(["admin", "finance_operator"]);
 
   const [file, setFile] = useState<File | null>(null);
+  const [showPreImportReview, setShowPreImportReview] = useState(false);
+  const [loadedTaxRules, setLoadedTaxRules] = useState<any[]>([]);
+
+  useEffect(() => {
+    loadTaxRules()
+      .then((r) => setLoadedTaxRules(r))
+      .catch(() => {});
+  }, []);
   const [activeDuplicateUpload, setActiveDuplicateUpload] = useState<any>(null);
   const [parsedData, setParsedData] = useState<ParsedExcelData | null>(null);
   const [selectedSheetIndex, setSelectedSheetIndex] = useState(0);
@@ -659,7 +668,7 @@ function UploadRoute() {
     };
   }
 
-  const handleImport = async () => {
+  const handleImport = () => {
     if (!canWrite) {
       toast.error("Unauthorized: You do not have permission to upload or import files.");
       return;
@@ -689,6 +698,15 @@ function UploadRoute() {
       );
       return;
     }
+
+    setShowPreImportReview(true);
+  };
+
+  const executeImport = async (makerNotes?: string) => {
+    setShowPreImportReview(false);
+    if (!file || !parsedData) return;
+    const sheet = parsedData.sheets[selectedSheetIndex];
+    if (!sheet) return;
 
     const sheetDivRate = sheetDividendRates[selectedSheetIndex];
     const rate = sheetDivRate
@@ -2397,6 +2415,27 @@ function UploadRoute() {
           <ImportPreview data={parsedData} selectedSheetIndex={selectedSheetIndex} />
         </div>
       )}
+
+      <PreImportReviewDialog
+        open={showPreImportReview}
+        onOpenChange={setShowPreImportReview}
+        file={file}
+        fileHash={cachedFileHash}
+        parsedData={parsedData}
+        selectedSheetIndex={selectedSheetIndex}
+        companyName={
+          companies.find((c: any) => c.id === selectedCompanyId)?.company_name ||
+          parsedData?.detectedCompanyName ||
+          "Auto Detected Company"
+        }
+        companyCode={companies.find((c: any) => c.id === selectedCompanyId)?.company_code || "AUTO"}
+        fiscalYear={fiscalYear}
+        operatorName={user?.user_metadata?.full_name || user?.email || "Authorized Operator"}
+        operatorRole={roles?.[0] || "Maker"}
+        taxRules={loadedTaxRules}
+        onConfirmPost={(notes) => executeImport(notes)}
+        isPosting={isImporting}
+      />
     </div>
   );
 }

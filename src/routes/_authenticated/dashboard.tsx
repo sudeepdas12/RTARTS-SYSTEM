@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase, fetchAllRows } from "@/lib/services/database";
+import { OperationalWorkflowHub } from "@/components/dashboard/operational-workflow-hub";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -91,9 +92,90 @@ const STATUS_COLORS: Record<string, string> = {
   Partial: "#3b82f6", // Blue
 };
 
+const SCOPE_STORAGE_KEY = "rtarts_dashboard_scope";
+
 function Dashboard() {
-  const [selectedCompanyId, setSelectedCompanyId] = useState<string>("all");
-  const [selectedFiscalYear, setSelectedFiscalYear] = useState<string>("all");
+  const qc = useQueryClient();
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(SCOPE_STORAGE_KEY);
+      if (saved) return JSON.parse(saved).companyId || "all";
+    } catch (err) {
+      console.debug("Scope storage read unavailable", err);
+    }
+    return "all";
+  });
+  const [selectedFiscalYear, setSelectedFiscalYear] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(SCOPE_STORAGE_KEY);
+      if (saved) return JSON.parse(saved).fiscalYear || "all";
+    } catch (err) {
+      console.debug("Scope FY storage read unavailable", err);
+    }
+    return "all";
+  });
+  const [dataAsOf, setDataAsOf] = useState<Date>(() => new Date());
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        SCOPE_STORAGE_KEY,
+        JSON.stringify({ companyId: selectedCompanyId, fiscalYear: selectedFiscalYear }),
+      );
+    } catch (err) {
+      console.debug("Scope storage write unavailable", err);
+    }
+  }, [selectedCompanyId, selectedFiscalYear]);
+
+  const handleRefreshSnapshot = async () => {
+    setIsRefreshing(true);
+    await qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+    await qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] });
+    setDataAsOf(new Date());
+    setIsRefreshing(false);
+  };
+
+  const { data: opMetrics } = useQuery({
+    queryKey: ["dashboard-operational-metrics", selectedCompanyId],
+    queryFn: async () => {
+      let appQ = (supabase as any)
+        .from("pending_approvals")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "Pending");
+      if (selectedCompanyId !== "all") appQ = appQ.eq("company_id", selectedCompanyId);
+      const { count: pendingApprovals = 0 } = await appQ;
+
+      let clientQ = (supabase as any)
+        .from("clients")
+        .select("id", { count: "exact", head: true })
+        .or("bank_account_no.is.null,bank_account_no.eq.'',needs_review.eq.true");
+      if (selectedCompanyId !== "all") clientQ = clientQ.eq("company_id", selectedCompanyId);
+      const { count: dataQualityIssues = 0 } = await clientQ;
+
+      let reconQ = (supabase as any)
+        .from("payments")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "Pending");
+      if (selectedCompanyId !== "all") reconQ = reconQ.eq("company_id", selectedCompanyId);
+      const { count: unreconciledPending = 0 } = await reconQ;
+
+      let batchQ = (supabase as any)
+        .from("payment_batches")
+        .select("id", { count: "exact", head: true })
+        .in("status", ["Draft", "Pending_Approval"]);
+      if (selectedCompanyId !== "all") batchQ = batchQ.eq("company_id", selectedCompanyId);
+      const { count: batchesPending = 0 } = await batchQ;
+
+      return {
+        pendingApprovals: pendingApprovals || 0,
+        dataQualityIssues: dataQualityIssues || 0,
+        unreconciledPending: unreconciledPending || 0,
+        batchesPending: batchesPending || 0,
+      };
+    },
+    staleTime: 60_000,
+  });
 
   const { data: companies = [] } = useQuery({
     queryKey: ["dashboard-companies"],
@@ -547,6 +629,15 @@ function Dashboard() {
           </Link>
         </div>
       </div>
+
+      <OperationalWorkflowHub
+        metrics={opMetrics}
+        dataAsOf={dataAsOf}
+        onRefresh={handleRefreshSnapshot}
+        isRefreshing={isRefreshing}
+        selectedCompanyName={selectedCompany?.company_name || "All Companies"}
+        selectedFiscalYear={selectedFiscalYear === "all" ? "All Fiscal Years" : selectedFiscalYear}
+      />
 
       {/* Quick Access Modules */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">

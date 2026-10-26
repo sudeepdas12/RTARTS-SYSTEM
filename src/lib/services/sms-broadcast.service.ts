@@ -68,7 +68,11 @@ export const SmsBroadcastService = {
     if (digits.length === 10 && /^(98|97|96)[0-9]{8}$/.test(digits)) {
       return { cleanPhone: digits, isValid: true };
     }
-    if (digits.length === 13 && digits.startsWith("977") && /^(977)(98|97|96)[0-9]{8}$/.test(digits)) {
+    if (
+      digits.length === 13 &&
+      digits.startsWith("977") &&
+      /^(977)(98|97|96)[0-9]{8}$/.test(digits)
+    ) {
       return { cleanPhone: digits.slice(3), isValid: true };
     }
     return { cleanPhone: digits, isValid: digits.length === 10 };
@@ -93,7 +97,10 @@ export const SmsBroadcastService = {
     return template
       .replace(/{{name}}/g, params.name || "Shareholder")
       .replace(/{{boid}}/g, params.boid || "")
-      .replace(/{{amount}}/g, Number(params.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 }))
+      .replace(
+        /{{amount}}/g,
+        Number(params.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 }),
+      )
       .replace(/{{company}}/g, params.company || "Company")
       .replace(/{{fy}}/g, params.fy || "")
       .replace(/{{ref}}/g, params.ref || "CIPS")
@@ -152,7 +159,7 @@ export const SmsBroadcastService = {
         id: item.id,
         recipientName: name,
         boid,
-        phone: cleanPhone || (item.phone || ""),
+        phone: cleanPhone || item.phone || "",
         email: item.email,
         companyName: company,
         fiscalYear: fy,
@@ -226,8 +233,10 @@ export const SmsBroadcastService = {
     XLSX.utils.book_append_sheet(wb, ws, "SMS_Broadcast_Queue");
 
     const safeName =
-      (fileName || `SMS_Broadcast_${summary.templateType}_${Date.now()}`)
-        .replace(/[^a-zA-Z0-9-_]/g, "_") + ".xlsx";
+      (fileName || `SMS_Broadcast_${summary.templateType}_${Date.now()}`).replace(
+        /[^a-zA-Z0-9-_]/g,
+        "_",
+      ) + ".xlsx";
 
     XLSX.writeFile(wb, safeName);
   },

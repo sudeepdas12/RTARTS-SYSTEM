@@ -766,7 +766,10 @@ function SettingsRoute() {
                     value={merged.sms_provider || "sparrow"}
                     onChange={(e) => {
                       const provider = e.target.value as
-                        "sparrow" | "aakash" | "smstonepal" | "custom";
+                        | "sparrow"
+                        | "aakash"
+                        | "smstonepal"
+                        | "custom";
                       update("sms_provider", provider);
                       if (provider === "sparrow") {
                         update("sms_gateway_url", "https://api.sparrowsms.com/v2/sms/");

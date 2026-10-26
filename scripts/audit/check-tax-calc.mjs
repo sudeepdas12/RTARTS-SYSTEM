@@ -10,12 +10,16 @@ if (fs.existsSync(envPath)) {
     if (!trimmed || trimmed.startsWith("#")) continue;
     const [key, ...rest] = trimmed.split("=");
     if (key && rest.length > 0 && !process.env[key.trim()]) {
-      process.env[key.trim()] = rest.join("=").trim().replace(/^["']|["']$/g, "");
+      process.env[key.trim()] = rest
+        .join("=")
+        .trim()
+        .replace(/^["']|["']$/g, "");
     }
   }
 }
 
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "http://127.0.0.1:54321";
+const SUPABASE_URL =
+  process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "http://127.0.0.1:54321";
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
@@ -23,7 +27,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 });
 
 async function main() {
-  const rmf1Id = '177ae652-36a1-4b1b-a745-230096a5908e';
+  const rmf1Id = "177ae652-36a1-4b1b-a745-230096a5908e";
 
   let from = 0;
   const batchSize = 1000;
@@ -32,10 +36,12 @@ async function main() {
 
   while (true) {
     const { data, error } = await supabase
-      .from('mutual_fund_payables')
-      .select('id, client_id, shares_held, dividend_rate, gross_dividend, tax_amount, net_payable, tds_rate, payee_classification')
-      .eq('company_id', rmf1Id)
-      .eq('payee_classification', 'NATURAL_PERSON')
+      .from("mutual_fund_payables")
+      .select(
+        "id, client_id, shares_held, dividend_rate, gross_dividend, tax_amount, net_payable, tds_rate, payee_classification",
+      )
+      .eq("company_id", rmf1Id)
+      .eq("payee_classification", "NATURAL_PERSON")
       .range(from, from + batchSize - 1);
 
     if (error || !data || data.length === 0) break;
@@ -54,7 +60,7 @@ async function main() {
             actualTax: tax,
             expectedTax,
             tdsRate: r.tds_rate,
-            diff: tax - expectedTax
+            diff: tax - expectedTax,
           });
         }
       }

@@ -31,20 +31,22 @@ if (!fs.existsSync(edgeFnPath)) {
   assert(false, `Edge function file missing at ${edgeFnPath}`);
 } else {
   const content = fs.readFileSync(edgeFnPath, "utf-8");
-  
+
   // Verify 15% institutional dividend TDS in Edge Function
   const hasInstitutional15 =
     /case "INSTITUTION":\s*case "COMPANY_INSTITUTION":\s*return 0\.15;/m.test(content) ||
     /case "COMPANY_INSTITUTION":\s*return 0\.15;/m.test(content);
-  assert(hasInstitutional15, "Edge function enforces 15% TDS for INSTITUTION / COMPANY_INSTITUTION");
+  assert(
+    hasInstitutional15,
+    "Edge function enforces 15% TDS for INSTITUTION / COMPANY_INSTITUTION",
+  );
 
   const hasForeign15 =
     /case "FOREIGN":\s*case "FOREIGN_INVESTOR":\s*return 0\.15;/m.test(content) ||
     /case "FOREIGN_INVESTOR":\s*return 0\.15;/m.test(content);
   assert(hasForeign15, "Edge function enforces 15% TDS for FOREIGN / FOREIGN_INVESTOR");
 
-  const hasMutualFundExempt =
-    /case "MUTUAL_FUND":\s*case "TAX_EXEMPT":\s*return 0;/m.test(content);
+  const hasMutualFundExempt = /case "MUTUAL_FUND":\s*case "TAX_EXEMPT":\s*return 0;/m.test(content);
   assert(hasMutualFundExempt, "Edge function enforces 0% TDS for MUTUAL_FUND and TAX_EXEMPT");
 }
 
@@ -54,7 +56,7 @@ const seedCandidates = [
   path.join(rootDir, "supabase", "seed.sql"),
   path.join(rootDir, "supabase", "migrations", "20261005000006_schema_seed_reference_data.sql"),
 ];
-const seedPath = seedCandidates.find(p => fs.existsSync(p));
+const seedPath = seedCandidates.find((p) => fs.existsSync(p));
 if (seedPath) {
   const seedContent = fs.readFileSync(seedPath, "utf-8");
   assert(
@@ -97,7 +99,9 @@ if (!supabaseUrl || !anonKey) {
     );
   } catch (err) {
     console.warn(`  [WARN] Live Edge Function endpoint unreachable (${err.message || err}).`);
-    console.warn("  Ensure 'supabase functions deploy process-import-chunk --no-verify-jwt' is executed.");
+    console.warn(
+      "  Ensure 'supabase functions deploy process-import-chunk --no-verify-jwt' is executed.",
+    );
   }
 }
 

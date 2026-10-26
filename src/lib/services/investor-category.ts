@@ -41,7 +41,12 @@ export type HolderTypeValue =
 
 /** Coarse demographic bucket shown to the user in the report. */
 export type DemographicGroup =
-  "Natural Person" | "Legal Person" | "Mutual Fund" | "Tax Exempt" | "Foreign" | "Unknown";
+  | "Natural Person"
+  | "Legal Person"
+  | "Mutual Fund"
+  | "Tax Exempt"
+  | "Foreign"
+  | "Unknown";
 
 /**
  * Map the raw detected investor category (the UPPER-CASE string returned by

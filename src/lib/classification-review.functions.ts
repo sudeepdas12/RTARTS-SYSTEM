@@ -18,7 +18,10 @@ import { fetchAllRows } from "./services/database";
  */
 
 export type PayeeClassification =
-  "NATURAL_PERSON" | "PUBLIC_LEGAL_PERSON" | "COMPANY_INSTITUTION" | "TAX_EXEMPT";
+  | "NATURAL_PERSON"
+  | "PUBLIC_LEGAL_PERSON"
+  | "COMPANY_INSTITUTION"
+  | "TAX_EXEMPT";
 
 export type PayeeSegment = "PROMOTER" | "LOCAL" | "PUBLIC" | null;
 

@@ -13,7 +13,10 @@ declare global {
 }
 
 export function initLogger() {
-  const dsn = typeof import.meta !== "undefined" && import.meta.env ? import.meta.env.VITE_SENTRY_DSN : undefined;
+  const dsn =
+    typeof import.meta !== "undefined" && import.meta.env
+      ? import.meta.env.VITE_SENTRY_DSN
+      : undefined;
   if (dsn && typeof window !== "undefined" && window.Sentry) {
     console.info("[Logger] Sentry integration active.");
   }
@@ -24,7 +27,10 @@ export const logger = {
     console.info(message, ...optionalParams);
     if (typeof window !== "undefined" && window.Sentry?.captureMessage) {
       try {
-        window.Sentry.captureMessage(typeof message === "string" ? message : JSON.stringify(message), "info");
+        window.Sentry.captureMessage(
+          typeof message === "string" ? message : JSON.stringify(message),
+          "info",
+        );
       } catch {
         // Ignore Sentry dispatch error
       }
@@ -34,7 +40,10 @@ export const logger = {
     console.warn(message, ...optionalParams);
     if (typeof window !== "undefined" && window.Sentry?.captureMessage) {
       try {
-        window.Sentry.captureMessage(typeof message === "string" ? message : JSON.stringify(message), "warning");
+        window.Sentry.captureMessage(
+          typeof message === "string" ? message : JSON.stringify(message),
+          "warning",
+        );
       } catch {
         // Ignore Sentry dispatch error
       }
@@ -51,4 +60,3 @@ export const logger = {
     }
   },
 };
-

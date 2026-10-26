@@ -73,6 +73,7 @@ import {
   getDebentureDisplayRates,
   getDividendDisplayRates,
 } from "@/lib/services/tax-rules.service";
+import { ReportManagementCenter } from "@/components/reports/report-management-center";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/reports")({ component: ReportsRoute });
@@ -1055,6 +1056,18 @@ function ReportsRoute() {
           </CardContent>
         </Card>
       </div>
+
+      <ReportManagementCenter
+        currentReportId="dividend_register"
+        currentCompanyId={companyId}
+        currentCompanyName={selectedCompany?.company_name || "All Companies (Consolidated)"}
+        currentFiscalYear="2081/82"
+        dataAsOf={new Date()}
+        onApplyPreset={(preset) => {
+          if (preset.companyId) setCompanyId(preset.companyId);
+          toast.success(`Applied report preset: ${preset.name}`);
+        }}
+      />
 
       {/* Main Tabbed Reporting Center */}
       <Tabs defaultValue="all" className="space-y-4">

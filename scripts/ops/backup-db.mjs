@@ -77,7 +77,7 @@ function findSupabaseContainer() {
   try {
     const output = execSync(
       'docker ps --filter "name=supabase_db_" --filter "status=running" --format "{{.Names}}"',
-      { encoding: "utf8" }
+      { encoding: "utf8" },
     ).trim();
     if (!output) return null;
     return output.split("\n")[0].trim();
@@ -119,11 +119,7 @@ async function main() {
   console.log(`    Mode: ${reason}`);
 
   // Step 3: Run pg_dump inside container
-  const timestamp = new Date()
-    .toISOString()
-    .replace(/[-:]/g, "")
-    .replace("T", "_")
-    .split(".")[0];
+  const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "_").split(".")[0];
   const sqlFileName = `rtarts_backup_${timestamp}.sql`;
   const containerTmpSql = `/tmp/${sqlFileName}`;
   const hostSqlPath = path.join(backupDir, sqlFileName);
@@ -132,7 +128,7 @@ async function main() {
   try {
     execSync(
       `docker exec ${containerId} pg_dump -U supabase_admin -d postgres --clean --if-exists --schema=public --schema=auth --schema=storage -f ${containerTmpSql}`,
-      { stdio: "inherit" }
+      { stdio: "inherit" },
     );
 
     // Copy out from container
@@ -173,7 +169,10 @@ async function main() {
     let deletedCount = 0;
 
     for (const file of files) {
-      if (file.startsWith("rtarts_backup_") && (file.endsWith(".gz") || file.endsWith(".zip") || file.endsWith(".sql"))) {
+      if (
+        file.startsWith("rtarts_backup_") &&
+        (file.endsWith(".gz") || file.endsWith(".zip") || file.endsWith(".sql"))
+      ) {
         const filePath = path.join(backupDir, file);
         const stat = fs.statSync(filePath);
         if (stat.mtimeMs < cutoffTime) {

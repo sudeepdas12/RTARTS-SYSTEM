@@ -2713,6 +2713,7 @@ $$;
 
 CREATE FUNCTION public.enforce_interest_payable_tax_rates() RETURNS trigger
     LANGUAGE plpgsql
+    SET search_path TO 'public'
     AS $$
 BEGIN
   -- Deprecated in favor of apply_payable_classification_and_tax() using authoritative payable_tax_rules
@@ -4223,6 +4224,7 @@ $$;
 
 CREATE FUNCTION public.mask_smtp_secrets(j jsonb) RETURNS jsonb
     LANGUAGE sql IMMUTABLE
+    SET search_path TO 'public'
     AS $$
   SELECT CASE 
     WHEN j IS NULL THEN NULL 
@@ -4242,6 +4244,7 @@ $$;
 
 CREATE FUNCTION public.next_agm_broker_claim_seq() RETURNS bigint
     LANGUAGE sql
+    SET search_path TO 'public'
     AS $$
   SELECT nextval('public.seq_agm_broker_claim_no');
 $$;
@@ -6070,6 +6073,7 @@ $$;
 
 CREATE FUNCTION public.trg_clients_set_needs_review() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
     AS $_$
 BEGIN
   -- Auto-flag rows missing bank account

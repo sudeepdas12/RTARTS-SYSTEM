@@ -120,4 +120,3 @@ export const PdfGenerator = {
     doc.save(`${safeTitle}_${now.toISOString().split("T")[0]}.pdf`);
   },
 };
-

@@ -1,0 +1,51 @@
+{
+  "timestamp": "2026-10-26T05:35:17.983Z",
+  "gates": [
+    {
+      "name": "Edge Function 15% Institutional TDS",
+      "passed": true,
+      "detail": "Enforces 15% TDS on COMPANY_INSTITUTION"
+    },
+    {
+      "name": "Edge Function 15% Foreign Investor TDS",
+      "passed": true,
+      "detail": "Enforces 15% TDS on FOREIGN_INVESTOR"
+    },
+    {
+      "name": "Edge Function 0% Section 10 Tax Exemption",
+      "passed": true,
+      "detail": "Enforces 0% TDS on MUTUAL_FUND and TAX_EXEMPT"
+    },
+    {
+      "name": "All PostgreSQL functions enforce immutable search_path",
+      "passed": true,
+      "detail": "100% of schema functions specify search_path TO 'public'"
+    },
+    {
+      "name": "Seed DIVIDEND COMPANY_INSTITUTION = 15%",
+      "passed": true,
+      "detail": "Statutory corporate tax seeding verified"
+    },
+    {
+      "name": "Seed DIVIDEND FOREIGN_INVESTOR = 15%",
+      "passed": true,
+      "detail": "Statutory foreign tax seeding verified"
+    },
+    {
+      "name": "Seed DIVIDEND TAX_EXEMPT = 0%",
+      "passed": true,
+      "detail": "Section 10 exempt entity seeding verified"
+    },
+    {
+      "name": "Client tax display rate helpers active",
+      "passed": true,
+      "detail": "Debenture, Dividend, Mutual Fund rate helpers present"
+    },
+    {
+      "name": "Investor category classification mapping active",
+      "passed": true,
+      "detail": "Classification resolver active"
+    }
+  ],
+  "verdict": "PASSED_RELEASE_GATE"
+}

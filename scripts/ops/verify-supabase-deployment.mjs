@@ -12,7 +12,10 @@ if (fs.existsSync(envPath)) {
     if (!trimmed || trimmed.startsWith("#")) continue;
     const [key, ...rest] = trimmed.split("=");
     if (key && rest.length > 0 && !process.env[key.trim()]) {
-      process.env[key.trim()] = rest.join("=").trim().replace(/^["']|["']$/g, "");
+      process.env[key.trim()] = rest
+        .join("=")
+        .trim()
+        .replace(/^["']|["']$/g, "");
     }
   }
 }
@@ -26,7 +29,9 @@ console.log("===================================================================
 console.log("           SUPABASE DEPLOYMENT & MIGRATION VERIFICATION RUNNER");
 console.log("===============================================================================");
 console.log(`Target URL: ${SUPABASE_URL}`);
-console.log(`Service Role Key: ${SUPABASE_SERVICE_ROLE_KEY.slice(0, 15)}...${SUPABASE_SERVICE_ROLE_KEY.slice(-5)}`);
+console.log(
+  `Service Role Key: ${SUPABASE_SERVICE_ROLE_KEY.slice(0, 15)}...${SUPABASE_SERVICE_ROLE_KEY.slice(-5)}`,
+);
 console.log("");
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -128,7 +133,9 @@ async function verifyTables() {
         allPassed = false;
       } else if (error) {
         // Any error other than 42P01 means table exists but PostgREST encountered another condition
-        console.log(`  [PASS] Table "${table}" exists (PostgREST probe returned: ${error.message || error.code})`);
+        console.log(
+          `  [PASS] Table "${table}" exists (PostgREST probe returned: ${error.message || error.code})`,
+        );
       } else {
         console.log(`  [PASS] Table "${table}" exists and accessible via service_role`);
       }
@@ -174,21 +181,34 @@ function verifyLocalCatalogIfAvailable() {
   try {
     const migrationOutput = execSync(
       'npx supabase db query --local "SELECT version, name FROM supabase_migrations.schema_migrations ORDER BY version DESC LIMIT 5;"',
-      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] },
     );
     console.log("  Latest Applied Schema Migrations:");
-    console.log(migrationOutput.split("\n").map((l) => `    ${l}`).join("\n"));
+    console.log(
+      migrationOutput
+        .split("\n")
+        .map((l) => `    ${l}`)
+        .join("\n"),
+    );
 
     // Verify latest migration baseline is applied
-    if (migrationOutput.includes("20261220000000") || migrationOutput.includes("20261219000000") || migrationOutput.includes("20261184000000")) {
-      console.log("  [PASS] Migration baseline (20261220000000/20261219000000/20261184000000) is registered in schema_migrations!");
+    if (
+      migrationOutput.includes("20261220000000") ||
+      migrationOutput.includes("20261219000000") ||
+      migrationOutput.includes("20261184000000")
+    ) {
+      console.log(
+        "  [PASS] Migration baseline (20261220000000/20261219000000/20261184000000) is registered in schema_migrations!",
+      );
       return true;
     } else {
       console.warn("  [WARN] Latest migration baseline was not found in top 5 schema_migrations.");
       return false;
     }
   } catch (e) {
-    console.log("  [INFO] Local database CLI query not applicable or remote host target. Skipping local catalog query.");
+    console.log(
+      "  [INFO] Local database CLI query not applicable or remote host target. Skipping local catalog query.",
+    );
     return true;
   }
 }

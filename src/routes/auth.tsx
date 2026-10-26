@@ -121,7 +121,11 @@ function AuthPage() {
     if (type && tokenHash) {
       const validTypes = ["recovery", "invite", "magiclink", "email_change", "signup"];
       const otpType = (validTypes.includes(type) ? type : "signup") as
-        "recovery" | "invite" | "magiclink" | "email_change" | "signup";
+        | "recovery"
+        | "invite"
+        | "magiclink"
+        | "email_change"
+        | "signup";
 
       const { data, error } = await supabase.auth.verifyOtp({
         token_hash: tokenHash,

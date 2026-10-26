@@ -21,6 +21,8 @@ describe("SmsBroadcastService — Nepal SMS Gateway Formatting & Templates", () 
       },
     );
 
-    expect(rendered).toBe("Dear Ram Sharma, NPR 25,000.00 credited for Supermai Hydropower FY 2081/82.");
+    expect(rendered).toBe(
+      "Dear Ram Sharma, NPR 25,000.00 credited for Supermai Hydropower FY 2081/82.",
+    );
   });
 });

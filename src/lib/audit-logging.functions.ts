@@ -30,8 +30,7 @@ export const recordLoginAttemptServerFn = createServerFn({ method: "POST" })
         headers?.get("x-real-ip") ||
         "127.0.0.1";
 
-      const resolvedUserAgent =
-        headers?.get("user-agent") || data.userAgent || "Unknown";
+      const resolvedUserAgent = headers?.get("user-agent") || data.userAgent || "Unknown";
 
       const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 

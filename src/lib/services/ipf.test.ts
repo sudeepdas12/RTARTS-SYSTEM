@@ -17,7 +17,12 @@ describe("IpfService — SEBON Investor Protection Fund Aging & Compliance", () 
         { label: "< 1 Year (Fresh)", count: 0, totalAmount: 0, isEligibleForIpf: false },
         { label: "1 - 3 Years (Pending)", count: 1, totalAmount: 25000, isEligibleForIpf: false },
         { label: "3 - 5 Years (Notice Period)", count: 0, totalAmount: 0, isEligibleForIpf: false },
-        { label: "> 5 Years (IPF Statutory Transfer)", count: 1, totalAmount: 50000, isEligibleForIpf: true },
+        {
+          label: "> 5 Years (IPF Statutory Transfer)",
+          count: 1,
+          totalAmount: 50000,
+          isEligibleForIpf: true,
+        },
       ],
       items: [
         {
