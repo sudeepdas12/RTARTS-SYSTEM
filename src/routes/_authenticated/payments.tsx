@@ -174,6 +174,56 @@ function PaymentsRoute() {
       shareholderPageSize,
     ],
     queryFn: async () => {
+      const from = (shareholderPage - 1) * shareholderPageSize;
+      const to = from + shareholderPageSize - 1;
+      const term = debouncedShareholderSearch ? debouncedShareholderSearch.trim() : null;
+      const companyId = shareholderCompany !== "all" ? shareholderCompany : null;
+      const statusFilter = shareholderStatus !== "all" ? shareholderStatus : null;
+
+      // Attempt parameterized server-side RPC (supports BOID, full_name, reference, bank account)
+      try {
+        const { data: rpcData, error: rpcError } = await (supabase as any).rpc(
+          "search_payments_paginated",
+          {
+            p_search_term: term,
+            p_company_id: companyId,
+            p_status: statusFilter,
+            p_limit: shareholderPageSize,
+            p_offset: from,
+          },
+        );
+
+        if (!rpcError && Array.isArray(rpcData)) {
+          const totalCount = Number(rpcData[0]?.total_count || 0);
+          const mapped = rpcData.map((row: any) => ({
+            ...row,
+            client: {
+              id: row.client_id,
+              boid: row.boid,
+              full_name: row.full_name,
+              holder_type: row.holder_type,
+              bank_name: row.bank_name,
+              bank_account_no: row.bank_account_no,
+            },
+            company: {
+              id: row.company_id,
+              company_name: row.company_name,
+              company_code: row.company_code,
+            },
+          }));
+          return {
+            items: mapped,
+            total: totalCount,
+          };
+        }
+      } catch (rpcEx) {
+        console.debug(
+          "search_payments_paginated RPC not available, using direct query fallback:",
+          rpcEx,
+        );
+      }
+
+      // Direct query fallback
       let q = (supabase as any)
         .from("payments")
         .select(
@@ -190,15 +240,12 @@ function PaymentsRoute() {
       if (shareholderCompany !== "all") q = q.eq("company_id", shareholderCompany);
       if (shareholderStatus !== "all") q = q.eq("status", shareholderStatus);
 
-      if (debouncedShareholderSearch) {
-        const term = debouncedShareholderSearch.trim();
+      if (term) {
         q = q.or(
           `bank_account_no.ilike.%${term}%,payment_reference.ilike.%${term}%,connectips_ref.ilike.%${term}%`,
         );
       }
 
-      const from = (shareholderPage - 1) * shareholderPageSize;
-      const to = from + shareholderPageSize - 1;
       q = q.range(from, to);
 
       const { data, count, error } = await q;

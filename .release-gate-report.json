@@ -1,5 +1,6 @@
 {
-  "timestamp": "2026-10-26T05:35:17.983Z",
+  "timestamp": "2026-10-26T05:52:47.700Z",
+  "mode": "SOURCE_RELEASE_AUDIT",
   "gates": [
     {
       "name": "Edge Function 15% Institutional TDS",

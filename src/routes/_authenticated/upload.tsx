@@ -188,6 +188,7 @@ function UploadRoute() {
 
   const [file, setFile] = useState<File | null>(null);
   const [showPreImportReview, setShowPreImportReview] = useState(false);
+  const [importReviewMode, setImportReviewMode] = useState<"single" | "all">("single");
   const [loadedTaxRules, setLoadedTaxRules] = useState<any[]>([]);
 
   useEffect(() => {
@@ -699,6 +700,7 @@ function UploadRoute() {
       return;
     }
 
+    setImportReviewMode("single");
     setShowPreImportReview(true);
   };
 
@@ -1016,8 +1018,27 @@ function UploadRoute() {
     }
   };
 
-  /** Import ALL non-summary sheets sequentially */
-  const handleImportAllSheets = async () => {
+  /** Open pre-import review for ALL non-summary sheets */
+  const handleImportAllSheetsClick = () => {
+    if (!canWrite) {
+      toast.error("Unauthorized: You do not have permission to upload or import files.");
+      return;
+    }
+    if (!file || !parsedData) return;
+
+    const dataSheets = parsedData.sheets.filter((s) => s.sheetType !== "SUMMARY");
+    if (dataSheets.length === 0) {
+      toast.error("No data sheets to import.");
+      return;
+    }
+
+    setImportReviewMode("all");
+    setShowPreImportReview(true);
+  };
+
+  /** Import ALL non-summary sheets sequentially after review approval */
+  const executeImportAllSheets = async (makerNotes?: string) => {
+    setShowPreImportReview(false);
     if (!canWrite) {
       toast.error("Unauthorized: You do not have permission to upload or import files.");
       return;
@@ -1668,7 +1689,7 @@ function UploadRoute() {
               </Button>
               {dataSheets.length > 1 && (
                 <Button
-                  onClick={handleImportAllSheets}
+                  onClick={handleImportAllSheetsClick}
                   disabled={isImporting}
                   className="bg-primary text-primary-foreground font-semibold shadow-sm"
                 >
@@ -2398,7 +2419,7 @@ function UploadRoute() {
                 </Button>
                 {dataSheets.length > 1 && (
                   <Button
-                    onClick={handleImportAllSheets}
+                    onClick={handleImportAllSheetsClick}
                     disabled={isImporting}
                     variant="outline"
                     className="border-primary/40 font-semibold"
@@ -2422,7 +2443,9 @@ function UploadRoute() {
         file={file}
         fileHash={cachedFileHash}
         parsedData={parsedData}
-        selectedSheetIndex={selectedSheetIndex}
+        selectedSheetIndex={importReviewMode === "all" ? -1 : selectedSheetIndex}
+        dividendType={dividendType}
+        dividendRate={dividendRate}
         companyName={
           companies.find((c: any) => c.id === selectedCompanyId)?.company_name ||
           parsedData?.detectedCompanyName ||
@@ -2433,7 +2456,13 @@ function UploadRoute() {
         operatorName={user?.user_metadata?.full_name || user?.email || "Authorized Operator"}
         operatorRole={roles?.[0] || "Maker"}
         taxRules={loadedTaxRules}
-        onConfirmPost={(notes) => executeImport(notes)}
+        onConfirmPost={async (notes) => {
+          if (importReviewMode === "all") {
+            await executeImportAllSheets(notes);
+          } else {
+            await executeImport(notes);
+          }
+        }}
         isPosting={isImporting}
       />
     </div>

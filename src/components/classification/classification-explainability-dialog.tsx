@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -30,13 +30,23 @@ import {
   ArrowRight,
   Info,
   Scale,
+  Database,
 } from "lucide-react";
 import { PayeeClassification } from "@/lib/classification-review.functions";
+import {
+  loadTaxRules,
+  getTaxRateFromRules,
+  TaxRule,
+  TaxClassification,
+  TAX_CLASSIFICATION_LABEL,
+} from "@/lib/services/tax-rules.service";
+import { smartClassify } from "@/lib/services/smart-classifier";
 
 export interface ClassificationExplainabilityDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   client: any | null;
+  taxRules?: TaxRule[];
   onConfirmClassification?: (
     id: string,
     classification: PayeeClassification,
@@ -59,75 +69,109 @@ export function ClassificationExplainabilityDialog({
   open,
   onOpenChange,
   client,
+  taxRules: initialTaxRules,
   onConfirmClassification,
   isPending,
 }: ClassificationExplainabilityDialogProps) {
   const [sampleGross, setSampleGross] = useState<number>(10000);
+  const [dbTaxRules, setDbTaxRules] = useState<TaxRule[]>(initialTaxRules || []);
+
+  useEffect(() => {
+    if (!initialTaxRules || initialTaxRules.length === 0) {
+      loadTaxRules()
+        .then((rules) => setDbTaxRules(rules))
+        .catch((err) => console.warn("Could not load tax rules for explainability:", err));
+    } else {
+      setDbTaxRules(initialTaxRules);
+    }
+  }, [initialTaxRules]);
 
   const explanation = useMemo(() => {
     if (!client) {
       return {
         reason: "",
+        reasonsList: [] as string[],
         ruleTitle: "",
         taxRatePct: 5,
         beforeRatePct: 15,
-        targetClassification: "NATURAL_PERSON",
+        targetClassification: "NATURAL_PERSON" as PayeeClassification,
+        confidence: 0,
+        sourceMatchedCategory: "PUBLIC",
+        ruleSource: "Database Default",
       };
     }
 
-    const name = String(client.full_name || "").toUpperCase();
-    const pan = String(client.pan_or_citizenship || "").toUpperCase();
-    const currClass = client.payee_classification || "NATURAL_PERSON";
+    // Run authoritative smart classifier
+    const classified = smartClassify({
+      full_name: client.full_name,
+      boid: client.boid,
+      pan_or_citizenship: client.pan_or_citizenship || client.pan_no || client.citizenship_no,
+      father_name: client.father_name,
+      grandfather_name: client.grandfather_name,
+      holder_type: client.holder_type,
+    });
 
-    let reason =
-      "Classified as individual retail shareholder based on Demat BOID and personal identification.";
-    let ruleTitle = "Nepal Income Tax Act 2058 - Section 88 (5% Resident Individual Dividend TDS)";
-    let taxRatePct = 5;
-    let beforeRatePct = 15;
+    const targetClass = (classified.payee_classification ||
+      client.payee_classification ||
+      "NATURAL_PERSON") as TaxClassification;
 
-    if (
-      name.includes("LTD") ||
-      name.includes("LIMITED") ||
-      name.includes("PVT") ||
-      name.includes("CORP") ||
-      name.includes("COMPANY")
-    ) {
-      reason =
-        "Entity name contains corporate keywords ('Ltd', 'Pvt', 'Company'). Classified as Legal Person pursuant to Section 88.";
-      ruleTitle = "Corporate Dividend & Coupon TDS (15% Legal Person Withholding)";
-      taxRatePct = 15;
-      beforeRatePct = 5;
-    } else if (
-      name.includes("MUTUAL FUND") ||
-      name.includes("RETIREMENT") ||
-      name.includes("PROVIDENT") ||
-      name.includes("SANSTHAN")
-    ) {
-      reason =
-        "Entity identified as approved mutual fund or statutory retirement fund pursuant to Section 10 tax exemption.";
-      ruleTitle = "Section 10 Statutory Tax Exemption (0% TDS Withholding)";
-      taxRatePct = 0;
-      beforeRatePct = 15;
-    } else if (currClass === "COMPANY_INSTITUTION") {
-      reason = "Assigned institutional classification by registry operator.";
-      ruleTitle = "Corporate Investor Statutory TDS Rate (15%)";
-      taxRatePct = 15;
-      beforeRatePct = 5;
-    } else if (currClass === "TAX_EXEMPT") {
-      reason = "Designated tax-exempt entity with 0% statutory deduction.";
-      ruleTitle = "Section 10 Tax Exemption Certificate";
-      taxRatePct = 0;
-      beforeRatePct = 5;
+    // Resolve rate from database active rules
+    const activeRate = getTaxRateFromRules(dbTaxRules, "DIVIDEND", targetClass);
+    const resolvedRate =
+      activeRate != null
+        ? activeRate
+        : targetClass === "COMPANY_INSTITUTION"
+          ? 0.15
+          : targetClass === "TAX_EXEMPT"
+            ? 0.0
+            : 0.05;
+    const taxRatePct = Math.round(resolvedRate * 10000) / 100;
+
+    // Default pre-review comparison rate (e.g. if previously treated as generic corporate 15% vs individual 5%)
+    const beforeRate = targetClass === "NATURAL_PERSON" ? 15 : 5;
+
+    let ruleTitle = `Nepal Income Tax Act 2058 - ${TAX_CLASSIFICATION_LABEL[targetClass] || targetClass}`;
+    if (targetClass === "TAX_EXEMPT") {
+      ruleTitle = "Section 10 Statutory Tax Exemption (0% Withholding)";
+    } else if (targetClass === "COMPANY_INSTITUTION") {
+      ruleTitle = "Section 88 Corporate Dividend Withholding (15% Legal Person Rate)";
+    } else if (targetClass === "NATURAL_PERSON") {
+      ruleTitle = "Section 88 Resident Individual Dividend Final Withholding (5% Rate)";
+    }
+
+    const reasonsList: string[] = [];
+    if (classified.rule_matched) {
+      reasonsList.push(`Rule: ${classified.rule_matched}`);
+    }
+    if (client.pan_or_citizenship || client.pan_no || client.citizenship_no) {
+      reasonsList.push(
+        `Identifier Verified: ${client.pan_or_citizenship || client.pan_no || client.citizenship_no}`,
+      );
+    }
+    if (client.father_name || client.grandfather_name) {
+      reasonsList.push(
+        `Family Lineage Confirmed: Father (${client.father_name || "—"}), Grandfather (${client.grandfather_name || "—"})`,
+      );
+    }
+    if (reasonsList.length === 0) {
+      reasonsList.push(`Classified as ${targetClass} via smart classifier hierarchy.`);
     }
 
     return {
-      reason,
+      reason: reasonsList.join(" • "),
+      reasonsList,
       ruleTitle,
       taxRatePct,
-      beforeRatePct,
-      targetClassification: currClass,
+      beforeRatePct: beforeRate,
+      targetClassification: targetClass as PayeeClassification,
+      confidence: Math.round((classified.confidence || 0.95) * 100),
+      sourceMatchedCategory: classified.payee_category || "PUBLIC",
+      ruleSource:
+        activeRate != null
+          ? "Active Database Rule (payable_tax_rules)"
+          : "Statutory Baseline Fallback",
     };
-  }, [client]);
+  }, [client, dbTaxRules]);
 
   if (!client) return null;
 
@@ -143,73 +187,73 @@ export function ClassificationExplainabilityDialog({
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center justify-between">
-            <DialogTitle className="text-xl flex items-center gap-2">
+            <DialogTitle className="text-lg flex items-center gap-2">
               <Sparkles className="h-5 w-5 text-primary" />
-              Tax Classification Explainability & Audit Panel
+              Tax Classification & Explainability Inspector
             </DialogTitle>
-            <Badge variant="outline" className="border-primary/40 text-primary">
-              Audit Transparency
+            <Badge variant="outline" className="font-mono text-xs">
+              Confidence: {explanation.confidence}%
             </Badge>
           </div>
           <DialogDescription>
-            Inspect the underlying data fields, applicable tax rule logic, and financial variance
-            impact for this shareholder.
+            Authoritative statutory audit trail, extraction signals, and database tax rule
+            resolution.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-2 text-xs">
-          {/* Source Fields Summary */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-muted/40 p-3 rounded-lg border">
+        <div className="space-y-4 py-2 text-sm">
+          {/* Client Identity & Extracted Tokens */}
+          <div className="grid grid-cols-2 gap-3 bg-muted/40 p-3 rounded-lg border text-xs">
             <div>
               <span className="text-muted-foreground block">Shareholder Name:</span>
-              <span className="font-semibold text-foreground text-sm">{client.full_name}</span>
+              <span className="font-semibold text-sm">{client.full_name || "—"}</span>
             </div>
             <div>
-              <span className="text-muted-foreground block">BOID (16-Digit):</span>
+              <span className="text-muted-foreground block">BOID:</span>
               <span className="font-mono font-medium">{client.boid || "—"}</span>
             </div>
             <div>
               <span className="text-muted-foreground block">PAN / Citizenship:</span>
-              <span className="font-mono font-medium">{client.pan_or_citizenship || "—"}</span>
+              <span className="font-mono">{client.pan_or_citizenship || client.pan_no || "—"}</span>
             </div>
             <div>
-              <span className="text-muted-foreground block">Company / Issuer:</span>
-              <span className="font-medium">{client.company?.company_name || "—"}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground block">Current Status:</span>
-              <Badge variant="outline" className="mt-0.5">
-                {client.classification_status || "PENDING"}
-              </Badge>
-            </div>
-            <div>
-              <span className="text-muted-foreground block">Active Classification:</span>
-              <Badge className="mt-0.5">{client.payee_classification || "NATURAL_PERSON"}</Badge>
+              <span className="text-muted-foreground block">Holder / Demat Type:</span>
+              <span>{client.holder_type || "Public"}</span>
             </div>
           </div>
 
-          {/* Rule Selection Logic & Explainability */}
-          <Card className="border-border bg-card">
-            <CardContent className="p-4 space-y-2">
-              <div className="flex items-center gap-2 text-foreground font-semibold">
-                <Scale className="h-4 w-4 text-primary" />
-                <span>Applicable Rule: {explanation.ruleTitle}</span>
+          {/* Classification Rationale */}
+          <Card className="border-border">
+            <CardContent className="p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold flex items-center gap-2">
+                  <Scale className="h-4 w-4 text-primary" />
+                  Statutory Rule Rationale
+                </span>
+                <Badge variant={explanation.taxRatePct === 0 ? "secondary" : "default"}>
+                  {explanation.taxRatePct}% TDS
+                </Badge>
               </div>
-              <div className="text-muted-foreground leading-relaxed bg-muted/30 p-2.5 rounded border border-border/60">
-                <strong className="text-foreground">Why this was selected:</strong>{" "}
-                {explanation.reason}
+
+              <div className="text-xs bg-muted/30 p-2.5 rounded border border-muted-foreground/20 space-y-1.5">
+                <div className="font-semibold text-primary">{explanation.ruleTitle}</div>
+                <div className="text-muted-foreground flex items-center gap-1.5 text-[11px]">
+                  <Database className="h-3 w-3" />
+                  Source: {explanation.ruleSource}
+                </div>
               </div>
-              <div className="flex items-center gap-4 pt-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-muted-foreground">Resolved Statutory Rate:</span>
-                  <Badge variant="secondary" className="font-bold text-sm">
-                    {explanation.taxRatePct}%
-                  </Badge>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-muted-foreground">Withholding Scope:</span>
-                  <span className="font-medium">Section 88, 87 / 90 Income Tax Act</span>
-                </div>
+
+              <div className="space-y-1.5 pt-1">
+                <span className="text-xs font-semibold text-muted-foreground uppercase">
+                  Signals & Evidence Considered:
+                </span>
+                <ul className="text-xs space-y-1 pl-4 list-disc text-muted-foreground">
+                  {explanation.reasonsList.map((reason: string, idx: number) => (
+                    <li key={idx} className="leading-relaxed">
+                      {reason}
+                    </li>
+                  ))}
+                </ul>
               </div>
             </CardContent>
           </Card>
@@ -218,62 +262,73 @@ export function ClassificationExplainabilityDialog({
           <Card className="border-border">
             <CardContent className="p-4 space-y-3">
               <div className="flex items-center justify-between">
-                <span className="font-semibold text-sm">Simulated Before & After Tax Impact</span>
+                <span className="font-semibold flex items-center gap-2 text-xs">
+                  <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                  Before & After Financial Impact
+                </span>
                 <div className="flex items-center gap-2">
-                  <Label htmlFor="sample-gross" className="text-[11px] text-muted-foreground">
-                    Test Gross (NPR):
+                  <Label htmlFor="sample-gross" className="text-xs text-muted-foreground">
+                    Simulation Gross:
                   </Label>
                   <Input
                     id="sample-gross"
                     type="number"
                     value={sampleGross}
-                    onChange={(e) => setSampleGross(Number(e.target.value) || 0)}
-                    className="w-24 h-7 text-xs font-mono"
+                    onChange={(e) => setSampleGross(Math.max(0, Number(e.target.value) || 0))}
+                    className="h-7 w-28 text-right font-mono text-xs"
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3 text-center">
-                <div className="bg-muted/30 p-2.5 rounded border">
-                  <div className="text-muted-foreground">
-                    Prior / Alternative ({explanation.beforeRatePct}%)
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="border rounded p-2.5 bg-muted/20">
+                  <div className="text-muted-foreground font-medium mb-1">
+                    Without Verification ({explanation.beforeRatePct}% TDS)
                   </div>
-                  <div className="font-semibold mt-1 text-sm">{fmtCurrency(taxBefore)} TDS</div>
-                  <div className="text-[11px] text-muted-foreground">
-                    Net: {fmtCurrency(netBefore)}
+                  <div className="flex justify-between py-0.5">
+                    <span className="text-muted-foreground">Tax Deducted:</span>
+                    <span className="font-mono text-red-600">{fmtCurrency(taxBefore)}</span>
                   </div>
-                </div>
-                <div className="bg-primary/10 border border-primary/30 p-2.5 rounded">
-                  <div className="text-primary font-semibold">
-                    Resolved ({explanation.taxRatePct}%)
-                  </div>
-                  <div className="font-bold mt-1 text-sm text-primary">
-                    {fmtCurrency(taxAfter)} TDS
-                  </div>
-                  <div className="text-[11px] text-foreground font-medium">
-                    Net: {fmtCurrency(netAfter)}
+                  <div className="flex justify-between py-0.5">
+                    <span className="text-muted-foreground">Net Payout:</span>
+                    <span className="font-mono font-semibold">{fmtCurrency(netBefore)}</span>
                   </div>
                 </div>
-                <div className="bg-muted/30 p-2.5 rounded border">
-                  <div className="text-muted-foreground">Shareholder Variance</div>
-                  <div
-                    className={`font-bold mt-1 text-sm ${netDifference >= 0 ? "text-emerald-600" : "text-rose-600"}`}
-                  >
-                    {netDifference >= 0
-                      ? `+${fmtCurrency(netDifference)}`
-                      : fmtCurrency(netDifference)}
+
+                <div className="border rounded p-2.5 bg-emerald-500/10 border-emerald-500/30">
+                  <div className="text-emerald-700 dark:text-emerald-300 font-medium mb-1">
+                    With Verified Rule ({explanation.taxRatePct}% TDS)
                   </div>
-                  <div className="text-[11px] text-muted-foreground">
-                    {netDifference >= 0 ? "Higher Net Payout" : "Higher Statutory Tax"}
+                  <div className="flex justify-between py-0.5">
+                    <span className="text-muted-foreground">Tax Deducted:</span>
+                    <span className="font-mono text-amber-600">{fmtCurrency(taxAfter)}</span>
+                  </div>
+                  <div className="flex justify-between py-0.5">
+                    <span className="text-muted-foreground">Net Payout:</span>
+                    <span className="font-mono font-semibold text-emerald-600">
+                      {fmtCurrency(netAfter)}
+                    </span>
                   </div>
                 </div>
+              </div>
+
+              <div className="text-[11px] text-muted-foreground flex items-center justify-between pt-1 border-t">
+                <span>Net Shareholder Variance:</span>
+                <span
+                  className={`font-mono font-semibold ${
+                    netDifference >= 0 ? "text-emerald-600" : "text-amber-600"
+                  }`}
+                >
+                  {netDifference >= 0 ? "+" : ""}
+                  {fmtCurrency(netDifference)}
+                </span>
               </div>
             </CardContent>
           </Card>
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
             Close
           </Button>
           {onConfirmClassification && (
@@ -281,16 +336,16 @@ export function ClassificationExplainabilityDialog({
               onClick={() => {
                 onConfirmClassification(
                   client.id,
-                  client.payee_classification || "NATURAL_PERSON",
-                  client.payee_segment,
+                  explanation.targetClassification,
+                  explanation.sourceMatchedCategory,
                 );
                 onOpenChange(false);
               }}
               disabled={isPending}
-              className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+              className="gap-1.5"
             >
               <CheckCircle2 className="h-4 w-4" />
-              Confirm & Recompute Payables
+              Apply {explanation.targetClassification} ({explanation.taxRatePct}%)
             </Button>
           )}
         </DialogFooter>

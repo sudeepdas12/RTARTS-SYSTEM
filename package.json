@@ -25,6 +25,8 @@
     "db:restore:ps": "powershell -ExecutionPolicy Bypass -File ./scripts/ops/restore-db.ps1",
     "verify:edge": "node ./scripts/ops/verify-edge-parity.mjs",
     "verify:release-gate": "node ./scripts/ops/release-gate-verify.mjs",
+    "audit:source-release": "node ./scripts/ops/release-gate-verify.mjs --source",
+    "verify:production-live": "node ./scripts/ops/release-gate-verify.mjs --live",
     "audit:classifications": "node ./scripts/audit/audit-classifications.mjs",
     "audit:summaries": "node ./scripts/audit/audit-all-summaries.mjs",
     "prepare": "husky"
