@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { RBACService, UserContext } from "@/lib/rbac-service";
 import { WorkflowEngine } from "@/lib/workflow-engine";
+import { ChunkProcessor } from "@/lib/chunk-processor";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -203,6 +204,52 @@ function ApprovalsPage() {
         );
         if (!res.success) {
           throw new Error(res.error || "Workflow transition failed");
+        }
+      }
+
+      // If this is a material import approval, process atomic commit
+      if (viewing.entity_type === "IMPORT_BATCH" || viewing.action === "MATERIAL_IMPORT_APPROVAL") {
+        if (decision === "Approved") {
+          // 1. Attempt atomic commit RPC
+          try {
+            await (supabase as any).rpc("commit_staged_import", {
+              p_approval_id: id,
+              p_checker_notes: notes || null,
+            });
+          } catch (rpcEx) {
+            console.debug("commit_staged_import RPC fallback:", rpcEx);
+          }
+
+          // 2. Fetch staged rows from import_staging and commit to ledger
+          const { data: staged } = await (supabase as any)
+            .from("import_staging")
+            .select("*")
+            .eq("approval_id", id)
+            .maybeSingle();
+
+          if (staged && Array.isArray(staged.staged_rows) && staged.staged_rows.length > 0) {
+            const uploadId = crypto.randomUUID();
+            await ChunkProcessor.processInChunks(
+              uploadId,
+              staged.staged_rows,
+              staged.target_table || "dividend_payables",
+              500,
+              undefined,
+              staged.options || {},
+            );
+
+            // Mark staged record as COMMITTED
+            await (supabase as any)
+              .from("import_staging")
+              .update({ status: "COMMITTED", committed_at: new Date().toISOString() })
+              .eq("id", staged.id);
+          }
+        } else {
+          // Checker Rejected
+          await (supabase as any)
+            .from("import_staging")
+            .update({ status: "REJECTED" })
+            .eq("approval_id", id);
         }
       }
 

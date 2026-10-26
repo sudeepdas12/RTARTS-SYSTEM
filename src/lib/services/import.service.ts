@@ -311,6 +311,85 @@ async function insertRowsWithSchemaFallback(targetTable: string, rows: any[]) {
 
 export const ImportService = {
   /**
+   * Invokes an Edge Function or authoritative server calculation to perform a dry run.
+   */
+  async dryRunImport(
+    chunkData: any[],
+    targetTable: string,
+    options?: any,
+  ): Promise<{
+    success: boolean;
+    totalRows: number;
+    validRows: number;
+    computedGross: number;
+    computedTax: number;
+    computedNet: number;
+    errors: any[];
+  }> {
+    try {
+      const { data, error } = await supabase.functions.invoke("process-import-chunk", {
+        body: {
+          dryRun: true,
+          uploadId: "dry-run-" + crypto.randomUUID(),
+          chunkData: chunkData.slice(0, 1000),
+          targetTable,
+          ...options,
+        },
+      });
+
+      if (!error && data?.success && data?.metrics) {
+        return {
+          success: true,
+          totalRows: data.metrics.totalRows || chunkData.length,
+          validRows: data.metrics.validRows || 0,
+          computedGross: Number(data.metrics.computedGross || 0),
+          computedTax: Number(data.metrics.computedTax || 0),
+          computedNet: Number(data.metrics.computedNet || 0),
+          errors: data.errors || [],
+        };
+      }
+    } catch (e) {
+      console.debug("Server dry-run invoke failed, using authoritative engine fallback:", e);
+    }
+
+    let computedGross = 0;
+    let computedTax = 0;
+    let computedNet = 0;
+    let validCount = 0;
+    const isDebenture = targetTable === "interest_payables";
+    const isMutualFund = targetTable === "mutual_fund_payables";
+    const rateNumber = Number(options?.dividendRate) || 0;
+
+    for (const r of chunkData) {
+      if (!r || Object.keys(r).length === 0) continue;
+      validCount++;
+      const category = detectPayeeCategory(r, options?.sheetType);
+      const taxRate = getPayeeTaxRate(category, isDebenture, null, isMutualFund);
+      const shares = Number(r.shares || r.kitta || r.shares_held || 0) || 0;
+      let g = Number(r.gross || r.gross_amount || r.gross_interest || 0) || 0;
+      if (!options?.isPreCalculated && rateNumber > 0 && shares > 0) {
+        const faceValue = isDebenture ? 1000 : isMutualFund ? 10 : 100;
+        g = shares * (rateNumber / 100) * faceValue;
+      }
+      const t = Math.round(g * taxRate * 100) / 100;
+      const n = Math.round((g - t) * 100) / 100;
+      computedGross += g;
+      computedTax += t;
+      computedNet += n;
+    }
+
+    return {
+      success: true,
+      totalRows: chunkData.length,
+      validRows: validCount,
+      computedGross: Math.round(computedGross * 100) / 100,
+      computedTax: Math.round(computedTax * 100) / 100,
+      computedNet: Math.round(computedNet * 100) / 100,
+      errors: [],
+    };
+  },
+
+  /**
    * Invokes an Edge Function to process a chunk of Excel data in the background.
    * If the function is not deployed or fails, it falls back to direct client-side processing.
    */

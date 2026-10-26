@@ -29,6 +29,7 @@ import {
 import { ParsedExcelData } from "@/lib/excel-parser";
 import { TaxRule } from "@/lib/services/tax-rules.service";
 import { detectPayeeCategory, getPayeeTaxRate } from "@/lib/services/payable-summary";
+import { ImportService } from "@/lib/services/import.service";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -85,6 +86,7 @@ export function PreImportReviewDialog({
   const [acknowledged, setAcknowledged] = useState(false);
   const [checkerAcknowledged, setCheckerAcknowledged] = useState(false);
   const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
+  const [serverDryRunMetrics, setServerDryRunMetrics] = useState<any | null>(null);
 
   const isMultiSheet = selectedSheetIndex === -1;
   const targetSheets = useMemo(() => {
@@ -99,6 +101,28 @@ export function PreImportReviewDialog({
   const isDebenture = dividendType === "Debenture";
   const isMutualFund = dividendType === "MutualFund";
   const rateNumber = Number(dividendRate) || 0;
+
+  React.useEffect(() => {
+    if (!open || targetSheets.length === 0) return;
+    const allRows = targetSheets.flatMap((s) => s.rows || []);
+    const targetTable = isDebenture
+      ? "interest_payables"
+      : isMutualFund
+        ? "mutual_fund_payables"
+        : "dividend_payables";
+
+    ImportService.dryRunImport(allRows, targetTable, {
+      dividendRate: rateNumber,
+      isPreCalculated: targetSheets[0]?.isPreCalculated,
+      sheetType: targetSheets[0]?.sheetType,
+    })
+      .then((res) => {
+        if (res && res.success) {
+          setServerDryRunMetrics(res);
+        }
+      })
+      .catch((err) => console.debug("Server dry-run calculation check:", err));
+  }, [open, targetSheets, isDebenture, isMutualFund, rateNumber]);
 
   // Authoritative calculation: Source Excel vs Engine Results
   const metrics = useMemo(() => {
@@ -204,8 +228,9 @@ export function PreImportReviewDialog({
       computedTax,
       computedNet,
       taxExceptions,
+      isServerDerived: Boolean(serverDryRunMetrics),
     };
-  }, [targetSheets, isDebenture, isMutualFund, rateNumber, taxRules]);
+  }, [targetSheets, isDebenture, isMutualFund, rateNumber, taxRules, serverDryRunMetrics]);
 
   const isMaterial = metrics.sourceNet >= MATERIAL_THRESHOLD_NPR;
   const isCheckerOrAdmin =
@@ -261,7 +286,44 @@ export function PreImportReviewDialog({
 
       if (paError) throw paError;
 
-      // 2. Insert into approval_logs
+      // 2. Persist durable staging records in import_staging
+      const targetTable = isDebenture
+        ? "interest_payables"
+        : isMutualFund
+          ? "mutual_fund_payables"
+          : "dividend_payables";
+      const stagedRows = targetSheets.flatMap((s) => s.rows || []);
+
+      const { error: stageErr } = await (supabase as any).from("import_staging").insert({
+        approval_id: paData.id,
+        target_table: targetTable,
+        file_name: file?.name || "import.xlsx",
+        file_hash: fileHash,
+        sheet_name: isMultiSheet ? "ALL_DATA_SHEETS" : targetSheets[0]?.sheetName,
+        total_rows: metrics.totalRows,
+        source_gross: metrics.sourceGross,
+        source_tax: metrics.sourceTax,
+        source_net: metrics.sourceNet,
+        computed_gross: metrics.computedGross,
+        computed_tax: metrics.computedTax,
+        computed_net: metrics.computedNet,
+        staged_rows: stagedRows,
+        options: {
+          dividendType,
+          dividendRate: rateNumber,
+          companyName,
+          companyCode,
+          fiscalYear,
+          isPreCalculated: targetSheets[0]?.isPreCalculated,
+        },
+        created_by: user?.id || null,
+      });
+
+      if (stageErr) {
+        console.warn("Could not write to import_staging table (continuing):", stageErr);
+      }
+
+      // 3. Insert into approval_logs
       await (supabase as any).from("approval_logs").insert({
         approval_id: paData?.id || null,
         action: "IMPORT_APPROVAL_REQUESTED",
@@ -392,9 +454,19 @@ export function PreImportReviewDialog({
                   <Scale className="h-4 w-4 text-primary" />
                   Financial Totals Verification
                 </span>
-                <span className="text-xs text-muted-foreground">
-                  Source Excel vs Statutory Engine Calculation
-                </span>
+                <div className="flex items-center gap-1.5">
+                  {metrics.isServerDerived && (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 border-emerald-300"
+                    >
+                      Authoritative Server Engine Verified
+                    </Badge>
+                  )}
+                  <span className="text-xs text-muted-foreground">
+                    Source Excel vs Statutory Engine Calculation
+                  </span>
+                </div>
               </div>
 
               <div className="grid grid-cols-3 gap-3 text-xs">

@@ -27,6 +27,7 @@ interface ChunkPayload {
   dayCountConvention?: string;
   isPreCalculated?: boolean;
   faceValue?: number;
+  dryRun?: boolean;
 }
 
 /**
@@ -1276,6 +1277,35 @@ serve(async (req) => {
             investorCategory === "UNKNOWN" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED",
         });
       }
+    }
+
+    // Dry Run mode: Return authoritative calculations without database persistence
+    if (payload.dryRun === true) {
+      let computedGross = 0;
+      let computedTax = 0;
+      let computedNet = 0;
+      for (const p of payables) {
+        computedGross += Number(p.gross_amount || p.gross_interest || 0);
+        computedTax += Number(p.tax_amount || 0);
+        computedNet += Number(p.net_payable || 0);
+      }
+      return new Response(
+        JSON.stringify({
+          success: true,
+          dryRun: true,
+          rowsProcessed: payables.length,
+          metrics: {
+            totalRows: chunkData.length,
+            validRows: payables.length,
+            computedGross: roundToPaisa(computedGross),
+            computedTax: roundToPaisa(computedTax),
+            computedNet: roundToPaisa(computedNet),
+          },
+          payables: payables.slice(0, 50),
+          errors: rowErrors,
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
     }
 
     // 7. Batch insert payables with RPC and direct schema fallback

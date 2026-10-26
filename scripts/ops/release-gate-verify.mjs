@@ -98,7 +98,7 @@ async function runLiveVerification() {
     recordGate("Live DB: Connection reachable", false, String(err.message || err));
   }
 
-  // Ping process-import-chunk Edge Function
+  // Live Edge Function Statutory Tax Calculation Verification
   try {
     const fnRes = await fetch(`${supabaseUrl}/functions/v1/process-import-chunk`, {
       method: "POST",
@@ -107,14 +107,38 @@ async function runLiveVerification() {
         Authorization: `Bearer ${serviceKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ ping: true }),
+      body: JSON.stringify({
+        dryRun: true,
+        uploadId: "live-audit-test",
+        targetTable: "dividend_payables",
+        chunkData: [
+          { name: "RELIABLE ENTERPRISES PVT LTD", gross_amount: 10000, shares: 100 },
+          { name: "RAM BAHADUR THAPA", gross_amount: 10000, shares: 100 },
+          { name: "NIBL SAMRIDDHI FUND", gross_amount: 10000, shares: 100 },
+        ],
+      }),
     });
 
-    recordGate(
-      "Live Edge Function: process-import-chunk reachable",
-      fnRes.status < 500,
-      `Endpoint responded with HTTP ${fnRes.status}`,
-    );
+    if (fnRes.ok) {
+      const data = await fnRes.json();
+      const hasDryRun = data && data.dryRun === true;
+      recordGate("Live Edge Function: dry-run calculation active", hasDryRun, "Edge Function returns dryRun calculation payload");
+
+      const computedTax = Number(data?.metrics?.computedTax || 0);
+      // Expected tax: 10000*0.15 (1500) + 10000*0.05 (500) + 10000*0 (0) = 2000
+      const isTaxAccurate = computedTax === 2000;
+      recordGate(
+        "Live Edge Function: Statutory Tax Calculation Parity",
+        isTaxAccurate,
+        `Calculated TDS total = NPR ${computedTax} (Expected: NPR 2,000 for Corporate 15% + Individual 5% + Exempt 0%)`,
+      );
+    } else {
+      recordGate(
+        "Live Edge Function: process-import-chunk reachable",
+        fnRes.status < 500,
+        `Endpoint responded with HTTP ${fnRes.status}`,
+      );
+    }
   } catch (err) {
     recordGate("Live Edge Function: process-import-chunk reachable", false, String(err.message || err));
   }
