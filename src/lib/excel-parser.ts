@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { expandScientificNotation } from "./validation-engine";
 
 export type DetectedFileType =
   | "debenture"
@@ -18,6 +19,7 @@ export type DetectedSheetType =
   | "LOCAL_UNVERIFIED"
   | "PRIVATE"
   | "REJECT_PENDING"
+  | "PHYSICAL"
   | "ORIGINAL"
   | "SUMMARY"
   | "UNKNOWN";
@@ -783,6 +785,8 @@ export const ExcelParser = {
         sheetType = "PUBLIC";
       } else if (sheetNameUpper.includes("PROMOTER")) {
         sheetType = "PROMOTER";
+      } else if (sheetNameUpper.includes("PHYSICAL") || sheetNameUpper.includes("FOLIO")) {
+        sheetType = "PHYSICAL";
       } else if (sheetNameUpper.includes("INSTITUTION")) {
         sheetType = "INSTITUTION";
       } else if (
@@ -1094,9 +1098,8 @@ export const ExcelParser = {
       if (sampleDataRows.length > 0) {
         const isBoidSample = (val: any) => {
           if (val === null || val === undefined) return false;
-          const clean = String(val)
-            .trim()
-            .replace(/[^0-9]/g, "");
+          const expanded = expandScientificNotation(String(val));
+          const clean = expanded.trim().replace(/[^0-9]/g, "");
           return clean.length === 16 && clean.startsWith("130");
         };
 
@@ -1173,6 +1176,20 @@ export const ExcelParser = {
               val = String(val);
             }
           }
+
+          // Recover full integer or unformatted representation if XLSX formatted cell to scientific notation
+          const cellRef = XLSX.utils.encode_cell({ r: i, c: j });
+          const rawCell = worksheet[cellRef];
+          if (rawCell && typeof rawCell.v === "number" && !Number.isNaN(rawCell.v)) {
+            if (rawCell.v >= 1e11 && Math.floor(rawCell.v) === rawCell.v) {
+              val = BigInt(Math.trunc(rawCell.v)).toString();
+            } else if (typeof val === "string" && /[eE]/.test(val)) {
+              val = expandScientificNotation(val);
+            }
+          } else if (typeof val === "string" && /[eE]/.test(val)) {
+            val = expandScientificNotation(val);
+          }
+
           if (val !== undefined && val !== null && String(val).trim() !== "") {
             row[header] = val;
           }

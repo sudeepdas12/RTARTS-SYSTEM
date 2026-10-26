@@ -200,6 +200,121 @@ describe("Sample Workbook & Matrix Regression Suite", () => {
       const boidError = errors.find((e) => e.type === "invalid_boid");
       expect(boidError).toBeTruthy();
     });
+
+    it("accepts scientific notation BOID and expands it without truncation", async () => {
+      const rows = [
+        {
+          boid: "1.30101E+15", // Scientific notation from Excel General format
+          full_name: "NARAYAN KUMAR SHRESTHA",
+          shares_held: 1,
+          gross_amount: 100,
+          tax_amount: 5,
+          net_payable: 95,
+        },
+      ];
+
+      const mappings = {
+        boid: "boid",
+        full_name: "full_name",
+        shares_held: "shares_held",
+        gross_amount: "gross_amount",
+        tax_amount: "tax_amount",
+        net_payable: "net_payable",
+      };
+
+      const errors = await ValidationEngine.validateBatch(rows, mappings, undefined, "DIVIDEND");
+      const boidError = errors.find((e) => e.type === "invalid_boid" || e.type === "missing_boid");
+      expect(boidError).toBeUndefined();
+    });
+
+    it("validates exact raw CDSC demat row with scientific notation BOID without blocking error", async () => {
+      const userRow = {
+        ISIN: "NPE207A00008",
+        BOID: "1.30101E+15",
+        NAME: "NARAYAN KUMAR SHRESTHA",
+        "FATHER'S NAME": "MAN BDR SHRESTHA",
+        GENDER: "M",
+        DOB: "19-JUN-1971",
+        CITIZENSHIP: "100212381988           ",
+        "GRANDFATHER'S NAME": "LAXMI DAS SHRETHA / SHIKHA MASKEY SHRESTHA",
+        ADDRESS: "KATHMANDU",
+        DISTRICT: "Kathmandu",
+        COUNTRY: "NEPAL",
+        CONTACT: "9851047110",
+        EMAIL: "nkshrestha30@gmail.com",
+        "BANK CODE": "7201",
+        "BANK NAME": "Muktinath Bikas Bank Ltd.-Dhangadi Branch",
+        BRANCH: "Dhangadi",
+        "BANK ACC.NO.": "02721200083404000001",
+        "TOTAL KITTA": "1.000",
+        "FREE BALANCE": "1.000",
+        "REP. GEN.DATE": "14082026",
+        isin: "NPE207A00008",
+        boid: "1.30101E+15",
+        full_name: "NARAYAN KUMAR SHRESTHA",
+        bank_name: "Muktinath Bikas Bank Ltd.-Dhangadi Branch",
+        bank_account_no: "02721200083404000001",
+      };
+
+      const mappings = {
+        BOID: "boid",
+        NAME: "full_name",
+        "TOTAL KITTA": "shares_held",
+      };
+
+      const errors = await ValidationEngine.validateBatch(
+        [userRow],
+        mappings,
+        undefined,
+        "raw_demat",
+      );
+      const boidError = errors.find(
+        (e) => e.field === "boid" && (e.severity ?? "error") === "error",
+      );
+      expect(boidError).toBeUndefined();
+    });
+
+    it("accepts physical shareholder folio numbers without requiring 16 digits", async () => {
+      const rows = [
+        {
+          folio: "42", // Short physical folio number
+          full_name: "Physical Shareholder One",
+          shares_held: 50,
+          gross_amount: 500,
+          tax_amount: 25,
+          net_payable: 475,
+        },
+        {
+          folio: "1", // Single digit physical folio
+          full_name: "Founder Folio One",
+          shares_held: 1000,
+          gross_amount: 10000,
+          tax_amount: 500,
+          net_payable: 9500,
+        },
+        {
+          folio: "FOLIO-1054", // Prefixed physical folio
+          full_name: "Physical Shareholder Three",
+          shares_held: 200,
+          gross_amount: 2000,
+          tax_amount: 100,
+          net_payable: 1900,
+        },
+      ];
+
+      const mappings = {
+        folio: "boid",
+        full_name: "full_name",
+        shares_held: "shares_held",
+        gross_amount: "gross_amount",
+        tax_amount: "tax_amount",
+        net_payable: "net_payable",
+      };
+
+      const errors = await ValidationEngine.validateBatch(rows, mappings, undefined, "DIVIDEND");
+      const blockingErrors = errors.filter((e) => (e.severity ?? "error") === "error");
+      expect(blockingErrors.length).toBe(0);
+    });
   });
 
   describe("6. Empty & Corrupt Workbook Edge Cases", () => {

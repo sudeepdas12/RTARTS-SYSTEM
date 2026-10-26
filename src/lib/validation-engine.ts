@@ -14,7 +14,7 @@ export const excelRowSchema = z
   .object({
     boid: z
       .string()
-      .min(4, "BOID or Folio identifier must be at least 4 characters")
+      .min(1, "BOID or Folio identifier is required")
       .max(24, "BOID or Folio identifier cannot exceed 24 characters")
       .regex(
         /^[0-9A-Za-z_-]+$/,
@@ -186,9 +186,25 @@ export const BOID_ALIASES = [
   "REGISTRATION NO",
 ];
 
+export function expandScientificNotation(raw: string): string {
+  const trimmed = String(raw || "").trim();
+  const match = trimmed.match(/^([+-]?\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/);
+  if (!match) return trimmed;
+  const [, intPart, decPart = "", expStr] = match;
+  const exp = parseInt(expStr, 10);
+  if (exp > 0) {
+    if (exp >= decPart.length) {
+      return intPart + decPart + "0".repeat(exp - decPart.length);
+    } else {
+      return intPart + decPart.slice(0, exp) + "." + decPart.slice(exp);
+    }
+  }
+  return trimmed;
+}
+
 export function normalizeBoid(raw: unknown): string | null {
   if (!raw) return null;
-  let str = String(raw).trim().replace(/[\s-]/g, "");
+  let str = expandScientificNotation(String(raw)).trim().replace(/[\s-]/g, "");
   if (!str) return null;
   if (/^\d+$/.test(str) && str.length >= 8 && str.length < 16) {
     str = str.padStart(16, "0");
@@ -197,17 +213,22 @@ export function normalizeBoid(raw: unknown): string | null {
 }
 
 export function cleanBoidString(raw: string): string {
-  let cleaned = String(raw || "")
-    .trim()
-    .replace(/[, -]/g, "")
-    .split(".")[0];
-  if (cleaned.includes("e") || cleaned.includes("E")) {
-    const num = Number(cleaned);
-    if (!isNaN(num)) {
-      cleaned = num.toLocaleString("fullwide", { useGrouping: false });
-    }
+  if (raw === null || raw === undefined) return "";
+  let str = String(raw).trim().replace(/[, ]/g, "");
+  if (!str) return "";
+
+  // 1. Expand exponential / scientific notation FIRST before splitting any decimal
+  if (/[eE]/.test(str)) {
+    str = expandScientificNotation(str);
   }
-  return cleaned;
+
+  // 2. If it still contains a decimal point (e.g. "12345.00"), strip the fraction
+  if (str.includes(".")) {
+    str = str.split(".")[0];
+  }
+
+  // 3. Remove hyphens for standard comparison
+  return str.replace(/[-]/g, "");
 }
 
 export function extractCanonicalBoid(row: any, mappings?: Record<string, string>): string {
@@ -346,10 +367,29 @@ const isValidDateString = (value: string): boolean => {
   return !Number.isNaN(date.getTime());
 };
 
-const isValidBoid = (value: string): boolean => {
-  const v = value.trim().replace(/[, -]/g, "").split(".")[0];
-  // CDSC Nepal BOID is 16 numeric digits, but also accept 6–20 characters for legacy/physical/CDS IDs
-  return v.length >= 6 && v.length <= 20 && /^[0-9A-Za-z]+$/.test(v);
+export const isValidBoid = (value: string, isPhysicalOrFolio: boolean = false): boolean => {
+  if (!value) return false;
+  const v = cleanBoidString(value);
+  if (!v) return false;
+
+  // If explicitly designated as physical folio / shareholder number:
+  if (isPhysicalOrFolio) {
+    return /^[0-9A-Za-z_-]{1,24}$/.test(v);
+  }
+
+  // CDSC Nepal Demat BOID: exactly 16 numeric digits
+  if (/^\d{16}$/.test(v)) {
+    return true;
+  }
+
+  // Truncated Demat BOID: starts with '130' (standard Nepal DP prefix) but is under 16 digits
+  if (/^130\d*$/.test(v) && v.length < 16) {
+    return false;
+  }
+
+  // Physical Folio / Shareholder / Certificate identifier (1 to 24 characters)
+  // Folio numbers can be integers like 1, 42, 1054 or codes like FOLIO-1, SH-42
+  return /^[0-9A-Za-z_-]{1,24}$/.test(v);
 };
 
 const isValidPAN = (value: string): boolean => {
@@ -726,6 +766,22 @@ export const ValidationEngine = {
         return; // Skip trailing non-data row
       }
 
+      const isFolioOrPhysical =
+        Boolean(
+          mappings &&
+          Object.entries(mappings).some(
+            ([k, v]) => v === "boid" && /FOLIO|SH|SHAREHOLDER|CERTIFICATE|HOLDER/i.test(k),
+          ),
+        ) ||
+        Boolean(
+          row["FOLIO"] ||
+          row["FOLIO NO"] ||
+          row["FOLIO_NO"] ||
+          row["SH NO"] ||
+          row["SH_NO"] ||
+          row["SHAREHOLDER NO"],
+        );
+
       // RULE 1: BOID is required (Core essential)
       if (!boid) {
         errors.push({
@@ -733,18 +789,23 @@ export const ValidationEngine = {
           field: "boid",
           type: "missing_boid",
           severity: "error",
-          message: "BOID is required for every row.",
+          message: isFolioOrPhysical
+            ? "Folio / Shareholder number is required for every row."
+            : "BOID is required for every row.",
           rawData,
         });
       }
       // RULE 2: BOID format validation (Core essential)
-      else if (!isValidBoid(boid)) {
+      else if (!isValidBoid(boid, isFolioOrPhysical)) {
         errors.push({
           row: rowNum,
           field: "boid",
           type: "invalid_boid",
           severity: "error",
-          message: "BOID must be at least 6 alphanumeric characters.",
+          message:
+            /^130\d*$/.test(boid) && boid.length < 16
+              ? `Demat BOID starting with 130 must be exactly 16 digits (found ${boid.length} digits).`
+              : "BOID or Folio identifier must be valid (16-digit Demat BOID or physical Folio identifier).",
           rawData,
         });
       }
