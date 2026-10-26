@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ReportService } from "./report.service";
 import { supabase } from "./database";
 
@@ -167,26 +167,14 @@ describe("ReportService Invariants and Error Semantics", () => {
     });
 
     it("throws error when getClientProfileReport encounters database failure", async () => {
-      const chain = {
-        select: vi.fn().mockReturnThis(),
-        order: vi.fn().mockResolvedValue({
-          data: null,
-          error: { message: "Database query failed" },
-        }),
-      };
+      const chain = createMockQueryChain(null, { message: "Database query failed" });
       (supabase.from as any).mockReturnValue(chain);
 
       await expect(ReportService.getClientProfileReport()).rejects.toThrow("Database query failed");
     });
 
     it("throws error when getShareholderDemographicsReport encounters database failure", async () => {
-      const chain = {
-        select: vi.fn().mockReturnThis(),
-        order: vi.fn().mockResolvedValue({
-          data: null,
-          error: { message: "Demographics view inaccessible" },
-        }),
-      };
+      const chain = createMockQueryChain(null, { message: "Demographics view inaccessible" });
       (supabase.from as any).mockReturnValue(chain);
 
       await expect(ReportService.getShareholderDemographicsReport()).rejects.toThrow(
@@ -211,6 +199,169 @@ describe("ReportService Invariants and Error Semantics", () => {
 
       await ReportService.getDividendRegister({ companyId: "comp-123-xyz" });
       expect(chain.eq).toHaveBeenCalledWith("company_id", "comp-123-xyz");
+    });
+  });
+
+  describe("Uncapped Paging via fetchAllRows (No arbitrary .limit)", () => {
+    it("fetches CDSC report across paged ranges without hardcoded .limit(1000)", async () => {
+      const chain = createMockQueryChain([
+        {
+          id: "dp-1",
+          client_id: "c-1",
+          company_id: "comp-1",
+          shares_held: 50,
+          gross_dividend: 500,
+          tax_amount: 25,
+          net_payable: 475,
+          payment_status: "Paid",
+          fiscal_year: "2080/81",
+        },
+      ]);
+      (supabase.from as any).mockReturnValue(chain);
+
+      const res = await ReportService.getCdscReport();
+      expect(res).toHaveLength(1);
+      expect(chain.range).toHaveBeenCalledWith(0, 999);
+      expect((chain as any).limit).toBeUndefined();
+    });
+
+    it("fetches Share Allocation report across paged ranges without .limit(1000)", async () => {
+      const chain = createMockQueryChain([
+        {
+          id: "dp-2",
+          shares_held: 100,
+          dividend_type: "Bonus",
+          bonus_actual: 10,
+          bonus_issued: 10,
+          after_bonus_kitta: 110,
+          fiscal_year: "2080/81",
+        },
+      ]);
+      (supabase.from as any).mockReturnValue(chain);
+
+      const res = await ReportService.getAllocationReport();
+      expect(res).toHaveLength(1);
+      expect(chain.range).toHaveBeenCalledWith(0, 999);
+      expect((chain as any).limit).toBeUndefined();
+    });
+
+    it("fetches Returned Payments report without .limit(500)", async () => {
+      const chain = createMockQueryChain([
+        {
+          id: "p-1",
+          batch_id: "b-1",
+          net_amount: 1500,
+          bank_name: "Nabil Bank",
+          bank_account_no: "1234",
+          status: "Returned",
+          payment_reference: "REF-1",
+          payment_date: "2026-01-01",
+        },
+      ]);
+      (supabase.from as any).mockReturnValue(chain);
+
+      const res = await ReportService.getReturnedPaymentsReport();
+      expect(res).toHaveLength(1);
+      expect(chain.range).toHaveBeenCalledWith(0, 999);
+      expect((chain as any).limit).toBeUndefined();
+    });
+
+    it("fetches Bounced Cheques report without .limit(500)", async () => {
+      const chain = createMockQueryChain([
+        {
+          id: "p-2",
+          batch_id: "b-1",
+          net_amount: 2500,
+          bank_name: "Global IME",
+          bank_account_no: "5678",
+          cheque_no: "CHQ-001",
+          status: "Bounced",
+          payment_reference: "REF-2",
+          payment_date: "2026-01-02",
+        },
+      ]);
+      (supabase.from as any).mockReturnValue(chain);
+
+      const res = await ReportService.getBouncedChequesReport();
+      expect(res).toHaveLength(1);
+      expect(chain.range).toHaveBeenCalledWith(0, 999);
+      expect((chain as any).limit).toBeUndefined();
+    });
+
+    it("fetches Bank Statement Summary report without .limit(100)", async () => {
+      const chain = createMockQueryChain([
+        {
+          id: "bs-1",
+          bank_name: "Everest Bank",
+          account_no: "ACC-99",
+          statement_date: "2026-02-01",
+          file_name: "stmt.csv",
+          total_transactions: 150,
+          total_credit: 500000,
+          total_debit: 200000,
+          is_reconciled: true,
+          created_at: "2026-02-01T10:00:00Z",
+        },
+      ]);
+      (supabase.from as any).mockReturnValue(chain);
+
+      const res = await ReportService.getBankStatementReport();
+      expect(res).toHaveLength(1);
+      expect(chain.range).toHaveBeenCalledWith(0, 999);
+      expect((chain as any).limit).toBeUndefined();
+    });
+  });
+
+  describe("Server-Authoritative Grand Totals via PostgreSQL RPC", () => {
+    it("calls get_report_grand_totals RPC and formats returned totals", async () => {
+      (supabase as any).rpc = vi.fn().mockResolvedValue({
+        data: [
+          {
+            total_records: 12500,
+            total_shares: 5000000,
+            total_gross: 25000000.5,
+            total_tax: 1250000.0,
+            total_net: 23750000.5,
+            total_disbursed: 20000000.0,
+            total_remaining: 3750000.5,
+          },
+        ],
+        error: null,
+      });
+
+      const totals = await ReportService.getReportGrandTotals("dividend_register", {
+        companyId: "comp-456",
+        fiscalYear: "2080/81",
+        status: "Pending",
+      });
+
+      expect((supabase as any).rpc).toHaveBeenCalledWith("get_report_grand_totals", {
+        p_report_id: "dividend_register",
+        p_company_id: "comp-456",
+        p_fiscal_year: "2080/81",
+        p_status: "Pending",
+        p_from_date: null,
+        p_to_date: null,
+        p_classification: null,
+      });
+
+      expect(totals.total_records).toBe(12500);
+      expect(totals.total_shares).toBe(5000000);
+      expect(totals.total_gross).toBe(25000000.5);
+      expect(totals.total_net).toBe(23750000.5);
+      expect(totals.total_disbursed).toBe(20000000.0);
+      expect(totals.total_remaining).toBe(3750000.5);
+    });
+
+    it("returns zero totals gracefully on RPC failure without throwing", async () => {
+      (supabase as any).rpc = vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: "RPC unavailable" },
+      });
+
+      const totals = await ReportService.getReportGrandTotals("dividend_register");
+      expect(totals.total_records).toBe(0);
+      expect(totals.total_net).toBe(0);
     });
   });
 });

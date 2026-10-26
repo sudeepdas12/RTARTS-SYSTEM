@@ -159,7 +159,7 @@ export const ConnectIPSService = {
     onProgress?: (processed: number, total: number) => void,
   ): Promise<ConnectIPSDisbursementResult> {
     const settings = await SettingsService.getSettings();
-    const lineItems = await PaymentService.getLineItems(batchId);
+    const lineItems = await PaymentService.getAllLineItemsForExport(batchId);
 
     if (!lineItems || lineItems.length === 0) {
       throw new Error("No payable line items found in this batch.");
@@ -365,7 +365,7 @@ export const ConnectIPSService = {
     const { batchId, debitAccount = "" } = params;
 
     // Fetch batch line items
-    const lineItems = await PaymentService.getLineItems(batchId);
+    const lineItems = await PaymentService.getAllLineItemsForExport(batchId);
     if (!lineItems || lineItems.length === 0) {
       throw new Error("No line items found in this payment batch.");
     }

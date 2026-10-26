@@ -39,6 +39,7 @@ export async function fetchAllRows<T>(
 ): Promise<T[]> {
   const allRows: T[] = [];
   let from = 0;
+  let hasMore = false;
 
   while (from < maxRows) {
     const to = from + pageSize - 1;
@@ -46,8 +47,21 @@ export async function fetchAllRows<T>(
     if (error) throw error;
     if (!data || data.length === 0) break;
     allRows.push(...data);
-    if (data.length < pageSize) break; // Reached last page
+    if (data.length < pageSize) {
+      hasMore = false;
+      break; // Reached last page
+    }
+    hasMore = true;
     from += pageSize;
+  }
+
+  // Safety threshold: if the loop exited because `from >= maxRows` and the last batch was full,
+  // there are additional records beyond maxRows. Silent truncation is strictly prohibited!
+  if (from >= maxRows && hasMore) {
+    throw new Error(
+      `Query safety threshold exceeded: Dataset contains more than ${maxRows.toLocaleString()} records. ` +
+        `To prevent incomplete statutory reporting, silent truncation is blocked. Please apply narrower date, company, or status filters.`,
+    );
   }
 
   return allRows;
@@ -63,6 +77,7 @@ export async function* streamAllRows<T>(
   maxRows = 200000,
 ): AsyncGenerator<T[], void, unknown> {
   let from = 0;
+  let hasMore = false;
 
   while (from < maxRows) {
     const to = from + pageSize - 1;
@@ -70,7 +85,18 @@ export async function* streamAllRows<T>(
     if (error) throw error;
     if (!data || data.length === 0) break;
     yield data;
-    if (data.length < pageSize) break;
+    if (data.length < pageSize) {
+      hasMore = false;
+      break;
+    }
+    hasMore = true;
     from += pageSize;
+  }
+
+  if (from >= maxRows && hasMore) {
+    throw new Error(
+      `Query safety threshold exceeded: Dataset contains more than ${maxRows.toLocaleString()} records. ` +
+        `To prevent incomplete statutory reporting, silent truncation is blocked. Please apply narrower date, company, or status filters.`,
+    );
   }
 }

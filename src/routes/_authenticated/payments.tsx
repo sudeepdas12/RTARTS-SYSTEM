@@ -853,7 +853,7 @@ function PaymentsRoute() {
 
     let items = lineItems;
     if (!items || items.length === 0 || activeBatchId !== batch.id) {
-      items = await PaymentService.getLineItems(batch.id);
+      items = await PaymentService.getAllLineItemsForExport(batch.id);
     }
 
     const payload = (items || []).map((item) => {

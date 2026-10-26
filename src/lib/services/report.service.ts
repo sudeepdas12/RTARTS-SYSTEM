@@ -10,6 +10,16 @@ export interface ReportFilters {
   classification?: string;
 }
 
+export interface ReportGrandTotals {
+  total_records: number;
+  total_shares: number;
+  total_gross: number;
+  total_tax: number;
+  total_net: number;
+  total_disbursed: number;
+  total_remaining: number;
+}
+
 // ─── Shared helpers ────────────────────────────────────────────────────────────
 
 function applyDateFilter(query: any, field: string, startDate?: string, endDate?: string) {
@@ -833,13 +843,20 @@ export const ReportService = {
         }));
       }
 
-      // Fallback: Query audit_logs for bulk import transactions
-      const { data: auditData } = await (supabase as any)
-        .from("audit_logs")
-        .select("id, user_id, action, table_name, action_time")
-        .eq("action", "INSERT")
-        .order("action_time", { ascending: false })
-        .limit(2000);
+      // Fallback: Query audit_logs for bulk import transactions using fetchAllRows
+      const auditData = await fetchAllRows<any>(
+        (from, to) => {
+          return (supabase as any)
+            .from("audit_logs")
+            .select("id, user_id, action, table_name, action_time")
+            .eq("action", "INSERT")
+            .order("action_time", { ascending: false })
+            .order("id", { ascending: true })
+            .range(from, to);
+        },
+        1000,
+        20000,
+      );
 
       if (!auditData || auditData.length === 0) return [];
 
@@ -885,16 +902,16 @@ export const ReportService = {
   // 11. Audit Report
   async getAuditReport(filters: ReportFilters = {}): Promise<AuditReportRow[]> {
     try {
-      let query = (supabase as any)
-        .from("approval_logs")
-        .select("id, action, previous_status, new_status, remarks, performed_by, performed_at")
-        .order("performed_at", { ascending: false })
-        .limit(500);
+      const data = await fetchAllRows<any>((from, to) => {
+        const query = (supabase as any)
+          .from("approval_logs")
+          .select("id, action, previous_status, new_status, remarks, performed_by, performed_at")
+          .order("performed_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to);
 
-      query = applyDateFilter(query, "performed_at", filters.startDate, filters.endDate);
-
-      const { data, error } = await query;
-      if (error) throw error;
+        return applyDateFilter(query, "performed_at", filters.startDate, filters.endDate);
+      });
 
       return (data || []).map((row: any) => ({
         id: row.id,
@@ -914,18 +931,21 @@ export const ReportService = {
   // 12. Company Report
   async getCompanyReport(filters: ReportFilters = {}): Promise<any[]> {
     try {
-      let query = supabase
-        .from("companies")
-        .select(
-          "id, company_code, company_name, company_type, isin, listed_date, sector_type, registrar, fiscal_year, dividend_rate, debenture_rate, contact_person, phone, email, address",
-        )
-        .order("company_name", { ascending: true });
+      const data = await fetchAllRows<any>((from, to) => {
+        let query = supabase
+          .from("companies")
+          .select(
+            "id, company_code, company_name, company_type, isin, listed_date, sector_type, registrar, fiscal_year, dividend_rate, debenture_rate, contact_person, phone, email, address",
+          )
+          .order("company_name", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to);
 
-      if (filters.companyId && filters.companyId !== "all")
-        query = query.eq("id", filters.companyId);
+        if (filters.companyId && filters.companyId !== "all")
+          query = query.eq("id", filters.companyId);
+        return query;
+      });
 
-      const { data, error } = await query;
-      if (error) throw error;
       return data || [];
     } catch (err) {
       console.error("getCompanyReport error:", err);
@@ -936,19 +956,22 @@ export const ReportService = {
   // 13. Client Profile Report
   async getClientProfileReport(filters: ReportFilters = {}): Promise<any[]> {
     try {
-      let query = (supabase as any)
-        .from("clients")
-        .select(
-          "id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, email, bank_name, bank_account_no, company_id, company:companies(company_name)",
-        )
-        .order("full_name", { ascending: true });
+      const data = await fetchAllRows<any>((from, to) => {
+        let query = (supabase as any)
+          .from("clients")
+          .select(
+            "id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, email, bank_name, bank_account_no, company_id, company:companies(company_name)",
+          )
+          .order("full_name", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to);
 
-      if (filters.companyId && filters.companyId !== "all") {
-        query = query.eq("company_id", filters.companyId);
-      }
+        if (filters.companyId && filters.companyId !== "all") {
+          query = query.eq("company_id", filters.companyId);
+        }
+        return query;
+      });
 
-      const { data, error } = await query;
-      if (error) throw error;
       return data || [];
     } catch (err) {
       console.error("getClientProfileReport error:", err);
@@ -959,21 +982,22 @@ export const ReportService = {
   // 14. Returned Payments Report
   async getReturnedPaymentsReport(filters: ReportFilters = {}): Promise<any[]> {
     try {
-      let query = (supabase as any)
-        .from("payments")
-        .select(
-          "id, batch_id, net_amount, bank_name, bank_account_no, status, payment_reference, payment_date, client:clients(full_name, boid), company:companies(company_name)",
-        )
-        .in("status", ["Returned", "Reversed"])
-        .order("payment_date", { ascending: false })
-        .limit(500);
+      const data = await fetchAllRows<any>((from, to) => {
+        let query = (supabase as any)
+          .from("payments")
+          .select(
+            "id, batch_id, net_amount, bank_name, bank_account_no, status, payment_reference, payment_date, client:clients(full_name, boid), company:companies(company_name)",
+          )
+          .in("status", ["Returned", "Reversed"])
+          .order("payment_date", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to);
 
-      if (filters.companyId && filters.companyId !== "all")
-        query = query.eq("company_id", filters.companyId);
-      query = applyDateFilter(query, "payment_date", filters.startDate, filters.endDate);
+        if (filters.companyId && filters.companyId !== "all")
+          query = query.eq("company_id", filters.companyId);
+        return applyDateFilter(query, "payment_date", filters.startDate, filters.endDate);
+      });
 
-      const { data, error } = await query;
-      if (error) throw error;
       return (data || []).map((row: any) => ({
         ...row,
         payment_status: row.status,
@@ -987,21 +1011,22 @@ export const ReportService = {
   // 15. Bounced Cheques Report
   async getBouncedChequesReport(filters: ReportFilters = {}): Promise<any[]> {
     try {
-      let query = (supabase as any)
-        .from("payments")
-        .select(
-          "id, batch_id, net_amount, bank_name, bank_account_no, cheque_no, status, payment_reference, payment_date, client:clients(full_name, boid), company:companies(company_name)",
-        )
-        .eq("status", "Bounced")
-        .order("payment_date", { ascending: false })
-        .limit(500);
+      const data = await fetchAllRows<any>((from, to) => {
+        let query = (supabase as any)
+          .from("payments")
+          .select(
+            "id, batch_id, net_amount, bank_name, bank_account_no, cheque_no, status, payment_reference, payment_date, client:clients(full_name, boid), company:companies(company_name)",
+          )
+          .eq("status", "Bounced")
+          .order("payment_date", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to);
 
-      if (filters.companyId && filters.companyId !== "all")
-        query = query.eq("company_id", filters.companyId);
-      query = applyDateFilter(query, "payment_date", filters.startDate, filters.endDate);
+        if (filters.companyId && filters.companyId !== "all")
+          query = query.eq("company_id", filters.companyId);
+        return applyDateFilter(query, "payment_date", filters.startDate, filters.endDate);
+      });
 
-      const { data, error } = await query;
-      if (error) throw error;
       return (data || []).map((row: any) => ({
         ...row,
         payment_status: row.status,
@@ -1015,16 +1040,24 @@ export const ReportService = {
   // 16. Share Allocation Report
   async getAllocationReport(filters: ReportFilters = {}): Promise<any[]> {
     try {
-      const { data, error } = await supabase
-        .from("dividend_payables")
-        .select(
-          "id, shares_held, dividend_type, bonus_actual, bonus_issued, after_bonus_kitta, fiscal_year, client:clients(full_name, boid), company:companies(company_name)",
-        )
-        .in("dividend_type", ["Bonus", "Stock", "Combined"])
-        .order("created_at", { ascending: false })
-        .limit(1000);
+      const data = await fetchAllRows<any>((from, to) => {
+        let query = (supabase as any)
+          .from("dividend_payables")
+          .select(
+            "id, shares_held, dividend_type, bonus_actual, bonus_issued, after_bonus_kitta, fiscal_year, client:clients(full_name, boid), company:companies(company_name)",
+          )
+          .in("dividend_type", ["Bonus", "Stock", "Combined"])
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to);
 
-      if (error) throw error;
+        if (filters.companyId && filters.companyId !== "all")
+          query = query.eq("company_id", filters.companyId);
+        if (filters.fiscalYear && filters.fiscalYear !== "all")
+          query = query.eq("fiscal_year", filters.fiscalYear);
+        return query;
+      });
+
       return data || [];
     } catch (err) {
       console.error("getAllocationReport error:", err);
@@ -1035,15 +1068,25 @@ export const ReportService = {
   // 17. CDSC Report
   async getCdscReport(filters: ReportFilters = {}): Promise<any[]> {
     try {
-      const { data, error } = await supabase
-        .from("dividend_payables")
-        .select(
-          "id, client_id, company_id, shares_held, gross_dividend, tax_amount, net_payable, payment_status, fiscal_year, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name, company_code)",
-        )
-        .order("created_at", { ascending: false })
-        .limit(1000);
+      const data = await fetchAllRows<any>((from, to) => {
+        let query = (supabase as any)
+          .from("dividend_payables")
+          .select(
+            "id, client_id, company_id, shares_held, gross_dividend, tax_amount, net_payable, payment_status, fiscal_year, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name, company_code)",
+          )
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to);
 
-      if (error) throw error;
+        if (filters.companyId && filters.companyId !== "all")
+          query = query.eq("company_id", filters.companyId);
+        if (filters.fiscalYear && filters.fiscalYear !== "all")
+          query = query.eq("fiscal_year", filters.fiscalYear);
+        if (filters.status && filters.status !== "all")
+          query = query.eq("payment_status", filters.status);
+        return query;
+      });
+
       return data || [];
     } catch (err) {
       console.error("getCdscReport error:", err);
@@ -1054,18 +1097,19 @@ export const ReportService = {
   // 18. Bank Statement Summary Report
   async getBankStatementReport(filters: ReportFilters = {}): Promise<any[]> {
     try {
-      let query = (supabase as any)
-        .from("bank_statements")
-        .select(
-          "id, bank_name, account_no, statement_date, file_name, total_transactions, total_credit, total_debit, is_reconciled, created_at",
-        )
-        .order("statement_date", { ascending: false })
-        .limit(100);
+      const data = await fetchAllRows<any>((from, to) => {
+        const query = (supabase as any)
+          .from("bank_statements")
+          .select(
+            "id, bank_name, account_no, statement_date, file_name, total_transactions, total_credit, total_debit, is_reconciled, created_at",
+          )
+          .order("statement_date", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to);
 
-      query = applyDateFilter(query, "statement_date", filters.startDate, filters.endDate);
+        return applyDateFilter(query, "statement_date", filters.startDate, filters.endDate);
+      });
 
-      const { data, error } = await query;
-      if (error) throw error;
       return data || [];
     } catch (err) {
       console.error("getBankStatementReport error:", err);
@@ -1078,19 +1122,21 @@ export const ReportService = {
   // (Natural Person / Legal Person / Mutual Fund / Tax Exempt / Foreign).
   async getShareholderDemographicsReport(filters: ReportFilters = {}): Promise<any[]> {
     try {
-      let query = supabase
-        .from("clients")
-        .select(
-          "id, client_code, boid, full_name, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no, holder_type, company_id, company:companies(company_name, company_code)",
-        )
-        .order("full_name", { ascending: true });
+      const data = await fetchAllRows<any>((from, to) => {
+        let query = (supabase as any)
+          .from("clients")
+          .select(
+            "id, client_code, boid, full_name, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no, holder_type, company_id, company:companies(company_name, company_code)",
+          )
+          .order("full_name", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to);
 
-      if (filters.companyId && filters.companyId !== "all") {
-        query = (query as any).eq("company_id", filters.companyId);
-      }
-
-      const { data, error } = await query;
-      if (error) throw error;
+        if (filters.companyId && filters.companyId !== "all") {
+          query = query.eq("company_id", filters.companyId);
+        }
+        return query;
+      });
 
       return (data || []).map((c: any) => ({
         id: c.id,
@@ -1115,6 +1161,63 @@ export const ReportService = {
     } catch (err) {
       console.error("getShareholderDemographicsReport error:", err);
       throw err;
+    }
+  },
+
+  // 20. Authoritative Grand Totals computed in PostgreSQL
+  async getReportGrandTotals(
+    reportId: string,
+    filters: ReportFilters = {},
+  ): Promise<ReportGrandTotals> {
+    try {
+      const { data, error } = await (supabase as any).rpc("get_report_grand_totals", {
+        p_report_id: reportId,
+        p_company_id: filters.companyId && filters.companyId !== "all" ? filters.companyId : null,
+        p_fiscal_year:
+          filters.fiscalYear && filters.fiscalYear !== "all" ? filters.fiscalYear : null,
+        p_status: filters.status && filters.status !== "all" ? filters.status : null,
+        p_from_date: filters.startDate || null,
+        p_to_date: filters.endDate || null,
+        p_classification:
+          filters.classification && filters.classification !== "all"
+            ? filters.classification
+            : null,
+      });
+
+      if (error) {
+        console.warn("get_report_grand_totals RPC warning:", error);
+        return {
+          total_records: 0,
+          total_shares: 0,
+          total_gross: 0,
+          total_tax: 0,
+          total_net: 0,
+          total_disbursed: 0,
+          total_remaining: 0,
+        };
+      }
+
+      const res = Array.isArray(data) ? data[0] : data;
+      return {
+        total_records: Number(res?.total_records ?? 0),
+        total_shares: Number(res?.total_shares ?? 0),
+        total_gross: Number(res?.total_gross ?? 0),
+        total_tax: Number(res?.total_tax ?? 0),
+        total_net: Number(res?.total_net ?? 0),
+        total_disbursed: Number(res?.total_disbursed ?? 0),
+        total_remaining: Number(res?.total_remaining ?? 0),
+      };
+    } catch (err) {
+      console.error("getReportGrandTotals error:", err);
+      return {
+        total_records: 0,
+        total_shares: 0,
+        total_gross: 0,
+        total_tax: 0,
+        total_net: 0,
+        total_disbursed: 0,
+        total_remaining: 0,
+      };
     }
   },
 };

@@ -156,20 +156,27 @@ export const PaymentService = {
     }
   },
 
-  async getLineItems(batchId: string, limit = 2000): Promise<PaymentLineItem[]> {
+  async getLineItems(batchId: string, limit?: number): Promise<PaymentLineItem[]> {
     try {
-      const { data, error } = await (supabase as any)
-        .from("payments")
-        .select("*, clients(id, boid, full_name, bank_name, bank_account_no)")
-        .eq("batch_id", batchId)
-        .order("created_at", { ascending: true })
-        .limit(limit);
+      if (limit !== undefined && limit > 0) {
+        // UI pagination / preview mode
+        const { data, error } = await (supabase as any)
+          .from("payments")
+          .select("*, clients(id, boid, full_name, bank_name, bank_account_no)")
+          .eq("batch_id", batchId)
+          .order("created_at", { ascending: true })
+          .range(0, limit - 1);
 
-      if (error) {
-        console.error("Failed to fetch line items:", error.message);
-        throw error;
+        if (error) {
+          console.error("Failed to fetch line items:", error.message);
+          throw error;
+        }
+        return (data || []) as PaymentLineItem[];
       }
-      return (data || []) as PaymentLineItem[];
+
+      // Default: fetch the complete dataset using repeated 1,000-row batches.
+      // Never silently truncates at 2,000 rows — ensures 100% of payment rows are included.
+      return await this.getAllLineItemsForExport(batchId);
     } catch (err: any) {
       console.error("Failed to fetch line items:", err?.message || err);
       throw err;
@@ -191,7 +198,7 @@ export const PaymentService = {
             .range(from, to);
         },
         1000,
-        100000,
+        200000,
       );
       return (data || []) as PaymentLineItem[];
     } catch (err: any) {

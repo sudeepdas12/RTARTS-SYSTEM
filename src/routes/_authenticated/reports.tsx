@@ -231,6 +231,7 @@ interface RegisterViewerDialogProps {
   reportTitle: string;
   reportDescription: string;
   companyName: string;
+  filters?: ReportFilters;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   fetchData: (id: ReportId) => Promise<any[]>;
@@ -243,6 +244,7 @@ function RegisterViewerDialog({
   reportTitle,
   reportDescription,
   companyName,
+  filters,
   open,
   onOpenChange,
   fetchData,
@@ -261,6 +263,14 @@ function RegisterViewerDialog({
   } = useQuery({
     queryKey: ["view-register-dialog-data", reportId, companyName],
     queryFn: () => (reportId ? fetchData(reportId) : Promise.resolve([])),
+    enabled: open && !!reportId,
+    staleTime: 60 * 1000,
+  });
+
+  const { data: serverTotals } = useQuery({
+    queryKey: ["report-grand-totals", reportId, filters],
+    queryFn: () =>
+      reportId ? ReportService.getReportGrandTotals(reportId, filters) : Promise.resolve(null),
     enabled: open && !!reportId,
     staleTime: 60 * 1000,
   });
@@ -435,6 +445,15 @@ function RegisterViewerDialog({
                 <Badge variant="secondary" className="text-xs font-normal">
                   {companyName}
                 </Badge>
+                {serverTotals && serverTotals.total_records > 0 && (
+                  <Badge
+                    variant="outline"
+                    className="text-emerald-700 bg-emerald-50 border-emerald-300 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800 text-[11px] font-mono flex items-center gap-1"
+                  >
+                    <ShieldCheck className="h-3 w-3" />
+                    Server Verified: {serverTotals.total_records.toLocaleString()} records
+                  </Badge>
+                )}
               </div>
               <DialogDescription className="text-xs text-muted-foreground">
                 {reportDescription}
@@ -477,63 +496,77 @@ function RegisterViewerDialog({
           {!isLoading && data.length > 0 && (
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 pt-3">
               <div className="px-3 py-1.5 bg-background/80 border rounded text-xs flex justify-between items-center">
-                <span className="text-muted-foreground font-medium">Records:</span>
-                <span className="font-bold font-mono">{stats.count.toLocaleString()}</span>
+                <span className="text-muted-foreground font-medium">
+                  {search ? "Filtered / Total:" : "Records:"}
+                </span>
+                <span className="font-bold font-mono">
+                  {search
+                    ? `${filteredRows.length.toLocaleString()} / ${(serverTotals?.total_records ?? data.length).toLocaleString()}`
+                    : (serverTotals?.total_records ?? stats.count).toLocaleString()}
+                </span>
               </div>
-              {stats.gross > 0 && (
+              {((search ? stats.gross : serverTotals?.total_gross) ?? 0) > 0 && (
                 <div className="px-3 py-1.5 bg-background/80 border rounded text-xs flex justify-between items-center">
                   <span className="text-muted-foreground font-medium">Gross:</span>
                   <span className="font-bold font-mono text-primary">
                     NPR{" "}
-                    {stats.gross.toLocaleString("en-IN", {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
+                    {((search ? stats.gross : serverTotals?.total_gross) ?? 0).toLocaleString(
+                      "en-IN",
+                      {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      },
+                    )}
                   </span>
                 </div>
               )}
-              {stats.tax > 0 && (
+              {((search ? stats.tax : serverTotals?.total_tax) ?? 0) > 0 && (
                 <div className="px-3 py-1.5 bg-background/80 border rounded text-xs flex justify-between items-center">
                   <span className="text-muted-foreground font-medium">Tax:</span>
                   <span className="font-bold font-mono text-amber-600">
                     NPR{" "}
-                    {stats.tax.toLocaleString("en-IN", {
+                    {((search ? stats.tax : serverTotals?.total_tax) ?? 0).toLocaleString("en-IN", {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
                     })}
                   </span>
                 </div>
               )}
-              {stats.net > 0 && (
+              {((search ? stats.net : serverTotals?.total_net) ?? 0) > 0 && (
                 <div className="px-3 py-1.5 bg-background/80 border rounded text-xs flex justify-between items-center">
                   <span className="text-muted-foreground font-medium">Net:</span>
                   <span className="font-bold font-mono text-foreground">
                     NPR{" "}
-                    {stats.net.toLocaleString("en-IN", {
+                    {((search ? stats.net : serverTotals?.total_net) ?? 0).toLocaleString("en-IN", {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
                     })}
                   </span>
                 </div>
               )}
-              {stats.paid > 0 && (
+              {((search ? stats.paid : serverTotals?.total_disbursed) ?? 0) > 0 && (
                 <div className="px-3 py-1.5 bg-background/80 border rounded text-xs flex justify-between items-center">
                   <span className="text-muted-foreground font-medium">Disbursed:</span>
                   <span className="font-bold font-mono text-emerald-600">
                     NPR{" "}
-                    {stats.paid.toLocaleString("en-IN", {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
+                    {((search ? stats.paid : serverTotals?.total_disbursed) ?? 0).toLocaleString(
+                      "en-IN",
+                      {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      },
+                    )}
                   </span>
                 </div>
               )}
-              {stats.remaining > 0 && (
+              {((search ? stats.remaining : serverTotals?.total_remaining) ?? 0) > 0 && (
                 <div className="px-3 py-1.5 bg-background/80 border rounded text-xs flex justify-between items-center">
                   <span className="text-muted-foreground font-medium">Due:</span>
                   <span className="font-bold font-mono text-rose-600">
                     NPR{" "}
-                    {stats.remaining.toLocaleString("en-IN", {
+                    {(
+                      (search ? stats.remaining : serverTotals?.total_remaining) ?? 0
+                    ).toLocaleString("en-IN", {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
                     })}
@@ -655,6 +688,22 @@ function RegisterViewerDialog({
               {filteredRows.length.toLocaleString()}
             </span>{" "}
             records
+            {serverTotals && serverTotals.total_records > 0 && (
+              <span className="ml-2 text-muted-foreground">
+                (PostgreSQL Server Grand Total:{" "}
+                <span className="font-medium text-foreground">
+                  {serverTotals.total_records.toLocaleString()}
+                </span>{" "}
+                records, NPR{" "}
+                <span className="font-medium text-foreground">
+                  {serverTotals.total_net.toLocaleString("en-IN", {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </span>{" "}
+                Net)
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-1.5">
             <Button
@@ -2330,6 +2379,7 @@ function ReportsRoute() {
           selectedCompany?.company_name ||
           (companyId === "all" ? "All Companies (Consolidated)" : "Selected Company")
         }
+        filters={filters}
         open={!!viewingReport}
         onOpenChange={(isOpen) => !isOpen && setViewingReport(null)}
         fetchData={fetchReport}

@@ -959,20 +959,25 @@ export const ReconciliationEngine = {
         return payablesList;
       })(),
 
-      (() => {
+      fetchAllRows<any>(async (from, to) => {
         let q = (db as any)
           .from("payment_batches")
           .select(
             "id,company_id,batch_name,total_amount,total_tax,total_payments,payable_type,status,cds_batch_ref,created_at",
-          );
+          )
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to);
         if (companyId) q = q.or(`company_id.eq.${companyId},company_id.is.null`);
-        return q.limit(1000);
-      })(),
+        return await q;
+      }),
     ]);
 
     const paymentsList: any[] = Array.isArray(payments) ? payments : (payments as any)?.data || [];
     const payablesList: any[] = Array.isArray(payables) ? payables : (payables as any)?.data || [];
-    const batches = batchesResult.data || [];
+    const batches: any[] = Array.isArray(batchesResult)
+      ? batchesResult
+      : (batchesResult as any)?.data || [];
 
     // Helper to get effective comparison amount for a payable (supporting prorated debenture interest and remaining partial installments)
     const getPayableAmounts = (
