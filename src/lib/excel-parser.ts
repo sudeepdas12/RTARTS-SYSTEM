@@ -1122,6 +1122,11 @@ export const ExcelParser = {
           val = expandScientificNotation(val);
         }
 
+        // Cap individual cell strings to prevent corrupted extreme strings from exhausting heap / JSON serialization
+        if (typeof val === "string" && val.length > 1000) {
+          val = val.slice(0, 1000);
+        }
+
         if (val !== undefined && val !== null && String(val).trim() !== "") {
           row[header] = val;
         }

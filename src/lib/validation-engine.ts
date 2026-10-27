@@ -192,6 +192,10 @@ export function expandScientificNotation(raw: string): string {
   if (!match) return trimmed;
   const [, intPart, decPart = "", expStr] = match;
   const exp = parseInt(expStr, 10);
+  // Guard against corrupted astronomical exponents that cause Out-Of-Memory / Invalid string length
+  if (Number.isNaN(exp) || exp > 30 || exp < -20) {
+    return trimmed;
+  }
   if (exp > 0) {
     if (exp >= decPart.length) {
       return intPart + decPart + "0".repeat(exp - decPart.length);

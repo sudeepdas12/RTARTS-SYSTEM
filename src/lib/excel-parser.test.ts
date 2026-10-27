@@ -89,4 +89,36 @@ describe("ExcelParser Resilience and Memory Protection", () => {
     expect(result.sheets.length).toBe(1);
     expect(result.sheets[0].rows[0].boid).toBe("1301010000000000");
   });
+
+  it("safely handles corrupted astronomical scientific notation without Invalid string length error", () => {
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([
+      ["BOID", "NAME", "CITIZENSHIP", "TOTAL KITTA"],
+      ["1301010000000001", "BHUWAN SHRESTHA", "1.044E+331782000", 100],
+    ]);
+    XLSX.utils.book_append_sheet(wb, ws, "PUBLIC");
+
+    const result = ExcelParser.parseWorkbook(wb, "dividend.xlsx");
+    expect(result.sheets.length).toBe(1);
+    expect(result.sheets[0].rows[0].citizenship).toBe("1.044E+331782000");
+    // Ensure serialization works without RangeError
+    const serialized = JSON.stringify(result);
+    expect(serialized.length).toBeGreaterThan(0);
+  });
+
+  it("caps oversized cell values exceeding 1,000 characters to protect memory and payloads", () => {
+    const wb = XLSX.utils.book_new();
+    const giantString = "A".repeat(5000);
+    const ws = XLSX.utils.aoa_to_sheet([
+      ["BOID", "NAME", "REMARKS", "TOTAL KITTA"],
+      ["1301010000000001", "TEST USER", giantString, 50],
+    ]);
+    XLSX.utils.book_append_sheet(wb, ws, "PUBLIC");
+
+    const result = ExcelParser.parseWorkbook(wb, "oversized.xlsx");
+    const row = result.sheets[0].rows[0];
+    const remarksVal = row.remarks || row["REMARKS"];
+    expect(remarksVal).toBeDefined();
+    expect(remarksVal.length).toBe(1000);
+  });
 });
