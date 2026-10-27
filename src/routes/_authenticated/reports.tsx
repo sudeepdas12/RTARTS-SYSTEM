@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart3,
   Building2,
@@ -757,14 +757,15 @@ function RegisterViewerDialog({
 }
 
 function ReportsRoute() {
+  const qc = useQueryClient();
   const [companyId, setCompanyId] = useState("all");
   const [activeExport, setActiveExport] = useState<string | null>(null);
   const [viewingReport, setViewingReport] = useState<ReportId | null>(null);
 
   const { data: companies = [] } = useQuery({
     queryKey: ["report-companies"],
-    staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("companies")
@@ -774,6 +775,64 @@ function ReportsRoute() {
       return data || [];
     },
   });
+
+  // Self-heal orphaned companyId
+  useEffect(() => {
+    if (companyId !== "all" && companies.length > 0) {
+      const exists = companies.some((c) => c.id === companyId);
+      if (!exists) {
+        setCompanyId("all");
+      }
+    }
+  }, [companies, companyId]);
+
+  // Realtime synchronization for instant reports update
+  useEffect(() => {
+    const channel = supabase
+      .channel("reports-realtime-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "upload_history" }, () => {
+        qc.invalidateQueries({ queryKey: ["report-companies"] });
+        qc.invalidateQueries({ queryKey: ["live-payable-summary"] });
+        qc.invalidateQueries({ queryKey: ["agm-dividend-summary-report"] });
+        qc.invalidateQueries({ queryKey: ["debenture-interest-summary-report"] });
+        qc.invalidateQueries({ queryKey: ["mutual-fund-summary-report"] });
+        qc.invalidateQueries({ queryKey: ["ird-annex-10-report"] });
+        qc.invalidateQueries({ queryKey: ["sebon-ipf-aging-report"] });
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "dividend_payables" }, () => {
+        qc.invalidateQueries({ queryKey: ["live-payable-summary"] });
+        qc.invalidateQueries({ queryKey: ["agm-dividend-summary-report"] });
+        qc.invalidateQueries({ queryKey: ["ird-annex-10-report"] });
+        qc.invalidateQueries({ queryKey: ["sebon-ipf-aging-report"] });
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "interest_payables" }, () => {
+        qc.invalidateQueries({ queryKey: ["live-payable-summary"] });
+        qc.invalidateQueries({ queryKey: ["debenture-interest-summary-report"] });
+        qc.invalidateQueries({ queryKey: ["ird-annex-10-report"] });
+        qc.invalidateQueries({ queryKey: ["sebon-ipf-aging-report"] });
+      })
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "mutual_fund_payables" },
+        () => {
+          qc.invalidateQueries({ queryKey: ["live-payable-summary"] });
+          qc.invalidateQueries({ queryKey: ["mutual-fund-summary-report"] });
+          qc.invalidateQueries({ queryKey: ["ird-annex-10-report"] });
+          qc.invalidateQueries({ queryKey: ["sebon-ipf-aging-report"] });
+        },
+      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, () => {
+        qc.invalidateQueries({ queryKey: ["live-payable-summary"] });
+        qc.invalidateQueries({ queryKey: ["agm-dividend-summary-report"] });
+        qc.invalidateQueries({ queryKey: ["debenture-interest-summary-report"] });
+        qc.invalidateQueries({ queryKey: ["mutual-fund-summary-report"] });
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [qc]);
 
   const selectedCompany = useMemo(
     () => companies.find((c) => c.id === companyId),
@@ -795,8 +854,9 @@ function ReportsRoute() {
   // 1. Consolidated Summary
   const summary = useQuery({
     queryKey: ["live-payable-summary", companyId],
-    staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
     queryFn: () => SummaryReportService.getCompanySummary(filters),
   });
   const rows = useMemo(() => summary.data || [], [summary.data]);
@@ -818,8 +878,9 @@ function ReportsRoute() {
   // 2. AGM Dividend Summary
   const agmSummaryQuery = useQuery({
     queryKey: ["agm-dividend-summary-report", companyId],
-    staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
     queryFn: () =>
       AgmDividendSummaryReportService.getCompanySummary(
         companyId === "all" ? undefined : companyId,
@@ -830,8 +891,9 @@ function ReportsRoute() {
   // 3. Debenture Summary
   const debentureSummaryQuery = useQuery({
     queryKey: ["debenture-interest-summary-report", companyId, taxRules],
-    staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
     queryFn: async () => {
       const data = await fetchAllRows<any>((from, to) => {
         let q = (supabase as any)
@@ -863,8 +925,9 @@ function ReportsRoute() {
   // 4. Mutual Fund Summary
   const mfSummaryQuery = useQuery({
     queryKey: ["mutual-fund-summary-report", companyId],
-    staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
     queryFn: () => SummaryReportService.getMutualFundSummary({ companyId }),
   });
   const mfSummary = useMemo(() => mfSummaryQuery.data || [], [mfSummaryQuery.data]);
@@ -895,8 +958,9 @@ function ReportsRoute() {
   // 5. IRD Annex-10 e-TDS Query
   const irdEtdsQuery = useQuery({
     queryKey: ["ird-annex-10-report", companyId],
-    staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
     queryFn: () =>
       IrdEtdsService.getAnnex10Report({
         companyId: companyId === "all" ? undefined : companyId,
@@ -908,8 +972,9 @@ function ReportsRoute() {
   // 6. SEBON IPF Aging Query
   const ipfAgingQuery = useQuery({
     queryKey: ["sebon-ipf-aging-report", companyId],
-    staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
     queryFn: () =>
       IpfService.getIpfAgingReport({
         companyId: companyId === "all" ? undefined : companyId,

@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, useMemo, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -85,6 +85,7 @@ function StatCard({
 }
 
 function AnalyticsPage() {
+  const qc = useQueryClient();
   const [selectedFy, setSelectedFy] = useState<string>("all");
   const [selectedCompany, setSelectedCompany] = useState<string>("all");
   const [summarySearch, setSummarySearch] = useState<string>("");
@@ -92,7 +93,7 @@ function AnalyticsPage() {
 
   const { data: companies = [] } = useQuery({
     queryKey: ["companies-lookup"],
-    staleTime: 5 * 60 * 1000,
+    staleTime: 10_000,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("companies")
@@ -105,7 +106,7 @@ function AnalyticsPage() {
 
   const { data: fiscalYears = [] } = useQuery({
     queryKey: ["distinct-fiscal-years"],
-    staleTime: 5 * 60 * 1000,
+    staleTime: 10_000,
     queryFn: () => DataManagementService.getDistinctFiscalYears(),
   });
 
@@ -115,11 +116,54 @@ function AnalyticsPage() {
     refetch: refetchSummary,
   } = useQuery({
     queryKey: ["company-fiscal-summary", selectedFy],
-    staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
     queryFn: () =>
       DataManagementService.getCompanyFiscalSummary(selectedFy !== "all" ? selectedFy : undefined),
   });
+
+  // Self-heal orphaned selectedCompany filter
+  useEffect(() => {
+    if (selectedCompany !== "all" && companies.length > 0) {
+      const exists = companies.some((c) => c.id === selectedCompany);
+      if (!exists) {
+        setSelectedCompany("all");
+      }
+    }
+  }, [companies, selectedCompany]);
+
+  // Realtime subscription for instant synchronization
+  useEffect(() => {
+    const channel = supabase
+      .channel("analytics-realtime-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "upload_history" }, () => {
+        qc.invalidateQueries({ queryKey: ["company-fiscal-summary"] });
+        qc.invalidateQueries({ queryKey: ["distinct-fiscal-years"] });
+        qc.invalidateQueries({ queryKey: ["companies-lookup"] });
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "dividend_payables" }, () => {
+        qc.invalidateQueries({ queryKey: ["company-fiscal-summary"] });
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "interest_payables" }, () => {
+        qc.invalidateQueries({ queryKey: ["company-fiscal-summary"] });
+      })
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "mutual_fund_payables" },
+        () => {
+          qc.invalidateQueries({ queryKey: ["company-fiscal-summary"] });
+        },
+      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, () => {
+        qc.invalidateQueries({ queryKey: ["company-fiscal-summary"] });
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [qc]);
 
   const filteredSummary = useMemo(() => {
     let data = summary;

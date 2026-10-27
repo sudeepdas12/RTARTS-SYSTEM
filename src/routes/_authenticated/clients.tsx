@@ -488,6 +488,7 @@ function ClientsPage() {
   // Companies lookup for dropdown filter and association
   const { data: companies = [] } = useQuery({
     queryKey: ["companies-lookup"],
+    staleTime: 10_000,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("companies")
@@ -497,6 +498,36 @@ function ClientsPage() {
       return data as { id: string; company_code: string; company_name: string }[];
     },
   });
+
+  // Self-heal orphaned companyFilter
+  useEffect(() => {
+    if (companyFilter !== "all" && companies.length > 0) {
+      const exists = companies.some((c) => c.id === companyFilter);
+      if (!exists) {
+        setCompanyFilter("all");
+      }
+    }
+  }, [companies, companyFilter]);
+
+  // Realtime subscription for clients & uploads
+  useEffect(() => {
+    const channel = supabase
+      .channel("clients-realtime-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "clients" }, () => {
+        qc.invalidateQueries({ queryKey: ["clients"] });
+        qc.invalidateQueries({ queryKey: ["clients-stats"] });
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "upload_history" }, () => {
+        qc.invalidateQueries({ queryKey: ["clients"] });
+        qc.invalidateQueries({ queryKey: ["clients-stats"] });
+        qc.invalidateQueries({ queryKey: ["companies-lookup"] });
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [qc]);
 
   const {
     data: stats = {
@@ -509,8 +540,9 @@ function ClientsPage() {
     },
   } = useQuery({
     queryKey: ["clients-stats", companyFilter],
-    staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
     queryFn: async () => {
       // 1. Primary: dedicated server-side aggregation RPC for instant (<50ms) single query response
       try {
@@ -680,8 +712,8 @@ function ClientsPage() {
       return { rows: rows as unknown as Client[], count };
     },
     placeholderData: keepPreviousData,
-    staleTime: 60 * 1000,
-    refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
   });
 
   const totalPages = Math.max(1, Math.ceil(pageData.count / pageSize));

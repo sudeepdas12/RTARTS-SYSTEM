@@ -111,12 +111,7 @@ export interface YoYChainReport {
 }
 
 export type CurrentFyStatus =
-  | "ACTIVE"
-  | "EXITED"
-  | "NOT_PRESENT_IN_IMPORT"
-  | "NEW_ENTRANT"
-  | "ESCROW"
-  | "PHYSICAL_PENDING";
+  "ACTIVE" | "EXITED" | "NOT_PRESENT_IN_IMPORT" | "NEW_ENTRANT" | "ESCROW" | "PHYSICAL_PENDING";
 
 export interface MultiYearShareholderProfile {
   companyId?: string;
@@ -823,6 +818,65 @@ export const AgmStudioService = {
     }
   },
 
+  async fetchCompaniesFromDatabase(): Promise<CompanyProfile[]> {
+    try {
+      const { data, error } = await (supabase as any)
+        .from("companies")
+        .select("id, company_code, company_name, isin")
+        .order("company_name");
+
+      if (error || !data || data.length === 0) {
+        return this.getCompanies();
+      }
+
+      const local = this.getCompanies();
+      const localByCode = new Map(local.map((c) => [c.code.toUpperCase(), c]));
+      const localById = new Map(local.map((c) => [c.id, c]));
+
+      const dbCompanies: CompanyProfile[] = data.map((dbComp: any) => {
+        const code = (dbComp.company_code || "").toUpperCase();
+        const existing = localByCode.get(code) || localById.get(dbComp.id);
+        if (existing) {
+          return {
+            ...existing,
+            id: dbComp.id,
+            name: dbComp.company_name || existing.name,
+            code: dbComp.company_code || existing.code,
+            isinPublic: dbComp.isin || existing.isinPublic,
+            timeline:
+              existing.timeline && existing.timeline.length > 0
+                ? existing.timeline
+                : this.getHistoricalTimeline(dbComp.id),
+          };
+        }
+        return {
+          id: dbComp.id,
+          code: dbComp.company_code || "COMP",
+          name: dbComp.company_name || `Company ${dbComp.company_code}`,
+          isinPublic: dbComp.isin || undefined,
+          baseFiscalYear: "2075/76",
+          currentFiscalYear: "2080/81",
+          timeline: this.getHistoricalTimeline(dbComp.id),
+        };
+      });
+
+      for (const loc of local) {
+        if (
+          !dbCompanies.some(
+            (d) => d.id === loc.id || d.code.toUpperCase() === loc.code.toUpperCase(),
+          )
+        ) {
+          dbCompanies.push(loc);
+        }
+      }
+
+      return dbCompanies;
+    } catch (err) {
+      console.warn("Could not query companies from database for AGM Studio:", err);
+      return this.getCompanies();
+    }
+  },
+
   async resolveCompanyUuid(companyIdOrCode?: string, companyName?: string): Promise<string | null> {
     const target = (companyIdOrCode || this.getActiveCompanyId() || "nlg-insurance").trim();
     if (isUuid(target)) {
@@ -1263,11 +1317,7 @@ export const AgmStudioService = {
         upperSheet.includes("CLEARING");
 
       const defaultHolderType:
-        | "PROMOTER"
-        | "PUBLIC"
-        | "MUTUAL_FUND"
-        | "CLEARING_POOL"
-        | "PHYSICAL" = isExclusionSheet
+        "PROMOTER" | "PUBLIC" | "MUTUAL_FUND" | "CLEARING_POOL" | "PHYSICAL" = isExclusionSheet
         ? "CLEARING_POOL"
         : isPhysicalSheet
           ? "PHYSICAL"

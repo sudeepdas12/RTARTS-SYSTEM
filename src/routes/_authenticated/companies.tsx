@@ -323,9 +323,18 @@ function CompaniesPage() {
       qc.invalidateQueries({ queryKey: ["companies"] });
       qc.invalidateQueries({ queryKey: ["companies-lookup"] });
       qc.invalidateQueries({ queryKey: ["dashboard-companies"] });
+      qc.invalidateQueries({ queryKey: ["report-companies"] });
+      qc.invalidateQueries({ queryKey: ["agm-companies-list"] });
       qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] });
+      qc.invalidateQueries({ queryKey: ["company-fiscal-summary"] });
       qc.invalidateQueries({ queryKey: ["clients"] });
       qc.invalidateQueries({ queryKey: ["clients-stats"] });
+      qc.invalidateQueries({ queryKey: ["dividend_payables"] });
+      qc.invalidateQueries({ queryKey: ["interest_payables"] });
+      qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
+      qc.invalidateQueries({ queryKey: ["live-payable-summary"] });
+      qc.invalidateQueries({ queryKey: ["upload-history"] });
       toast.success("Company and all associated records deleted successfully");
       setDeleteTarget(null);
     },

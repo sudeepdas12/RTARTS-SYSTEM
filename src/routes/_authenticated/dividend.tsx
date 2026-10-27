@@ -301,8 +301,40 @@ function DividendPage() {
         debenture_rate?: number | null;
       }[];
     },
-    staleTime: 5 * 60 * 1000,
+    staleTime: 10_000,
   });
+
+  // Self-heal orphaned companyFilter
+  useEffect(() => {
+    if (companyFilter !== "all" && companies.length > 0) {
+      const exists = companies.some((c) => c.id === companyFilter);
+      if (!exists) {
+        setCompanyFilter("all");
+      }
+    }
+  }, [companies, companyFilter]);
+
+  // Realtime subscription for live dividend payables updates
+  useEffect(() => {
+    const channel = supabase
+      .channel("dividend-realtime-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "dividend_payables" }, () => {
+        qc.invalidateQueries({ queryKey: ["dividend_payables_totals"] });
+        qc.invalidateQueries({ queryKey: ["dividend_payables_paginated"] });
+        qc.invalidateQueries({ queryKey: ["dividend_payables_all"] });
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "upload_history" }, () => {
+        qc.invalidateQueries({ queryKey: ["dividend_payables_totals"] });
+        qc.invalidateQueries({ queryKey: ["dividend_payables_paginated"] });
+        qc.invalidateQueries({ queryKey: ["dividend_payables_all"] });
+        qc.invalidateQueries({ queryKey: ["companies-lookup"] });
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [qc]);
 
   // Contextual companies for Dividend section (strictly shows Equity companies & dividend issuers only)
   const relevantCompanies = useMemo(() => {
@@ -451,8 +483,8 @@ function DividendPage() {
       fromDateFilter,
       toDateFilter,
     ],
-    staleTime: 60 * 1000,
-    refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
     queryFn: async () => {
       try {
         const { data: rpcTotals, error: rpcErr } = await (supabase as any).rpc(
@@ -686,7 +718,8 @@ function DividendPage() {
         return q;
       });
     },
-    staleTime: 60_000,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
   });
 
   const agmSummaryReport = useMemo(

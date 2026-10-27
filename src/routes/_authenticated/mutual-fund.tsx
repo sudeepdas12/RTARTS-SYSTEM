@@ -223,8 +223,44 @@ function MutualFundPage() {
         sector_type?: string | null;
       }[];
     },
-    staleTime: 5 * 60 * 1000,
+    staleTime: 10_000,
   });
+
+  // Self-heal orphaned companyFilter
+  useEffect(() => {
+    if (companyFilter !== "all" && companies.length > 0) {
+      const exists = companies.some((c) => c.id === companyFilter);
+      if (!exists) {
+        setCompanyFilter("all");
+      }
+    }
+  }, [companies, companyFilter]);
+
+  // Realtime subscription for live mutual fund payables updates
+  useEffect(() => {
+    const channel = supabase
+      .channel("mutual-fund-realtime-sync")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "mutual_fund_payables" },
+        () => {
+          qc.invalidateQueries({ queryKey: ["mutual_fund_payables_totals"] });
+          qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
+          qc.invalidateQueries({ queryKey: ["mf-summary"] });
+        },
+      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "upload_history" }, () => {
+        qc.invalidateQueries({ queryKey: ["mutual_fund_payables_totals"] });
+        qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
+        qc.invalidateQueries({ queryKey: ["mf-summary"] });
+        qc.invalidateQueries({ queryKey: ["companies-lookup"] });
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [qc]);
 
   // Contextual schemes/companies for Mutual Fund section (strictly shows Mutual Fund schemes only)
   const relevantCompanies = useMemo(() => {
@@ -363,8 +399,8 @@ function MutualFundPage() {
       fromDateFilter,
       toDateFilter,
     ],
-    staleTime: 60 * 1000,
-    refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
     queryFn: async () => {
       // 1. Fast server-side aggregation RPC (< 50ms)
       try {
@@ -490,8 +526,8 @@ function MutualFundPage() {
       return { rows: (data || []) as Payable[], count: count || 0 };
     },
     placeholderData: keepPreviousData,
-    staleTime: 60 * 1000,
-    refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
   });
 
   const data = pageResult.rows;
@@ -575,8 +611,8 @@ function MutualFundPage() {
   // Category-wise distribution summary in the CDS "SUMMARY" sheet layout.
   const mfSummary = useQuery({
     queryKey: ["mf-summary", companyFilter, fyFilter, fromDateFilter, toDateFilter],
-    staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
     queryFn: () =>
       SummaryReportService.getMutualFundSummary({
         companyId: companyFilter,

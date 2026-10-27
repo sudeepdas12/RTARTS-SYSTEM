@@ -202,7 +202,8 @@ function InterestPage() {
   const { data: taxRules } = useQuery({
     queryKey: ["tax-rules"],
     queryFn: () => loadTaxRules(),
-    staleTime: 60_000,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
   });
 
   const debentureDisplayRates = useMemo(() => getDebentureDisplayRates(taxRules), [taxRules]);
@@ -287,8 +288,40 @@ function InterestPage() {
         coupon_rate?: number | null;
       }[];
     },
-    staleTime: 5 * 60 * 1000,
+    staleTime: 10_000,
   });
+
+  // Self-heal orphaned companyFilter
+  useEffect(() => {
+    if (companyFilter !== "all" && companies.length > 0) {
+      const exists = companies.some((c) => c.id === companyFilter);
+      if (!exists) {
+        setCompanyFilter("all");
+      }
+    }
+  }, [companies, companyFilter]);
+
+  // Realtime subscription for live interest payables updates
+  useEffect(() => {
+    const channel = supabase
+      .channel("interest-realtime-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "interest_payables" }, () => {
+        qc.invalidateQueries({ queryKey: ["interest_payables_totals"] });
+        qc.invalidateQueries({ queryKey: ["interest_payables_paginated"] });
+        qc.invalidateQueries({ queryKey: ["interest_payables_all"] });
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "upload_history" }, () => {
+        qc.invalidateQueries({ queryKey: ["interest_payables_totals"] });
+        qc.invalidateQueries({ queryKey: ["interest_payables_paginated"] });
+        qc.invalidateQueries({ queryKey: ["interest_payables_all"] });
+        qc.invalidateQueries({ queryKey: ["companies-lookup"] });
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [qc]);
 
   // Contextual companies for Debenture / Interest section (strictly shows Debentures & Bonds only)
   const relevantCompanies = useMemo(() => {
@@ -428,8 +461,8 @@ function InterestPage() {
       fromDateFilter,
       toDateFilter,
     ],
-    staleTime: 60 * 1000,
-    refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
     queryFn: async () => {
       try {
         const { data: rpcTotals, error: rpcErr } = await (supabase as any).rpc(
@@ -655,7 +688,8 @@ function InterestPage() {
         return q;
       });
     },
-    staleTime: 60_000,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
   });
 
   const debentureSummaryReport = useMemo(

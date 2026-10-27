@@ -322,7 +322,27 @@ function DataManagementPage() {
     qc.invalidateQueries({ queryKey: ["distinct-fiscal-years"] });
     qc.invalidateQueries({ queryKey: ["client-fiscal-detail"] });
     qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+    qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] });
+    qc.invalidateQueries({ queryKey: ["dashboard-companies"] });
+    qc.invalidateQueries({ queryKey: ["companies"] });
     qc.invalidateQueries({ queryKey: ["companies-lookup"] });
+    qc.invalidateQueries({ queryKey: ["report-companies"] });
+    qc.invalidateQueries({ queryKey: ["clients"] });
+    qc.invalidateQueries({ queryKey: ["clients-stats"] });
+    qc.invalidateQueries({ queryKey: ["interest_payables"] });
+    qc.invalidateQueries({ queryKey: ["interest_payables_totals"] });
+    qc.invalidateQueries({ queryKey: ["dividend_payables"] });
+    qc.invalidateQueries({ queryKey: ["dividend_payables_totals"] });
+    qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
+    qc.invalidateQueries({ queryKey: ["mutual_fund_payables_totals"] });
+    qc.invalidateQueries({ queryKey: ["live-payable-summary"] });
+    qc.invalidateQueries({ queryKey: ["agm-dividend-summary-report"] });
+    qc.invalidateQueries({ queryKey: ["debenture-interest-summary-report"] });
+    qc.invalidateQueries({ queryKey: ["mutual-fund-summary-report"] });
+    qc.invalidateQueries({ queryKey: ["ird-annex-10-report"] });
+    qc.invalidateQueries({ queryKey: ["sebon-ipf-aging-report"] });
+    qc.invalidateQueries({ queryKey: ["system-db-stats-dedicated"] });
+    qc.invalidateQueries({ queryKey: ["upload-history"] });
   }, [qc]);
 
   const handleDeleteSuccess = useCallback(

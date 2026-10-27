@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useCallback, Fragment } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { supabase } from "@/integrations/supabase/client";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import {
@@ -100,6 +100,27 @@ function AgmStudioPage() {
   const [activeCompanyId, setActiveCompanyId] = useState<string>(() =>
     AgmStudioService.getActiveCompanyId(),
   );
+
+  const { data: dbCompanies } = useQuery({
+    queryKey: ["agm-companies-list"],
+    queryFn: () => AgmStudioService.fetchCompaniesFromDatabase(),
+    staleTime: 10_000,
+  });
+
+  useEffect(() => {
+    if (dbCompanies && dbCompanies.length > 0) {
+      setCompanies(dbCompanies);
+      setActiveCompanyId((current) => {
+        const hasCurrent = dbCompanies.some((c) => c.id === current);
+        if (hasCurrent) return current;
+        const nlgMatch = dbCompanies.find((c) => c.code === "NLG");
+        const nextId = nlgMatch ? nlgMatch.id : dbCompanies[0].id;
+        AgmStudioService.setActiveCompanyId(nextId);
+        return nextId;
+      });
+    }
+  }, [dbCompanies]);
+
   const activeCompany = useMemo(() => {
     return companies.find((c) => c.id === activeCompanyId) || companies[0];
   }, [companies, activeCompanyId]);
@@ -144,9 +165,7 @@ function AgmStudioPage() {
   // -------------------------------------------------------------
   // PROMOTER CONVERSION (CA Seq 6316) STATE
   // -------------------------------------------------------------
-  const [conversionRecords, setConversionRecords] = useState<PromoterConversionRecord[]>(() =>
-    AgmStudioService.getSamplePromoterConversions(),
-  );
+  const [conversionRecords, setConversionRecords] = useState<PromoterConversionRecord[]>([]);
   const [conversionSummary, setConversionSummary] = useState<ConversionSummaryReport | null>(null);
   const [isParsingConversion, setIsParsingConversion] = useState(false);
   const [convSearch, setConvSearch] = useState("");
@@ -423,8 +442,7 @@ function AgmStudioPage() {
             floatingLotDifference: Math.round(sumFrac * 10000) / 10000,
             caSeqList: Array.from(new Set(dbConversions.map((r) => r.caSeqNo).filter(Boolean))),
           });
-        } else if (dbShRes.profiles.length > 0 || dbShRes.totalCount > 0) {
-          // Real company with DB records but no conversion records uploaded yet
+        } else {
           setConversionRecords([]);
           setConversionSummary(null);
         }
@@ -1126,8 +1144,11 @@ function AgmStudioPage() {
     }
 
     try {
-      const baseSet =
-        parsedProfiles.length > 0 ? parsedProfiles : AgmStudioService.getSampleHistoricalProfiles();
+      if (parsedProfiles.length === 0) {
+        toast.info("No shareholder profiles loaded. Please upload an Excel workbook first.");
+        return;
+      }
+      const baseSet = parsedProfiles;
       const updated = baseSet.map((p) => {
         const initialFrac =
           p.yearlySnapshots?.[0]?.previousFraction ?? (p.initialFraction2075 || 0);
@@ -2005,8 +2026,11 @@ function AgmStudioPage() {
       return;
     }
 
-    const baseSet =
-      parsedProfiles.length > 0 ? parsedProfiles : AgmStudioService.getSampleHistoricalProfiles();
+    if (parsedProfiles.length === 0) {
+      toast.info("No shareholder profiles loaded. Please upload an Excel workbook first.");
+      return;
+    }
+    const baseSet = parsedProfiles;
     const res = AgmStudioService.disperseBulkConversionAndBonusPools(baseSet);
     if (res.dispersedPoolsCount > 0) {
       setParsedProfiles(res.expandedProfiles);
@@ -4215,9 +4239,41 @@ function AgmStudioPage() {
                       <TableRow>
                         <TableCell
                           colSpan={10}
-                          className="text-center py-8 text-muted-foreground text-xs"
+                          className="text-center py-10 text-muted-foreground text-xs"
                         >
-                          No promoter conversion records found matching filter criteria.
+                          <div className="space-y-2">
+                            <p className="font-medium text-foreground/80">
+                              No promoter conversion records found for this company.
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              Upload a CDSC CA 6316 conversion workbook or load the demo dataset to
+                              preview functionality.
+                            </p>
+                            <div className="flex justify-center gap-2 pt-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs gap-1"
+                                onClick={() => conversionFileInputRef.current?.click()}
+                              >
+                                <Upload className="h-3 w-3" />
+                                <span>Upload Excel</span>
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 text-xs gap-1 text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/20"
+                                onClick={() => {
+                                  const sample = AgmStudioService.getSamplePromoterConversions();
+                                  setConversionRecords(sample);
+                                  toast.info("Loaded sample dataset for testing.");
+                                }}
+                              >
+                                <Sparkles className="h-3 w-3 text-amber-500" />
+                                <span>Load Demo Data</span>
+                              </Button>
+                            </div>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ) : (
