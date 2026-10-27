@@ -534,7 +534,14 @@ function UploadRoute() {
         { duration: 5000 },
       );
     } catch (error: any) {
-      toast.error(`Failed to parse file: ${error?.message || "File format or structure error"}`);
+      const isMemoryOrLengthError =
+        error?.message?.includes("Invalid string length") ||
+        error?.message?.includes("out of memory") ||
+        error?.name === "RangeError";
+      const userMessage = isMemoryOrLengthError
+        ? "File is too large for in-browser parsing. Please split the sheet, save as CSV, or remove unused empty formatted rows."
+        : error?.message || "File format or structure error";
+      toast.error(`Failed to parse file: ${userMessage}`);
       console.error("Excel parse error:", error);
     } finally {
       setIsParsing(false);

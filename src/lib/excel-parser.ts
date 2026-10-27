@@ -647,10 +647,78 @@ const COLUMN_ALIASES: Record<keyof ColumnMapping, string[]> = {
   batch_id: ["BATCH ID", "BATCH_ID", "BATCHID", "BATCH NO", "BATCH NO.", "BATCH"],
 };
 
+/**
+ * Safely decode text/CSV buffer to string with BOM handling (UTF-8, UTF-16LE, etc.)
+ */
+function decodeCsvBufferToString(data: ArrayBuffer | Uint8Array): string {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return new TextDecoder("utf-16le").decode(bytes.subarray(2));
+  }
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    return new TextDecoder("utf-16be").decode(bytes.subarray(2));
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    return new TextDecoder("utf-8").decode(bytes.subarray(3));
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return new TextDecoder("windows-1252").decode(bytes);
+  }
+}
+
+/**
+ * Prevents worksheet !ref from exploding memory if saved with empty formatted rows (e.g. A1:Z1048576)
+ */
+function sanitizeWorksheetRange(ws: XLSX.WorkSheet) {
+  if (!ws || !ws["!ref"]) return;
+  const decoded = XLSX.utils.decode_range(ws["!ref"]);
+  // If the sheet range claims to exceed 200,000 rows, clamp it to actual used rows to prevent 27M empty string allocations
+  if (decoded.e.r > 200000) {
+    let lastRow = 0;
+    // Check dense mode array rows
+    for (let r = Math.min(decoded.e.r, 200000); r >= 0; r--) {
+      const row = (ws as any)[r];
+      if (
+        Array.isArray(row) &&
+        row.some((c: any) => c && c.v !== undefined && c.v !== null && String(c.v).trim() !== "")
+      ) {
+        lastRow = r;
+        break;
+      }
+    }
+    // Fallback if sparse keys
+    if (lastRow === 0) {
+      for (const k in ws) {
+        if (k.charCodeAt(0) === 33) continue;
+        const c = XLSX.utils.decode_cell(k);
+        if (c.r > lastRow && c.r <= 200000) lastRow = c.r;
+      }
+    }
+    decoded.e.r = Math.max(lastRow, 0);
+    ws["!ref"] = XLSX.utils.encode_range(decoded);
+  }
+}
+
 export const ExcelParser = {
   async parseBuffer(data: ArrayBuffer | Uint8Array, fileName: string): Promise<ParsedExcelData> {
-    const workbook = XLSX.read(data, { type: "array" });
+    const isCsvOrTsv = /\.(csv|tsv|txt)$/i.test(fileName);
+    let workbook: XLSX.WorkBook;
 
+    if (isCsvOrTsv) {
+      // Decode CSV/TSV safely as a text string to avoid SheetJS's buggy browser utf8reada string-concatenation loop
+      const csvString = decodeCsvBufferToString(data);
+      workbook = XLSX.read(csvString, { type: "string", dense: true, cellDates: true });
+    } else {
+      // Read Excel files in dense mode to avoid allocating millions of sparse cell keys in V8 heap
+      workbook = XLSX.read(data, { type: "array", dense: true, cellDates: true });
+    }
+
+    return this.parseWorkbook(workbook, fileName);
+  },
+
+  parseWorkbook(workbook: XLSX.WorkBook, fileName: string): ParsedExcelData {
     let fileType: DetectedFileType = "unknown";
     const fileNameLower = fileName.toLowerCase();
     let detectedRate: number | undefined;
@@ -707,7 +775,12 @@ export const ExcelParser = {
     if (fileType === "unknown") {
       for (const sheetName of workbook.SheetNames.slice(0, 5)) {
         const ws = workbook.Sheets[sheetName];
-        const json2 = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1 });
+        // Only inspect the first 25 rows for file type detection — never parse the entire sheet!
+        const json2 = XLSX.utils.sheet_to_json<any[]>(ws, {
+          header: 1,
+          range: { s: { r: 0, c: 0 }, e: { r: 25, c: 60 } },
+          blankrows: false,
+        });
         if (!json2 || json2.length === 0) continue;
 
         const sampleText = json2
@@ -771,10 +844,12 @@ export const ExcelParser = {
 
     for (const sheetName of workbook.SheetNames) {
       const worksheet = workbook.Sheets[sheetName];
+      sanitizeWorksheetRange(worksheet);
       const json = XLSX.utils.sheet_to_json<any[]>(worksheet, {
         header: 1,
         raw: false,
         defval: "",
+        blankrows: false,
       });
       if (!json || json.length === 0) continue;
 
@@ -1178,8 +1253,9 @@ export const ExcelParser = {
           }
 
           // Recover full integer or unformatted representation if XLSX formatted cell to scientific notation
-          const cellRef = XLSX.utils.encode_cell({ r: i, c: j });
-          const rawCell = worksheet[cellRef];
+          const rawCell = Array.isArray((worksheet as any)[i])
+            ? (worksheet as any)[i][j]
+            : (worksheet as any)[XLSX.utils.encode_cell({ r: i, c: j })];
           if (rawCell && typeof rawCell.v === "number" && !Number.isNaN(rawCell.v)) {
             if (rawCell.v >= 1e11 && Math.floor(rawCell.v) === rawCell.v) {
               val = BigInt(Math.trunc(rawCell.v)).toString();
@@ -1360,7 +1436,12 @@ export const ExcelParser = {
     // 1. Try to extract from title rows before header in first non-summary sheet
     for (const wsName of workbook.SheetNames) {
       const ws = workbook.Sheets[wsName];
-      const json2 = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1 });
+      // Only inspect the top 10 rows for company name detection — never parse the entire sheet!
+      const json2 = XLSX.utils.sheet_to_json<any[]>(ws, {
+        header: 1,
+        range: { s: { r: 0, c: 0 }, e: { r: 10, c: 30 } },
+        blankrows: false,
+      });
       if (!json2 || json2.length === 0) continue;
 
       const sheetNameUpper = wsName.toUpperCase();
@@ -1443,6 +1524,16 @@ export const ExcelParser = {
   },
 
   async parseFile(file: File): Promise<ParsedExcelData> {
+    const isCsvOrTsv = /\.(csv|tsv|txt)$/i.test(file.name);
+    if (isCsvOrTsv) {
+      try {
+        const text = await file.text();
+        const workbook = XLSX.read(text, { type: "string", dense: true, cellDates: true });
+        return this.parseWorkbook(workbook, file.name);
+      } catch (err: any) {
+        console.warn("Direct text CSV parse failed, falling back to buffer decoding:", err);
+      }
+    }
     const data = await file.arrayBuffer();
     return this.parseBuffer(data, file.name);
   },
