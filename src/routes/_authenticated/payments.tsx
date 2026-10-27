@@ -587,6 +587,7 @@ function PaymentsRoute() {
       qc.invalidateQueries({ queryKey: ["interest_payables"] });
       qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
       qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] });
     },
     onError: (err: any) => toast.error(err?.message || "Failed to update batch status."),
   });
@@ -626,6 +627,7 @@ function PaymentsRoute() {
       qc.invalidateQueries({ queryKey: ["interest_payables"] });
       qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
       qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] });
     },
     onError: (err: any) => toast.error(err?.message || "Failed to revert batch."),
   });
@@ -653,6 +655,7 @@ function PaymentsRoute() {
       qc.invalidateQueries({ queryKey: ["interest_payables"] });
       qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
       qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] });
     },
     onError: (err: any) => toast.error(err?.message || "Reversal failed"),
   });

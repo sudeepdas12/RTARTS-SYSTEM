@@ -251,6 +251,8 @@ function UploadHistoryRoute() {
       qc.invalidateQueries({ queryKey: ["upload-history"] });
       qc.invalidateQueries({ queryKey: ["company-fiscal-summary"] });
       qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-companies"] });
       qc.invalidateQueries({ queryKey: ["companies"] });
       qc.invalidateQueries({ queryKey: ["clients"] });
       qc.invalidateQueries({ queryKey: ["interest_payables"] });

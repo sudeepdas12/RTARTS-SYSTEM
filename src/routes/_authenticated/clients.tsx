@@ -90,11 +90,7 @@ type Status = "Active" | "Inactive";
 type Residency = "Resident" | "Non-Resident";
 type Verification = "Pending" | "Verified" | "Rejected";
 type PayeeClassification =
-  | "NATURAL_PERSON"
-  | "PUBLIC_LEGAL_PERSON"
-  | "COMPANY_INSTITUTION"
-  | "TAX_EXEMPT"
-  | "UNCLASSIFIED";
+  "NATURAL_PERSON" | "PUBLIC_LEGAL_PERSON" | "COMPANY_INSTITUTION" | "TAX_EXEMPT" | "UNCLASSIFIED";
 
 function classificationBadge(c: PayeeClassification | null, holderType?: string | null) {
   switch (c) {
@@ -827,6 +823,7 @@ function ClientsPage() {
       qc.invalidateQueries({ queryKey: ["payments"] });
       qc.invalidateQueries({ queryKey: ["all-individual-payments"] });
       qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] });
       qc.invalidateQueries({ queryKey: ["live-payable-summary"] });
       qc.invalidateQueries({ queryKey: ["exceptions"] });
       toast.success(

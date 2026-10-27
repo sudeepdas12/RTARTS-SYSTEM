@@ -130,11 +130,62 @@ function Dashboard() {
 
   const handleRefreshSnapshot = async () => {
     setIsRefreshing(true);
-    await qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
-    await qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] });
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ["dashboard-kpis"] }),
+      qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] }),
+      qc.invalidateQueries({ queryKey: ["dashboard-companies"] }),
+      qc.invalidateQueries({ queryKey: ["dashboard-fiscal-years"] }),
+    ]);
     setDataAsOf(new Date());
     setIsRefreshing(false);
   };
+
+  const { data: companies = [] } = useQuery({
+    queryKey: ["dashboard-companies"],
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("companies")
+        .select("id, company_code, company_name")
+        .order("company_name");
+      return data || [];
+    },
+  });
+
+  const { data: fiscalYears = [] } = useQuery({
+    queryKey: ["dashboard-fiscal-years"],
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("fiscal_years")
+        .select("fiscal_year")
+        .order("fiscal_year", { ascending: false });
+      return (data || []).map((f) => f.fiscal_year);
+    },
+  });
+
+  // Sanitize stored scope: if the saved company or fiscal year no longer exists, reset to "all"
+  useEffect(() => {
+    if (
+      selectedCompanyId !== "all" &&
+      companies.length > 0 &&
+      !companies.some((c: any) => c.id === selectedCompanyId)
+    ) {
+      setSelectedCompanyId("all");
+    }
+  }, [companies, selectedCompanyId]);
+
+  useEffect(() => {
+    if (
+      selectedFiscalYear !== "all" &&
+      fiscalYears.length > 0 &&
+      !fiscalYears.includes(selectedFiscalYear)
+    ) {
+      setSelectedFiscalYear("all");
+    }
+  }, [fiscalYears, selectedFiscalYear]);
 
   const { data: opMetrics } = useQuery({
     queryKey: ["dashboard-operational-metrics", selectedCompanyId],
@@ -174,38 +225,64 @@ function Dashboard() {
         batchesPending: batchesPending || 0,
       };
     },
-    staleTime: 60_000,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
   });
 
-  const { data: companies = [] } = useQuery({
-    queryKey: ["dashboard-companies"],
-    staleTime: 5 * 60 * 1000,
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("companies")
-        .select("id, company_code, company_name")
-        .order("company_name");
-      return data || [];
-    },
-  });
+  // Real-time live synchronization: invalidate dashboard queries immediately on database changes
+  useEffect(() => {
+    const channel = supabase
+      .channel("dashboard-realtime-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "upload_history" }, () => {
+        qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+        qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] });
+        qc.invalidateQueries({ queryKey: ["dashboard-companies"] });
+        setDataAsOf(new Date());
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "dividend_payables" }, () => {
+        qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+        qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] });
+        setDataAsOf(new Date());
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "interest_payables" }, () => {
+        qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+        qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] });
+        setDataAsOf(new Date());
+      })
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "mutual_fund_payables" },
+        () => {
+          qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+          qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] });
+          setDataAsOf(new Date());
+        },
+      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, () => {
+        qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+        qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] });
+        setDataAsOf(new Date());
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "pending_approvals" }, () => {
+        qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] });
+        qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+        setDataAsOf(new Date());
+      })
+      .subscribe();
 
-  const { data: fiscalYears = [] } = useQuery({
-    queryKey: ["dashboard-fiscal-years"],
-    staleTime: 5 * 60 * 1000,
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("fiscal_years")
-        .select("fiscal_year")
-        .order("fiscal_year", { ascending: false });
-      return (data || []).map((f) => f.fiscal_year);
-    },
-  });
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [qc]);
 
   const selectedCompany = companies.find((c: any) => c.id === selectedCompanyId);
 
   const { data, isLoading } = useQuery({
     queryKey: ["dashboard-kpis", selectedCompanyId, selectedFiscalYear],
-    staleTime: 5 * 60 * 1000,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
     queryFn: async () => {
       type Row = {
         net_payable: number | null;
@@ -449,21 +526,23 @@ function Dashboard() {
   const kpis = [
     {
       title: "Companies",
-      value: data?.companies ?? 0,
+      value: selectedCompany ? 1 : fmt(data?.companies ?? 0),
       icon: Building2,
       color: "text-blue-600 dark:text-blue-400",
       bg: "bg-blue-500/10 dark:bg-blue-950/40",
-      trend: `${data?.companies ?? 0} registered`,
+      trend: selectedCompany
+        ? selectedCompany.company_code
+        : `${fmt(data?.companies ?? 0)} registered`,
       trendUp: true,
       href: "/companies",
     },
     {
       title: "Clients",
-      value: data?.clients ?? 0,
+      value: fmt(data?.clients ?? 0),
       icon: Users,
       color: "text-violet-600 dark:text-violet-400",
       bg: "bg-violet-500/10 dark:bg-violet-950/40",
-      trend: `${data?.clients ?? 0} shareholders`,
+      trend: `${fmt(data?.clients ?? 0)} shareholders`,
       trendUp: true,
       href: "/clients",
     },
@@ -489,7 +568,7 @@ function Dashboard() {
     },
     {
       title: "Bank Reconciled",
-      value: `${data?.bankReconciled ?? 0}/${data?.bankTotal ?? 0}`,
+      value: `${fmt(data?.bankReconciled ?? 0)}/${fmt(data?.bankTotal ?? 0)}`,
       icon: ArrowLeftRight,
       color: "text-cyan-600 dark:text-cyan-400",
       bg: "bg-cyan-500/10 dark:bg-cyan-950/40",
@@ -499,21 +578,21 @@ function Dashboard() {
     },
     {
       title: "Classification Review",
-      value: data?.reviewPending ?? 0,
+      value: fmt(data?.reviewPending ?? 0),
       icon: ShieldCheck,
       color: "text-orange-600 dark:text-orange-400",
       bg: "bg-orange-500/10 dark:bg-orange-950/40",
-      trend: data?.reviewPending ? "Needs classification" : "All classified",
+      trend: data?.reviewPending ? `${fmt(data.reviewPending)} to review` : "All classified",
       trendUp: (data?.reviewPending ?? 0) === 0,
       href: "/classification-review",
     },
     {
       title: "Pending Approvals",
-      value: data?.approvals ?? 0,
+      value: fmt(data?.approvals ?? 0),
       icon: ClipboardCheck,
       color: "text-rose-600 dark:text-rose-400",
       bg: "bg-rose-500/10 dark:bg-rose-950/40",
-      trend: data?.approvals ? "Action required" : "No pending",
+      trend: data?.approvals ? `${fmt(data.approvals)} pending` : "No pending",
       trendUp: (data?.approvals ?? 0) === 0,
       href: "/approvals",
     },

@@ -993,6 +993,8 @@ function UploadRoute() {
         queryClient.invalidateQueries({ queryKey: ["dividend_payables"] }),
         queryClient.invalidateQueries({ queryKey: ["mutual_fund_payables"] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard-kpis"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard-companies"] }),
         queryClient.invalidateQueries({ queryKey: ["upload-history"] }),
         queryClient.invalidateQueries({ queryKey: ["classification-review-count"] }),
       ]);
@@ -1342,6 +1344,8 @@ function UploadRoute() {
         queryClient.invalidateQueries({ queryKey: ["dividend_payables"] }),
         queryClient.invalidateQueries({ queryKey: ["mutual_fund_payables"] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard-kpis"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard-companies"] }),
         queryClient.invalidateQueries({ queryKey: ["upload-history"] }),
         queryClient.invalidateQueries({ queryKey: ["classification-review-count"] }),
       ]);

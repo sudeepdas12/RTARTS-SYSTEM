@@ -843,6 +843,7 @@ export function ReconciliationRoute() {
       qc.invalidateQueries({ queryKey: ["dividend_payables"] });
       qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
       qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] });
 
       // Update in-memory matches
       setReport((prev) => {

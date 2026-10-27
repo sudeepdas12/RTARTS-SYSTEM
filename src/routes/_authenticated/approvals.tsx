@@ -263,6 +263,7 @@ function ApprovalsPage() {
       qc.invalidateQueries({ queryKey: ["interest_payables"] });
       qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
       qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] });
     },
     onError: (e: Error) => toast.error(e.message),
   });

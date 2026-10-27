@@ -283,6 +283,7 @@ function CompaniesPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["companies"] });
       qc.invalidateQueries({ queryKey: ["companies-lookup"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-companies"] });
       qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
       toast.success(editing ? "Company updated successfully" : "Company created successfully");
       setOpen(false);
@@ -321,6 +322,7 @@ function CompaniesPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["companies"] });
       qc.invalidateQueries({ queryKey: ["companies-lookup"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-companies"] });
       qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
       qc.invalidateQueries({ queryKey: ["clients"] });
       qc.invalidateQueries({ queryKey: ["clients-stats"] });
