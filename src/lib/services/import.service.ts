@@ -1234,7 +1234,7 @@ export const ImportService = {
           try {
             const { error: insErr } = await (supabase as any)
               .from("clients")
-              .upsert(clientRec, { onConflict: "boid" });
+              .upsert(clientRec, { onConflict: "company_id,boid" });
             if (!insErr) {
               clientsInserted++;
             } else {
@@ -1275,7 +1275,7 @@ export const ImportService = {
               };
               const { error: insErr2 } = await (supabase as any)
                 .from("clients")
-                .upsert(baseClient, { onConflict: "boid" });
+                .upsert(baseClient, { onConflict: "company_id,boid" });
               if (!insErr2) clientsInserted++;
             }
           } catch (cEx) {

@@ -954,7 +954,7 @@ BEGIN
         COALESCE(NULLIF(v_client->>'classification_source', ''), 'SYSTEM'),
         COALESCE((v_client->>'kitta')::numeric, 0)
       )
-      ON CONFLICT (boid) DO UPDATE SET
+      ON CONFLICT (company_id, boid) DO UPDATE SET
         full_name = COALESCE(NULLIF(EXCLUDED.full_name, ''), clients.full_name),
         father_name = COALESCE(NULLIF(EXCLUDED.father_name, ''), clients.father_name),
         grandfather_name = COALESCE(NULLIF(EXCLUDED.grandfather_name, ''), clients.grandfather_name),
@@ -4517,7 +4517,7 @@ BEGIN
       COALESCE((v_client_rec->>'total_kitta')::numeric, (v_client_rec->>'kitta')::numeric, 0),
       'Active'
     )
-    ON CONFLICT (boid) DO UPDATE
+    ON CONFLICT (company_id, boid) DO UPDATE
     SET full_name = EXCLUDED.full_name,
         client_code = COALESCE(public.clients.client_code, EXCLUDED.client_code),
         father_name = COALESCE(EXCLUDED.father_name, public.clients.father_name),
