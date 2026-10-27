@@ -458,7 +458,9 @@ function UploadRoute() {
     setAllSheetsProgress(null);
     setValidationErrors([]);
     try {
-      const data = await ExcelParser.parseFile(selectedFile);
+      const data = await ExcelParser.parseFile(selectedFile, (msg) => {
+        toast.info(msg, { id: "parser-progress", duration: 8000 });
+      });
 
       if (!data.sheets || data.sheets.length === 0) {
         setParsedData(null);
@@ -475,11 +477,10 @@ function UploadRoute() {
       const dataSheets = data.sheets.filter((s) => s.sheetType !== "SUMMARY");
 
       if (dataSheets.length === 0) {
-        toast.warning(
-          `Only reference/summary sheets were found in "${selectedFile.name}". No individual shareholder data was detected.`,
-          { duration: 8000 },
+        toast.info(
+          `Summary / reference overview spreadsheet "${selectedFile.name}" loaded (${data.sheets[0]?.rows.length || 0} overview records). You can preview the summary metrics below.`,
+          { duration: 7000 },
         );
-        return;
       }
 
       if (data.detectedRate) {
@@ -529,19 +530,14 @@ function UploadRoute() {
         console.warn("Could not check duplicate hash:", hashErr);
       }
 
-      toast.success(
-        `File parsed: ${data.sheets.length} sheet(s) detected (${dataSheets.length} data sheet(s)). Click "Import" to save records to the database.`,
-        { duration: 5000 },
-      );
+      if (dataSheets.length > 0) {
+        toast.success(
+          `File parsed: ${data.sheets.length} sheet(s) detected (${dataSheets.length} data sheet(s)). Click "Import" to save records to the database.`,
+          { duration: 5000 },
+        );
+      }
     } catch (error: any) {
-      const isMemoryOrLengthError =
-        error?.message?.includes("Invalid string length") ||
-        error?.message?.includes("out of memory") ||
-        error?.name === "RangeError";
-      const userMessage = isMemoryOrLengthError
-        ? "File is too large for in-browser parsing. Please split the sheet, save as CSV, or remove unused empty formatted rows."
-        : error?.message || "File format or structure error";
-      toast.error(`Failed to parse file: ${userMessage}`);
+      toast.error(`Failed to parse file: ${error?.message || "File format or structure error"}`);
       console.error("Excel parse error:", error);
     } finally {
       setIsParsing(false);
@@ -1689,10 +1685,14 @@ function UploadRoute() {
                     : ""
                 }
                 onClick={handleImport}
-                disabled={isImporting || !currentSheet}
+                disabled={isImporting || !currentSheet || currentSheet.sheetType === "SUMMARY"}
               >
                 <Upload className="mr-1.5 h-4 w-4" />
-                {isImporting ? "Importing..." : `Import "${currentSheet?.sheetName || "Sheet"}"`}
+                {isImporting
+                  ? "Importing..."
+                  : currentSheet?.sheetType === "SUMMARY"
+                    ? "Summary Sheet (Reference Only)"
+                    : `Import "${currentSheet?.sheetName || "Sheet"}"`}
               </Button>
               {dataSheets.length > 1 && (
                 <Button
@@ -2416,13 +2416,15 @@ function UploadRoute() {
               <div className="flex items-center gap-2 shrink-0">
                 <Button
                   onClick={handleImport}
-                  disabled={isImporting}
+                  disabled={isImporting || currentSheet.sheetType === "SUMMARY"}
                   className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold shadow-md px-5"
                 >
                   <Upload className="mr-2 h-4 w-4" />
                   {isImporting
                     ? "Importing to Database..."
-                    : `Import "${currentSheet.sheetName}" Now`}
+                    : currentSheet.sheetType === "SUMMARY"
+                      ? "Summary Reference Sheet"
+                      : `Import "${currentSheet.sheetName}" Now`}
                 </Button>
                 {dataSheets.length > 1 && (
                   <Button

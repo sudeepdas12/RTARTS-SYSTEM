@@ -48,4 +48,45 @@ describe("ExcelParser Resilience and Memory Protection", () => {
     const result = ExcelParser.parseWorkbook(wb, "statement.xlsx");
     expect(result.fileType).toBe("debenture");
   });
+
+  it("retains standalone summary reports (e.g. FY_Summary_Report) without returning 0 sheets", () => {
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([
+      ["TEST COMPANY — MULTI-YEAR STATUTORY FISCAL RECONCILIATION SUMMARY"],
+      ["Generated at: 10/27/2026, 9:13:38 AM"],
+      [],
+      [
+        "Fiscal Year",
+        "Corporate Event Name",
+        "Total Holding Kitta",
+        "Gross Cash Dividend (NPR)",
+        "Tax Withheld (NPR)",
+        "Net Cash Payable (NPR)",
+      ],
+      ["2072/73", "11th AGM", 100, 50, 2.5, 47.5],
+      ["2073/74", "12th AGM", 120, 60, 3.0, 57.0],
+    ]);
+    XLSX.utils.book_append_sheet(wb, ws, "FY_Summary_Report");
+
+    const result = ExcelParser.parseWorkbook(wb, "test.xlsx");
+    expect(result.sheets.length).toBe(1);
+    expect(result.sheets[0].sheetName).toBe("FY_Summary_Report");
+    expect(result.sheets[0].sheetType).toBe("SUMMARY");
+    expect(result.sheets[0].rows.length).toBe(2);
+    expect(result.sheets[0].totalKitta).toBe(220);
+    expect(result.sheets[0].totalAmount).toBe(110);
+  });
+
+  it("recovers 16-digit integers without precision loss from scientific notation cells", () => {
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([
+      ["BOID", "NAME", "TOTAL KITTA"],
+      ["1.30101E+15", "NARAYAN KUMAR SHRESTHA", 100],
+    ]);
+    XLSX.utils.book_append_sheet(wb, ws, "PUBLIC");
+
+    const result = ExcelParser.parseWorkbook(wb, "dividend.xlsx");
+    expect(result.sheets.length).toBe(1);
+    expect(result.sheets[0].rows[0].boid).toBe("1301010000000000");
+  });
 });

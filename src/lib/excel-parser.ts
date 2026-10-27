@@ -718,6 +718,574 @@ export const ExcelParser = {
     return this.parseWorkbook(workbook, fileName);
   },
 
+  parseSingleSheet(
+    sheetName: string,
+    worksheet: XLSX.WorkSheet,
+    fileType: DetectedFileType,
+    allowSummary: boolean = false,
+  ): ParsedSheetData | null {
+    if (!worksheet) return null;
+    sanitizeWorksheetRange(worksheet);
+    const json = XLSX.utils.sheet_to_json<any[]>(worksheet, {
+      header: 1,
+      raw: false,
+      defval: "",
+      blankrows: true,
+    });
+    if (!json || json.length === 0) return null;
+
+    const sheetNameUpper = sheetName.toUpperCase();
+    let sheetType: DetectedSheetType = "UNKNOWN";
+
+    if (sheetNameUpper.includes("PUBLIC")) {
+      sheetType = "PUBLIC";
+    } else if (sheetNameUpper.includes("PROMOTER")) {
+      sheetType = "PROMOTER";
+    } else if (sheetNameUpper.includes("PHYSICAL") || sheetNameUpper.includes("FOLIO")) {
+      sheetType = "PHYSICAL";
+    } else if (sheetNameUpper.includes("INSTITUTION")) {
+      sheetType = "INSTITUTION";
+    } else if (
+      sheetNameUpper.includes("TAX EXEMPT") ||
+      sheetNameUpper.includes("EXEMPTED") ||
+      sheetNameUpper.includes("MUTUAL FUND")
+    ) {
+      sheetType = "TAX_EXEMPTED";
+    } else if (sheetNameUpper.includes("LOCAL")) {
+      sheetType = "LOCAL_UNVERIFIED";
+    } else if (sheetNameUpper.includes("PRIVATE")) {
+      sheetType = "PRIVATE";
+    } else if (
+      sheetNameUpper.includes("REJECT") ||
+      sheetNameUpper.includes("PENDING") ||
+      sheetNameUpper.includes("REMAINING")
+    ) {
+      sheetType = "REJECT_PENDING";
+    } else if (sheetNameUpper.includes("ORIGINAL")) {
+      sheetType = "ORIGINAL";
+    } else if (sheetNameUpper.includes("SUMMARY")) {
+      sheetType = "SUMMARY";
+    }
+
+    if (!allowSummary && (sheetType === "SUMMARY" || sheetType === "ORIGINAL")) {
+      return null;
+    }
+
+    let defaultTdsRate = 0.05;
+    if (fileType === "debenture") {
+      if (sheetType === "INSTITUTION" || sheetType === "PRIVATE") defaultTdsRate = 0.15;
+      else if (sheetType === "TAX_EXEMPTED") defaultTdsRate = 0;
+      else defaultTdsRate = 0.06;
+    } else {
+      if (sheetType === "TAX_EXEMPTED" || fileType === "mutual_fund") defaultTdsRate = 0;
+      else defaultTdsRate = 0.05;
+    }
+
+    const domainKeywords = [
+      "boid",
+      "name",
+      "kitta",
+      "shares",
+      "amount",
+      "dividend",
+      "interest",
+      "tax",
+      "net",
+      "payable",
+      "gross",
+      "bank",
+      "account",
+      "wht",
+      "tds",
+      "sn",
+      "s.n.",
+      "holder",
+      "client",
+      "warrant",
+      "folio",
+      "rate",
+      "pumori",
+      "actual",
+      "round",
+      "fiscal",
+      "year",
+      "fraction",
+      "baseline",
+      "event",
+    ];
+
+    let bestHeaderScore = -1;
+    let headerRowIndex = 0;
+    let headers: string[] = [];
+
+    for (let i = 0; i < Math.min(25, json.length); i++) {
+      const row = json[i] as any[];
+      if (!row || row.length < 2) continue;
+
+      const stringCells = row
+        .filter((c) => typeof c === "string" && c.trim().length > 0)
+        .map((c) => c.toString().trim().toLowerCase());
+
+      if (stringCells.length < 2) continue;
+
+      let score = 0;
+      for (const cell of stringCells) {
+        const cleanCell = cell.replace(/[^a-z0-9]/g, "");
+        if (domainKeywords.some((kw) => cleanCell.includes(kw.replace(/[^a-z0-9]/g, "")))) {
+          score++;
+        }
+      }
+
+      if (score > bestHeaderScore && score >= 2) {
+        bestHeaderScore = score;
+        headerRowIndex = i;
+        headers = row.map((h) => (h !== undefined && h !== null ? h.toString().trim() : ""));
+        if (score >= 4) {
+          break;
+        }
+      } else if (bestHeaderScore < 0 && stringCells.length >= 2) {
+        bestHeaderScore = 0;
+        headerRowIndex = i;
+        headers = row.map((h) => (h !== undefined && h !== null ? h.toString().trim() : ""));
+      }
+    }
+
+    const mapping: Record<string, keyof ColumnMapping> = {};
+    const fieldPriority: Record<string, string[]> = {
+      boid: [
+        "BOID",
+        "BOID NO",
+        "BOID NO.",
+        "BENEFICIARY ID",
+        "BENEFICIARY_ID",
+        "DP CLIENT ID",
+        "DP_CLIENT_ID",
+        "CLIENT ID",
+        "DEMAT ACCOUNT",
+        "DEMAT A/C",
+        "DMAT",
+        "FOLIO NO",
+        "FOLIO",
+        "CLIENT CODE",
+      ],
+      net_payable: [
+        "NET_DIV.",
+        "NET PAYABLE",
+        "NET DIVIDEND",
+        "NET INTEREST PAYABLE",
+        "NET",
+        "ROUND UP DIV",
+        "ROUNDUP",
+      ],
+      cash_dividend: [
+        "DIVIDEND",
+        "DIVIDEND AMOUNT",
+        "GROSS DIVIDEND",
+        "GROSS PAYABLE",
+        "AMOUNT",
+        "TOTAL AMOUNT",
+      ],
+      div_tax: ["DIV_TAX", "TAX @6%", "TAX", "TAX AMOUNT", "WHT"],
+      bon_tax: ["BON_TAX", "BONUS TAX"],
+      shares_held: [
+        "TOTAL KITTA",
+        "TOTA KITTA",
+        "FREE BALANCE",
+        "KITTA",
+        "ALLOTED_QUANTITY",
+        "SHARES",
+        "CURRENT HOLDING",
+        "HOLDING KITTA",
+      ],
+    };
+
+    for (const [dbField, priorityList] of Object.entries(fieldPriority)) {
+      for (const prioName of priorityList) {
+        const found = headers.find((h) => h && h.toUpperCase().trim() === prioName);
+        if (found && !mapping[found]) {
+          mapping[found] = dbField as keyof ColumnMapping;
+          break;
+        }
+      }
+    }
+
+    for (const header of headers) {
+      if (!header || mapping[header]) continue;
+      const upperHeader = header.toUpperCase().trim();
+      const cleanUpper = upperHeader.replace(/[^A-Z0-9]/g, "");
+
+      let bestMatch: keyof ColumnMapping | null = null;
+      let bestPriority = -1;
+
+      for (const [dbField, aliases] of Object.entries(COLUMN_ALIASES)) {
+        if (Object.values(mapping).includes(dbField as keyof ColumnMapping)) continue;
+
+        for (let i = 0; i < aliases.length; i++) {
+          const alias = aliases[i].toUpperCase();
+          const cleanAlias = alias.replace(/[^A-Z0-9]/g, "");
+          const priority = aliases.length - i;
+
+          if (upperHeader === alias || cleanUpper === cleanAlias) {
+            if (priority > bestPriority) {
+              bestPriority = priority + 1000;
+              bestMatch = dbField as keyof ColumnMapping;
+            }
+          } else if (
+            (upperHeader.startsWith(alias) || cleanUpper.startsWith(cleanAlias)) &&
+            alias.length >= 3
+          ) {
+            if (priority > bestPriority) {
+              bestPriority = priority + 100;
+              bestMatch = dbField as keyof ColumnMapping;
+            }
+          } else if (
+            (upperHeader.includes(alias) || cleanUpper.includes(cleanAlias)) &&
+            alias.length >= 4
+          ) {
+            if (priority > bestPriority) {
+              bestPriority = priority;
+              bestMatch = dbField as keyof ColumnMapping;
+            }
+          }
+        }
+      }
+
+      if (bestMatch) {
+        mapping[header] = bestMatch;
+      }
+    }
+
+    let detectedDividendRate: number | undefined;
+    headers.forEach((header) => {
+      if (!header) return;
+      const upperHeader = header.toUpperCase().trim();
+      if (
+        upperHeader.includes("DIVIDEND") ||
+        upperHeader.includes("DIV") ||
+        upperHeader.includes("BONUS") ||
+        upperHeader.includes("INT")
+      ) {
+        const match = upperHeader.match(/(\d+\.?\d*)/);
+        if (match && match[0]) {
+          const val = Number(match[0]);
+          if (val > 0 && val <= 100) {
+            detectedDividendRate = val;
+          }
+        }
+      }
+    });
+
+    const headerCountMap = new Map<string, number>();
+    const uniqueHeaders: string[] = [];
+    for (let idx = 0; idx < headers.length; idx++) {
+      let h = headers[idx];
+      if (!h || h.trim() === "") {
+        h = `__COL_${idx}`;
+      }
+      const count = (headerCountMap.get(h) || 0) + 1;
+      headerCountMap.set(h, count);
+      uniqueHeaders.push(count > 1 ? `${h} (${count})` : h);
+    }
+
+    const uniqueMapping: Record<string, keyof ColumnMapping> = {};
+    const mappedFieldsSeen = new Set<keyof ColumnMapping>();
+    for (let idx = 0; idx < headers.length; idx++) {
+      const origHeader = headers[idx];
+      const uniqueHeader = uniqueHeaders[idx];
+      if (mapping[origHeader] && !mappedFieldsSeen.has(mapping[origHeader])) {
+        uniqueMapping[uniqueHeader] = mapping[origHeader];
+        mappedFieldsSeen.add(mapping[origHeader]);
+      }
+    }
+    for (let idx = 0; idx < headers.length; idx++) {
+      const origHeader = headers[idx];
+      const uniqueHeader = uniqueHeaders[idx];
+      if (uniqueMapping[uniqueHeader]) continue;
+      if (!origHeader) continue;
+      const upperHeader = origHeader.toUpperCase().trim();
+      for (const [dbField, aliases] of Object.entries(COLUMN_ALIASES)) {
+        const key = dbField as keyof ColumnMapping;
+        if (mappedFieldsSeen.has(key)) continue;
+        if (aliases.some((alias) => upperHeader === alias || upperHeader.startsWith(alias))) {
+          uniqueMapping[uniqueHeader] = key;
+          mappedFieldsSeen.add(key);
+          break;
+        }
+      }
+    }
+
+    headers = uniqueHeaders;
+    Object.keys(mapping).forEach((k) => delete mapping[k]);
+    Object.assign(mapping, uniqueMapping);
+
+    if (!Object.values(mapping).some((f) => f === "boid")) {
+      const clientCol = Object.entries(mapping).find(([, f]) => f === "client_id")?.[0];
+      if (clientCol) {
+        mapping[clientCol] = "boid";
+      }
+    }
+
+    const sampleDataRows = json.slice(
+      headerRowIndex + 1,
+      Math.min(headerRowIndex + 25, json.length),
+    );
+    if (sampleDataRows.length > 0) {
+      const isBoidSample = (val: any) => {
+        if (val === null || val === undefined) return false;
+        const expanded = expandScientificNotation(String(val));
+        const clean = expanded.trim().replace(/[^0-9]/g, "");
+        return clean.length === 16 && clean.startsWith("130");
+      };
+
+      const currentBoidEntry = Object.entries(mapping).find(([, f]) => f === "boid");
+      const boidCol = currentBoidEntry?.[0];
+      let hasValid16DigitSamples = false;
+
+      if (boidCol) {
+        const colIdx = headers.indexOf(boidCol);
+        if (colIdx >= 0) {
+          hasValid16DigitSamples = sampleDataRows.some(
+            (r) => Array.isArray(r) && isBoidSample(r[colIdx]),
+          );
+        }
+      }
+
+      if (!hasValid16DigitSamples) {
+        for (let c = 0; c < headers.length; c++) {
+          const h = headers[c];
+          if (!h) continue;
+          const matches = sampleDataRows.filter(
+            (r) => Array.isArray(r) && isBoidSample(r[c]),
+          ).length;
+          if (matches >= 2 || (sampleDataRows.length === 1 && matches === 1)) {
+            if (boidCol) delete mapping[boidCol];
+            mapping[h] = "boid";
+            break;
+          }
+        }
+      }
+    }
+
+    const hasInvestorIdentity = Object.values(mapping).some(
+      (f) => f === "boid" || f === "client_id",
+    );
+    const hasShareholderData =
+      Object.values(mapping).some((f) => f === "full_name") &&
+      Object.values(mapping).some(
+        (f) =>
+          f === "shares_held" ||
+          f === "bonus_actual" ||
+          f === "cash_dividend" ||
+          f === "net_payable",
+      );
+    const isSummaryOrOverview =
+      sheetType === "SUMMARY" ||
+      allowSummary ||
+      headers.some((h) =>
+        /fiscal|kitta|share|holding|dividend|tax|payable|event|baseline|summary|report/i.test(h),
+      );
+
+    if (!hasInvestorIdentity && !hasShareholderData && !isSummaryOrOverview) {
+      return null;
+    }
+
+    const rawRows: Record<string, any>[] = [];
+    for (let i = headerRowIndex + 1; i < json.length; i++) {
+      const rowArr = json[i] as any[];
+      if (!rowArr || rowArr.every((c) => c === undefined || c === null || String(c).trim() === ""))
+        continue;
+
+      const row: Record<string, any> = {};
+      for (let j = 0; j < Math.max(headers.length, rowArr.length); j++) {
+        const header = headers[j] || `__EXTRA_COL_${j}`;
+        let val = rowArr[j];
+        if (val !== null && val !== undefined && typeof val === "object") {
+          if ("v" in val && val.v !== undefined) {
+            val = val.v;
+          } else if ("f" in val) {
+            val = 0;
+          } else {
+            val = String(val);
+          }
+        }
+
+        const rawCell = Array.isArray((worksheet as any)[i])
+          ? (worksheet as any)[i][j]
+          : (worksheet as any)[XLSX.utils.encode_cell({ r: i, c: j })];
+        if (rawCell && typeof rawCell.v === "number" && !Number.isNaN(rawCell.v)) {
+          if (rawCell.v >= 1e11 && Math.floor(rawCell.v) === rawCell.v) {
+            val = BigInt(Math.trunc(rawCell.v)).toString();
+          } else if (typeof val === "string" && /[eE]/.test(val)) {
+            val = expandScientificNotation(val);
+          }
+        } else if (typeof val === "string" && /[eE]/.test(val)) {
+          val = expandScientificNotation(val);
+        }
+
+        if (val !== undefined && val !== null && String(val).trim() !== "") {
+          row[header] = val;
+        }
+      }
+
+      for (const [colName, mappedField] of Object.entries(mapping)) {
+        if (row[colName] !== undefined && row[mappedField] === undefined) {
+          row[mappedField] = row[colName];
+        }
+      }
+
+      const divTaxCol = Object.entries(mapping).find(([, f]) => f === "div_tax")?.[0];
+      if (
+        divTaxCol &&
+        (row[divTaxCol] === undefined ||
+          row[divTaxCol] === null ||
+          String(row[divTaxCol]).trim() === "")
+      ) {
+        row.div_tax = null;
+      }
+      const bonTaxCol = Object.entries(mapping).find(([, f]) => f === "bon_tax")?.[0];
+      if (
+        bonTaxCol &&
+        (row[bonTaxCol] === undefined ||
+          row[bonTaxCol] === null ||
+          String(row[bonTaxCol]).trim() === "")
+      ) {
+        row.bon_tax = null;
+      }
+
+      rawRows.push(row);
+    }
+
+    let sheetKitta = 0;
+    let sheetAmount = 0;
+    let sheetTax = 0;
+    let sheetNet = 0;
+    let validRowCount = 0;
+
+    const processedRows = rawRows.filter((r) => {
+      const allValues = Object.values(r).filter((v) => v !== null && v !== undefined);
+      const meaningfulValues = allValues.filter((v) => String(v).trim() !== "");
+      if (meaningfulValues.length === 0) return false;
+
+      const hasTotalMarker = allValues.some((v) => {
+        const s = String(v).trim().toUpperCase();
+        return (
+          s === "TOTAL" ||
+          s === "GRAND TOTAL" ||
+          s === "SUMMARY" ||
+          s.startsWith("TOTAL ") ||
+          s.startsWith("SUMMARY ") ||
+          s.includes("AUTHORISED SIGNATORY") ||
+          s.includes("AUTHORIZED SIGNATORY") ||
+          s.includes("PREPARED BY") ||
+          s.includes("CHECKED BY") ||
+          s.includes("VERIFIED BY")
+        );
+      });
+      if (hasTotalMarker) return false;
+
+      if (sheetType === "SUMMARY" || allowSummary) {
+        validRowCount++;
+        for (const [colName, valRaw] of Object.entries(r)) {
+          const colUpper = colName.toUpperCase();
+          const cleanStr =
+            valRaw !== null && valRaw !== undefined ? String(valRaw).replace(/,/g, "").trim() : "";
+          const val = cleanStr === "" ? NaN : Number(cleanStr);
+          if (!isNaN(val)) {
+            if (/HOLDING KITTA|TOTAL KITTA|TOTAL SHARES/.test(colUpper)) sheetKitta += val;
+            else if (/GROSS CASH|GROSS DIVIDEND|TOTAL AMOUNT/.test(colUpper)) sheetAmount += val;
+            else if (/TAX WITHHELD|TOTAL TAX/.test(colUpper)) sheetTax += val;
+            else if (/NET CASH|NET PAYABLE|NET DIVIDEND/.test(colUpper)) sheetNet += val;
+          }
+        }
+        return true;
+      }
+
+      const hasRowIdentity = Boolean(
+        (r.boid && String(r.boid).trim().length > 0) ||
+        (r.full_name && String(r.full_name).trim().length > 0) ||
+        (r.client_code && String(r.client_code).trim().length > 0),
+      );
+      if (!hasRowIdentity) return false;
+
+      validRowCount++;
+
+      for (const [colName, mappedField] of Object.entries(mapping)) {
+        const rawVal = r[colName];
+        const cleanStr =
+          rawVal !== null && rawVal !== undefined ? String(rawVal).replace(/,/g, "").trim() : "";
+        const val = cleanStr === "" ? NaN : Number(cleanStr);
+        if (!isNaN(val)) {
+          if (mappedField === "shares_held") sheetKitta += val;
+          if (mappedField === "cash_dividend") sheetAmount += val;
+          if (mappedField === "div_tax" || mappedField === "bon_tax") sheetTax += val;
+          if (mappedField === "net_payable") sheetNet += val;
+        }
+      }
+
+      return true;
+    });
+
+    const hasFinancialColumns = Object.values(mapping).some(
+      (m) => m === "cash_dividend" || m === "div_tax" || m === "bon_tax" || m === "net_payable",
+    );
+    const hasKitta = Object.values(mapping).some((m) => m === "shares_held");
+
+    let isPreCalculated = false;
+    if (hasFinancialColumns && processedRows.length > 0) {
+      let rowsWithFinancials = 0;
+      for (const r of processedRows) {
+        const cleanNum = (val: any) => {
+          if (val === null || val === undefined) return NaN;
+          const s = String(val).replace(/,/g, "").trim();
+          return s === "" ? NaN : Number(s);
+        };
+        const gross = cleanNum(r[mapping["cash_dividend" as keyof ColumnMapping] || ""]);
+        const tax =
+          cleanNum(r[mapping["div_tax" as keyof ColumnMapping] || ""]) ||
+          cleanNum(r[mapping["bon_tax" as keyof ColumnMapping] || ""]);
+        const net = cleanNum(r[mapping["net_payable" as keyof ColumnMapping] || ""]);
+        if (!isNaN(gross) && !isNaN(tax) && !isNaN(net) && (gross > 0 || net > 0)) {
+          rowsWithFinancials++;
+        }
+      }
+      isPreCalculated = rowsWithFinancials / processedRows.length > 0.8;
+    }
+
+    const isRawInputFile = !hasFinancialColumns && hasKitta;
+
+    let detectedIsin: string | undefined;
+    for (const r of processedRows.slice(0, 50)) {
+      const val = String(r.isin || r["ISIN NO."] || r["ISIN NO"] || r["ISIN"] || "").trim();
+      if (
+        val &&
+        val.length >= 6 &&
+        val.toUpperCase() !== "ISIN" &&
+        val.toUpperCase() !== "ISIN NO."
+      ) {
+        detectedIsin = val;
+        break;
+      }
+    }
+
+    return {
+      sheetName,
+      sheetType,
+      defaultTdsRate,
+      detectedDividendRate,
+      headers,
+      mapping,
+      rows: processedRows,
+      rowCount: validRowCount,
+      totalKitta: Math.round(sheetKitta),
+      totalAmount: Math.round(sheetAmount * 100) / 100,
+      totalTax: Math.round(sheetTax * 100) / 100,
+      totalNet: Math.round(sheetNet * 100) / 100,
+      isPreCalculated,
+      isRawInputFile,
+      detectedIsin,
+    };
+  },
+
   parseWorkbook(workbook: XLSX.WorkBook, fileName: string): ParsedExcelData {
     let fileType: DetectedFileType = "unknown";
     const fileNameLower = fileName.toLowerCase();
@@ -841,592 +1409,49 @@ export const ExcelParser = {
 
     const sheets: ParsedSheetData[] = [];
     const grandTotals = { totalRows: 0, totalKitta: 0, totalAmount: 0, totalTax: 0, totalNet: 0 };
+    const deferredSummarySheets: string[] = [];
 
     for (const sheetName of workbook.SheetNames) {
-      const worksheet = workbook.Sheets[sheetName];
-      sanitizeWorksheetRange(worksheet);
-      const json = XLSX.utils.sheet_to_json<any[]>(worksheet, {
-        header: 1,
-        raw: false,
-        defval: "",
-        blankrows: false,
-      });
-      if (!json || json.length === 0) continue;
-
       const sheetNameUpper = sheetName.toUpperCase();
-      let sheetType: DetectedSheetType = "UNKNOWN";
-
-      if (sheetNameUpper.includes("PUBLIC")) {
-        sheetType = "PUBLIC";
-      } else if (sheetNameUpper.includes("PROMOTER")) {
-        sheetType = "PROMOTER";
-      } else if (sheetNameUpper.includes("PHYSICAL") || sheetNameUpper.includes("FOLIO")) {
-        sheetType = "PHYSICAL";
-      } else if (sheetNameUpper.includes("INSTITUTION")) {
-        sheetType = "INSTITUTION";
-      } else if (
-        sheetNameUpper.includes("TAX EXEMPT") ||
-        sheetNameUpper.includes("EXEMPTED") ||
-        sheetNameUpper.includes("MUTUAL FUND")
-      ) {
-        sheetType = "TAX_EXEMPTED";
-      } else if (sheetNameUpper.includes("LOCAL")) {
-        sheetType = "LOCAL_UNVERIFIED";
-      } else if (sheetNameUpper.includes("PRIVATE")) {
-        sheetType = "PRIVATE";
-      } else if (
-        sheetNameUpper.includes("REJECT") ||
-        sheetNameUpper.includes("PENDING") ||
-        sheetNameUpper.includes("REMAINING")
-      ) {
-        sheetType = "REJECT_PENDING";
-      } else if (sheetNameUpper.includes("ORIGINAL")) {
-        sheetType = "ORIGINAL";
-      } else if (sheetNameUpper.includes("SUMMARY")) {
-        sheetType = "SUMMARY";
+      if (sheetNameUpper.includes("SUMMARY") || sheetNameUpper.includes("ORIGINAL")) {
+        deferredSummarySheets.push(sheetName);
+        continue;
       }
 
-      // Ignore Summary and Original sheets entirely — they contain roll-up
-      // figures or raw shareholder register and must not be processed as payable/payout batches.
-      if (sheetType === "SUMMARY" || sheetType === "ORIGINAL") continue;
-
-      let defaultTdsRate = 0.05;
-      if (fileType === "debenture") {
-        if (sheetType === "INSTITUTION" || sheetType === "PRIVATE")
-          defaultTdsRate = 0.15; // Legal Person / Private Placement
-        else if (sheetType === "TAX_EXEMPTED")
-          defaultTdsRate = 0; // Tax Exempted
-        else defaultTdsRate = 0.06; // Natural Person (Public, Promoter, etc) pays 6% for debenture
-      } else {
-        // Dividend, Bonus Share, Mutual Fund
-        if (sheetType === "TAX_EXEMPTED" || fileType === "mutual_fund")
-          defaultTdsRate = 0; // Mutual Fund 0%
-        else defaultTdsRate = 0.05; // Both Natural and Legal Persons pay 5% for dividend
-      }
-
-      // Find Header Row: Scan up to 25 rows and score by domain-specific column keywords.
-      // This prevents selecting metadata/banner rows (which may have 3 strings) instead of actual table headers.
-      const domainKeywords = [
-        "boid",
-        "name",
-        "kitta",
-        "shares",
-        "amount",
-        "dividend",
-        "interest",
-        "tax",
-        "net",
-        "payable",
-        "gross",
-        "bank",
-        "account",
-        "wht",
-        "tds",
-        "sn",
-        "s.n.",
-        "holder",
-        "client",
-        "warrant",
-        "folio",
-        "rate",
-        "pumori",
-        "actual",
-        "round",
-      ];
-
-      let bestHeaderScore = -1;
-      let headerRowIndex = 0;
-      let headers: string[] = [];
-
-      for (let i = 0; i < Math.min(25, json.length); i++) {
-        const row = json[i] as any[];
-        if (!row || row.length < 3) continue;
-
-        const stringCells = row
-          .filter((c) => typeof c === "string" && c.trim().length > 0)
-          .map((c) => c.toString().trim().toLowerCase());
-
-        if (stringCells.length < 3) continue;
-
-        let score = 0;
-        for (const cell of stringCells) {
-          const cleanCell = cell.replace(/[^a-z0-9]/g, "");
-          if (domainKeywords.some((kw) => cleanCell.includes(kw.replace(/[^a-z0-9]/g, "")))) {
-            score++;
-          }
-        }
-
-        if (score > bestHeaderScore && score >= 2) {
-          bestHeaderScore = score;
-          headerRowIndex = i;
-          headers = row.map((h) => (h !== undefined && h !== null ? h.toString().trim() : ""));
-          if (score >= 4) {
-            break;
-          }
-        } else if (bestHeaderScore < 0 && stringCells.length >= 3) {
-          bestHeaderScore = 0;
-          headerRowIndex = i;
-          headers = row.map((h) => (h !== undefined && h !== null ? h.toString().trim() : ""));
-        }
-      }
-
-      // Column Auto-Mapping - with priority to prevent overwrites
-      const mapping: Record<string, keyof ColumnMapping> = {};
-      // Priority order for fields that could have multiple matching columns
-      const fieldPriority: Record<string, string[]> = {
-        boid: [
-          "BOID",
-          "BOID NO",
-          "BOID NO.",
-          "BENEFICIARY ID",
-          "BENEFICIARY_ID",
-          "DP CLIENT ID",
-          "DP_CLIENT_ID",
-          "CLIENT ID",
-          "DEMAT ACCOUNT",
-          "DEMAT A/C",
-          "DMAT",
-          "FOLIO NO",
-          "FOLIO",
-          "CLIENT CODE",
-        ],
-        net_payable: [
-          "NET_DIV.",
-          "NET PAYABLE",
-          "NET DIVIDEND",
-          "NET INTEREST PAYABLE",
-          "NET",
-          "ROUND UP DIV",
-          "ROUNDUP",
-        ],
-        // Interest-amount columns MUST out-rank the generic "AMOUNT" column:
-        // in reconciliation files "AMOUNT" is the debenture FACE VALUE (e.g. 50,000),
-        // NOT the taxable interest, and "INTEREST-Pumori" is the accrued interest
-        // the NET/TDS actually derive from. Without this, gross is read from the
-        // face-value column and every row fails net=gross-tax validation.
-        cash_dividend: [
-          "INTEREST-PUMORI",
-          "INTEREST PUMORI",
-          "INTEREST AMOUNT",
-          "INTEREST",
-          "GROSS INTEREST",
-          "COUPON AMOUNT",
-          "INTEREST @ 8.50%",
-          "INT. @ 8.50%",
-          "INTEREST @ 7%",
-          "INT. @ 7%",
-          "GROSS AMOUNT",
-          "INT AMOUNT",
-          "DIVIDEND",
-          "DIVIDEND 5.631",
-          "AMOUNT/DIVIDEND",
-          "AMOUNT",
-        ],
-        full_name: ["NAME", "SHAREHOLDER NAME", "APPLICANT_NAME"],
-        father_name: ["FATHER'S NAME", "FATHER_NAME", "FATHER NAME", "FATHER_NAME_MOTHER_NAME"],
-        grandfather_name: [
-          "GRANDFATHER'S NAME",
-          "GRANDFATHER_NAME",
-          "GRANDFATHER NAME",
-          "GRANDFATHER_NAME_SPOUSE_NAME",
-        ],
-      };
-
-      // First pass: map headers to fields
-      const headerToField = new Map<string, { field: string; alias: string }>();
-      headers.forEach((header) => {
-        if (!header) return;
-        const upperHeader = header.toUpperCase().trim();
-
-        for (const [dbField, aliases] of Object.entries(COLUMN_ALIASES)) {
-          const key = dbField as keyof ColumnMapping;
-          // Exact match first
-          if (aliases.some((alias) => upperHeader === alias)) {
-            if (!headerToField.has(key)) {
-              headerToField.set(key, { field: key, alias: upperHeader });
-              mapping[header] = key;
-            } else {
-              // Already mapped - check if this new header has higher priority
-              const existing = headerToField.get(key)!;
-              const priorityList = fieldPriority[key];
-              if (priorityList) {
-                const existingIdx = priorityList.indexOf(existing.alias);
-                const newIdx = priorityList.indexOf(upperHeader);
-                if (newIdx >= 0 && (existingIdx < 0 || newIdx < existingIdx)) {
-                  // New header has higher priority - find and remove old mapping
-                  for (const [hdr, mappedField] of Object.entries(mapping)) {
-                    if (mappedField === key && hdr !== header) {
-                      delete mapping[hdr];
-                      break;
-                    }
-                  }
-                  headerToField.set(key, { field: key, alias: upperHeader });
-                  mapping[header] = key;
-                }
-                // else keep existing priority - skip this mapping
-              }
-            }
-            break;
-          }
-        }
-      });
-
-      // Second pass: try startsWith matching for headers not yet mapped
-      const mappedHeaders = new Set(Object.keys(mapping));
-      headers.forEach((header) => {
-        if (!header) return;
-        if (mappedHeaders.has(header)) return; // already mapped in first pass
-        const upperHeader = header.toUpperCase().trim();
-
-        for (const [dbField, aliases] of Object.entries(COLUMN_ALIASES)) {
-          const key = dbField as keyof ColumnMapping;
-          if (headerToField.has(key)) continue; // already have a mapping for this field
-          if (aliases.some((alias) => upperHeader.startsWith(alias))) {
-            headerToField.set(key, { field: key, alias: upperHeader });
-            mapping[header] = key;
-            break;
-          }
-        }
-      });
-
-      // Third pass: Try to extract dividend/interest rate from headers like "DIVIDEND 5.631" or "INT. @ 7%"
-      let detectedDividendRate: number | undefined;
-      headers.forEach((header) => {
-        if (!header) return;
-        const upperHeader = header.toUpperCase().trim();
-        if (
-          upperHeader.includes("DIVIDEND") ||
-          upperHeader.includes("INT.") ||
-          upperHeader.includes("BONUS")
-        ) {
-          const match = upperHeader.match(/[\d.]+/);
-          if (match && !isNaN(Number(match[0]))) {
-            const val = Number(match[0]);
-            // Guard: rates are typically between 0.01% and 100%. Avoid year numbers like 2081.
-            if (val > 0 && val <= 100) {
-              detectedDividendRate = val;
-            }
-          }
-        }
-      });
-
-      // --- Make headers unique to handle duplicate column names (e.g., "REMARKS" appearing twice) ---
-      const uniqueHeaders: string[] = [];
-      const headerCountMap = new Map<string, number>();
-      for (const h of headers) {
-        if (!h) {
-          uniqueHeaders.push("");
-          continue;
-        }
-        const count = (headerCountMap.get(h) || 0) + 1;
-        headerCountMap.set(h, count);
-        uniqueHeaders.push(count > 1 ? `${h} (${count})` : h);
-      }
-
-      // Rebuild mapping with unique header names; also try to map duplicate headers to unmapped fields
-      const uniqueMapping: Record<string, keyof ColumnMapping> = {};
-      const mappedFieldsSeen = new Set<keyof ColumnMapping>();
-      for (let idx = 0; idx < headers.length; idx++) {
-        const origHeader = headers[idx];
-        const uniqueHeader = uniqueHeaders[idx];
-        if (mapping[origHeader] && !mappedFieldsSeen.has(mapping[origHeader])) {
-          uniqueMapping[uniqueHeader] = mapping[origHeader];
-          mappedFieldsSeen.add(mapping[origHeader]);
-        }
-      }
-      // Try to map duplicate headers to other unmapped fields (e.g., second "REMARKS" → status)
-      for (let idx = 0; idx < headers.length; idx++) {
-        const origHeader = headers[idx];
-        const uniqueHeader = uniqueHeaders[idx];
-        if (uniqueMapping[uniqueHeader]) continue;
-        if (!origHeader) continue;
-        const upperHeader = origHeader.toUpperCase().trim();
-        for (const [dbField, aliases] of Object.entries(COLUMN_ALIASES)) {
-          const key = dbField as keyof ColumnMapping;
-          if (mappedFieldsSeen.has(key)) continue;
-          if (aliases.some((alias) => upperHeader === alias || upperHeader.startsWith(alias))) {
-            uniqueMapping[uniqueHeader] = key;
-            mappedFieldsSeen.add(key);
-            break;
-          }
-        }
-      }
-
-      // Replace headers and mapping with unique versions
-      headers = uniqueHeaders;
-      Object.keys(mapping).forEach((k) => delete mapping[k]);
-      Object.assign(mapping, uniqueMapping);
-
-      // If client_id was mapped but boid was not, link boid to client_id
-      if (!Object.values(mapping).some((f) => f === "boid")) {
-        const clientCol = Object.entries(mapping).find(([, f]) => f === "client_id")?.[0];
-        if (clientCol) {
-          mapping[clientCol] = "boid";
-        }
-      }
-
-      // Disambiguate BOID by validating 16-digit 130... BOID sample patterns
-      const sampleDataRows = json.slice(
-        headerRowIndex + 1,
-        Math.min(headerRowIndex + 25, json.length),
-      );
-      if (sampleDataRows.length > 0) {
-        const isBoidSample = (val: any) => {
-          if (val === null || val === undefined) return false;
-          const expanded = expandScientificNotation(String(val));
-          const clean = expanded.trim().replace(/[^0-9]/g, "");
-          return clean.length === 16 && clean.startsWith("130");
-        };
-
-        const currentBoidEntry = Object.entries(mapping).find(([, f]) => f === "boid");
-        const boidCol = currentBoidEntry?.[0];
-        let hasValid16DigitSamples = false;
-
-        if (boidCol) {
-          const colIdx = headers.indexOf(boidCol);
-          if (colIdx >= 0) {
-            hasValid16DigitSamples = sampleDataRows.some(
-              (r) => Array.isArray(r) && isBoidSample(r[colIdx]),
-            );
-          }
-        }
-
-        if (!hasValid16DigitSamples) {
-          for (let c = 0; c < headers.length; c++) {
-            const h = headers[c];
-            if (!h) continue;
-            const matches = sampleDataRows.filter(
-              (r) => Array.isArray(r) && isBoidSample(r[c]),
-            ).length;
-            if (matches >= 2 || (sampleDataRows.length === 1 && matches === 1)) {
-              if (boidCol) delete mapping[boidCol];
-              mapping[h] = "boid";
-              break;
-            }
-          }
-        }
-      }
-
-      // Report-only / reference sheets (e.g. bank totals, VAT, cover tabs) have
-      // no investor identity and no shareholder holdings. Skip them so they are
-      // never shown for validation or sent to the import pipeline.
-      const hasInvestorIdentity = Object.values(mapping).some(
-        (f) => f === "boid" || f === "client_id",
-      );
-      const hasShareholderData =
-        Object.values(mapping).some((f) => f === "full_name") &&
-        Object.values(mapping).some(
-          (f) =>
-            f === "shares_held" ||
-            f === "bonus_actual" ||
-            f === "cash_dividend" ||
-            f === "net_payable",
-        );
-
-      if (!hasInvestorIdentity && !hasShareholderData) continue;
-
-      // --- Build rows from array data (handles duplicate headers correctly) ---
-      // Also add normalized field names so the import service can access data consistently
-      // e.g., row.boid = row["BOID"], row.full_name = row["NAME"], row.cash_dividend = row["DIVIDEND 5.631"]
-      const rawRows: Record<string, any>[] = [];
-      for (let i = headerRowIndex + 1; i < json.length; i++) {
-        const rowArr = json[i] as any[];
-        if (
-          !rowArr ||
-          rowArr.every((c) => c === undefined || c === null || String(c).trim() === "")
-        )
-          continue;
-
-        const row: Record<string, any> = {};
-        for (let j = 0; j < Math.max(headers.length, rowArr.length); j++) {
-          const header = headers[j] || `__EXTRA_COL_${j}`;
-          let val = rowArr[j];
-          // Handle formula cells that XLSX returns as objects like { f: 'A1+B1', v: 123 }
-          if (val !== null && val !== undefined && typeof val === "object") {
-            if ("v" in val && val.v !== undefined) {
-              val = val.v;
-            } else if ("f" in val) {
-              val = 0;
-            } else {
-              val = String(val);
-            }
-          }
-
-          // Recover full integer or unformatted representation if XLSX formatted cell to scientific notation
-          const rawCell = Array.isArray((worksheet as any)[i])
-            ? (worksheet as any)[i][j]
-            : (worksheet as any)[XLSX.utils.encode_cell({ r: i, c: j })];
-          if (rawCell && typeof rawCell.v === "number" && !Number.isNaN(rawCell.v)) {
-            if (rawCell.v >= 1e11 && Math.floor(rawCell.v) === rawCell.v) {
-              val = BigInt(Math.trunc(rawCell.v)).toString();
-            } else if (typeof val === "string" && /[eE]/.test(val)) {
-              val = expandScientificNotation(val);
-            }
-          } else if (typeof val === "string" && /[eE]/.test(val)) {
-            val = expandScientificNotation(val);
-          }
-
-          if (val !== undefined && val !== null && String(val).trim() !== "") {
-            row[header] = val;
-          }
-        }
-
-        // Add normalized field names based on mapping (e.g., row.boid = row["BOID"])
-        for (const [colName, mappedField] of Object.entries(mapping)) {
-          if (row[colName] !== undefined && row[mappedField] === undefined) {
-            row[mappedField] = row[colName];
-          }
-        }
-
-        // Return null for blank/empty tax cells so tax is not coerced to 0
-        const divTaxCol = Object.entries(mapping).find(([, f]) => f === "div_tax")?.[0];
-        if (
-          divTaxCol &&
-          (row[divTaxCol] === undefined ||
-            row[divTaxCol] === null ||
-            String(row[divTaxCol]).trim() === "")
-        ) {
-          row.div_tax = null;
-        }
-        const bonTaxCol = Object.entries(mapping).find(([, f]) => f === "bon_tax")?.[0];
-        if (
-          bonTaxCol &&
-          (row[bonTaxCol] === undefined ||
-            row[bonTaxCol] === null ||
-            String(row[bonTaxCol]).trim() === "")
-        ) {
-          row.bon_tax = null;
-        }
-
-        rawRows.push(row);
-      }
-
-      let sheetKitta = 0;
-      let sheetAmount = 0;
-      let sheetTax = 0;
-      let sheetNet = 0;
-      let validRowCount = 0;
-
-      const processedRows = rawRows.filter((r) => {
-        // Filter out summary/total rows at the bottom and blank trailing rows.
-        // Check ALL string values in the row (not just the first), since RMF files
-        // often place "TOTAL" in the NAME column rather than the first column.
-        const allValues = Object.values(r).filter((v) => v !== null && v !== undefined);
-        const meaningfulValues = allValues.filter((v) => String(v).trim() !== "");
-        if (meaningfulValues.length === 0) return false;
-
-        const hasTotalMarker = allValues.some((v) => {
-          const s = String(v).trim().toUpperCase();
-          return (
-            s === "TOTAL" ||
-            s === "GRAND TOTAL" ||
-            s === "SUMMARY" ||
-            s.startsWith("TOTAL ") ||
-            s.startsWith("SUMMARY ") ||
-            s.includes("AUTHORISED SIGNATORY") ||
-            s.includes("AUTHORIZED SIGNATORY") ||
-            s.includes("PREPARED BY") ||
-            s.includes("CHECKED BY") ||
-            s.includes("VERIFIED BY")
-          );
-        });
-        if (hasTotalMarker) return false;
-
-        // A valid investor row MUST have at least one investor identifier (BOID, Name, or Client Code).
-        // Rows with only numbers but no identity are unlabeled footer/total rows and must be excluded.
-        const hasInvestorIdentity = Boolean(
-          (r.boid && String(r.boid).trim().length > 0) ||
-          (r.full_name && String(r.full_name).trim().length > 0) ||
-          (r.client_code && String(r.client_code).trim().length > 0),
-        );
-        if (!hasInvestorIdentity) return false;
-
-        validRowCount++;
-
-        // Sum aggregates
-        for (const [colName, mappedField] of Object.entries(mapping)) {
-          const rawVal = r[colName];
-          const cleanStr =
-            rawVal !== null && rawVal !== undefined ? String(rawVal).replace(/,/g, "").trim() : "";
-          const val = cleanStr === "" ? NaN : Number(cleanStr);
-          if (!isNaN(val)) {
-            if (mappedField === "shares_held") sheetKitta += val;
-            if (mappedField === "cash_dividend") sheetAmount += val;
-            if (mappedField === "div_tax" || mappedField === "bon_tax") sheetTax += val;
-            if (mappedField === "net_payable") sheetNet += val;
-          }
-        }
-
-        return true;
-      });
-
-      // Determine if file is raw input or pre-calculated
-      const hasFinancialColumns = Object.values(mapping).some(
-        (m) => m === "cash_dividend" || m === "div_tax" || m === "bon_tax" || m === "net_payable",
-      );
-      const hasKitta = Object.values(mapping).some((m) => m === "shares_held");
-
-      let isPreCalculated = false;
-      if (hasFinancialColumns && processedRows.length > 0) {
-        let rowsWithFinancials = 0;
-        for (const r of processedRows) {
-          const cleanNum = (val: any) => {
-            if (val === null || val === undefined) return NaN;
-            const s = String(val).replace(/,/g, "").trim();
-            return s === "" ? NaN : Number(s);
-          };
-          const gross = cleanNum(r[mapping["cash_dividend" as keyof ColumnMapping] || ""]);
-          const tax =
-            cleanNum(r[mapping["div_tax" as keyof ColumnMapping] || ""]) ||
-            cleanNum(r[mapping["bon_tax" as keyof ColumnMapping] || ""]);
-          const net = cleanNum(r[mapping["net_payable" as keyof ColumnMapping] || ""]);
-          if (!isNaN(gross) && !isNaN(tax) && !isNaN(net) && (gross > 0 || net > 0)) {
-            rowsWithFinancials++;
-          }
-        }
-        isPreCalculated = rowsWithFinancials / processedRows.length > 0.8; // >80% rows have financial data
-      }
-
-      const isRawInputFile = !hasFinancialColumns && hasKitta;
-
-      let detectedIsin: string | undefined;
-      for (const r of processedRows.slice(0, 50)) {
-        const val = String(r.isin || r["ISIN NO."] || r["ISIN NO"] || r["ISIN"] || "").trim();
-        if (
-          val &&
-          val.length >= 6 &&
-          val.toUpperCase() !== "ISIN" &&
-          val.toUpperCase() !== "ISIN NO."
-        ) {
-          detectedIsin = val;
-          break;
-        }
-      }
-
-      sheets.push({
+      const parsedSheet = this.parseSingleSheet(
         sheetName,
-        sheetType,
-        defaultTdsRate,
-        detectedDividendRate,
-        headers,
-        mapping,
-        rows: processedRows,
-        rowCount: validRowCount,
-        totalKitta: Math.round(sheetKitta),
-        totalAmount: Math.round(sheetAmount * 100) / 100,
-        totalTax: Math.round(sheetTax * 100) / 100,
-        totalNet: Math.round(sheetNet * 100) / 100,
-        isPreCalculated,
-        isRawInputFile,
-        detectedIsin,
-      });
+        workbook.Sheets[sheetName],
+        fileType,
+        false,
+      );
+      if (parsedSheet && parsedSheet.rows.length > 0) {
+        sheets.push(parsedSheet);
+        grandTotals.totalRows += parsedSheet.rowCount;
+        grandTotals.totalKitta += parsedSheet.totalKitta;
+        grandTotals.totalAmount += parsedSheet.totalAmount;
+        grandTotals.totalTax += parsedSheet.totalTax;
+        grandTotals.totalNet += parsedSheet.totalNet;
+      }
+    }
 
-      // SUMMARY / report-only sheets are skipped above, so always accumulate.
-      grandTotals.totalRows += validRowCount;
-      grandTotals.totalKitta += Math.round(sheetKitta);
-      grandTotals.totalAmount += Math.round(sheetAmount * 100) / 100;
-      grandTotals.totalTax += Math.round(sheetTax * 100) / 100;
-      grandTotals.totalNet += Math.round(sheetNet * 100) / 100;
+    // If no active data sheets were found, fall back to parsing summary sheets (e.g., standalone multi-year summary report)
+    if (sheets.length === 0 && deferredSummarySheets.length > 0) {
+      for (const sheetName of deferredSummarySheets) {
+        const parsedSheet = this.parseSingleSheet(
+          sheetName,
+          workbook.Sheets[sheetName],
+          fileType,
+          true,
+        );
+        if (parsedSheet && parsedSheet.rows.length > 0) {
+          sheets.push(parsedSheet);
+          grandTotals.totalRows += parsedSheet.rowCount;
+          grandTotals.totalKitta += parsedSheet.totalKitta;
+          grandTotals.totalAmount += parsedSheet.totalAmount;
+          grandTotals.totalTax += parsedSheet.totalTax;
+          grandTotals.totalNet += parsedSheet.totalNet;
+        }
+      }
     }
 
     // --- Company Name Detection ---
@@ -1523,19 +1548,66 @@ export const ExcelParser = {
     };
   },
 
-  async parseFile(file: File): Promise<ParsedExcelData> {
-    const isCsvOrTsv = /\.(csv|tsv|txt)$/i.test(file.name);
-    if (isCsvOrTsv) {
+  async parseOnServer(file: File): Promise<ParsedExcelData> {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await fetch("/api/parse-excel", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      let errText = "Server failed to parse spreadsheet";
       try {
-        const text = await file.text();
-        const workbook = XLSX.read(text, { type: "string", dense: true, cellDates: true });
-        return this.parseWorkbook(workbook, file.name);
-      } catch (err: any) {
-        console.warn("Direct text CSV parse failed, falling back to buffer decoding:", err);
+        const errJson = await response.json();
+        if (errJson.error) errText = errJson.error;
+      } catch {
+        // fallback
       }
+      throw new Error(errText);
     }
-    const data = await file.arrayBuffer();
-    return this.parseBuffer(data, file.name);
+
+    return response.json();
+  },
+
+  async parseFile(file: File, onProgress?: (msg: string) => void): Promise<ParsedExcelData> {
+    const isBrowser = typeof window !== "undefined";
+    const isLarge = file.size > 3 * 1024 * 1024; // > 3MB: use server parser directly to avoid browser heap/freeze
+
+    if (isBrowser && isLarge) {
+      onProgress?.(
+        `Processing large file (${(file.size / (1024 * 1024)).toFixed(1)} MB) on server engine...`,
+      );
+      return this.parseOnServer(file);
+    }
+
+    try {
+      const isCsvOrTsv = /\.(csv|tsv|txt)$/i.test(file.name);
+      if (isCsvOrTsv) {
+        try {
+          const text = await file.text();
+          const workbook = XLSX.read(text, { type: "string", dense: true, cellDates: true });
+          return this.parseWorkbook(workbook, file.name);
+        } catch (err: any) {
+          console.warn("Direct text CSV parse failed, falling back to buffer decoding:", err);
+        }
+      }
+      const data = await file.arrayBuffer();
+      return this.parseBuffer(data, file.name);
+    } catch (err: any) {
+      if (isBrowser) {
+        console.warn(
+          "Client-side parse encountered issue, automatically falling back to server parser:",
+          err,
+        );
+        onProgress?.(
+          "Browser limit reached. Seamlessly processing spreadsheet on server engine...",
+        );
+        return this.parseOnServer(file);
+      }
+      throw err;
+    }
   },
 
   /**

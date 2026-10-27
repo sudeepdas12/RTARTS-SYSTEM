@@ -35,6 +35,7 @@ import { Route as AuthenticatedUploadRouteImport } from './routes/_authenticated
 import { Route as AuthenticatedUploadHistoryRouteImport } from './routes/_authenticated/upload-history'
 import { Route as AuthenticatedUploadsRouteImport } from './routes/_authenticated/uploads'
 import { Route as AuthenticatedUsersRouteImport } from './routes/_authenticated/users'
+import { Route as ApiParseExcelRouteImport } from './routes/api.parse-excel'
 import { Route as AuthenticatedSettingsIndexRouteImport } from './routes/_authenticated/settings.index'
 import { Route as AuthenticatedSettingsFiscalYearsRouteImport } from './routes/_authenticated/settings.fiscal-years'
 
@@ -172,6 +173,11 @@ const AuthenticatedUsersRoute = AuthenticatedUsersRouteImport.update({
   path: '/users',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const ApiParseExcelRoute = ApiParseExcelRouteImport.update({
+  id: '/api/parse-excel',
+  path: '/api/parse-excel',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedSettingsIndexRoute =
   AuthenticatedSettingsIndexRouteImport.update({
     id: '/settings/',
@@ -211,6 +217,7 @@ export interface FileRoutesByFullPath {
   '/upload-history': typeof AuthenticatedUploadHistoryRoute
   '/uploads': typeof AuthenticatedUploadsRoute
   '/users': typeof AuthenticatedUsersRoute
+  '/api/parse-excel': typeof ApiParseExcelRoute
   '/settings/fiscal-years': typeof AuthenticatedSettingsFiscalYearsRoute
   '/settings/': typeof AuthenticatedSettingsIndexRoute
 }
@@ -240,6 +247,7 @@ export interface FileRoutesByTo {
   '/upload-history': typeof AuthenticatedUploadHistoryRoute
   '/uploads': typeof AuthenticatedUploadsRoute
   '/users': typeof AuthenticatedUsersRoute
+  '/api/parse-excel': typeof ApiParseExcelRoute
   '/settings/fiscal-years': typeof AuthenticatedSettingsFiscalYearsRoute
   '/settings': typeof AuthenticatedSettingsIndexRoute
 }
@@ -271,6 +279,7 @@ export interface FileRoutesById {
   '/_authenticated/upload-history': typeof AuthenticatedUploadHistoryRoute
   '/_authenticated/uploads': typeof AuthenticatedUploadsRoute
   '/_authenticated/users': typeof AuthenticatedUsersRoute
+  '/api/parse-excel': typeof ApiParseExcelRoute
   '/_authenticated/settings/fiscal-years': typeof AuthenticatedSettingsFiscalYearsRoute
   '/_authenticated/settings/': typeof AuthenticatedSettingsIndexRoute
 }
@@ -302,6 +311,7 @@ export interface FileRouteTypes {
     | '/upload-history'
     | '/uploads'
     | '/users'
+    | '/api/parse-excel'
     | '/settings/fiscal-years'
     | '/settings/'
   fileRoutesByTo: FileRoutesByTo
@@ -331,6 +341,7 @@ export interface FileRouteTypes {
     | '/upload-history'
     | '/uploads'
     | '/users'
+    | '/api/parse-excel'
     | '/settings/fiscal-years'
     | '/settings'
   id:
@@ -361,6 +372,7 @@ export interface FileRouteTypes {
     | '/_authenticated/upload-history'
     | '/_authenticated/uploads'
     | '/_authenticated/users'
+    | '/api/parse-excel'
     | '/_authenticated/settings/fiscal-years'
     | '/_authenticated/settings/'
   fileRoutesById: FileRoutesById
@@ -370,6 +382,7 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
+  ApiParseExcelRoute: typeof ApiParseExcelRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -556,6 +569,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedUsersRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/api/parse-excel': {
+      id: '/api/parse-excel'
+      path: '/api/parse-excel'
+      fullPath: '/api/parse-excel'
+      preLoaderRoute: typeof ApiParseExcelRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_authenticated/settings/': {
       id: '/_authenticated/settings/'
       path: '/settings'
@@ -636,6 +656,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
+  ApiParseExcelRoute: ApiParseExcelRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
