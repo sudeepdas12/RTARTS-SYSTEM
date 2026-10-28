@@ -751,59 +751,135 @@ function CompaniesPage() {
     );
   };
 
+  function getField(row: Record<string, unknown>, ...aliases: string[]): any {
+    for (const [key, val] of Object.entries(row)) {
+      const cleanKey = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+      for (const alias of aliases) {
+        const cleanAlias = alias.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (
+          cleanKey === cleanAlias &&
+          val !== undefined &&
+          val !== null &&
+          String(val).trim() !== ""
+        ) {
+          return val;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  function parseExcelDate(val: any): string | null {
+    if (!val) return null;
+    if (val instanceof Date) return val.toISOString().slice(0, 10);
+    if (typeof val === "number" && val > 20000 && val < 60000) {
+      const d = new Date(Math.round((val - 25569) * 86400 * 1000));
+      return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+    }
+    const str = String(val).trim();
+    return /^\d{4}-\d{2}-\d{2}$/.test(str) ? str : str || null;
+  }
+
   const handleImport = async (file: File) => {
     try {
       const rows = await importFromExcel<Record<string, unknown>>(file);
       const clean = rows
-        .filter((r) => r.company_code && r.company_name)
         .map((r) => {
-          const compType = r.company_type ? String(r.company_type).trim().toLowerCase() : "";
+          const code = getField(r, "company_code", "companycode", "code", "symbol");
+          const name = getField(r, "company_name", "companyname", "name", "entity_name");
+          if (!code || !name) return null;
+
+          const rawType = getField(r, "company_type", "companytype", "type");
+          const compType = rawType ? String(rawType).trim().toLowerCase() : "";
           const defaultFace = compType.includes("debenture")
             ? 1000
             : compType.includes("mutual fund")
               ? 10
               : 100;
+
+          const rawFace = getField(r, "face_value", "facevalue", "par_value");
+          const rawIssueSize = getField(
+            r,
+            "issue_size",
+            "issuesize",
+            "units",
+            "total_units",
+            "kitta",
+          );
+          const rawDiv = getField(
+            r,
+            "dividend_rate",
+            "dividendrate",
+            "div_rate",
+            "divrate",
+            "dividend",
+          );
+          const rawDeb = getField(
+            r,
+            "debenture_rate",
+            "debenturerate",
+            "deb_rate",
+            "debrate",
+            "debenture",
+          );
+          const rawCpn = getField(r, "coupon_rate", "couponrate", "coupon");
+          const rawStatus = getField(r, "status", "state");
+          const rawSector = getField(r, "sector_type", "sectortype", "sector");
+          const rawTax = getField(r, "interest_tax_status", "tax_status", "taxstatus");
+
           return {
-            company_code: String(r.company_code).trim().toUpperCase(),
-            company_name: String(r.company_name).trim(),
-            company_type: r.company_type ? String(r.company_type).trim() : null,
-            isin: r.isin ? String(r.isin).trim() : null,
-            listed_date: r.listed_date ? String(r.listed_date) : null,
-            sector_type: (r.sector_type as Sector) ?? null,
-            registrar: r.registrar ? String(r.registrar).trim() : "RBB Merchant Banking Limited",
-            fiscal_year: r.fiscal_year ? String(r.fiscal_year).trim() : null,
-            dividend_rate:
-              r.dividend_rate !== undefined && r.dividend_rate !== ""
-                ? Number(r.dividend_rate)
-                : null,
-            debenture_rate:
-              r.debenture_rate !== undefined && r.debenture_rate !== ""
-                ? Number(r.debenture_rate)
-                : null,
-            coupon_rate:
-              r.coupon_rate !== undefined && r.coupon_rate !== "" ? Number(r.coupon_rate) : null,
-            maturity_date: r.maturity_date ? String(r.maturity_date) : null,
-            face_value:
-              r.face_value !== undefined && r.face_value !== ""
-                ? Number(r.face_value)
-                : defaultFace,
+            company_code: String(code).trim().toUpperCase(),
+            company_name: String(name).trim(),
+            company_type: rawType ? String(rawType).trim() : null,
+            isin: getField(r, "isin", "isin_code")
+              ? String(getField(r, "isin", "isin_code")).trim()
+              : null,
+            listed_date: parseExcelDate(getField(r, "listed_date", "listeddate")),
+            sector_type: (rawSector ? String(rawSector).trim() : null) as Sector | null,
+            registrar: getField(r, "registrar", "rta", "rts")
+              ? String(getField(r, "registrar", "rta", "rts")).trim()
+              : "RBB Merchant Banking Limited",
+            fiscal_year: getField(r, "fiscal_year", "fiscalyear", "fy")
+              ? String(getField(r, "fiscal_year", "fiscalyear", "fy")).trim()
+              : null,
+            dividend_rate: rawDiv !== undefined && rawDiv !== "" ? Number(rawDiv) : null,
+            debenture_rate: rawDeb !== undefined && rawDeb !== "" ? Number(rawDeb) : null,
+            coupon_rate: rawCpn !== undefined && rawCpn !== "" ? Number(rawCpn) : null,
+            maturity_date: parseExcelDate(getField(r, "maturity_date", "maturitydate", "maturity")),
+            face_value: rawFace !== undefined && rawFace !== "" ? Number(rawFace) : defaultFace,
             issue_size:
-              r.issue_size !== undefined && r.issue_size !== "" ? Number(r.issue_size) : null,
-            interest_tax_status: (r.interest_tax_status as TaxStatus) ?? null,
-            pan_no: r.pan_no ? String(r.pan_no).trim() : null,
-            bank_account_no: r.bank_account_no ? String(r.bank_account_no).trim() : null,
-            bank_name: r.bank_name ? String(r.bank_name).trim() : null,
-            email: r.email ? String(r.email).trim() : null,
-            phone: r.phone ? String(r.phone).trim() : null,
-            website: r.website ? String(r.website).trim() : null,
-            address: r.address ? String(r.address).trim() : null,
-            status: r.status
-              ? ((String(r.status).trim().charAt(0).toUpperCase() +
-                  String(r.status).trim().slice(1).toLowerCase()) as Status)
+              rawIssueSize !== undefined && rawIssueSize !== "" ? Number(rawIssueSize) : null,
+            interest_tax_status: (rawTax ? String(rawTax).trim() : null) as TaxStatus | null,
+            pan_no: getField(r, "pan_no", "panno", "pan")
+              ? String(getField(r, "pan_no", "panno", "pan")).trim()
+              : null,
+            bank_name: getField(r, "bank_name", "bankname", "bank")
+              ? String(getField(r, "bank_name", "bankname", "bank")).trim()
+              : null,
+            bank_account_no: getField(r, "bank_account_no", "bankaccountno", "account_no")
+              ? String(getField(r, "bank_account_no", "bankaccountno", "account_no")).trim()
+              : null,
+            email: getField(r, "email", "email_address")
+              ? String(getField(r, "email", "email_address")).trim()
+              : null,
+            phone: getField(r, "phone", "contact_no", "phone_no")
+              ? String(getField(r, "phone", "contact_no", "phone_no")).trim()
+              : null,
+            website: getField(r, "website", "url", "web")
+              ? String(getField(r, "website", "url", "web")).trim()
+              : null,
+            address: getField(r, "address", "location")
+              ? String(getField(r, "address", "location")).trim()
+              : null,
+            status: rawStatus
+              ? ((String(rawStatus).trim().charAt(0).toUpperCase() +
+                  String(rawStatus).trim().slice(1).toLowerCase()) as Status)
               : "Active",
           };
-        });
-      if (!clean.length) return toast.error("No valid company rows found");
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null);
+
+      if (!clean.length) return toast.error("No valid company rows found in file");
       const { error } = await supabase
         .from("companies")
         .upsert(clean as never, { onConflict: "company_code" });
