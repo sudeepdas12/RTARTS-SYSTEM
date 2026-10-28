@@ -27,12 +27,14 @@ interface PaginatedTableProps<T> {
   columns: ColumnDef<T, any>[];
   data: T[];
   pageSize?: number;
+  onRowClick?: (item: T) => void;
 }
 
 export function PaginatedTable<T extends object>({
   columns,
   data,
   pageSize = 10,
+  onRowClick,
 }: PaginatedTableProps<T>) {
   const [size, setSize] = React.useState(pageSize);
   const table = useReactTable({
@@ -72,7 +74,27 @@ export function PaginatedTable<T extends object>({
         </TableHeader>
         <TableBody>
           {table.getRowModel().rows.map((row) => (
-            <TableRow key={row.id}>
+            <TableRow
+              key={row.id}
+              className={
+                onRowClick ? "cursor-pointer hover:bg-muted/50 transition-colors" : undefined
+              }
+              onClick={
+                onRowClick
+                  ? (e) => {
+                      const target = e.target as HTMLElement;
+                      if (
+                        target.closest(
+                          "button, a, input, select, textarea, [role='menuitem'], [data-radix-collection-item], [data-prevent-row-click]",
+                        )
+                      ) {
+                        return;
+                      }
+                      onRowClick(row.original);
+                    }
+                  : undefined
+              }
+            >
               {row.getVisibleCells().map((cell) => (
                 <TableCell
                   key={cell.id}

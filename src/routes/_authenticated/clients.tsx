@@ -376,7 +376,23 @@ function ClientsPage() {
   const qc = useQueryClient();
 
   const [search, setSearch] = useState("");
-  const [companyFilter, setCompanyFilter] = useState("all");
+  const [companyFilter, setCompanyFilter] = useState(() => {
+    if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search);
+      return p.get("companyId") || p.get("companyFilter") || "all";
+    }
+    return "all";
+  });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search);
+      const paramComp = p.get("companyId") || p.get("companyFilter");
+      if (paramComp && paramComp !== companyFilter) {
+        setCompanyFilter(paramComp);
+      }
+    }
+  }, []);
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [verFilter, setVerFilter] = useState("all");
