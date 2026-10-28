@@ -206,6 +206,7 @@ export function ShareholderStatementDialog({
         grossAmount: number;
         taxAmount: number;
         bonusTax?: number;
+        bonusTaxDeducted?: boolean;
         netAmount: number;
         paidAmount: number;
         remainingAmount: number;
@@ -341,7 +342,13 @@ export function ShareholderStatementDialog({
         const totalKitta = Number(r.after_bonus_kitta || baseKitta + bonusKitta || baseKitta || 0);
         const bonusTax = Number(r.bonus_tax || 0);
         const cashTax = Number(r.tax_amount || 0);
-        const totalTds = cashTax + bonusTax;
+        // In Nepal, when a company declares both Bonus Shares and Cash Dividend:
+        // Case A: Bonus tax is deducted from cash dividend (netAmt ≈ grossCash - cashTax - bonusTax).
+        // Case B: Company pays out net cash dividend without deducting bonus tax (netAmt ≈ grossCash - cashTax).
+        // To maintain strict accounting balance (Gross - TDS = Net), only include bonusTax in cash TDS if deducted.
+        const bonusTaxDeducted =
+          bonusTax > 0 && Math.abs(grossCash - cashTax - bonusTax - netAmt) < 0.05;
+        const totalTds = bonusTaxDeducted ? cashTax + bonusTax : cashTax;
 
         records.push({
           id: r.id,
@@ -357,6 +364,7 @@ export function ShareholderStatementDialog({
           grossAmount: grossCash,
           taxAmount: totalTds,
           bonusTax,
+          bonusTaxDeducted,
           netAmount: netAmt,
           paidAmount: paidAmt,
           remainingAmount: remAmt,
@@ -662,7 +670,7 @@ export function ShareholderStatementDialog({
         <td style="text-align: right; font-family: monospace;">${r.grossAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
         <td style="text-align: right; color: #d97706; font-family: monospace;">
           ${r.taxAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-          ${r.bonusTax && r.bonusTax > 0 ? `<div style="font-size: 7.5px; color: #92400e;">(Bonus: ${r.bonusTax.toLocaleString("en-IN", { minimumFractionDigits: 2 })})</div>` : ""}
+          ${r.bonusTax && r.bonusTax > 0 ? `<div style="font-size: 7.5px; color: #92400e;">(Bonus Tax: ${r.bonusTax.toLocaleString("en-IN", { minimumFractionDigits: 2 })}${r.bonusTaxDeducted ? "" : " not deducted"})</div>` : ""}
         </td>
         <td style="text-align: right; font-weight: 700; font-family: monospace; color: #0f172a;">${r.netAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
         <td style="text-align: right; font-weight: 700; font-family: monospace; color: #059669;">${r.paidAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
@@ -1262,8 +1270,9 @@ export function ShareholderStatementDialog({
                       <div>{r.taxAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</div>
                       {r.bonusTax && r.bonusTax > 0 ? (
                         <div className="text-[9.5px] text-muted-foreground font-normal">
-                          (Bonus: {r.bonusTax.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                          )
+                          (Bonus Tax:{" "}
+                          {r.bonusTax.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                          {r.bonusTaxDeducted ? "" : " not deducted"})
                         </div>
                       ) : null}
                     </TableCell>
