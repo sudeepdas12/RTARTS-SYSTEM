@@ -57,6 +57,7 @@ import {
   CheckCircle2,
   ArrowRight,
   Database,
+  Lock,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -173,8 +174,7 @@ function DeleteResultsSummary({ results }: { results: BulkDeleteResult[] }) {
 }
 
 function DataManagementPage() {
-  const { hasAny } = useAuth();
-  const isAdmin = hasAny(["admin"]);
+  const { isAdmin, loading: authLoading } = useAuth();
   const qc = useQueryClient();
   const search = Route.useSearch();
 
@@ -529,6 +529,23 @@ function DataManagementPage() {
         return null;
     }
   };
+
+  if (!authLoading && !isAdmin) {
+    return (
+      <div className="flex min-h-[60vh] flex-col items-center justify-center p-6 text-center">
+        <div className="h-14 w-14 rounded-full bg-rose-100 dark:bg-rose-950/50 flex items-center justify-center text-rose-600 dark:text-rose-400 mb-4">
+          <Lock className="h-7 w-7" />
+        </div>
+        <h2 className="text-xl font-bold tracking-tight">Administrator Access Required</h2>
+        <p className="text-sm text-muted-foreground mt-1.5 max-w-md">
+          Data management operations and database bulk purges require the administrator role.
+        </p>
+        <Button asChild variant="outline" className="mt-5">
+          <Link to="/dashboard">Return to Dashboard</Link>
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 p-6">

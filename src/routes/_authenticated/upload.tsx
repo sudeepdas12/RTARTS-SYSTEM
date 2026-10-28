@@ -1765,7 +1765,8 @@ function UploadRoute() {
                         size="sm"
                         className="gap-1.5 text-amber-700 hover:text-amber-800 border-amber-300 dark:text-amber-400 dark:border-amber-800"
                       >
-                        <RotateCcw className="h-4 w-4" /> Manage &amp; Rollback
+                        <RotateCcw className="h-4 w-4" />{" "}
+                        {isAdmin ? "Manage & Rollback" : "View Upload History"}
                       </Button>
                     </Link>
                     <Button
@@ -1836,7 +1837,8 @@ function UploadRoute() {
                       size="sm"
                       className="gap-1.5 text-amber-700 hover:text-amber-800 border-amber-300 dark:text-amber-400 dark:border-amber-800"
                     >
-                      <RotateCcw className="h-4 w-4" /> Manage &amp; Rollback
+                      <RotateCcw className="h-4 w-4" />{" "}
+                      {isAdmin ? "Manage & Rollback" : "View Upload History"}
                     </Button>
                   </Link>
                   <Button size="sm" onClick={reset}>
@@ -1937,7 +1939,8 @@ function UploadRoute() {
                         size="sm"
                         className="gap-1.5 text-amber-700 hover:text-amber-800 border-amber-300 dark:text-amber-400 dark:border-amber-800"
                       >
-                        <RotateCcw className="h-4 w-4" /> Manage &amp; Rollback
+                        <RotateCcw className="h-4 w-4" />{" "}
+                        {isAdmin ? "Manage & Rollback" : "View Upload History"}
                       </Button>
                     </Link>
                     <Button size="sm" onClick={reset}>

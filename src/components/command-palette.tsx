@@ -74,7 +74,7 @@ const routes: CommandRoute[] = [
     url: "/approvals",
     icon: ClipboardCheck,
     group: "Operations",
-    roles: ["admin", "supervisor", "approver", "checker"],
+    roles: ["admin", "supervisor", "approver", "checker", "auditor"],
   },
   { title: "Upload Data", url: "/upload", icon: Upload, group: "Operations" },
   { title: "Upload History", url: "/upload-history", icon: History, group: "Operations" },
@@ -85,7 +85,7 @@ const routes: CommandRoute[] = [
     url: "/classification-review",
     icon: ListChecks,
     group: "Insights & Operations",
-    roles: ["admin", "supervisor", "checker", "approver", "operator"],
+    roles: ["admin", "supervisor", "checker", "approver", "operator", "auditor"],
   },
   {
     title: "Audit Log",
@@ -99,7 +99,7 @@ const routes: CommandRoute[] = [
     url: "/data-management",
     icon: Database,
     group: "Insights & Operations",
-    roles: ["admin", "supervisor"],
+    roles: ["admin"],
   },
   {
     title: "Users & Roles",
@@ -113,14 +113,14 @@ const routes: CommandRoute[] = [
     url: "/settings/fiscal-years",
     icon: Calendar,
     group: "Administration",
-    roles: ["admin", "supervisor"],
+    roles: ["admin"],
   },
   {
     title: "Backup & Recovery",
     url: "/backup",
     icon: HardDrive,
     group: "Administration",
-    roles: ["admin", "supervisor"],
+    roles: ["admin"],
   },
   {
     title: "System Settings",

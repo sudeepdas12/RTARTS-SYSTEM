@@ -87,7 +87,7 @@ const sections: NavSection[] = [
         title: "Pending Approvals",
         url: "/approvals",
         icon: ClipboardCheck,
-        roles: ["admin", "supervisor", "approver", "checker"] as AppRole[],
+        roles: ["admin", "supervisor", "approver", "checker", "auditor"] as AppRole[],
       },
       { title: "Upload Data", url: "/upload", icon: Upload },
       { title: "Upload History", url: "/upload-history", icon: History },
@@ -102,13 +102,13 @@ const sections: NavSection[] = [
         title: "Data Management",
         url: "/data-management",
         icon: Database,
-        roles: ["admin", "supervisor"] as AppRole[],
+        roles: ["admin"] as AppRole[],
       },
       {
         title: "Classification Review",
         url: "/classification-review",
         icon: ListChecks,
-        roles: ["admin", "supervisor", "checker", "approver", "operator"] as AppRole[],
+        roles: ["admin", "supervisor", "checker", "approver", "operator", "auditor"] as AppRole[],
       },
       {
         title: "Audit Log",
@@ -120,20 +120,20 @@ const sections: NavSection[] = [
   },
   {
     label: "Administration",
-    roles: ["admin", "supervisor"] as AppRole[],
+    roles: ["admin"] as AppRole[],
     items: [
       { title: "Users & Roles", url: "/users", icon: UserCog, roles: ["admin"] as AppRole[] },
       {
         title: "Fiscal Years",
         url: "/settings/fiscal-years",
         icon: Calendar,
-        roles: ["admin", "supervisor"] as AppRole[],
+        roles: ["admin"] as AppRole[],
       },
       {
         title: "Backup & Recovery",
         url: "/backup",
         icon: HardDrive,
-        roles: ["admin", "supervisor"] as AppRole[],
+        roles: ["admin"] as AppRole[],
       },
       { title: "System Settings", url: "/settings", icon: Settings, roles: ["admin"] as AppRole[] },
     ],

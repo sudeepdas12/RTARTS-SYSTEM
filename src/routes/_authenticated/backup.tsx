@@ -29,8 +29,8 @@ export const Route = createFileRoute("/_authenticated/backup")({
 });
 
 function BackupPage() {
-  const { hasAny, loading } = useAuth();
-  const canAccess = hasAny(["admin", "supervisor"]);
+  const { isAdmin, loading } = useAuth();
+  const canAccess = isAdmin;
 
   const [isExportingBackup, setIsExportingBackup] = useState(false);
   const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
@@ -43,6 +43,10 @@ function BackupPage() {
   };
 
   const handleExportFullExcel = async () => {
+    if (!isAdmin) {
+      toast.error("Unauthorized: Full database backups require admin privileges.");
+      return;
+    }
     setIsExportingBackup(true);
     try {
       toast.info("Generating full system Excel backup...");
@@ -58,6 +62,10 @@ function BackupPage() {
   };
 
   const handleExportFullJson = async () => {
+    if (!isAdmin) {
+      toast.error("Unauthorized: Full database backups require admin privileges.");
+      return;
+    }
     setIsExportingBackup(true);
     try {
       toast.info("Generating full system JSON archive...");

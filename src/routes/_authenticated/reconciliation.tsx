@@ -473,6 +473,10 @@ export function ReconciliationRoute() {
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canApply) {
+      toast.error("Unauthorized: Read-only accounts cannot upload files for reconciliation.");
+      return;
+    }
     const files = Array.from(e.target.files || []);
     e.target.value = "";
     if (!files.length) return;
@@ -480,6 +484,12 @@ export function ReconciliationRoute() {
   };
 
   const handleBankStatementUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canApply) {
+      toast.error(
+        "Unauthorized: Read-only accounts cannot upload bank statements for reconciliation.",
+      );
+      return;
+    }
     const files = Array.from(e.target.files || []);
     e.target.value = "";
     if (!files.length) return;
@@ -686,6 +696,10 @@ export function ReconciliationRoute() {
   };
 
   const handleSaveReconciliation = async () => {
+    if (!canApply) {
+      toast.error("Unauthorized: Read-only accounts cannot modify reconciliation data.");
+      return;
+    }
     if (!report?.matches?.length) {
       toast.error("No reconciliation report to save.");
       return;
@@ -1404,42 +1418,53 @@ export function ReconciliationRoute() {
                 ))}
               </SelectContent>
             </Select>
-            <Button
-              variant="default"
-              className="cursor-pointer"
-              disabled={isProcessing || isSaving || isApplying}
-              onClick={() => headerExcelInputRef.current?.click()}
-            >
-              <Upload className="w-4 h-4 mr-2" />
-              {isProcessing ? "Analyzing..." : "Upload Excel File(s)"}
-            </Button>
-            <input
-              ref={headerExcelInputRef}
-              id="reconcile-excel-upload"
-              type="file"
-              multiple
-              accept=".xlsx,.xls,.csv"
-              className="hidden"
-              onChange={handleFileUpload}
-            />
-            <Button
-              variant="outline"
-              className="cursor-pointer"
-              disabled={isProcessing || isSaving || isApplying}
-              onClick={() => headerBankInputRef.current?.click()}
-            >
-              <FileSpreadsheet className="w-4 h-4 mr-2" />
-              {isProcessing ? "Analyzing..." : "Upload Bank Statement(s)"}
-            </Button>
-            <input
-              ref={headerBankInputRef}
-              id="reconcile-bank-upload"
-              type="file"
-              multiple
-              accept=".xls,.xlsx,.xlsm,.csv,.txt"
-              className="hidden"
-              onChange={handleBankStatementUpload}
-            />
+            {canApply ? (
+              <>
+                <Button
+                  variant="default"
+                  className="cursor-pointer"
+                  disabled={isProcessing || isSaving || isApplying}
+                  onClick={() => headerExcelInputRef.current?.click()}
+                >
+                  <Upload className="w-4 h-4 mr-2" />
+                  {isProcessing ? "Analyzing..." : "Upload Excel File(s)"}
+                </Button>
+                <input
+                  ref={headerExcelInputRef}
+                  id="reconcile-excel-upload"
+                  type="file"
+                  multiple
+                  accept=".xlsx,.xls,.csv"
+                  className="hidden"
+                  onChange={handleFileUpload}
+                />
+                <Button
+                  variant="outline"
+                  className="cursor-pointer"
+                  disabled={isProcessing || isSaving || isApplying}
+                  onClick={() => headerBankInputRef.current?.click()}
+                >
+                  <FileSpreadsheet className="w-4 h-4 mr-2" />
+                  {isProcessing ? "Analyzing..." : "Upload Bank Statement(s)"}
+                </Button>
+                <input
+                  ref={headerBankInputRef}
+                  id="reconcile-bank-upload"
+                  type="file"
+                  multiple
+                  accept=".xls,.xlsx,.xlsm,.csv,.txt"
+                  className="hidden"
+                  onChange={handleBankStatementUpload}
+                />
+              </>
+            ) : (
+              <Badge
+                variant="outline"
+                className="text-amber-700 dark:text-amber-300 border-amber-300 bg-amber-50 dark:bg-amber-950/20 text-xs px-2.5 py-1"
+              >
+                Read-Only Audit Mode — Viewing Historical Lots & Verification Records
+              </Badge>
+            )}
           </div>
           <p className="text-[11px] text-muted-foreground">
             Multi-file upload enabled • Hold Ctrl / Shift to select multiple files at once
@@ -1472,14 +1497,16 @@ export function ReconciliationRoute() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleSaveReconciliation}
-                disabled={isSaving || isProcessing || isApplying}
-              >
-                {isSaving ? "Saving..." : "Save Reconciliation"}
-              </Button>
+              {canApply && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleSaveReconciliation}
+                  disabled={isSaving || isProcessing || isApplying}
+                >
+                  {isSaving ? "Saving..." : "Save Reconciliation"}
+                </Button>
+              )}
               {canApply && (
                 <Button
                   variant="default"
@@ -2371,43 +2398,57 @@ export function ReconciliationRoute() {
                   ))}
                 </SelectContent>
               </Select>
-              <Button
-                size="lg"
-                className="cursor-pointer"
-                disabled={isProcessing}
-                onClick={() => bodyExcelInputRef.current?.click()}
-              >
-                <Upload className="w-5 h-5 mr-2" />
-                Select Excel File(s)
-              </Button>
-              <input
-                ref={bodyExcelInputRef}
-                id="reconcile-file-upload-body"
-                type="file"
-                multiple
-                accept=".xlsx,.xls,.csv"
-                className="hidden"
-                onChange={handleFileUpload}
-              />
-              <Button
-                size="lg"
-                variant="outline"
-                className="cursor-pointer"
-                disabled={isProcessing}
-                onClick={() => bodyBankInputRef.current?.click()}
-              >
-                <FileSpreadsheet className="w-5 h-5 mr-2" />
-                Select Bank Statement(s)
-              </Button>
-              <input
-                ref={bodyBankInputRef}
-                id="reconcile-bank-upload-body"
-                type="file"
-                multiple
-                accept=".xls,.xlsx,.xlsm,.csv,.txt"
-                className="hidden"
-                onChange={handleBankStatementUpload}
-              />
+              {canApply ? (
+                <>
+                  <Button
+                    size="lg"
+                    className="cursor-pointer"
+                    disabled={isProcessing}
+                    onClick={() => bodyExcelInputRef.current?.click()}
+                  >
+                    <Upload className="w-5 h-5 mr-2" />
+                    Select Excel File(s)
+                  </Button>
+                  <input
+                    ref={bodyExcelInputRef}
+                    id="reconcile-file-upload-body"
+                    type="file"
+                    multiple
+                    accept=".xlsx,.xls,.csv"
+                    className="hidden"
+                    onChange={handleFileUpload}
+                  />
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    className="cursor-pointer"
+                    disabled={isProcessing}
+                    onClick={() => bodyBankInputRef.current?.click()}
+                  >
+                    <FileSpreadsheet className="w-5 h-5 mr-2" />
+                    Select Bank Statement(s)
+                  </Button>
+                  <input
+                    ref={bodyBankInputRef}
+                    id="reconcile-bank-upload-body"
+                    type="file"
+                    multiple
+                    accept=".xls,.xlsx,.xlsm,.csv,.txt"
+                    className="hidden"
+                    onChange={handleBankStatementUpload}
+                  />
+                </>
+              ) : (
+                <div className="py-2.5 px-4 rounded-lg bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 text-center">
+                  <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
+                    Audit &amp; Inspection Mode
+                  </p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    Select a saved reconciliation lot from the historical lots tab to inspect
+                    matches.
+                  </p>
+                </div>
+              )}
             </div>
             <p className="text-xs text-muted-foreground">
               Multi-file upload enabled • Hold Ctrl / Shift to select multiple files at once, or

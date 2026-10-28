@@ -236,8 +236,10 @@ function UploadHistoryRoute() {
 
   const rollbackMutation = useMutation({
     mutationFn: async (record: any) => {
-      if (!isAdmin && !hasRole("supervisor") && !hasRole("finance_operator")) {
-        throw new Error("Only administrators and supervisors are authorized to roll back uploads.");
+      if (!isAdmin) {
+        throw new Error(
+          "Access denied: Rollback operations are strictly restricted to administrators.",
+        );
       }
       return await UploadService.rollbackUpload(record.id, record.target_table);
     },
@@ -317,7 +319,11 @@ function UploadHistoryRoute() {
       <div className="flex items-start justify-between gap-3">
         <PageHeader
           title="Upload History"
-          description="Track all file imports — view row counts, errors, and rollback completed uploads."
+          description={
+            isAdmin
+              ? "Track all file imports — view row counts, errors, and rollback completed uploads."
+              : "Track all file imports — view row counts, processing status, and error logs."
+          }
         />
         <Button
           variant="outline"
@@ -576,25 +582,25 @@ function UploadHistoryRoute() {
                           </Button>
                         )}
 
-                        {record.status !== "RolledBack" && (
+                        {isAdmin && record.status !== "RolledBack" && (
                           <Button
                             variant="ghost"
                             size="icon"
                             className="h-7 w-7 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950/30"
-                            title="Rollback this upload"
+                            title="Rollback this upload (Admin only)"
                             onClick={() => setRollbackRecord(record)}
                           >
                             <RotateCcw className="h-3.5 w-3.5" />
                           </Button>
                         )}
 
-                        {/* Mark as Failed (for stuck Processing records) */}
-                        {record.status === "Processing" && (
+                        {/* Mark as Failed (for stuck Processing records - Admin only) */}
+                        {isAdmin && record.status === "Processing" && (
                           <Button
                             variant="ghost"
                             size="icon"
                             className="h-7 w-7 text-destructive hover:bg-destructive/10"
-                            title="Mark as Failed (stuck record)"
+                            title="Mark as Failed (Admin only)"
                             onClick={() => setMarkFailedRecord(record)}
                           >
                             <AlertTriangle className="h-3.5 w-3.5" />
@@ -639,9 +645,9 @@ function UploadHistoryRoute() {
         )}
       </Card>
 
-      {/* Rollback Confirmation */}
+      {/* Rollback Confirmation (Admin Only) */}
       <AlertDialog
-        open={!!rollbackRecord}
+        open={isAdmin && !!rollbackRecord}
         onOpenChange={(open) => !open && setRollbackRecord(null)}
       >
         <AlertDialogContent>

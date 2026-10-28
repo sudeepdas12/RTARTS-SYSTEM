@@ -486,7 +486,7 @@ export const UploadService = {
     return {
       success: Boolean(data?.success),
       sheetsRolledBack: Number(data?.sheets_rolled_back || 0),
-      payablesDeleted: Number(data?.payables_deleted || 0),
+      payablesDeleted: Number(data?.payables_deleted ?? data?.total_payables_deleted ?? 0),
     };
   },
 };
