@@ -5,6 +5,7 @@ export interface ModernStatementShareholder {
   fatherName?: string;
   boid: string;
   pan?: string;
+  citizenship?: string;
   holderType?: string;
   bankName?: string;
   bankAccountNo?: string;
@@ -160,22 +161,22 @@ export const ExcelExporter = {
       "Father's Name:",
       shareholder.fatherName || "—",
       "",
-      "PAN / Citizenship:",
+      "PAN Number:",
       String(shareholder.pan || "—"),
     ]);
     aoa.push([
       "Holder Category:",
       shareholder.holderType || "Natural Person - Public",
       "",
-      "Bank Name:",
-      shareholder.bankName || "—",
+      "Citizenship No.:",
+      String(shareholder.citizenship || "—"),
     ]);
     aoa.push([
       "Contact Phone:",
       shareholder.phone || "—",
       "",
-      "Bank Account No.:",
-      String(shareholder.bankAccountNo || "—"),
+      "Bank Account:",
+      `${shareholder.bankName ? `${shareholder.bankName} - ` : ""}${shareholder.bankAccountNo || "—"}`,
     ]);
     aoa.push([]); // blank separator
 

@@ -570,6 +570,28 @@ export function ShareholderStatementDialog({
     return active ? Number(active.totalKitta || active.kitta) : 0;
   }, [filteredRecords]);
 
+  // Distinct resolution of PAN vs Citizenship Number
+  const resolvedPan = useMemo(() => {
+    const rawPan = (clientInfo?.pan_no || "").trim();
+    if (rawPan) return rawPan;
+    const rawPoc = (clientInfo?.pan_or_citizenship || "").trim();
+    if (rawPoc && /^\d{9}$/.test(rawPoc)) {
+      return rawPoc;
+    }
+    return null;
+  }, [clientInfo]);
+
+  const resolvedCitizenship = useMemo(() => {
+    const rawCtz = (clientInfo?.citizenship_no || "").trim();
+    if (rawCtz) return rawCtz;
+    const rawPoc = (clientInfo?.pan_or_citizenship || "").trim();
+    const rawPan = (clientInfo?.pan_no || "").trim();
+    if (rawPoc && rawPoc !== rawPan && !/^\d{9}$/.test(rawPoc)) {
+      return rawPoc;
+    }
+    return null;
+  }, [clientInfo]);
+
   const handleExport = () => {
     if (!statementRecords.length) return;
     ExcelExporter.exportModernStatement({
@@ -580,8 +602,8 @@ export function ShareholderStatementDialog({
         name: clientInfo?.full_name || "Shareholder",
         fatherName: clientInfo?.father_name || undefined,
         boid: resolvedBoid || "—",
-        pan:
-          clientInfo?.pan_no || clientInfo?.citizenship_no || clientInfo?.pan_or_citizenship || "—",
+        pan: resolvedPan || "—",
+        citizenship: resolvedCitizenship || "—",
         holderType: clientInfo?.holder_type || "Natural Person - Public",
         bankName: clientInfo?.bank_name || "—",
         bankAccountNo: clientInfo?.bank_account_no || "—",
@@ -719,7 +741,7 @@ export function ShareholderStatementDialog({
             padding: 8px 12px;
             margin-bottom: 10px;
             display: grid;
-            grid-template-columns: 1.2fr 1fr 1fr 1fr;
+            grid-template-columns: 1.2fr 1.1fr 0.9fr 1.1fr 1.2fr;
             gap: 8px;
           }
           .info-col label {
@@ -873,8 +895,13 @@ export function ShareholderStatementDialog({
             <div style="font-size: 8.5px; color: #64748b;">${escapeHtml(clientInfo?.holder_type || "Natural Person - Public")}</div>
           </div>
           <div class="info-col">
-            <label>PAN / Citizenship</label>
-            <span>${escapeHtml(clientInfo?.pan_no || clientInfo?.citizenship_no || clientInfo?.pan_or_citizenship || "—")}</span>
+            <label>PAN Number</label>
+            <span style="font-family: monospace;">${escapeHtml(resolvedPan || "—")}</span>
+            <div style="font-size: 8.5px; color: #64748b;">${resolvedPan ? "Registered" : "Not Registered"}</div>
+          </div>
+          <div class="info-col">
+            <label>Citizenship No.</label>
+            <span style="font-family: monospace; font-size: 10px;">${escapeHtml(resolvedCitizenship || "—")}</span>
             ${clientInfo?.phone ? `<div style="font-size: 8.5px; color: #64748b;">Ph: ${escapeHtml(clientInfo.phone)}</div>` : ""}
           </div>
           <div class="info-col">
@@ -1016,14 +1043,17 @@ export function ShareholderStatementDialog({
         </DialogHeader>
 
         {/* Shareholder Metadata Header */}
-        <div className="bg-muted/30 p-3.5 rounded-lg border text-xs grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="bg-muted/30 p-3.5 rounded-lg border text-xs grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
           <div>
             <span className="text-muted-foreground block text-[11px]">Shareholder Name</span>
-            <span className="font-bold text-foreground text-sm">
+            <span
+              className="font-bold text-foreground text-sm truncate block"
+              title={clientInfo?.full_name || "—"}
+            >
               {clientInfo?.full_name || "—"}
             </span>
             {clientInfo?.father_name && (
-              <span className="text-[10px] text-muted-foreground block">
+              <span className="text-[10px] text-muted-foreground block truncate">
                 s/o {clientInfo.father_name}
               </span>
             )}
@@ -1031,30 +1061,50 @@ export function ShareholderStatementDialog({
           <div>
             <span className="text-muted-foreground block text-[11px]">BOID (Demat No.)</span>
             <span className="font-mono font-bold text-primary block">{resolvedBoid || "—"}</span>
-            <span className="text-[10px] text-muted-foreground">
+            <span className="text-[10px] text-muted-foreground block truncate">
               {clientInfo?.holder_type || "Natural Person - Public"}
             </span>
           </div>
           <div>
-            <span className="text-muted-foreground block text-[11px]">Bank Account</span>
-            <span className="font-medium text-foreground truncate block">
-              {clientInfo?.bank_name || "—"}
+            <span className="text-muted-foreground block text-[11px]">PAN Number</span>
+            <span className="font-mono font-bold text-foreground block">
+              {resolvedPan || <span className="font-normal text-muted-foreground">—</span>}
             </span>
-            <span className="font-mono text-[10px] text-muted-foreground">
-              {clientInfo?.bank_account_no || "—"}
+            <span className="text-[10px] text-muted-foreground block">
+              {resolvedPan ? (
+                <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                  Registered
+                </span>
+              ) : (
+                "Not Registered"
+              )}
             </span>
           </div>
           <div>
-            <span className="text-muted-foreground block text-[11px]">PAN / Citizenship</span>
-            <span className="font-mono font-bold text-foreground block">
-              {clientInfo?.pan_no ||
-                clientInfo?.citizenship_no ||
-                clientInfo?.pan_or_citizenship ||
-                "—"}
+            <span className="text-muted-foreground block text-[11px]">Citizenship No</span>
+            <span
+              className="font-mono font-bold text-foreground block truncate"
+              title={resolvedCitizenship || "—"}
+            >
+              {resolvedCitizenship || <span className="font-normal text-muted-foreground">—</span>}
             </span>
             {clientInfo?.phone && (
-              <span className="text-[10px] text-muted-foreground">Phone: {clientInfo.phone}</span>
+              <span className="text-[10px] text-muted-foreground block truncate">
+                Phone: {clientInfo.phone}
+              </span>
             )}
+          </div>
+          <div>
+            <span className="text-muted-foreground block text-[11px]">Registered Bank Account</span>
+            <span
+              className="font-medium text-foreground truncate block"
+              title={clientInfo?.bank_name || "—"}
+            >
+              {clientInfo?.bank_name || "—"}
+            </span>
+            <span className="font-mono text-[10px] text-muted-foreground block">
+              {clientInfo?.bank_account_no || "—"}
+            </span>
           </div>
         </div>
 
