@@ -18,10 +18,7 @@ import { fetchAllRows } from "./services/database";
  */
 
 export type PayeeClassification =
-  | "NATURAL_PERSON"
-  | "PUBLIC_LEGAL_PERSON"
-  | "COMPANY_INSTITUTION"
-  | "TAX_EXEMPT";
+  "NATURAL_PERSON" | "PUBLIC_LEGAL_PERSON" | "COMPANY_INSTITUTION" | "TAX_EXEMPT";
 
 export type PayeeSegment = "PROMOTER" | "LOCAL" | "PUBLIC" | null;
 
@@ -52,7 +49,7 @@ async function assertAdmin(context: { supabase: any; userId: string }) {
   }
 }
 
-const ALLOWED_REVIEW_ROLES = ["admin", "supervisor", "checker", "approver", "operator"];
+const ALLOWED_REVIEW_ROLES = ["admin", "supervisor", "checker", "approver", "operator", "auditor"];
 
 async function assertReviewAccess(context: {
   supabase: any;
@@ -73,7 +70,7 @@ async function assertReviewAccess(context: {
     throw new Error("You do not have permission to access payee classification review.");
   }
 
-  const isGlobal = userRoles.some((r: string) => r === "admin" || r === "supervisor");
+  const isGlobal = userRoles.some((r: string) => ["admin", "supervisor", "auditor"].includes(r));
   if (isGlobal) {
     return { isGlobal: true, allowedCompanyIds: null };
   }
@@ -84,8 +81,34 @@ async function assertReviewAccess(context: {
     .select("company_id")
     .eq("user_id", context.userId);
 
-  const allowedCompanyIds = (accessRows || []).map((r: any) => r.company_id).filter(Boolean);
-  return { isGlobal: false, allowedCompanyIds };
+  if (accessRows && accessRows.length > 0) {
+    const allowedCompanyIds = accessRows.map((r: any) => r.company_id).filter(Boolean);
+    return { isGlobal: false, allowedCompanyIds };
+  }
+
+  // Operational users without explicit restriction rows have default global view access
+  return { isGlobal: true, allowedCompanyIds: null };
+}
+
+async function assertReviewMutationAccess(context: { supabase: any; userId: string }) {
+  const { data: roleRows, error } = await context.supabase
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", context.userId);
+
+  if (error || !roleRows || roleRows.length === 0) {
+    throw new Error("Unauthorized: Access denied.");
+  }
+
+  const userRoles = roleRows.map((r: any) => r.role);
+  const canMutate = userRoles.some((r: string) =>
+    ["admin", "supervisor", "checker", "approver", "operator"].includes(r),
+  );
+  if (!canMutate) {
+    throw new Error(
+      "Unauthorized: Auditors and read-only roles cannot modify payee classifications.",
+    );
+  }
 }
 
 /**
@@ -136,6 +159,7 @@ export const adminConfirmClientClassification = createServerFn({ method: "POST" 
   )
   .middleware([requireSupabaseAuth])
   .handler(async ({ data, context }) => {
+    await assertReviewMutationAccess(context);
     const { isGlobal, allowedCompanyIds } = await assertReviewAccess(context);
 
     if (data.classification === "UNCLASSIFIED") {
