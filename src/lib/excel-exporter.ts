@@ -216,10 +216,17 @@ export const ExcelExporter = {
     aoa.push(headers);
 
     // 5. Ledger Data Rows
-    // In multi-year ledgers, holding is a point-in-time stock balance.
-    // We report the latest active holding rather than summing historical balances across years.
-    const activeRecord = records.find((r) => Number(r.totalKitta || r.kitta) > 0);
-    const latestHolding = activeRecord ? Number(activeRecord.totalKitta || activeRecord.kitta) : 0;
+    // In multi-year ledgers of a single company, holding is a point-in-time stock balance.
+    // For single-company statements, we report the latest active holding rather than summing.
+    // For consolidated multi-company statements, holding is multi-asset and shown as "—".
+    const distinctCompanies = new Set(records.map((r) => r.companyName || r.companyCode));
+    const isMultiCompany = distinctCompanies.size > 1;
+    const activeRecord = !isMultiCompany
+      ? records.find((r) => Number(r.totalKitta || r.kitta) > 0)
+      : null;
+    const latestHolding = activeRecord
+      ? Number(activeRecord.totalKitta || activeRecord.kitta)
+      : "—";
 
     records.forEach((r, idx) => {
       const net = Number(r.netAmount || 0);

@@ -564,11 +564,16 @@ export function ShareholderStatementDialog({
     return { gross, tax, net, paid, pending };
   }, [filteredRecords]);
 
+  const isMultiCompany = useMemo(() => {
+    const distinct = new Set(filteredRecords.map((r) => r.companyName || r.companyCode));
+    return distinct.size > 1;
+  }, [filteredRecords]);
+
   const latestHoldingKitta = useMemo(() => {
-    if (!filteredRecords.length) return 0;
+    if (!filteredRecords.length || isMultiCompany) return 0;
     const active = filteredRecords.find((r) => Number(r.totalKitta || r.kitta) > 0);
     return active ? Number(active.totalKitta || active.kitta) : 0;
-  }, [filteredRecords]);
+  }, [filteredRecords, isMultiCompany]);
 
   // Distinct resolution of PAN vs Citizenship Number
   const resolvedPan = useMemo(() => {
@@ -1323,7 +1328,11 @@ export function ShareholderStatementDialog({
                   </TableCell>
                   <TableCell
                     className="text-right font-mono font-bold text-primary"
-                    title="Latest Active Holding Balance"
+                    title={
+                      isMultiCompany
+                        ? "Consolidated Portfolio (Various Holdings)"
+                        : "Latest Active Holding Balance"
+                    }
                   >
                     {latestHoldingKitta > 0 ? latestHoldingKitta.toLocaleString() : "—"}
                   </TableCell>
