@@ -59,10 +59,13 @@ import {
   FileText,
   AlertTriangle,
   X,
+  Mail,
 } from "lucide-react";
 import { toast } from "sonner";
 import { exportToExcel, importFromExcel } from "@/lib/xlsx-utils";
 import { ShareholderStatementDialog } from "@/components/shareholder-statement-dialog";
+import { ShareholderNoticeDialog } from "@/components/shareholder-notice-dialog";
+import { ShareholderNoticeService } from "@/lib/services/shareholder-notice.service";
 import { normalizeBoid } from "@/lib/validation-engine";
 
 export const Route = createFileRoute("/_authenticated/clients")({
@@ -390,6 +393,8 @@ function ClientsPage() {
   const [isCounterSearching, setIsCounterSearching] = useState(false);
   const [counterSearchResults, setCounterSearchResults] = useState<any[] | null>(null);
   const [showCounterDropdown, setShowCounterDropdown] = useState(false);
+  const [noticeDialogOpen, setNoticeDialogOpen] = useState(false);
+  const [noticeTargetClient, setNoticeTargetClient] = useState<any | null>(null);
 
   const handleCounterLookup = async (queryToSearch?: string) => {
     const raw = (queryToSearch !== undefined ? queryToSearch : counterQuery).trim();
@@ -1124,6 +1129,18 @@ function ClientsPage() {
                 <Button
                   variant="outline"
                   size="sm"
+                  onClick={() => {
+                    setNoticeTargetClient(null);
+                    setNoticeDialogOpen(true);
+                  }}
+                  className="hover-lift border-primary/30 text-primary hover:bg-primary/5 cursor-pointer"
+                  title="Send KYC & Bank Detail Update Notices via Email"
+                >
+                  <Mail className="mr-2 h-4 w-4" /> Send KYC Notices
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={() => fileRef.current?.click()}
                   className="hover-lift"
                 >
@@ -1574,6 +1591,35 @@ function ClientsPage() {
                     <TableCell>{verificationBadge(c.verification_status)}</TableCell>
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex justify-end gap-1">
+                        {c.email &&
+                          (ShareholderNoticeService.isMissingBank(c) ||
+                            ShareholderNoticeService.isMissingPan(c)) && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950/50 cursor-pointer"
+                              onClick={() => {
+                                setNoticeTargetClient({
+                                  id: c.id,
+                                  full_name: c.full_name,
+                                  boid: c.boid,
+                                  email: c.email,
+                                  phone: c.phone,
+                                  bank_name: c.bank_name,
+                                  bank_account_no: c.bank_account_no,
+                                  pan_no: c.pan_no,
+                                  pan_or_citizenship: c.pan_or_citizenship,
+                                  citizenship_no: c.citizenship_no,
+                                  company_name: c.company?.company_name,
+                                  company_code: c.company?.company_code,
+                                });
+                                setNoticeDialogOpen(true);
+                              }}
+                              title="Send KYC / Bank Detail Update Notice via Email"
+                            >
+                              <Mail className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
                         <Button
                           size="icon"
                           variant="ghost"
@@ -1703,6 +1749,54 @@ function ClientsPage() {
                 </div>
               </div>
             )}
+
+            {editing &&
+              editing.email &&
+              (ShareholderNoticeService.isMissingBank(editing) ||
+                ShareholderNoticeService.isMissingPan(editing)) && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50/70 dark:bg-blue-950/40 p-3 text-xs text-blue-900 dark:text-blue-200 flex items-center justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    <Mail className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-semibold text-blue-950 dark:text-blue-100">
+                        Missing Details with Registered Email ({editing.email})
+                      </div>
+                      <div className="text-[11px] text-blue-700 dark:text-blue-300 leading-relaxed mt-0.5">
+                        {ShareholderNoticeService.isMissingBank(editing) &&
+                        ShareholderNoticeService.isMissingPan(editing)
+                          ? "Shareholder lacks both Bank Account details and PAN number."
+                          : ShareholderNoticeService.isMissingBank(editing)
+                            ? "Shareholder lacks verified Bank Account details for ConnectIPS."
+                            : "Shareholder lacks a registered 9-digit PAN number for tax credit."}
+                      </div>
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-300 border-blue-300 shrink-0 gap-1.5 cursor-pointer hover:bg-blue-100/50"
+                    onClick={() => {
+                      setNoticeTargetClient({
+                        id: editing.id,
+                        full_name: editing.full_name,
+                        boid: editing.boid,
+                        email: editing.email,
+                        phone: editing.phone,
+                        bank_name: editing.bank_name,
+                        bank_account_no: editing.bank_account_no,
+                        pan_no: editing.pan_no,
+                        pan_or_citizenship: editing.pan_or_citizenship,
+                        citizenship_no: editing.citizenship_no,
+                        company_name: editing.company?.company_name,
+                        company_code: editing.company?.company_code,
+                      });
+                      setNoticeDialogOpen(true);
+                    }}
+                  >
+                    <Mail className="h-3.5 w-3.5" /> Send Notice
+                  </Button>
+                </div>
+              )}
 
             {/* Portfolio & Company Holdings */}
             {editing?.company_details && editing.company_details.length > 0 && (
@@ -2180,6 +2274,17 @@ function ClientsPage() {
         open={!!selectedStatementBoid}
         onOpenChange={(open) => {
           if (!open) setSelectedStatementBoid(null);
+        }}
+      />
+
+      {/* Shareholder Missing Details KYC/Bank Notice Dialog */}
+      <ShareholderNoticeDialog
+        open={noticeDialogOpen}
+        onOpenChange={setNoticeDialogOpen}
+        client={noticeTargetClient}
+        defaultCompanyId={companyFilter !== "all" ? companyFilter : undefined}
+        onNoticeSent={() => {
+          qc.invalidateQueries({ queryKey: ["clients"] });
         }}
       />
     </div>
