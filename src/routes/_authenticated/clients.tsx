@@ -621,21 +621,48 @@ function ClientsPage() {
         };
       }
 
-      // Safe fallback for selected company: fetch a single paginated row to get total_count safely
+      // Safe fallback for selected company: fetch real counts dynamically from PostgreSQL
       try {
-        const { data: pData } = await (supabase as any).rpc("get_clients_paginated", {
-          p_company_id: companyFilter,
-          p_limit: 1,
-          p_offset: 0,
-        });
-        const total = pData && pData.length > 0 ? Number(pData[0].total_count) : 0;
+        const [totalRes, verifiedRes, pendingRes, naturalRes, instRes, reviewRes] =
+          await Promise.all([
+            (supabase as any)
+              .from("clients")
+              .select("id", { count: "exact", head: true })
+              .eq("company_id", companyFilter),
+            (supabase as any)
+              .from("clients")
+              .select("id", { count: "exact", head: true })
+              .eq("company_id", companyFilter)
+              .eq("verification_status", "Verified"),
+            (supabase as any)
+              .from("clients")
+              .select("id", { count: "exact", head: true })
+              .eq("company_id", companyFilter)
+              .eq("verification_status", "Pending"),
+            (supabase as any)
+              .from("clients")
+              .select("id", { count: "exact", head: true })
+              .eq("company_id", companyFilter)
+              .eq("payee_classification", "NATURAL_PERSON"),
+            (supabase as any)
+              .from("clients")
+              .select("id", { count: "exact", head: true })
+              .eq("company_id", companyFilter)
+              .in("payee_classification", ["COMPANY_INSTITUTION", "PUBLIC_LEGAL_PERSON"]),
+            (supabase as any)
+              .from("clients")
+              .select("id", { count: "exact", head: true })
+              .eq("company_id", companyFilter)
+              .eq("needs_review", true),
+          ]);
+
         return {
-          total,
-          verified: total,
-          pending: 0,
-          natural: total,
-          institutions: 0,
-          needsReview: 0,
+          total: totalRes.count || 0,
+          verified: verifiedRes.count || 0,
+          pending: pendingRes.count || 0,
+          natural: naturalRes.count || 0,
+          institutions: instRes.count || 0,
+          needsReview: reviewRes.count || 0,
         };
       } catch {
         return {
@@ -1020,7 +1047,9 @@ function ClientsPage() {
           verification_status: d.verification_status,
           status: d.status,
         })),
-        "clients_register",
+        companyFilter !== "all"
+          ? `clients_register_${companies.find((c) => c.id === companyFilter)?.company_code || "export"}`
+          : "clients_register_all",
       );
       toast.success(`Successfully exported ${allData.length.toLocaleString()} clients`);
     } catch (e: any) {
@@ -1028,93 +1057,220 @@ function ClientsPage() {
     }
   };
 
+  function getClientField(row: Record<string, unknown>, ...aliases: string[]): any {
+    for (const [key, val] of Object.entries(row)) {
+      const cleanKey = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+      for (const alias of aliases) {
+        const cleanAlias = alias.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (
+          cleanKey === cleanAlias &&
+          val !== undefined &&
+          val !== null &&
+          String(val).trim() !== ""
+        ) {
+          return val;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  function parseClientDate(val: any): string | null {
+    if (!val) return null;
+    if (val instanceof Date) return val.toISOString().slice(0, 10);
+    if (typeof val === "number" && val > 20000 && val < 60000) {
+      const d = new Date(Math.round((val - 25569) * 86400 * 1000));
+      return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+    }
+    const str = String(val).trim();
+    return /^\d{4}-\d{2}-\d{2}$/.test(str) ? str : str || null;
+  }
+
   const handleImport = async (file: File) => {
     try {
       const rows = await importFromExcel<Record<string, unknown>>(file);
       const clean = rows
-        .filter((r) => r.client_code && r.full_name)
-        .map((r) => {
-          const pan = r.pan_no
-            ? String(r.pan_no).trim()
-            : r.pan
-              ? String(r.pan).trim()
-              : r.PAN
-                ? String(r.PAN).trim()
-                : r["PAN NO"]
-                  ? String(r["PAN NO"]).trim()
-                  : null;
-          const ctz = r.citizenship_no
-            ? String(r.citizenship_no).trim()
-            : r.citizenship
-              ? String(r.citizenship).trim()
-              : r.CITIZENSHIP
-                ? String(r.CITIZENSHIP).trim()
-                : r["CITIZENSHIP NO"]
-                  ? String(r["CITIZENSHIP NO"]).trim()
-                  : null;
-          const legacyPanCtz = r.pan_or_citizenship ? String(r.pan_or_citizenship).trim() : null;
-          const payeeClass =
-            (r.payee_classification as PayeeClassification) ??
-            (r.classification as PayeeClassification) ??
-            (r["PAYEE CLASSIFICATION"] as PayeeClassification) ??
-            "NATURAL_PERSON";
-          // Resolve company_id: prefer explicit UUID → code lookup → active filter → null
-          const rowCompanyCode = r.company_code ? String(r.company_code).trim() : null;
-          const resolvedCompanyId = r.company_id
-            ? String(r.company_id).trim()
+        .map((r, idx) => {
+          const rawCode = getClientField(
+            r,
+            "client_code",
+            "clientcode",
+            "code",
+            "shareholder_no",
+            "folio_no",
+            "account_no",
+          );
+          const rawName = getClientField(
+            r,
+            "full_name",
+            "fullname",
+            "name",
+            "shareholder_name",
+            "client_name",
+          );
+          const rawBoid = getClientField(r, "boid", "demat_no", "demat", "boid_no");
+          const cleanBoid = rawBoid ? normalizeBoid(rawBoid) : null;
+
+          // If no client code provided, use BOID or generate sequential folio
+          const clientCode = rawCode
+            ? String(rawCode).trim()
+            : cleanBoid
+              ? cleanBoid
+              : `CL-${Date.now().toString().slice(-6)}-${idx + 1}`;
+
+          if (!rawName) return null;
+
+          const pan = getClientField(r, "pan_no", "panno", "pan", "pan_number")
+            ? String(getClientField(r, "pan_no", "panno", "pan", "pan_number")).trim()
+            : null;
+          const ctz = getClientField(
+            r,
+            "citizenship_no",
+            "citizenshipno",
+            "citizenship",
+            "citizenship_number",
+          )
+            ? String(
+                getClientField(
+                  r,
+                  "citizenship_no",
+                  "citizenshipno",
+                  "citizenship",
+                  "citizenship_number",
+                ),
+              ).trim()
+            : null;
+          const legacyPanCtz = getClientField(r, "pan_or_citizenship")
+            ? String(getClientField(r, "pan_or_citizenship")).trim()
+            : null;
+
+          const rawClass = getClientField(
+            r,
+            "payee_classification",
+            "classification",
+            "tax_class",
+            "tax_classification",
+          );
+          const payeeClass = (rawClass as PayeeClassification) ?? "NATURAL_PERSON";
+
+          const rowCompanyCode = getClientField(r, "company_code", "companycode", "company");
+          const resolvedCompanyId = getClientField(r, "company_id")
+            ? String(getClientField(r, "company_id")).trim()
             : rowCompanyCode
-              ? (companies.find((c) => c.company_code === rowCompanyCode)?.id ?? null)
+              ? (companies.find(
+                  (c) => c.company_code === String(rowCompanyCode).trim().toUpperCase(),
+                )?.id ?? null)
               : companyFilter !== "all"
                 ? companyFilter
-                : null;
+                : (companies[0]?.id ?? null);
+
+          const rawKitta = getClientField(r, "kitta", "holding_kitta", "shares", "units");
+
           return {
-            client_code: String(r.client_code).trim(),
+            client_code: clientCode,
             company_id: resolvedCompanyId,
-            client_id: r.client_id ? String(r.client_id).trim() : null,
-            full_name: String(r.full_name).trim(),
-            father_name: r.father_name ? String(r.father_name).trim() : null,
-            grandfather_name: r.grandfather_name ? String(r.grandfather_name).trim() : null,
-            date_of_birth: r.date_of_birth ? String(r.date_of_birth).trim() : null,
-            gender: r.gender ? String(r.gender).trim() : null,
-            occupation: r.occupation ? String(r.occupation).trim() : null,
-            boid: r.boid ? String(r.boid).trim() : null,
-            kitta: Math.max(0, Number(r.kitta ?? r.holding_kitta ?? 0)),
-            holder_type: (r.holder_type as Holder) ?? null,
+            client_id: getClientField(r, "client_id")
+              ? String(getClientField(r, "client_id")).trim()
+              : null,
+            full_name: String(rawName).trim(),
+            father_name: getClientField(r, "father_name", "fathername", "father")
+              ? String(getClientField(r, "father_name", "fathername", "father")).trim()
+              : null,
+            grandfather_name: getClientField(
+              r,
+              "grandfather_name",
+              "grandfathername",
+              "grandfather",
+            )
+              ? String(
+                  getClientField(r, "grandfather_name", "grandfathername", "grandfather"),
+                ).trim()
+              : null,
+            date_of_birth: parseClientDate(getClientField(r, "date_of_birth", "dob")),
+            gender: getClientField(r, "gender", "sex")
+              ? String(getClientField(r, "gender", "sex")).trim()
+              : null,
+            occupation: getClientField(r, "occupation", "profession")
+              ? String(getClientField(r, "occupation", "profession")).trim()
+              : null,
+            boid: cleanBoid,
+            kitta: Math.max(0, Number(rawKitta ?? 0)),
+            holder_type: (getClientField(r, "holder_type", "holdertype") as Holder) ?? null,
             payee_classification: payeeClass,
             pan_no: pan,
             citizenship_no: ctz,
             pan_or_citizenship: pan || ctz || legacyPanCtz,
-            nid_number: r.nid_number
-              ? String(r.nid_number).trim()
-              : r.nid
-                ? String(r.nid).trim()
-                : r.NID
-                  ? String(r.NID).trim()
-                  : null,
-            address: r.address ? String(r.address).trim() : null,
-            province: r.province ? String(r.province).trim() : null,
-            district: r.district ? String(r.district).trim() : null,
-            municipality: r.municipality ? String(r.municipality).trim() : null,
-            phone: r.phone ? String(r.phone).trim() : null,
-            email: r.email ? String(r.email).trim() : null,
-            bank_name: r.bank_name ? String(r.bank_name).trim() : null,
-            bank_branch: r.bank_branch ? String(r.bank_branch).trim() : null,
-            bank_account_no: r.bank_account_no ? String(r.bank_account_no).trim() : null,
-            account_type: r.account_type ? String(r.account_type).trim() : null,
-            residency: (r.residency as Residency) ?? null,
-            verification_status: (r.verification_status as Verification) ?? "Verified",
-            status: (r.status as Status) ?? "Active",
+            nid_number: getClientField(r, "nid_number", "nid", "national_id")
+              ? String(getClientField(r, "nid_number", "nid", "national_id")).trim()
+              : null,
+            address: getClientField(r, "address", "location")
+              ? String(getClientField(r, "address", "location")).trim()
+              : null,
+            province: getClientField(r, "province", "state")
+              ? String(getClientField(r, "province", "state")).trim()
+              : null,
+            district: getClientField(r, "district")
+              ? String(getClientField(r, "district")).trim()
+              : null,
+            municipality: getClientField(r, "municipality", "city")
+              ? String(getClientField(r, "municipality", "city")).trim()
+              : null,
+            phone: getClientField(r, "phone", "phone_no", "mobile", "contact_no")
+              ? String(getClientField(r, "phone", "phone_no", "mobile", "contact_no")).trim()
+              : null,
+            email: getClientField(r, "email", "email_address")
+              ? String(getClientField(r, "email", "email_address")).trim()
+              : null,
+            bank_name: getClientField(r, "bank_name", "bankname", "bank")
+              ? String(getClientField(r, "bank_name", "bankname", "bank")).trim()
+              : null,
+            bank_branch: getClientField(r, "bank_branch", "branch")
+              ? String(getClientField(r, "bank_branch", "branch")).trim()
+              : null,
+            bank_account_no: getClientField(
+              r,
+              "bank_account_no",
+              "bankaccountno",
+              "account_no",
+              "account_number",
+            )
+              ? String(
+                  getClientField(
+                    r,
+                    "bank_account_no",
+                    "bankaccountno",
+                    "account_no",
+                    "account_number",
+                  ),
+                ).trim()
+              : null,
+            account_type: getClientField(r, "account_type")
+              ? String(getClientField(r, "account_type")).trim()
+              : null,
+            residency: (getClientField(r, "residency") as Residency) ?? null,
+            verification_status:
+              (getClientField(r, "verification_status") as Verification) ?? "Verified",
+            status: (getClientField(r, "status") as Status) ?? "Active",
           };
-        });
-      if (!clean.length) return toast.error("No valid client rows found");
-      const { error } = await supabase
-        .from("clients")
-        .upsert(clean as never, { onConflict: "client_code" });
-      if (error) throw error;
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null);
+
+      if (!clean.length) return toast.error("No valid client rows found in spreadsheet");
+
+      const BATCH_SIZE = 250;
+      for (let i = 0; i < clean.length; i += BATCH_SIZE) {
+        const batch = clean.slice(i, i + BATCH_SIZE);
+        const { error } = await supabase
+          .from("clients")
+          .upsert(batch as never, { onConflict: "company_id,client_code" });
+        if (error) throw error;
+      }
+      if (fileRef.current) fileRef.current.value = "";
       qc.invalidateQueries({ queryKey: ["clients"] });
       qc.invalidateQueries({ queryKey: ["clients-stats"] });
-      toast.success(`Successfully imported ${clean.length} clients`);
+      toast.success(`Successfully imported ${clean.length.toLocaleString()} clients`);
     } catch (e) {
+      if (fileRef.current) fileRef.current.value = "";
       toast.error(e instanceof Error ? e.message : "Import failed");
     }
   };
@@ -1171,8 +1327,8 @@ function ClientsPage() {
         }
       />
 
-      {/* KPI Stats Strip */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+      {/* KPI Stats Strip — 100% Dynamic & Interactive */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         {[
           {
             label: "Total Shareholders",
@@ -1180,10 +1336,11 @@ function ClientsPage() {
             icon: Users,
             color: "text-primary",
             bg: "bg-primary/10",
-            active: reviewFilter === "all" && categoryFilter === "all",
+            active: reviewFilter === "all" && categoryFilter === "all" && verFilter === "all",
             onClick: () => {
               setReviewFilter("all");
               setCategoryFilter("all");
+              setVerFilter("all");
               setPage(1);
             },
           },
@@ -1193,6 +1350,11 @@ function ClientsPage() {
             icon: ShieldCheck,
             color: "text-emerald-600",
             bg: "bg-emerald-50 dark:bg-emerald-950/30",
+            active: verFilter === "Verified",
+            onClick: () => {
+              setVerFilter(verFilter === "Verified" ? "all" : "Verified");
+              setPage(1);
+            },
           },
           {
             label: "Needs Review",
@@ -1215,6 +1377,11 @@ function ClientsPage() {
             icon: Clock,
             color: "text-blue-600",
             bg: "bg-blue-50 dark:bg-blue-950/30",
+            active: verFilter === "Pending",
+            onClick: () => {
+              setVerFilter(verFilter === "Pending" ? "all" : "Pending");
+              setPage(1);
+            },
           },
           {
             label: "Natural Persons",
@@ -1222,19 +1389,38 @@ function ClientsPage() {
             icon: User,
             color: "text-violet-600",
             bg: "bg-violet-50 dark:bg-violet-950/30",
+            active: categoryFilter === "PUBLIC",
+            onClick: () => {
+              setCategoryFilter(categoryFilter === "PUBLIC" ? "all" : "PUBLIC");
+              setPage(1);
+            },
+          },
+          {
+            label: "Institutions & Legal",
+            value: stats.institutions,
+            icon: Building2,
+            color: "text-indigo-600",
+            bg: "bg-indigo-50 dark:bg-indigo-950/30",
+            active: categoryFilter === "INSTITUTION",
+            onClick: () => {
+              setCategoryFilter(categoryFilter === "INSTITUTION" ? "all" : "INSTITUTION");
+              setPage(1);
+            },
           },
         ].map((s) => (
           <Card
             key={s.label}
-            className={`glass-card ${s.onClick ? "cursor-pointer hover:border-primary/50 transition-all" : ""} ${s.active ? "border-amber-400 dark:border-amber-600" : ""}`}
+            className={`glass-card cursor-pointer hover:border-primary/50 transition-all ${s.active ? "border-amber-400 dark:border-amber-600 ring-1 ring-amber-400" : ""}`}
             onClick={s.onClick}
           >
-            <CardContent className="flex items-center gap-3 p-4">
-              <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${s.bg}`}>
+            <CardContent className="flex items-center gap-3 p-3.5">
+              <div
+                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${s.bg}`}
+              >
                 <s.icon className={`h-5 w-5 ${s.color}`} />
               </div>
-              <div>
-                <p className="text-xs text-muted-foreground">{s.label}</p>
+              <div className="min-w-0">
+                <p className="text-[11px] font-medium text-muted-foreground truncate">{s.label}</p>
                 <p className={`text-xl font-bold tabular-nums ${s.color}`}>
                   {s.value.toLocaleString()}
                 </p>
