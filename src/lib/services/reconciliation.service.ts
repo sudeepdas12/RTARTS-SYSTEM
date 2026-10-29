@@ -813,32 +813,40 @@ export const ReconciliationService = {
         cds_batch_ref: detectedBatchRef,
       };
 
-      const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc(
-        "apply_reconciliation_batch",
-        {
-          p_items: groupItems,
-          p_batch_info: batchInfo,
-        },
-      );
-
-      if (rpcErr) {
-        throw new Error(`Atomic reconciliation batch failed: ${rpcErr.message}`);
-      }
-
-      if (!rpcRes || !rpcRes.success) {
-        throw new Error(
-          `Reconciliation transaction failed: ${rpcRes?.error || "Transaction rolled back"}`,
+      const CHUNK_SIZE = 500;
+      for (let i = 0; i < groupItems.length; i += CHUNK_SIZE) {
+        const chunk = groupItems.slice(i, i + CHUNK_SIZE);
+        const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc(
+          "apply_reconciliation_batch",
+          {
+            p_items: chunk,
+            p_batch_info: i === 0 ? batchInfo : null,
+          },
         );
-      }
 
-      updated += Number(rpcRes.updated_payables ?? rpcRes.payables_updated ?? rpcRes.updated ?? 0);
-      paymentsCreated += Number(
-        rpcRes.updated_payments ?? rpcRes.payments_created ?? rpcRes.paymentsCreated ?? 0,
-      );
-      alreadyPaid += Number(rpcRes.already_paid_skipped ?? rpcRes.already_paid ?? 0);
-      if (Array.isArray(rpcRes.errors) && rpcRes.errors.length > 0) {
-        for (const err of rpcRes.errors) {
-          errors.push(err?.error || JSON.stringify(err));
+        if (rpcErr) {
+          throw new Error(
+            `Atomic reconciliation batch failed (records ${i + 1}-${i + chunk.length}): ${rpcErr.message}`,
+          );
+        }
+
+        if (!rpcRes || !rpcRes.success) {
+          throw new Error(
+            `Reconciliation transaction failed (records ${i + 1}-${i + chunk.length}): ${rpcRes?.error || "Transaction rolled back"}`,
+          );
+        }
+
+        updated += Number(
+          rpcRes.updated_payables ?? rpcRes.payables_updated ?? rpcRes.updated ?? 0,
+        );
+        paymentsCreated += Number(
+          rpcRes.updated_payments ?? rpcRes.payments_created ?? rpcRes.paymentsCreated ?? 0,
+        );
+        alreadyPaid += Number(rpcRes.already_paid_skipped ?? rpcRes.already_paid ?? 0);
+        if (Array.isArray(rpcRes.errors) && rpcRes.errors.length > 0) {
+          for (const err of rpcRes.errors) {
+            errors.push(err?.error || JSON.stringify(err));
+          }
         }
       }
     }

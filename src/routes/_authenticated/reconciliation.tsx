@@ -381,10 +381,9 @@ export function ReconciliationRoute() {
     );
     try {
       // Check if files are bank account statements or raw ACH settlement reports (not shareholder registry lot files)
-      const areBankReports = files.every((f) => {
+      const areBankReports = files.some((f) => {
         const fileName = f.name.toLowerCase();
-        // ConnectIPS / NCHL / Settlement / Late Return reports are always bank/settlement reports
-        if (
+        return (
           fileName.includes("ips") ||
           fileName.includes("nchl") ||
           fileName.includes("connectips") ||
@@ -393,26 +392,45 @@ export function ReconciliationRoute() {
           fileName.includes("late return") ||
           fileName.includes("report") ||
           fileName.includes("mer") ||
-          fileName.includes("error report")
-        ) {
-          return true;
-        }
-        const isRegistryLot =
-          fileName.includes("kitta") ||
-          fileName.includes("shareholder") ||
-          fileName.includes("reconcilation") ||
-          fileName.includes("reconciliation") ||
-          fileName.includes("original");
-        if (isRegistryLot) return false;
-        return (
+          fileName.includes("error report") ||
+          fileName.includes("debenture") ||
           fileName.includes("bank") ||
-          fileName.includes("statement") ||
-          fileName.includes("batch") ||
-          fileName.includes("lot")
+          fileName.includes("statement")
         );
       });
 
-      if (areBankReports) {
+      // Also inspect first file headers to see if it contains bank settlement columns
+      let detectedBankByHeader = areBankReports;
+      if (!detectedBankByHeader && files.length > 0) {
+        try {
+          const sampleBuf = await files[0].slice(0, 100000).arrayBuffer();
+          const wb = XLSX.read(sampleBuf, { type: "array", sheetRows: 5, dense: true });
+          const firstSheet = wb.Sheets[wb.SheetNames[0]];
+          if (firstSheet) {
+            const rawRows = XLSX.utils.sheet_to_json(firstSheet, { header: 1 }) as any[][];
+            const headerStr = rawRows
+              .slice(0, 3)
+              .flat()
+              .map((v) => String(v || "").toLowerCase())
+              .join(" ");
+            if (
+              headerStr.includes("instruction") ||
+              headerStr.includes("transaction id") ||
+              headerStr.includes("transid") ||
+              headerStr.includes("creditor") ||
+              headerStr.includes("debit") ||
+              headerStr.includes("credit") ||
+              headerStr.includes("waive fee")
+            ) {
+              detectedBankByHeader = true;
+            }
+          }
+        } catch (e) {
+          console.warn("Header check failed, continuing:", e);
+        }
+      }
+
+      if (areBankReports || detectedBankByHeader) {
         try {
           const transactions = await BankParser.parseMultipleFiles(files, {
             onProgress: (cur, tot, name) =>
@@ -532,9 +550,9 @@ export function ReconciliationRoute() {
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const files = Array.from(e.dataTransfer.files);
-      const isBankLike = files.every((f) => {
+      const isBankLike = files.some((f) => {
         const name = f.name.toLowerCase();
-        if (
+        return (
           name.includes("ips") ||
           name.includes("nchl") ||
           name.includes("connectips") ||
@@ -543,18 +561,11 @@ export function ReconciliationRoute() {
           name.includes("late return") ||
           name.includes("report") ||
           name.includes("mer") ||
-          name.includes("error report")
-        ) {
-          return true;
-        }
-        const isRegistryLot =
-          name.includes("lot") ||
-          name.includes("kitta") ||
-          name.includes("shareholder") ||
-          name.includes("reconcilation") ||
-          name.includes("reconciliation");
-        if (isRegistryLot) return false;
-        return name.includes("bank") || name.includes("statement");
+          name.includes("error report") ||
+          name.includes("debenture") ||
+          name.includes("bank") ||
+          name.includes("statement")
+        );
       });
       if (isBankLike) {
         await processBankStatementFiles(files);
