@@ -380,18 +380,27 @@ export function ReconciliationRoute() {
       // Check if all files are bank account statements or raw ACH settlement reports (not shareholder registry lot files)
       const areBankReports = files.every((f) => {
         const fileName = f.name.toLowerCase();
+        // ConnectIPS / NCHL / Settlement reports are always bank/settlement reports even if they include 'lot'
+        if (
+          fileName.includes("ips") ||
+          fileName.includes("nchl") ||
+          fileName.includes("connectips") ||
+          fileName.includes("settlement")
+        ) {
+          return true;
+        }
         const isRegistryLot =
-          fileName.includes("lot") ||
           fileName.includes("kitta") ||
           fileName.includes("shareholder") ||
           fileName.includes("reconcilation") ||
-          fileName.includes("reconciliation");
+          fileName.includes("reconciliation") ||
+          fileName.includes("original");
         if (isRegistryLot) return false;
         return (
           fileName.includes("bank") ||
           fileName.includes("statement") ||
-          (fileName.includes("ips") && !fileName.includes("lot")) ||
-          fileName.includes("batch")
+          fileName.includes("batch") ||
+          fileName.includes("lot")
         );
       });
 

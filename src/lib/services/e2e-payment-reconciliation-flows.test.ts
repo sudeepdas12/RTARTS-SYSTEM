@@ -252,4 +252,45 @@ describe("End-to-End Payment, Reconciliation, and Bank Statement Verification", 
       );
     });
   });
+
+  describe("5. ConnectIPS Settlement Report Classification and Priority Routing", () => {
+    it("classifies ACSC rows as PAYOUT_DEBIT and RJCT rows as REJECT_RETURN in settlement reports", async () => {
+      const csv = [
+        "#,Batch Id,Transaction Id,Instruction Id,Transaction Amount,Creditor Bank,Creditor Branch,Creditor Name,Creditor Account,Credit Status,Waive Fee,Reference Id,Remarks,Particulars,Created On,Created By",
+        "1,441581,1626805,0201260721JWX546,1402.08,4501-Sanima Bank Ltd.,1 -Head Office,ABDUL SATAR ANSARI,021011120000004,ACSC,Y,RBBL DEBENTURE,RBBDEBENTURE,,2026-07-21 11:32:09.202,RBB14317",
+        "2,441581,1626720,0201260721JWX461,1001.48,2601-Prabhu Bank Limited,999 -Head Office Babarmahal,HARI SHANKAR GUPTA,0500042716600011,RJCT,Y,RBBL DEBENTURE,RBBDEBENTURE,,2026-07-21 11:32:09.202,RBB14317",
+      ].join("\n");
+
+      const file = createMockFile(csv, "IPS REPORT LOT 2 PUBLIC.csv");
+      const txns = await BankParser.parseBankStatement(file);
+
+      expect(txns).toHaveLength(2);
+
+      // Successful row: ACSC should be PAYOUT_DEBIT and have positive debit
+      expect(txns[0].status).toBe("ACSC");
+      expect(txns[0].category).toBe("PAYOUT_DEBIT");
+      expect(txns[0].debit).toBe(1402.08);
+      expect(txns[0].credit).toBe(0);
+      expect(txns[0].instructionId).toBe("0201260721JWX546");
+
+      // Rejected row: RJCT should be REJECT_RETURN
+      expect(txns[1].status).toBe("RJCT");
+      expect(txns[1].category).toBe("REJECT_RETURN");
+      expect(txns[1].instructionId).toBe("0201260721JWX461");
+    });
+
+    it("prioritizes ConnectIPS Instruction Id over Transaction Id", async () => {
+      const csv = [
+        "#,Batch Id,Transaction Id,Instruction Id,Transaction Amount,Creditor Bank,Creditor Name,Creditor Account,Credit Status",
+        "1,441146,1614560,0201260720JRL28,3104479.68,4501-Sanima Bank Ltd.,SOCIAL SECURITY FUND,001010010003504,ACSC",
+      ].join("\n");
+
+      const file = createMockFile(csv, "IPS REPORT LOT 1 COMPANY FUND.csv");
+      const txns = await BankParser.parseBankStatement(file);
+
+      expect(txns).toHaveLength(1);
+      expect(txns[0].instructionId).toBe("0201260720JRL28");
+      expect(txns[0].instructionId).not.toBe("1614560");
+    });
+  });
 });

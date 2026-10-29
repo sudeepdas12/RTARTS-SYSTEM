@@ -249,17 +249,15 @@ export const BankParser = {
         ],
       ]),
       instructionId: findColumnIndexByPriority(headerRow, [
-        [
-          "instruction id",
-          "instructionid",
-          "transaction id",
-          "transid",
-          "reference id",
-          "referenceid",
-        ],
+        ["instruction id", "instructionid"],
+        ["reference id", "referenceid", "endtoendid"],
+        ["transaction id", "transid"],
       ]),
       batchId: findColumnIndexByPriority(headerRow, [
         ["batch id", "batchid", "batch.sessionid", "batch"],
+      ]),
+      referenceId: findColumnIndexByPriority(headerRow, [
+        ["reference id", "referenceid", "ref no", "ref id"],
       ]),
       reason: findColumnIndexByPriority(headerRow, [
         [
@@ -497,15 +495,9 @@ export const BankParser = {
           ],
         ]),
         description: findColumnIndexByPriority(headerRow, [
-          [
-            "remarks",
-            "particulars",
-            "instructionid",
-            "instruction id",
-            "description",
-            "narration",
-            "endtoendid",
-          ],
+          ["particulars", "narration", "description"],
+          ["remarks"],
+          ["instructionid", "instruction id", "endtoendid"],
         ]),
         debit: findColumnIndexByPriority(headerRow, [
           ["withdraw", "withdrawal", "debit", "payment"],
@@ -540,17 +532,14 @@ export const BankParser = {
           ],
         ]),
         instructionId: findColumnIndexByPriority(headerRow, [
-          [
-            "instruction id",
-            "instructionid",
-            "transaction id",
-            "transid",
-            "reference id",
-            "referenceid",
-            "endtoendid",
-          ],
+          ["instruction id", "instructionid"],
+          ["reference id", "referenceid", "endtoendid"],
+          ["transaction id", "transid"],
         ]),
         batchId: findColumnIndexByPriority(headerRow, [["batch id", "batchid", "batch.sessionid"]]),
+        referenceId: findColumnIndexByPriority(headerRow, [
+          ["reference id", "referenceid", "ref no", "ref id"],
+        ]),
         reason: findColumnIndexByPriority(headerRow, [
           [
             "return reason",
@@ -653,8 +642,9 @@ export const BankParser = {
           upperDesc.includes("REVERSAL") ||
           upperDesc.includes("LATE RTN");
 
-        // Detect ConnectIPS returned deposits (e.g. 16868722 0201260721JWX461... deposit)
+        // Detect ConnectIPS returned deposits (e.g. 16868722 0201260721JWX461... deposit) in bank statements
         const isConnectIpsReturn =
+          !isSettlementReport &&
           depositVal > 0 &&
           withdrawVal === 0 &&
           (isReject ||
@@ -675,10 +665,20 @@ export const BankParser = {
 
         if (isCircular) {
           category = "NRB_CIRCULAR";
+        } else if (isSettlementReport) {
+          if (isReject) {
+            category = "REJECT_RETURN";
+            autoStatus = "RJCT";
+          } else {
+            category = "PAYOUT_DEBIT";
+            autoStatus = rowStatus || "ACSC";
+          }
         } else if (
           isReject ||
           isConnectIpsReturn ||
-          (depositVal > 0 &&
+          (!isSettlementReport &&
+            rowStatus !== "ACSC" &&
+            depositVal > 0 &&
             withdrawVal === 0 &&
             rawDesc.includes("0201") &&
             !isIssuerFundingOrBatch)
@@ -688,8 +688,7 @@ export const BankParser = {
         } else if (isIssuerFundingOrBatch && depositVal > 0) {
           category = "FUNDING_DEPOSIT";
         } else if (
-          (isSettlementReport ||
-            upperDesc.includes("INTEREST") ||
+          (upperDesc.includes("INTEREST") ||
             upperDesc.includes("DEBENTURE") ||
             upperDesc.includes("DIVIDEND") ||
             upperDesc.includes("MUTUAL FUND") ||
@@ -800,6 +799,9 @@ export const BankParser = {
           }
         }
 
+        const referenceId =
+          indices.referenceId >= 0 ? String(row[indices.referenceId] || "").trim() : undefined;
+
         const description =
           rawDesc ||
           extractedName ||
@@ -817,6 +819,7 @@ export const BankParser = {
           beneficiaryName: extractedName || undefined,
           status,
           instructionId,
+          referenceId,
           batchId,
           fileName: file.name,
           category,

@@ -756,6 +756,12 @@ export const ReconciliationService = {
         company_id: r.company_id || null,
         client_id: r.client_id,
         payable_type: payableType,
+        target_table:
+          payableType === "interest"
+            ? "interest_payables"
+            : payableType === "mutual_fund"
+              ? "mutual_fund_payables"
+              : "dividend_payables",
         actual_amount: Number(r.actual_amount || r.expected_amount || 0),
         expected_amount: Number(r.expected_amount || r.actual_amount || 0),
         paid_amount: Number(r.actual_amount || r.expected_amount || 0),
@@ -825,9 +831,11 @@ export const ReconciliationService = {
         );
       }
 
-      updated += Number(rpcRes.payables_updated ?? rpcRes.updated ?? 0);
-      paymentsCreated += Number(rpcRes.payments_created ?? rpcRes.paymentsCreated ?? 0);
-      alreadyPaid += Number(rpcRes.already_paid ?? 0);
+      updated += Number(rpcRes.updated_payables ?? rpcRes.payables_updated ?? rpcRes.updated ?? 0);
+      paymentsCreated += Number(
+        rpcRes.updated_payments ?? rpcRes.payments_created ?? rpcRes.paymentsCreated ?? 0,
+      );
+      alreadyPaid += Number(rpcRes.already_paid_skipped ?? rpcRes.already_paid ?? 0);
       if (Array.isArray(rpcRes.errors) && rpcRes.errors.length > 0) {
         for (const err of rpcRes.errors) {
           errors.push(err?.error || JSON.stringify(err));
