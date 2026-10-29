@@ -248,6 +248,9 @@ export const BankParser = {
           "tx status",
         ],
       ]),
+      transId: findColumnIndexByPriority(headerRow, [
+        ["transid", "transaction id", "transactionid"],
+      ]),
       instructionId: findColumnIndexByPriority(headerRow, [
         ["instruction id", "instructionid"],
         ["reference id", "referenceid", "endtoendid"],
@@ -298,10 +301,17 @@ export const BankParser = {
         indices.beneficiaryName >= 0
           ? String(columns[indices.beneficiaryName] || "").trim()
           : undefined;
-      const instructionId =
+      let instructionId =
         indices.instructionId >= 0
           ? String(columns[indices.instructionId] || "").trim()
           : undefined;
+      // If transId matches ConnectIPS pattern (/^0201\d{6}[A-Za-z0-9]+$/), prioritize it over static scheme name in instructionId
+      if (indices.transId >= 0 && columns[indices.transId]) {
+        const transVal = String(columns[indices.transId] || "").trim();
+        if (/^0201\d{6}[A-Za-z0-9]+$/i.test(transVal)) {
+          instructionId = transVal;
+        }
+      }
       const rawReason = indices.reason >= 0 ? String(columns[indices.reason] || "").trim() : "";
       let desc =
         indices.description >= 0
@@ -397,20 +407,29 @@ export const BankParser = {
     const workbook = XLSX.read(data, { type: "array", cellDates: true });
     const transactions: BankTransaction[] = [];
 
-    // Choose the primary sheet
+    // Choose sheets to process
     let sheetsToProcess = workbook.SheetNames;
-    const nchlSheet = workbook.SheetNames.find(
-      (s) =>
-        s.toLowerCase().includes("nchl") ||
-        s.toLowerCase().includes("bankcentral") ||
-        s.toLowerCase().includes("thapathali"),
-    );
-    if (nchlSheet) {
-      sheetsToProcess = [nchlSheet];
-    } else if (workbook.SheetNames.includes("Statement") && workbook.SheetNames.length > 1) {
-      sheetsToProcess = ["Statement"];
-    } else if (workbook.SheetNames.includes("Sheet1") && workbook.SheetNames.length > 1) {
-      sheetsToProcess = ["Sheet1"];
+    const isMultiBankLateRtn = workbook.SheetNames.some((s) => /LATE\s*RTN/i.test(s));
+    const isMultiLotWorkbook =
+      workbook.SheetNames.some((s) => /^Sheet\d+$/i.test(s)) && workbook.SheetNames.length > 1;
+
+    if (isMultiBankLateRtn || isMultiLotWorkbook) {
+      // Process all sheets in multi-bank late return or multi-lot files
+      sheetsToProcess = workbook.SheetNames;
+    } else {
+      const nchlSheet = workbook.SheetNames.find(
+        (s) =>
+          s.toLowerCase().includes("nchl") ||
+          s.toLowerCase().includes("bankcentral") ||
+          s.toLowerCase().includes("thapathali"),
+      );
+      if (nchlSheet) {
+        sheetsToProcess = [nchlSheet];
+      } else if (workbook.SheetNames.includes("Statement") && workbook.SheetNames.length > 1) {
+        sheetsToProcess = ["Statement"];
+      } else if (workbook.SheetNames.includes("Sheet1") && workbook.SheetNames.length > 1) {
+        sheetsToProcess = ["Sheet1"];
+      }
     }
 
     for (const sheetName of sheetsToProcess) {
@@ -458,6 +477,51 @@ export const BankParser = {
           headerRowIndex = i;
           break;
         }
+      }
+
+      // Check for specialized headerless reject file (e.g. ERROR REPORT with Scheme, Batch, Amount, BankCode, Name, Account)
+      const firstRow = rows[0];
+      const isHeaderlessCipsReject =
+        Array.isArray(firstRow) &&
+        firstRow.length >= 8 &&
+        typeof firstRow[2] === "number" &&
+        (String(firstRow[0]).toUpperCase().includes("MUTUAL FUND") ||
+          String(firstRow[1]).toUpperCase().includes("DIV")) &&
+        String(firstRow[7]).replace(/[^0-9A-Za-z]/g, "").length >= 6;
+
+      if (isHeaderlessCipsReject) {
+        for (let i = 0; i < rows.length; i++) {
+          const r = rows[i];
+          if (!r || !Array.isArray(r) || r.length < 8) continue;
+          const scheme = String(r[0] || "").trim();
+          const batchId = String(r[1] || "").trim();
+          const amount = normalizeAmount(r[2]);
+          if (amount === 0) continue;
+          const beneficiaryName = String(r[6] || "").trim();
+          const accountNo = String(r[7] || "").trim();
+          const debtorAccount = r[15] ? String(r[15]).trim() : undefined;
+          const metadata = r[22] ? String(r[22]).trim() : "";
+          const dateMatch = metadata.match(/\b(20\d{2}[-/.]\d{1,2}[-/.]\d{1,2})\b/);
+          const date = dateMatch ? normalizeDate(dateMatch[1]) : "";
+
+          transactions.push({
+            id: `txn-${sheetName}-${i}`,
+            date,
+            description: `${scheme} Reject: ${beneficiaryName} (${batchId})`,
+            debit: amount,
+            credit: 0,
+            balance: 0,
+            accountNo: accountNo || undefined,
+            beneficiaryName: beneficiaryName || undefined,
+            status: "RJCT",
+            batchId: batchId || undefined,
+            fileName: file.name,
+            category: "REJECT_RETURN",
+            isLiquiditySweep: false,
+            accountHolder: debtorAccount,
+          });
+        }
+        continue;
       }
 
       // If sheet contains a BOID or Shareholder Registry column, it is a payee list / ConnectIPS lot file, not an account statement.
@@ -531,6 +595,9 @@ export const BankParser = {
             "tx status",
           ],
         ]),
+        transId: findColumnIndexByPriority(headerRow, [
+          ["transid", "transaction id", "transactionid"],
+        ]),
         instructionId: findColumnIndexByPriority(headerRow, [
           ["instruction id", "instructionid"],
           ["reference id", "referenceid", "endtoendid"],
@@ -555,6 +622,19 @@ export const BankParser = {
         ]),
       };
 
+      // Detect multiple description columns (e.g., DESC 1, DESC 2, DESC 3 in RBB electronic statements)
+      const descIndices: number[] = [];
+      headerRow.forEach((col: string, idx: number) => {
+        const norm = col.trim().toLowerCase();
+        if (
+          norm.startsWith("desc") ||
+          norm.startsWith("narration") ||
+          norm.startsWith("particular")
+        ) {
+          descIndices.push(idx);
+        }
+      });
+
       for (let i = headerRowIndex + 1; i < rows.length; i++) {
         const row = rows[i];
         if (
@@ -578,10 +658,15 @@ export const BankParser = {
           indices.reason >= 0 && row[indices.reason]
             ? String(row[indices.reason] || "").trim()
             : "";
-        let rawDesc =
-          indices.description >= 0 && row[indices.description]
-            ? String(row[indices.description] || "").trim()
-            : "";
+        let rawDesc = "";
+        if (descIndices.length > 1) {
+          const parts = descIndices
+            .map((idx) => String(row[idx] || "").trim())
+            .filter((p) => p && p !== "-");
+          rawDesc = parts.join(" ");
+        } else if (indices.description >= 0 && row[indices.description]) {
+          rawDesc = String(row[indices.description] || "").trim();
+        }
         if (rawReason && !rawDesc.toUpperCase().includes(rawReason.toUpperCase())) {
           rawDesc = rawDesc ? `${rawDesc} [Reason: ${rawReason}]` : `[Reason: ${rawReason}]`;
         }
@@ -779,6 +864,13 @@ export const BankParser = {
         // Extract ConnectIPS instruction ID or reference ID from description if not in dedicated column
         let instructionId =
           indices.instructionId >= 0 ? String(row[indices.instructionId] || "").trim() : undefined;
+        // If transId matches ConnectIPS pattern (/^0201\d{6}[A-Za-z0-9]+$/), prioritize it over static scheme name in instructionId
+        if (indices.transId >= 0 && row[indices.transId]) {
+          const transVal = String(row[indices.transId] || "").trim();
+          if (/^0201\d{6}[A-Za-z0-9]+$/i.test(transVal)) {
+            instructionId = transVal;
+          }
+        }
         if (!instructionId && rawDesc) {
           const cipsMatch =
             rawDesc.match(/\b(0201\d{6}[A-Za-z0-9]{3,20})\b/) ||

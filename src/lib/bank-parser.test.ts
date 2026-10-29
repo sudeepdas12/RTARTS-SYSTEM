@@ -163,4 +163,18 @@ describe("BankParser Comprehensive Unit Tests", () => {
     expect(txs[0].credit).toBe(0);
     expect(txs[0].category).toBe("PAYOUT_DEBIT");
   });
+
+  it("prioritizes ConnectIPS transId when transId matches NCHL pattern", async () => {
+    const csvContent = [
+      "statusId,achStatus.description,transId,endtoEndID,amount,instructionID",
+      ",Accepted Settlement Completed,02012610030097PR,82-83-DIV-RMF2,8550,RBB MUTUAL FUND 2",
+    ].join("\n");
+
+    const file = createMockFile(csvContent, "nchl_export.csv");
+    const txs = await BankParser.parseBankStatement(file);
+
+    expect(txs).toHaveLength(1);
+    expect(txs[0].instructionId).toBe("02012610030097PR");
+    expect(txs[0].debit).toBe(8550);
+  });
 });
