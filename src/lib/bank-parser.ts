@@ -470,7 +470,9 @@ export const BankParser = {
             c.includes("withdraw") ||
             c.includes("debit") ||
             c.includes("amount") ||
-            c.includes("deposit"),
+            c.includes("deposit") ||
+            c.includes("txnamt") ||
+            c.includes("amt"),
         );
 
         if (hasDateCol && hasAmountOrDesc) {
@@ -544,7 +546,7 @@ export const BankParser = {
       const headerRow = rows[headerRowIndex].map((h: any) => String(h).trim().toLowerCase());
       const indices = {
         amount: findColumnIndexByPriority(headerRow, [
-          ["transaction amount", "transactionamount", "amt"],
+          ["transaction amount", "transactionamount", "amt", "txnamt", "txn amt"],
           ["amount", "net amount"],
         ]),
         date: findColumnIndexByPriority(headerRow, [
@@ -596,7 +598,7 @@ export const BankParser = {
           ],
         ]),
         transId: findColumnIndexByPriority(headerRow, [
-          ["transid", "transaction id", "transactionid"],
+          ["transid", "transaction id", "transactionid", "txn id", "txnid"],
         ]),
         instructionId: findColumnIndexByPriority(headerRow, [
           ["instruction id", "instructionid"],
@@ -691,6 +693,7 @@ export const BankParser = {
         // Intelligent Classification
         const upperDesc = rawDesc.toUpperCase();
         const upperFileName = file.name.toUpperCase();
+        const upperSheetName = sheetName.toUpperCase();
         const rowStatus =
           indices.status >= 0 && row[indices.status]
             ? String(row[indices.status]).trim().toUpperCase()
@@ -705,14 +708,24 @@ export const BankParser = {
         let category: BankTransaction["category"] = "OTHER";
         let autoStatus: string | undefined = undefined;
 
+        const isLateReturnDoc =
+          upperFileName.includes("LATE RTN") ||
+          upperFileName.includes("LATE_RTN") ||
+          upperFileName.includes("LATE RETURN") ||
+          upperSheetName.includes("LATE RTN") ||
+          upperSheetName.includes("LATE_RTN") ||
+          upperSheetName.includes("LATERETURN");
+
         const isSettlementReport =
-          indices.creditorName >= 0 ||
-          indices.batchId >= 0 ||
-          upperFileName.includes("IPS") ||
-          upperFileName.includes("SETTLEMENT") ||
-          upperFileName.includes("LOT");
+          !isLateReturnDoc &&
+          (indices.creditorName >= 0 ||
+            indices.batchId >= 0 ||
+            upperFileName.includes("IPS") ||
+            upperFileName.includes("SETTLEMENT") ||
+            upperFileName.includes("LOT"));
 
         const isReject =
+          isLateReturnDoc ||
           rowStatus === "RJCT" ||
           rowStatus.includes("REJECT") ||
           rowStatus.includes("FAIL") ||
