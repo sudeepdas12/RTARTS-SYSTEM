@@ -411,7 +411,11 @@ export const BankParser = {
     let sheetsToProcess = workbook.SheetNames;
     const isMultiBankLateRtn = workbook.SheetNames.some((s) => /LATE\s*RTN/i.test(s));
     const isMultiLotWorkbook =
-      workbook.SheetNames.some((s) => /^Sheet\d+$/i.test(s)) && workbook.SheetNames.length > 1;
+      !workbook.SheetNames.some(
+        (s) => s.toLowerCase().includes("thapathali") || s.toLowerCase().includes("nchl"),
+      ) &&
+      workbook.SheetNames.some((s) => /^Sheet\d+$/i.test(s)) &&
+      workbook.SheetNames.length > 1;
 
     if (isMultiBankLateRtn || isMultiLotWorkbook) {
       // Process all sheets in multi-bank late return or multi-lot files

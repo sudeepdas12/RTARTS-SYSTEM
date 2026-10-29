@@ -377,15 +377,20 @@ export function ReconciliationRoute() {
         : `Analyzing ${files[0].name}...`,
     );
     try {
-      // Check if all files are bank account statements or raw ACH settlement reports (not shareholder registry lot files)
+      // Check if files are bank account statements or raw ACH settlement reports (not shareholder registry lot files)
       const areBankReports = files.every((f) => {
         const fileName = f.name.toLowerCase();
-        // ConnectIPS / NCHL / Settlement reports are always bank/settlement reports even if they include 'lot'
+        // ConnectIPS / NCHL / Settlement / Late Return reports are always bank/settlement reports
         if (
           fileName.includes("ips") ||
           fileName.includes("nchl") ||
           fileName.includes("connectips") ||
-          fileName.includes("settlement")
+          fileName.includes("settlement") ||
+          fileName.includes("late rtn") ||
+          fileName.includes("late return") ||
+          fileName.includes("report") ||
+          fileName.includes("mer") ||
+          fileName.includes("error report")
         ) {
           return true;
         }
@@ -526,6 +531,19 @@ export function ReconciliationRoute() {
       const files = Array.from(e.dataTransfer.files);
       const isBankLike = files.every((f) => {
         const name = f.name.toLowerCase();
+        if (
+          name.includes("ips") ||
+          name.includes("nchl") ||
+          name.includes("connectips") ||
+          name.includes("settlement") ||
+          name.includes("late rtn") ||
+          name.includes("late return") ||
+          name.includes("report") ||
+          name.includes("mer") ||
+          name.includes("error report")
+        ) {
+          return true;
+        }
         const isRegistryLot =
           name.includes("lot") ||
           name.includes("kitta") ||
