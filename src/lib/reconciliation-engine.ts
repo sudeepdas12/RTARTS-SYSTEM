@@ -1237,6 +1237,24 @@ export const ReconciliationEngine = {
       }
     };
 
+    // Collect all rejected instruction IDs / references upfront to ensure returns supersede prior debits
+    const rejectedRefs = new Set<string>();
+    for (const t of transactions) {
+      if (
+        t.category === "REJECT_RETURN" ||
+        t.status === "RJCT" ||
+        String(t.status || "")
+          .toLowerCase()
+          .includes("reject") ||
+        String(t.description || "")
+          .toUpperCase()
+          .includes("INCORRECT A/C")
+      ) {
+        const ref = t.instructionId || t.referenceId;
+        if (ref) rejectedRefs.add(String(ref).trim().toUpperCase());
+      }
+    }
+
     for (let idx = 0; idx < transactions.length; idx++) {
       const txn = transactions[idx];
       if (idx > 0 && idx % 2500 === 0) {
@@ -1247,6 +1265,11 @@ export const ReconciliationEngine = {
       const txnAcct = cleanAcct(txn.accountNo);
       const txnName = cleanName(txn.beneficiaryName || txn.description);
       const amtKey = buildAmountKey(amount);
+      const refToSearch = txn.instructionId || txn.referenceId;
+      const refKey = refToSearch ? String(refToSearch).trim().toUpperCase() : "";
+
+      // Professional Audit Rule: If a transaction or its instruction ID was rejected by the bank,
+      // it must ALWAYS be treated as Rejected and never marked as Matched or Paid.
       const isBankReject =
         txn.category === "REJECT_RETURN" ||
         txn.status === "RJCT" ||
@@ -1255,7 +1278,8 @@ export const ReconciliationEngine = {
           .includes("reject") ||
         String(txn.description || "")
           .toUpperCase()
-          .includes("INCORRECT A/C");
+          .includes("INCORRECT A/C") ||
+        Boolean(refKey && rejectedRefs.has(refKey));
 
       let bestPayment: any = null;
       let matchedPayable: any = null;
@@ -1264,13 +1288,13 @@ export const ReconciliationEngine = {
 
       // PHASE 1: EXACT MATCHES (within RECONCILIATION_TOLERANCE_NPR)
       // 1a. Match against Payments by ConnectIPS Reference or Instruction ID (MUST match amount within tolerance)
-      const refToSearch = txn.instructionId || txn.referenceId;
       if (refToSearch) {
-        const refPayments = paymentsByRef.get(String(refToSearch).trim().toUpperCase()) || [];
+        const refPayments = paymentsByRef.get(refKey) || [];
         bestPayment =
           refPayments.find(
             (p) =>
               !usedPaymentIds.has(p.id) &&
+              isCompanyAllowed(p.company_id) &&
               (amountEqualsPaisa(Number(p.net_amount), amount) ||
                 (Number(p.paid_amount || 0) > 0 &&
                   amountEqualsPaisa(Number(p.paid_amount), amount))),
@@ -1286,6 +1310,7 @@ export const ReconciliationEngine = {
             refPayments.find(
               (p) =>
                 !usedPaymentIds.has(p.id) &&
+                isCompanyAllowed(p.company_id) &&
                 (amountEqualsPaisa(Number(p.net_amount), amount) ||
                   (Number(p.paid_amount || 0) > 0 &&
                     amountEqualsPaisa(Number(p.paid_amount), amount))),
@@ -1300,22 +1325,26 @@ export const ReconciliationEngine = {
           acctPayments.find(
             (p) =>
               !usedPaymentIds.has(p.id) &&
+              isCompanyAllowed(p.company_id) &&
               (amountEqualsPaisa(Number(p.net_amount), amount) ||
                 (Number(p.paid_amount || 0) > 0 &&
                   amountEqualsPaisa(Number(p.paid_amount), amount))),
           ) || null;
       }
 
-      // 1c. Match against Payables by Account + Exact Amount (full or prorated) with Date Compatibility
+      // 1c. Match against Payables by Account + Exact Amount (full or prorated) with Date & Company Compatibility
+      // Prioritizes pending/unpaid payables over already-paid historical ones
       if (!bestPayment && txnAcct) {
         const acctPayables = payablesByAcct.get(txnAcct) || [];
+        const validPayables = acctPayables.filter(
+          (p) =>
+            canUsePayable(p, amount) &&
+            isDateCompatible(txn.date, p.fiscal_year) &&
+            matchesPayableAmount(p, amount) &&
+            isCompanyAllowed(p.company_id),
+        );
         matchedPayable =
-          acctPayables.find(
-            (p) =>
-              canUsePayable(p, amount) &&
-              isDateCompatible(txn.date, p.fiscal_year) &&
-              matchesPayableAmount(p, amount),
-          ) || null;
+          validPayables.find((p) => p.payment_status !== "Paid") || validPayables[0] || null;
       }
 
       // 1d. Match against Payments by Name + Exact Amount (net_amount or paid_amount)
@@ -1325,22 +1354,25 @@ export const ReconciliationEngine = {
           namePayments.find(
             (p) =>
               !usedPaymentIds.has(p.id) &&
+              isCompanyAllowed(p.company_id) &&
               (amountEqualsPaisa(Number(p.net_amount), amount) ||
                 (Number(p.paid_amount || 0) > 0 &&
                   amountEqualsPaisa(Number(p.paid_amount), amount))),
           ) || null;
       }
 
-      // 1e. Match against Payables by Name + Exact Amount (full or prorated) with Date Compatibility
+      // 1e. Match against Payables by Name + Exact Amount (full or prorated) with Date & Company Compatibility
       if (!bestPayment && !matchedPayable && txnName) {
         const namePayables = payablesByName.get(txnName) || [];
+        const validPayables = namePayables.filter(
+          (p) =>
+            canUsePayable(p, amount) &&
+            isDateCompatible(txn.date, p.fiscal_year) &&
+            matchesPayableAmount(p, amount) &&
+            isCompanyAllowed(p.company_id),
+        );
         matchedPayable =
-          namePayables.find(
-            (p) =>
-              canUsePayable(p, amount) &&
-              isDateCompatible(txn.date, p.fiscal_year) &&
-              matchesPayableAmount(p, amount),
-          ) || null;
+          validPayables.find((p) => p.payment_status !== "Paid") || validPayables[0] || null;
       }
 
       // 1f. Match against Payment Batches (for aggregate statement entries) by Exact Amount or Batch Reference
@@ -1355,6 +1387,7 @@ export const ReconciliationEngine = {
       ) {
         const batchMatch = batches.find((b: any) => {
           if (usedBatchIds.has(b.id)) return false;
+          if (!isCompanyAllowed(b.company_id)) return false;
           const bAmount = Number(b.total_amount || 0);
           const bNet = Number(b.total_net || 0);
           if (
@@ -1401,24 +1434,36 @@ export const ReconciliationEngine = {
         }
       }
 
-      // 1g. Match against Payments by Exact Amount only (fallback for known amount, strictly isolated by company)
+      // 1g. Match against Payments by Exact Amount only (strictly isolated by company, requires no conflicting account)
       if (!bestPayment && !matchedPayable && !matchedBatch && amount > 0) {
         const amtPayments = paymentsByAmt.get(amtKey) || [];
-        bestPayment =
-          amtPayments.find((p) => !usedPaymentIds.has(p.id) && isCompanyAllowed(p.company_id)) ||
-          null;
+        const validAmtPayments = amtPayments.filter(
+          (p) =>
+            !usedPaymentIds.has(p.id) &&
+            isCompanyAllowed(p.company_id) &&
+            (!txnAcct || !p.bank_account_no || cleanAcct(p.bank_account_no) === txnAcct),
+        );
+        if (validAmtPayments.length === 1) {
+          bestPayment = validAmtPayments[0];
+        }
       }
 
-      // 1h. Match against Payables by Exact Amount only (strictly isolated by company and fiscal year compatible)
+      // 1h. Match against Payables by Exact Amount only:
+      // STRICT AUDIT SAFEGUARD: Only match if amount is uniquely identifiable in the company
+      // and there is no conflicting bank account number. Never guess randomly among multiple payables.
       if (!bestPayment && !matchedPayable && !matchedBatch && amount > 0) {
         const amtPayables = payablesByAmt.get(amtKey) || [];
-        matchedPayable =
-          amtPayables.find(
-            (p) =>
-              canUsePayable(p, amount) &&
-              isDateCompatible(txn.date, p.fiscal_year) &&
-              isCompanyAllowed(p.company_id),
-          ) || null;
+        const validAmtPayables = amtPayables.filter(
+          (p) =>
+            canUsePayable(p, amount) &&
+            isDateCompatible(txn.date, p.fiscal_year) &&
+            isCompanyAllowed(p.company_id) &&
+            (!txnAcct || !p.bank_account_no || cleanAcct(p.bank_account_no) === txnAcct),
+        );
+        // Only accept if uniquely identifiable (length === 1) to avoid assigning someone else's dividend
+        if (validAmtPayables.length === 1) {
+          matchedPayable = validAmtPayables[0];
+        }
       }
 
       // PHASE 2: PARTIAL / DISCREPANCY MATCHES (Only if NO exact match was found anywhere)
@@ -1431,13 +1476,14 @@ export const ReconciliationEngine = {
         }
         if (!bestPayment && txnAcct) {
           const acctPayables = payablesByAcct.get(txnAcct) || [];
+          const validPayables = acctPayables.filter(
+            (p) =>
+              canUsePayable(p, amount) &&
+              isDateCompatible(txn.date, p.fiscal_year) &&
+              isCompanyAllowed(p.company_id),
+          );
           matchedPayable =
-            acctPayables.find(
-              (p) =>
-                canUsePayable(p, amount) &&
-                isDateCompatible(txn.date, p.fiscal_year) &&
-                isCompanyAllowed(p.company_id),
-            ) || null;
+            validPayables.find((p) => p.payment_status !== "Paid") || validPayables[0] || null;
         }
         if (!bestPayment && !matchedPayable && txnName) {
           const namePayments = paymentsByName.get(txnName) || [];
@@ -1447,13 +1493,14 @@ export const ReconciliationEngine = {
         }
         if (!bestPayment && !matchedPayable && txnName) {
           const namePayables = payablesByName.get(txnName) || [];
+          const validPayables = namePayables.filter(
+            (p) =>
+              canUsePayable(p, amount) &&
+              isDateCompatible(txn.date, p.fiscal_year) &&
+              isCompanyAllowed(p.company_id),
+          );
           matchedPayable =
-            namePayables.find(
-              (p) =>
-                canUsePayable(p, amount) &&
-                isDateCompatible(txn.date, p.fiscal_year) &&
-                isCompanyAllowed(p.company_id),
-            ) || null;
+            validPayables.find((p) => p.payment_status !== "Paid") || validPayables[0] || null;
         }
       }
 
