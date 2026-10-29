@@ -201,11 +201,28 @@ export const ReconciliationEngine = {
    */
   async analyzeParsedExcel(
     parsedData: ParsedExcelData,
-    options?: { companyId?: string | null; client?: any },
+    options?: {
+      companyId?: string | string[] | null;
+      companyIds?: string[] | null;
+      client?: any;
+    },
   ): Promise<ComprehensiveReconciliationReport> {
     const db = options?.client || supabase;
-    const filterByCompany = Boolean(options?.companyId && options.companyId !== "all");
-    const companyId = filterByCompany ? options!.companyId! : null;
+    const rawComp = options?.companyIds || options?.companyId;
+    const targetCompanyIds: string[] = (Array.isArray(rawComp) ? rawComp : [rawComp]).filter(
+      (id): id is string => Boolean(id && id !== "all"),
+    );
+
+    const applyCompanyFilter = (query: any) => {
+      if (targetCompanyIds.length === 1) return query.eq("company_id", targetCompanyIds[0]);
+      if (targetCompanyIds.length > 1) return query.in("company_id", targetCompanyIds);
+      return query;
+    };
+
+    const isCompanyAllowed = (itemCompanyId?: string | null) => {
+      if (targetCompanyIds.length === 0) return true;
+      return itemCompanyId ? targetCompanyIds.includes(itemCompanyId) : true;
+    };
 
     const boids = parsedData.sheets
       .flatMap((sheet) => {
@@ -282,7 +299,7 @@ export const ReconciliationEngine = {
                 "id,company_id,client_id,net_payable,gross_dividend,payment_status,fiscal_year,paid_amount,remaining_amount",
               )
               .in("client_id", chunk);
-            if (companyId) q = q.eq("company_id", companyId);
+            q = applyCompanyFilter(q);
             return q;
           }),
           fetchInChunks(clientIds, (chunk) => {
@@ -292,7 +309,7 @@ export const ReconciliationEngine = {
                 "id,company_id,client_id,net_payable,gross_interest,payment_status,fiscal_year,days_count,paid_amount,remaining_amount",
               )
               .in("client_id", chunk);
-            if (companyId) q = q.eq("company_id", companyId);
+            q = applyCompanyFilter(q);
             return q;
           }),
           fetchInChunks(clientIds, (chunk) => {
@@ -302,7 +319,7 @@ export const ReconciliationEngine = {
                 "id,company_id,client_id,net_payable,payment_status,fiscal_year,paid_amount,remaining_amount",
               )
               .in("client_id", chunk);
-            if (companyId) q = q.eq("company_id", companyId);
+            q = applyCompanyFilter(q);
             return q;
           }),
         ]);
@@ -321,7 +338,7 @@ export const ReconciliationEngine = {
           .select(
             "id,company_id,client_id,net_amount,paid_amount,connectips_ref,bank_name,bank_account_no,status,payable_type,payable_id",
           );
-        if (companyId) q = q.eq("company_id", companyId);
+        q = applyCompanyFilter(q);
         return q;
       })(),
 
@@ -342,8 +359,8 @@ export const ReconciliationEngine = {
     (clients || []).forEach((c: any) => {
       if (c.boid) {
         const boidKey = String(c.boid).trim();
-        // If companyId is provided, prioritize client record belonging to that company
-        if (!clientsByBoid.has(boidKey) || (companyId && c.company_id === companyId)) {
+        // If targetCompanyIds are provided, prioritize client record belonging to those companies
+        if (!clientsByBoid.has(boidKey) || isCompanyAllowed(c.company_id)) {
           clientsByBoid.set(boidKey, c);
         }
       }
@@ -594,7 +611,7 @@ export const ReconciliationEngine = {
         // SOURCE 1: Match against Payables
         if (clientId) {
           const candidatePayables = (payablesByClientId.get(clientId) || []).filter(
-            (p) => !usedPayableIds.has(p.id) && (!companyId || p.company_id === companyId),
+            (p) => !usedPayableIds.has(p.id) && isCompanyAllowed(p.company_id),
           );
           if (candidatePayables.length > 0) {
             // Prioritize exact or within-tolerance amount matches (preferring Pending/unpaid over Paid)
@@ -640,7 +657,7 @@ export const ReconciliationEngine = {
           const unassignedCandidates = payables.filter(
             (p) =>
               !usedPayableIds.has(p.id) &&
-              (!companyId || p.company_id === companyId) &&
+              isCompanyAllowed(p.company_id) &&
               matchesPayableAmount(p, excelAmount),
           );
           if (unassignedCandidates.length === 1) {
@@ -655,8 +672,8 @@ export const ReconciliationEngine = {
 
         // SOURCE 2: Match against Payments (strictly by payable linkage, client + amount, or verified amount fallback)
         if (clientId) {
-          const clientPayments = (paymentsByClientId.get(clientId) || []).filter(
-            (p: any) => !companyId || p.company_id === companyId,
+          const clientPayments = (paymentsByClientId.get(clientId) || []).filter((p: any) =>
+            isCompanyAllowed(p.company_id),
           );
 
           // 2a. Priority: Payment linked directly to bestPayable
@@ -883,7 +900,12 @@ export const ReconciliationEngine = {
    */
   async analyzeBankStatement(
     transactions: BankTransaction[],
-    options?: { fileName?: string; companyId?: string | null; client?: any },
+    options?: {
+      fileName?: string;
+      companyId?: string | string[] | null;
+      companyIds?: string[] | null;
+      client?: any;
+    },
   ): Promise<ComprehensiveReconciliationReport> {
     const db = options?.client || supabase;
     const cleanAcct = (val: unknown): string =>
@@ -896,12 +918,35 @@ export const ReconciliationEngine = {
         .toLowerCase()
         .replace(/[^a-z0-9]/g, "");
 
-    const filterByCompany = options?.companyId && options.companyId !== "all";
-    const companyId = filterByCompany ? options!.companyId! : null;
+    const rawComp = options?.companyIds || options?.companyId;
+    const targetCompanyIds: string[] = (Array.isArray(rawComp) ? rawComp : [rawComp]).filter(
+      (id): id is string => Boolean(id && id !== "all"),
+    );
+
+    const applyCompanyFilter = (query: any) => {
+      if (targetCompanyIds.length === 1) return query.eq("company_id", targetCompanyIds[0]);
+      if (targetCompanyIds.length > 1) return query.in("company_id", targetCompanyIds);
+      return query;
+    };
+
+    const applyBatchCompanyFilter = (query: any) => {
+      if (targetCompanyIds.length === 1) {
+        return query.or(`company_id.eq.${targetCompanyIds[0]},company_id.is.null`);
+      } else if (targetCompanyIds.length > 1) {
+        const orList =
+          targetCompanyIds.map((id) => `company_id.eq.${id}`).join(",") + ",company_id.is.null";
+        return query.or(orList);
+      }
+      return query;
+    };
+
+    const isCompanyAllowed = (itemCompanyId?: string | null) => {
+      if (targetCompanyIds.length === 0) return true;
+      return itemCompanyId ? targetCompanyIds.includes(itemCompanyId) : true;
+    };
 
     // Load data from DB in parallel with complete client joins and payment batches
-    // Load data from DB in parallel with complete client joins and payment batches
-    // Filter by company_id when provided to prevent cross-company data leakage
+    // Filter by company_ids when provided to prevent cross-company data leakage
     const [payments, payables, batchesResult] = await Promise.all([
       fetchAllRows<any>(async (from, to) => {
         let q = (db as any)
@@ -910,7 +955,7 @@ export const ReconciliationEngine = {
             "id,company_id,client_id,net_amount,paid_amount,gross_amount,bank_name,bank_account_no,status,payable_type,payable_id,payment_date,payment_reference,connectips_ref,clients(id,boid,full_name,company_id,bank_name,bank_account_no)",
           )
           .range(from, to);
-        if (companyId) q = q.eq("company_id", companyId);
+        q = applyCompanyFilter(q);
         return await q;
       }),
 
@@ -923,7 +968,7 @@ export const ReconciliationEngine = {
                 "id,company_id,client_id,net_payable,gross_dividend,payment_status,fiscal_year,bank_name,bank_account_no,paid_amount,remaining_amount,clients(id,boid,full_name,bank_name,bank_account_no)",
               )
               .range(from, to);
-            if (companyId) q = q.eq("company_id", companyId);
+            q = applyCompanyFilter(q);
             return await q;
           }),
           fetchAllRows<any>(async (from, to) => {
@@ -933,7 +978,7 @@ export const ReconciliationEngine = {
                 "id,company_id,client_id,net_payable,gross_interest,days_count,payment_status,fiscal_year,bank_name,bank_account_no,paid_amount,remaining_amount,clients(id,boid,full_name,bank_name,bank_account_no)",
               )
               .range(from, to);
-            if (companyId) q = q.eq("company_id", companyId);
+            q = applyCompanyFilter(q);
             return await q;
           }),
           fetchAllRows<any>(async (from, to) => {
@@ -943,7 +988,7 @@ export const ReconciliationEngine = {
                 "id,company_id,client_id,net_payable,payment_status,fiscal_year,bank_name,bank_account_no,paid_amount,remaining_amount,clients(id,boid,full_name,bank_name,bank_account_no)",
               )
               .range(from, to);
-            if (companyId) q = q.eq("company_id", companyId);
+            q = applyCompanyFilter(q);
             return await q;
           }),
         ]);
@@ -964,7 +1009,7 @@ export const ReconciliationEngine = {
           .order("created_at", { ascending: false })
           .order("id", { ascending: true })
           .range(from, to);
-        if (companyId) q = q.or(`company_id.eq.${companyId},company_id.is.null`);
+        q = applyBatchCompanyFilter(q);
         return await q;
       }),
     ]);
@@ -1012,6 +1057,7 @@ export const ReconciliationEngine = {
     const paymentsByName = new Map<string, any[]>();
     const paymentsByAmt = new Map<string, any[]>();
     const paymentsByRef = new Map<string, any[]>();
+    const paymentsByPayableId = new Map<string, any[]>();
 
     paymentsList.forEach((p: any) => {
       const acct = cleanAcct(p.bank_account_no || p.clients?.bank_account_no);
@@ -1046,6 +1092,10 @@ export const ReconciliationEngine = {
         const pRef = String(p.payment_reference).trim().toUpperCase();
         if (!paymentsByRef.has(pRef)) paymentsByRef.set(pRef, []);
         paymentsByRef.get(pRef)!.push(p);
+      }
+      if (p.payable_id) {
+        if (!paymentsByPayableId.has(p.payable_id)) paymentsByPayableId.set(p.payable_id, []);
+        paymentsByPayableId.get(p.payable_id)!.push(p);
       }
     });
 
@@ -1187,7 +1237,12 @@ export const ReconciliationEngine = {
       }
     };
 
-    transactions.forEach((txn, idx) => {
+    for (let idx = 0; idx < transactions.length; idx++) {
+      const txn = transactions[idx];
+      if (idx > 0 && idx % 2500 === 0) {
+        // Yield to the event loop so the UI remains responsive and garbage collection can run
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
       const amount = txn.credit > 0 ? txn.credit : Math.abs(txn.debit);
       const txnAcct = cleanAcct(txn.accountNo);
       const txnName = cleanName(txn.beneficiaryName || txn.description);
@@ -1350,9 +1405,8 @@ export const ReconciliationEngine = {
       if (!bestPayment && !matchedPayable && !matchedBatch && amount > 0) {
         const amtPayments = paymentsByAmt.get(amtKey) || [];
         bestPayment =
-          amtPayments.find(
-            (p) => !usedPaymentIds.has(p.id) && (!companyId || p.company_id === companyId),
-          ) || null;
+          amtPayments.find((p) => !usedPaymentIds.has(p.id) && isCompanyAllowed(p.company_id)) ||
+          null;
       }
 
       // 1h. Match against Payables by Exact Amount only (strictly isolated by company and fiscal year compatible)
@@ -1363,7 +1417,7 @@ export const ReconciliationEngine = {
             (p) =>
               canUsePayable(p, amount) &&
               isDateCompatible(txn.date, p.fiscal_year) &&
-              (!companyId || p.company_id === companyId),
+              isCompanyAllowed(p.company_id),
           ) || null;
       }
 
@@ -1372,9 +1426,8 @@ export const ReconciliationEngine = {
         if (txnAcct) {
           const acctPayments = paymentsByAcct.get(txnAcct) || [];
           bestPayment =
-            acctPayments.find(
-              (p) => !usedPaymentIds.has(p.id) && (!companyId || p.company_id === companyId),
-            ) || null;
+            acctPayments.find((p) => !usedPaymentIds.has(p.id) && isCompanyAllowed(p.company_id)) ||
+            null;
         }
         if (!bestPayment && txnAcct) {
           const acctPayables = payablesByAcct.get(txnAcct) || [];
@@ -1383,15 +1436,14 @@ export const ReconciliationEngine = {
               (p) =>
                 canUsePayable(p, amount) &&
                 isDateCompatible(txn.date, p.fiscal_year) &&
-                (!companyId || p.company_id === companyId),
+                isCompanyAllowed(p.company_id),
             ) || null;
         }
         if (!bestPayment && !matchedPayable && txnName) {
           const namePayments = paymentsByName.get(txnName) || [];
           bestPayment =
-            namePayments.find(
-              (p) => !usedPaymentIds.has(p.id) && (!companyId || p.company_id === companyId),
-            ) || null;
+            namePayments.find((p) => !usedPaymentIds.has(p.id) && isCompanyAllowed(p.company_id)) ||
+            null;
         }
         if (!bestPayment && !matchedPayable && txnName) {
           const namePayables = payablesByName.get(txnName) || [];
@@ -1400,16 +1452,17 @@ export const ReconciliationEngine = {
               (p) =>
                 canUsePayable(p, amount) &&
                 isDateCompatible(txn.date, p.fiscal_year) &&
-                (!companyId || p.company_id === companyId),
+                isCompanyAllowed(p.company_id),
             ) || null;
         }
       }
 
-      // Link payment to payable if payable matched and payment not yet linked
+      // Link payment to payable if payable matched and payment not yet linked ($O(1)$ lookup)
       if (matchedPayable && !bestPayment) {
-        const pmtForPayable = payments.find((p: any) => p.payable_id === matchedPayable.id);
-        if (pmtForPayable && !usedPaymentIds.has(pmtForPayable.id)) {
-          bestPayment = pmtForPayable;
+        const pmtsForPayable = paymentsByPayableId.get(matchedPayable.id);
+        if (pmtsForPayable) {
+          const pmt = pmtsForPayable.find((p: any) => !usedPaymentIds.has(p.id));
+          if (pmt) bestPayment = pmt;
         }
       }
 
@@ -1592,7 +1645,7 @@ export const ReconciliationEngine = {
         referenceId: txn.referenceId || undefined,
         confidenceScore,
       });
-    });
+    }
 
     // Build distinct classification summaries from bank statement matches
     const catMap = new Map<string, CategorySummary>();
@@ -1689,6 +1742,7 @@ export interface ReconciliationExceptionSummary {
 export function extractReconciliationExceptions(
   matchesOrReport: ComprehensiveReconciliationReport | ReconciliationMatch[],
   varianceThresholdNpr = 1.0,
+  maxDisplayExceptions = 500,
 ): ReconciliationExceptionSummary {
   const matches = Array.isArray(matchesOrReport) ? matchesOrReport : matchesOrReport.matches;
   const exceptions: ReconciliationExceptionItem[] = [];
@@ -1710,20 +1764,22 @@ export function extractReconciliationExceptions(
     ) {
       unmatchedBankTxnCount++;
       unmatchedBankTotalAmount += m.excelAmount || 0;
-      exceptions.push({
-        id: `exc-bank-${m.id}`,
-        type: "UNMATCHED_BANK_CREDIT",
-        severity: "critical",
-        description: `Unmatched bank statement transaction: ${m.shareholderName || "Unknown Beneficiary"} (NPR ${(m.excelAmount || 0).toLocaleString()})`,
-        amount: m.excelAmount || 0,
-        varianceAmount: m.excelAmount || 0,
-        bankReference: m.referenceId || null,
-        systemReference: null,
-        boid: m.boid || null,
-        shareholderName: m.shareholderName || null,
-        status: m.status,
-        actionRequired: "REVIEW",
-      });
+      if (exceptions.length < maxDisplayExceptions) {
+        exceptions.push({
+          id: `exc-bank-${m.id}`,
+          type: "UNMATCHED_BANK_CREDIT",
+          severity: "critical",
+          description: `Unmatched bank statement transaction: ${m.shareholderName || "Unknown Beneficiary"} (NPR ${(m.excelAmount || 0).toLocaleString()})`,
+          amount: m.excelAmount || 0,
+          varianceAmount: m.excelAmount || 0,
+          bankReference: m.referenceId || null,
+          systemReference: null,
+          boid: m.boid || null,
+          shareholderName: m.shareholderName || null,
+          status: m.status,
+          actionRequired: "REVIEW",
+        });
+      }
       continue;
     }
 
@@ -1731,41 +1787,47 @@ export function extractReconciliationExceptions(
     if (diff > varianceThresholdNpr) {
       largeVarianceCount++;
       largeVarianceTotalAmount += diff;
-      exceptions.push({
-        id: `exc-var-${m.id}`,
-        type: "LARGE_VARIANCE",
-        severity: diff > 100 ? "critical" : "warning",
-        description: `Variance exceeds threshold (NPR ${diff.toFixed(2)}): System NPR ${(m.systemAmount || 0).toFixed(2)} vs Bank/File NPR ${(m.excelAmount || 0).toFixed(2)}`,
-        amount: m.excelAmount || m.systemAmount || 0,
-        varianceAmount: diff,
-        bankReference: m.referenceId || null,
-        systemReference: m.instructionId || null,
-        boid: m.boid || null,
-        shareholderName: m.shareholderName || null,
-        status: m.status,
-        actionRequired: "REMEDIATE",
-      });
+      if (exceptions.length < maxDisplayExceptions) {
+        exceptions.push({
+          id: `exc-var-${m.id}`,
+          type: "LARGE_VARIANCE",
+          severity: diff > 100 ? "critical" : "warning",
+          description: `Variance exceeds threshold (NPR ${diff.toFixed(2)}): System NPR ${(m.systemAmount || 0).toFixed(2)} vs Bank/File NPR ${(m.excelAmount || 0).toFixed(2)}`,
+          amount: m.excelAmount || m.systemAmount || 0,
+          varianceAmount: diff,
+          bankReference: m.referenceId || null,
+          systemReference: m.instructionId || null,
+          boid: m.boid || null,
+          shareholderName: m.shareholderName || null,
+          status: m.status,
+          actionRequired: "REMEDIATE",
+        });
+      }
     }
 
     // 3. Mismatched Payment Reference
     if (m.referenceId && m.instructionId && m.referenceId !== m.instructionId) {
       mismatchedReferenceCount++;
-      exceptions.push({
-        id: `exc-ref-${m.id}`,
-        type: "MISMATCHED_REFERENCE",
-        severity: "warning",
-        description: `Payment reference mismatch: Bank ref "${m.referenceId}" does not match system ref "${m.instructionId}"`,
-        amount: m.excelAmount || m.systemAmount || 0,
-        varianceAmount: diff,
-        bankReference: m.referenceId,
-        systemReference: m.instructionId,
-        boid: m.boid || null,
-        shareholderName: m.shareholderName || null,
-        status: m.status,
-        actionRequired: "FORCE_MATCH",
-      });
+      if (exceptions.length < maxDisplayExceptions) {
+        exceptions.push({
+          id: `exc-ref-${m.id}`,
+          type: "MISMATCHED_REFERENCE",
+          severity: "warning",
+          description: `Payment reference mismatch: Bank ref "${m.referenceId}" does not match system ref "${m.instructionId}"`,
+          amount: m.excelAmount || m.systemAmount || 0,
+          varianceAmount: diff,
+          bankReference: m.referenceId,
+          systemReference: m.instructionId,
+          boid: m.boid || null,
+          shareholderName: m.shareholderName || null,
+          status: m.status,
+          actionRequired: "FORCE_MATCH",
+        });
+      }
     }
   }
+
+  const totalExceptions = unmatchedBankTxnCount + largeVarianceCount + mismatchedReferenceCount;
 
   return {
     unmatchedBankTxnCount,
@@ -1773,7 +1835,7 @@ export function extractReconciliationExceptions(
     largeVarianceCount,
     largeVarianceTotalAmount: Math.round(largeVarianceTotalAmount * 100) / 100,
     mismatchedReferenceCount,
-    totalExceptions: exceptions.length,
+    totalExceptions,
     exceptions,
   };
 }

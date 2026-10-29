@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -93,7 +94,9 @@ export function ReconciliationRoute() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [sourceFilter, setSourceFilter] = useState<string>("all");
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>("all");
-  const [reconCompanyId, setReconCompanyId] = useState<string>("all");
+  const [reconCompanyIds, setReconCompanyIds] = useState<string[]>([]);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(50);
   const [historyVisibleCount, setHistoryVisibleCount] = useState(15);
   const [expandedLotKey, setExpandedLotKey] = useState<string | null>(null);
   const [historySearchQuery, setHistorySearchQuery] = useState<string>("");
@@ -420,7 +423,7 @@ export function ReconciliationRoute() {
             setProcessingProgress("Performing 5-way multi-source reconciliation...");
             const rep = await ReconciliationEngine.analyzeBankStatement(transactions, {
               fileName: files.map((f) => f.name).join(", "),
-              companyId: reconCompanyId !== "all" ? reconCompanyId : null,
+              companyIds: reconCompanyIds.length > 0 ? reconCompanyIds : null,
             });
             setReport(rep);
             toast.success(
@@ -439,7 +442,7 @@ export function ReconciliationRoute() {
       });
       setProcessingProgress("Matching shareholder records against database...");
       const rep = await ReconciliationEngine.analyzeParsedExcel(parsedData, {
-        companyId: reconCompanyId !== "all" ? reconCompanyId : undefined,
+        companyIds: reconCompanyIds.length > 0 ? reconCompanyIds : undefined,
       });
       setReport(rep);
       toast.success(
@@ -471,7 +474,7 @@ export function ReconciliationRoute() {
       setProcessingProgress("Matching statement transactions with disbursements & payouts...");
       const rep = await ReconciliationEngine.analyzeBankStatement(transactions, {
         fileName: files.map((f) => f.name).join(", "),
-        companyId: reconCompanyId !== "all" ? reconCompanyId : null,
+        companyIds: reconCompanyIds.length > 0 ? reconCompanyIds : null,
       });
       setReport(rep);
       toast.success(
@@ -601,6 +604,177 @@ export function ReconciliationRoute() {
   const exceptionsSummary = useMemo(() => {
     return extractReconciliationExceptions(filteredMatches, 1.0);
   }, [filteredMatches]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, statusFilter, sourceFilter, selectedCategoryFilter, report]);
+
+  const paginatedFilteredMatches = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredMatches.slice(start, start + pageSize);
+  }, [filteredMatches, currentPage, pageSize]);
+
+  const paginatedMatchedOnly = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return matchedOnlyMatches.slice(start, start + pageSize);
+  }, [matchedOnlyMatches, currentPage, pageSize]);
+
+  const paginatedPartial = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return partialMatches.slice(start, start + pageSize);
+  }, [partialMatches, currentPage, pageSize]);
+
+  const paginatedRejected = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return rejectedMatches.slice(start, start + pageSize);
+  }, [rejectedMatches, currentPage, pageSize]);
+
+  const paginatedUnmatchedBank = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return unmatchedBankMatches.slice(start, start + pageSize);
+  }, [unmatchedBankMatches, currentPage, pageSize]);
+
+  const renderPaginationToolbar = (totalItems: number) => {
+    if (totalItems === 0) return null;
+    const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+    const startItem = (currentPage - 1) * pageSize + 1;
+    const endItem = Math.min(currentPage * pageSize, totalItems);
+
+    return (
+      <div className="flex items-center justify-between border-t pt-3 mt-3 text-xs text-muted-foreground flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <span>
+            Showing <strong className="text-foreground">{startItem.toLocaleString()}</strong> to{" "}
+            <strong className="text-foreground">{endItem.toLocaleString()}</strong> of{" "}
+            <strong className="text-foreground">{totalItems.toLocaleString()}</strong> records
+          </span>
+          <Select
+            value={String(pageSize)}
+            onValueChange={(val) => {
+              setPageSize(Number(val));
+              setCurrentPage(1);
+            }}
+          >
+            <SelectTrigger className="h-7 w-[95px] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="25">25 / page</SelectItem>
+              <SelectItem value="50">50 / page</SelectItem>
+              <SelectItem value="100">100 / page</SelectItem>
+              <SelectItem value="250">250 / page</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-2.5 text-xs"
+            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            disabled={currentPage <= 1}
+          >
+            Previous
+          </Button>
+          <span className="px-2 font-medium text-foreground">
+            Page {currentPage} of {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-2.5 text-xs"
+            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+            disabled={currentPage >= totalPages}
+          >
+            Next
+          </Button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderCompanyMultiSelect = (
+    triggerClassName: string = "w-[210px] h-9 text-xs",
+    placeholder: string = "All Companies",
+  ) => {
+    const selectedCount = reconCompanyIds.length;
+    const isAll = selectedCount === 0;
+    const displayText = isAll
+      ? placeholder
+      : selectedCount === 1
+        ? companiesList.find((c) => c.id === reconCompanyIds[0])?.company_name ||
+          "1 Company Selected"
+        : `${selectedCount} Companies Selected`;
+
+    return (
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            className={`${triggerClassName} justify-between text-left font-normal`}
+          >
+            <div className="flex items-center gap-1.5 truncate">
+              <Building2 className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+              <span className="truncate">{displayText}</span>
+            </div>
+            <ChevronDown className="w-3.5 h-3.5 ml-2 opacity-50 flex-shrink-0" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-64 p-2 shadow-lg" align="start">
+          <div className="space-y-1">
+            <div className="px-2 py-1 text-[11px] font-semibold text-muted-foreground">
+              Target Reconciliation Scheme(s)
+            </div>
+            <div
+              className={`flex items-center space-x-2 px-2 py-1.5 rounded-md hover:bg-muted cursor-pointer transition-colors ${
+                isAll ? "bg-muted font-medium" : ""
+              }`}
+              onClick={() => {
+                setReconCompanyIds([]);
+                if (report) setReport(null);
+              }}
+            >
+              <Checkbox checked={isAll} />
+              <span className="text-xs">All Companies</span>
+            </div>
+            <div className="border-t my-1" />
+            <div className="max-h-48 overflow-y-auto space-y-0.5">
+              {companiesList.map((c) => {
+                const isChecked = reconCompanyIds.includes(c.id);
+                return (
+                  <div
+                    key={c.id}
+                    className={`flex items-center space-x-2 px-2 py-1.5 rounded-md hover:bg-muted cursor-pointer transition-colors ${
+                      isChecked ? "bg-primary/5 text-primary font-medium" : ""
+                    }`}
+                    onClick={() => {
+                      let updated: string[];
+                      if (isChecked) {
+                        updated = reconCompanyIds.filter((id) => id !== c.id);
+                      } else {
+                        updated = [...reconCompanyIds, c.id];
+                      }
+                      setReconCompanyIds(updated);
+                      if (report) setReport(null);
+                    }}
+                  >
+                    <Checkbox checked={isChecked} />
+                    <span className="text-xs truncate flex-1">{c.company_name}</span>
+                    {c.company_code && (
+                      <Badge variant="outline" className="text-[9px] px-1 py-0 font-mono">
+                        {c.company_code}
+                      </Badge>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </PopoverContent>
+      </Popover>
+    );
+  };
 
   const [acknowledgedExceptions, setAcknowledgedExceptions] = useState<Set<string>>(new Set());
 
@@ -1425,26 +1599,7 @@ export function ReconciliationRoute() {
         />
         <div className="flex flex-col items-end gap-1.5">
           <div className="flex flex-wrap items-center gap-2">
-            <Select
-              value={reconCompanyId}
-              onValueChange={(val) => {
-                setReconCompanyId(val);
-                if (report) setReport(null);
-              }}
-            >
-              <SelectTrigger className="w-[190px] h-9 text-xs">
-                <Building2 className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
-                <SelectValue placeholder="All Companies" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Companies</SelectItem>
-                {companiesList.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.company_name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {renderCompanyMultiSelect("w-[210px] h-9 text-xs", "All Companies")}
             {canApply ? (
               <>
                 <Button
@@ -2164,7 +2319,10 @@ export function ReconciliationRoute() {
                       No matches found for current filters.
                     </p>
                   ) : (
-                    filteredMatches.map(renderMatchRow)
+                    <>
+                      {paginatedFilteredMatches.map(renderMatchRow)}
+                      {renderPaginationToolbar(filteredMatches.length)}
+                    </>
                   )}
                 </TabsContent>
                 <TabsContent
@@ -2176,7 +2334,10 @@ export function ReconciliationRoute() {
                       No exact matched records found.
                     </p>
                   ) : (
-                    matchedOnlyMatches.map(renderMatchRow)
+                    <>
+                      {paginatedMatchedOnly.map(renderMatchRow)}
+                      {renderPaginationToolbar(matchedOnlyMatches.length)}
+                    </>
                   )}
                 </TabsContent>
                 <TabsContent
@@ -2197,7 +2358,8 @@ export function ReconciliationRoute() {
                           When applied, payables will update to &ldquo;Partial&rdquo; status.
                         </AlertDescription>
                       </Alert>
-                      {partialMatches.map(renderMatchRow)}
+                      {paginatedPartial.map(renderMatchRow)}
+                      {renderPaginationToolbar(partialMatches.length)}
                     </>
                   )}
                 </TabsContent>
@@ -2225,7 +2387,8 @@ export function ReconciliationRoute() {
                           unpaid for retry.
                         </AlertDescription>
                       </Alert>
-                      {rejectedMatches.map(renderMatchRow)}
+                      {paginatedRejected.map(renderMatchRow)}
+                      {renderPaginationToolbar(rejectedMatches.length)}
                     </>
                   )}
                 </TabsContent>
@@ -2252,7 +2415,8 @@ export function ReconciliationRoute() {
                           clients in the system. They require manual review.
                         </AlertDescription>
                       </Alert>
-                      {unmatchedBankMatches.map(renderMatchRow)}
+                      {paginatedUnmatchedBank.map(renderMatchRow)}
+                      {renderPaginationToolbar(unmatchedBankMatches.length)}
                     </>
                   )}
                 </TabsContent>
@@ -2311,6 +2475,15 @@ export function ReconciliationRoute() {
                     </div>
                   ) : (
                     <div className="space-y-2">
+                      {exceptionsSummary.totalExceptions > exceptionsSummary.exceptions.length && (
+                        <Alert className="mb-2 bg-blue-50/50 border-blue-200 text-blue-900 dark:bg-blue-950/20 dark:border-blue-900/40 dark:text-blue-200">
+                          <Info className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                          <AlertDescription className="text-xs">
+                            Displaying top {exceptionsSummary.exceptions.length} exceptions of{" "}
+                            {exceptionsSummary.totalExceptions.toLocaleString()} total identified.
+                          </AlertDescription>
+                        </Alert>
+                      )}
                       {exceptionsSummary.exceptions.map((exc) => {
                         const isAcknowledged = acknowledgedExceptions.has(exc.id);
                         return (
@@ -2406,25 +2579,7 @@ export function ReconciliationRoute() {
               </CardDescription>
             </div>
             <div className="flex flex-wrap items-center justify-center gap-3 mt-2">
-              <Select
-                value={reconCompanyId}
-                onValueChange={(val) => {
-                  setReconCompanyId(val);
-                }}
-              >
-                <SelectTrigger className="w-[220px] h-11 text-xs">
-                  <Building2 className="w-4 h-4 mr-2 text-muted-foreground" />
-                  <SelectValue placeholder="All Companies" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Target: All Companies</SelectItem>
-                  {companiesList.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.company_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {renderCompanyMultiSelect("w-[240px] h-11 text-xs", "Target: All Companies")}
               {canApply ? (
                 <>
                   <Button
@@ -2927,9 +3082,11 @@ export function ReconciliationRoute() {
         onOpenChange={setRemediationDialogOpen}
         initialItems={remediationItems}
         companyName={
-          reconCompanyId !== "all"
-            ? companiesList.find((c) => c.id === reconCompanyId)?.company_name
-            : "Selected Entity"
+          reconCompanyIds.length === 1
+            ? companiesList.find((c) => c.id === reconCompanyIds[0])?.company_name
+            : reconCompanyIds.length > 1
+              ? `${reconCompanyIds.length} Companies Selected`
+              : "All Companies"
         }
       />
 
