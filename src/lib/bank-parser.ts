@@ -404,7 +404,7 @@ export const BankParser = {
     }
 
     const data = new Uint8Array(rawBuffer);
-    const workbook = XLSX.read(data, { type: "array", cellDates: true });
+    const workbook = XLSX.read(data, { type: "array", cellDates: true, dense: true });
     const transactions: BankTransaction[] = [];
 
     // Choose sheets to process
@@ -971,6 +971,8 @@ export const BankParser = {
       seenFileSignatures.add(fileSig);
 
       options.onProgress?.(i + 1, files.length, file.name);
+      // Give the browser event loop a moment to breathe and render the progress UI
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
       try {
         const txns = await this.parseBankStatement(file, options);
