@@ -1308,7 +1308,74 @@ export const ReconciliationEngine = {
         // Yield to the event loop so the UI remains responsive and garbage collection can run
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
-      const amount = txn.credit > 0 ? txn.credit : Math.abs(txn.debit);
+      // Finding 5: Validate debit/credit exclusivity; route both-nonzero rows to exception queue
+      const hasBothDebitAndCredit = Number(txn.debit) > 0 && Number(txn.credit) > 0;
+      if (hasBothDebitAndCredit) {
+        matches.push({
+          id: `recon-ambig-${idx}-${Date.now()}`,
+          boid: txn.accountNo ? `A/C: ${txn.accountNo}` : `Row ${idx + 1}`,
+          shareholderName: txn.beneficiaryName || txn.description || "Ambiguous Transaction",
+          category: "Ambiguous Debit/Credit",
+          kitta: 0,
+          excelAmount: Math.abs(Number(txn.debit) - Number(txn.credit)),
+          systemAmount: 0,
+          difference: -Math.abs(Number(txn.debit) - Number(txn.credit)),
+          status: "Pending",
+          bankAccountNo: txn.accountNo || undefined,
+          transactionDate: txn.date || null,
+          transactionDescription: `AMBIGUOUS: Both debit (${txn.debit}) and credit (${txn.credit}) are non-zero. Excluded from payable matching.`,
+          sourceType: "bank_statement",
+          confidenceScore: 0,
+          requiresManualApproval: true,
+          candidateCount: 0,
+          ruleVersion: "2.0.0",
+        });
+        summary.missingInSystem += 1;
+        grandTotal.discrepancyCount += 1;
+        continue;
+      }
+
+      // Finding 3: Non-payout transactions (funding deposits, charges, circular sweeps)
+      // must NOT enter payable/payment matching
+      const isFundingDeposit =
+        txn.category === "FUNDING_DEPOSIT" ||
+        (Number(txn.credit) > 0 && Number(txn.debit) === 0 && txn.category !== "REJECT_RETURN");
+      const isBankCharge = txn.category === "BANK_CHARGES";
+      const isCircularSweep = txn.category === "NRB_CIRCULAR" || Boolean(txn.isLiquiditySweep);
+      const isExcludedCategory = isFundingDeposit || isBankCharge || isCircularSweep;
+
+      const amount = Number(txn.credit) > 0 ? Number(txn.credit) : Math.abs(Number(txn.debit));
+
+      if (isExcludedCategory) {
+        const catLabel = isFundingDeposit
+          ? "Account Funding / Inflow"
+          : isBankCharge
+            ? "Bank Fee / Commission"
+            : "NRB / Circular Sweep";
+
+        matches.push({
+          id: `recon-excl-${idx}-${Date.now()}`,
+          boid: txn.accountNo ? `A/C: ${txn.accountNo}` : `Row ${idx + 1}`,
+          shareholderName: txn.beneficiaryName || txn.description || catLabel,
+          category: catLabel,
+          kitta: 0,
+          excelAmount: amount,
+          systemAmount: 0,
+          difference: -amount,
+          status: "Pending",
+          bankAccountNo: txn.accountNo || undefined,
+          transactionDate: txn.date || null,
+          transactionDescription: `EXCLUDED: ${catLabel} (${txn.description || "Non-payout transaction"}). Excluded from payable matching.`,
+          sourceType: "bank_statement",
+          confidenceScore: 0,
+          requiresManualApproval: true,
+          candidateCount: 0,
+          ruleVersion: "2.0.0",
+        });
+        summary.missingInSystem += 1;
+        continue;
+      }
+
       const txnAcct = cleanAcct(txn.accountNo);
       const txnName = cleanName(txn.beneficiaryName || txn.description);
       const amtKey = buildAmountKey(amount);

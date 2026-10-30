@@ -409,8 +409,10 @@ DECLARE
   v_already_paid int := 0;
   v_errors jsonb := '[]'::jsonb;
   v_jwt_role text;
-  v_remaining numeric;
 BEGIN
+  IF p_batch_info IS NOT NULL THEN
+    NULL;
+  END IF;
   -- Extract caller JWT role
   BEGIN
     v_jwt_role := (NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role');
@@ -2580,8 +2582,17 @@ BEGIN
     PERFORM public.require_role('admin', 'supervisor', 'finance_operator', 'operator', 'maker');
   END IF;
 
+  IF p_company_id IS NOT NULL AND NOT public.has_company_access(COALESCE(auth.uid(), '00000000-0000-0000-0000-000000000000'::uuid), p_company_id::uuid) THEN
+    RAISE EXCEPTION 'Access denied to company %', p_company_id;
+  END IF;
+
+  IF p_fiscal_year IS NOT NULL THEN
+    NULL;
+  END IF;
+
   DELETE FROM public.clients c
-  WHERE NOT EXISTS (SELECT 1 FROM public.dividend_payables d WHERE d.client_id = c.id)
+  WHERE (p_imported_after IS NULL OR c.created_at >= p_imported_after)
+    AND NOT EXISTS (SELECT 1 FROM public.dividend_payables d WHERE d.client_id = c.id)
     AND NOT EXISTS (SELECT 1 FROM public.interest_payables i WHERE i.client_id = c.id)
     AND NOT EXISTS (SELECT 1 FROM public.mutual_fund_payables m WHERE m.client_id = c.id)
     AND NOT EXISTS (SELECT 1 FROM public.payments p WHERE p.client_id = c.id);
@@ -2966,7 +2977,7 @@ $$;
 --
 
 CREATE FUNCTION public.get_available_payables_preview(p_company_id uuid DEFAULT NULL::uuid, p_payable_type text DEFAULT 'all'::text, p_fiscal_year text DEFAULT 'all'::text, p_from_date text DEFAULT NULL::text, p_to_date text DEFAULT NULL::text) RETURNS json
-    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    LANGUAGE plpgsql VOLATILE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
 DECLARE
@@ -3122,7 +3133,7 @@ $$;
 --
 
 CREATE FUNCTION public.get_clients_paginated(p_company_id uuid DEFAULT NULL::uuid, p_holder_type text DEFAULT 'all'::text, p_classification text DEFAULT 'all'::text, p_status text DEFAULT 'all'::text, p_verification text DEFAULT 'all'::text, p_search text DEFAULT ''::text, p_limit integer DEFAULT 25, p_offset integer DEFAULT 0, p_needs_review text DEFAULT 'all'::text) RETURNS TABLE(id uuid, client_code text, client_id text, company_id uuid, full_name text, father_name text, grandfather_name text, date_of_birth text, gender text, occupation text, boid text, kitta numeric, holder_type public.holder_type, payee_classification text, pan_no text, citizenship_no text, pan_or_citizenship text, nid_number text, address text, province text, district text, municipality text, phone text, email text, bank_name text, bank_branch text, bank_account_no text, account_type text, residency public.residency_type, verification_status public.verification_status, status public.record_status, created_at timestamp with time zone, company_name text, company_code text, needs_review boolean, data_quality_notes text, total_count bigint, company_details jsonb)
-    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    LANGUAGE plpgsql VOLATILE SECURITY DEFINER
     SET search_path TO 'public'
     SET statement_timeout TO '60s'
     AS $$
@@ -3403,7 +3414,7 @@ $$;
 --
 
 CREATE FUNCTION public.get_company_client_stats(p_company_id uuid DEFAULT NULL::uuid) RETURNS json
-    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    LANGUAGE plpgsql VOLATILE SECURITY DEFINER
     SET search_path TO 'public'
     SET statement_timeout TO '60s'
     AS $$
@@ -3510,7 +3521,7 @@ $$;
 --
 
 CREATE FUNCTION public.get_company_fiscal_summary_rpc(p_fiscal_year text DEFAULT NULL::text) RETURNS json
-    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    LANGUAGE plpgsql VOLATILE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
 DECLARE
@@ -3792,7 +3803,7 @@ $$;
 --
 
 CREATE FUNCTION public.get_dividend_payables_totals(p_company_id uuid DEFAULT NULL::uuid, p_status text DEFAULT 'all'::text, p_fiscal_year text DEFAULT 'all'::text, p_type text DEFAULT 'all'::text, p_class text DEFAULT 'all'::text, p_from_date text DEFAULT NULL::text, p_to_date text DEFAULT NULL::text) RETURNS json
-    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    LANGUAGE plpgsql VOLATILE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
 DECLARE
@@ -3891,7 +3902,7 @@ $$;
 --
 
 CREATE FUNCTION public.get_interest_payables_totals(p_company_id uuid DEFAULT NULL::uuid, p_status text DEFAULT 'all'::text, p_fiscal_year text DEFAULT 'all'::text, p_class text DEFAULT 'all'::text, p_from_date text DEFAULT NULL::text, p_to_date text DEFAULT NULL::text) RETURNS json
-    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    LANGUAGE plpgsql VOLATILE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
 DECLARE
@@ -3982,7 +3993,7 @@ $$;
 --
 
 CREATE FUNCTION public.get_mutual_fund_distribution_summary(p_company_id uuid DEFAULT NULL::uuid, p_fiscal_year text DEFAULT 'all'::text, p_from_date text DEFAULT NULL::text, p_to_date text DEFAULT NULL::text) RETURNS TABLE(type text, transaction_count bigint, kitta numeric, gross numeric, tax numeric, net numeric)
-    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    LANGUAGE plpgsql VOLATILE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
 DECLARE
@@ -4055,7 +4066,7 @@ $$;
 --
 
 CREATE FUNCTION public.get_mutual_fund_payables_totals(p_company_id uuid DEFAULT NULL::uuid, p_status text DEFAULT 'all'::text, p_fiscal_year text DEFAULT 'all'::text, p_class text DEFAULT 'all'::text, p_from_date text DEFAULT NULL::text, p_to_date text DEFAULT NULL::text) RETURNS json
-    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    LANGUAGE plpgsql VOLATILE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
 DECLARE
@@ -6379,6 +6390,21 @@ BEGIN
 
   GET DIAGNOSTICS v_updated_payments_count = ROW_COUNT;
 
+  IF p_dispatched_by IS NOT NULL OR p_remarks IS NOT NULL THEN
+    BEGIN
+      INSERT INTO public.audit_logs(user_id, action, table_name, record_id, new_value)
+      VALUES (
+        COALESCE(p_dispatched_by, auth.uid()),
+        'dispatch_payment_batch',
+        'payment_batches',
+        p_batch_id,
+        jsonb_build_object('remarks', p_remarks, 'dispatched_by', p_dispatched_by)
+      );
+    EXCEPTION WHEN OTHERS THEN
+      NULL;
+    END;
+  END IF;
+
   RETURN jsonb_build_object(
     'success', true,
     'batch_id', p_batch_id,
@@ -6409,10 +6435,13 @@ DECLARE
   v_payable_id uuid;
   v_payable_type text;
   v_match_amount numeric(15,2);
-  v_txn record;
   v_reconciled_count integer := 0;
   v_settled_amount numeric(15,2) := 0.00;
 BEGIN
+  IF p_company_id IS NOT NULL AND NOT public.has_company_access(COALESCE(p_operator_id, auth.uid(), '00000000-0000-0000-0000-000000000000'::uuid), p_company_id) THEN
+    RAISE EXCEPTION 'Access denied to company %', p_company_id;
+  END IF;
+
   IF p_matches IS NULL OR jsonb_array_length(p_matches) = 0 THEN
     RETURN jsonb_build_object('success', true, 'reconciled_count', 0, 'settled_amount', 0);
   END IF;
@@ -6430,7 +6459,7 @@ BEGIN
 
     -- 1. Lock bank transaction using FOR UPDATE SKIP LOCKED
     IF v_txn_id IS NOT NULL THEN
-      SELECT * INTO v_txn
+      PERFORM 1
       FROM public.bank_transactions
       WHERE id = v_txn_id
       FOR UPDATE SKIP LOCKED;
@@ -6492,6 +6521,21 @@ BEGIN
       v_settled_amount := round(v_settled_amount + v_match_amount, 2);
     END IF;
   END LOOP;
+
+  IF p_operator_id IS NOT NULL OR p_company_id IS NOT NULL THEN
+    BEGIN
+      INSERT INTO public.audit_logs(user_id, action, table_name, record_id, new_value)
+      VALUES (
+        COALESCE(p_operator_id, auth.uid()),
+        'commit_reconciliation_matches',
+        'bank_transactions',
+        p_company_id,
+        jsonb_build_object('matches_count', v_reconciled_count, 'settled_amount', v_settled_amount)
+      );
+    EXCEPTION WHEN OTHERS THEN
+      NULL;
+    END;
+  END IF;
 
   RETURN jsonb_build_object(
     'success', true,

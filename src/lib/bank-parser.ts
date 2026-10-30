@@ -178,6 +178,103 @@ export interface BankTransaction {
   accountHolder?: string;
 }
 
+export interface FileParseStatus {
+  file: File;
+  fileName: string;
+  fileHash: string;
+  status: "parsed" | "empty" | "failed" | "duplicate";
+  transactionCount: number;
+  rejectedCount: number;
+  acceptedCount: number;
+  selectedSheet?: string;
+  availableSheets?: string[];
+  error?: string;
+}
+
+export interface FileVariantWarning {
+  fileA: string;
+  fileB: string;
+  countA: number;
+  countB: number;
+  reason: string;
+}
+
+export interface ParseMultipleFilesResult {
+  transactions: BankTransaction[];
+  perFileTransactions: Map<File, BankTransaction[]>;
+  fileStatuses: FileParseStatus[];
+  hasFailures: boolean;
+  duplicateCount: number;
+  variantWarnings: FileVariantWarning[];
+}
+
+/**
+ * Classifies a file as either a bank settlement / statement report or a shareholder payable registry.
+ */
+export async function classifyReconciliationFile(
+  file: File,
+): Promise<"bank_statement" | "shareholder_registry"> {
+  const name = file.name.toLowerCase();
+  const bankKeywords = [
+    "ips",
+    "nchl",
+    "connectips",
+    "settlement",
+    "late rtn",
+    "late return",
+    "late_rtn",
+    "error report",
+    "mer",
+    "bank",
+    "statement",
+    "payout",
+    "debenture",
+  ];
+
+  if (bankKeywords.some((kw) => name.includes(kw))) {
+    return "bank_statement";
+  }
+
+  // If name is ambiguous or doesn't have an obvious indicator, inspect first few header rows
+  try {
+    const slice = await file.slice(0, 65536).arrayBuffer();
+    const wb = XLSX.read(slice, { type: "array", sheetRows: 5, dense: true });
+    if (wb.SheetNames && wb.SheetNames.length > 0) {
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+      const headerStr = rows
+        .slice(0, 4)
+        .flat()
+        .map((v) => String(v || "").toLowerCase())
+        .join(" ");
+
+      if (
+        headerStr.includes("instruction") ||
+        headerStr.includes("transid") ||
+        headerStr.includes("transaction id") ||
+        headerStr.includes("creditor") ||
+        headerStr.includes("waive fee") ||
+        (headerStr.includes("debit") && headerStr.includes("credit"))
+      ) {
+        return "bank_statement";
+      }
+
+      if (
+        headerStr.includes("boid") ||
+        headerStr.includes("shareholder") ||
+        headerStr.includes("kitta") ||
+        headerStr.includes("folio")
+      ) {
+        return "shareholder_registry";
+      }
+    }
+  } catch {
+    // If workbook inspection fails, default to shareholder registry safely
+  }
+
+  return "shareholder_registry";
+}
+
 export const BankParser = {
   /**
    * Parse a bank statement or ACH payment settlement report.
@@ -991,17 +1088,26 @@ export const BankParser = {
       includeCircularSweeps?: boolean;
       onProgress?: (current: number, total: number, fileName: string) => void;
     } = {},
-  ): Promise<{
-    transactions: BankTransaction[];
-    perFileTransactions: Map<File, BankTransaction[]>;
-  }> {
+  ): Promise<ParseMultipleFilesResult> {
     const perFileTransactions = new Map<File, BankTransaction[]>();
-    if (!files.length) return { transactions: [], perFileTransactions };
+    const fileStatuses: FileParseStatus[] = [];
+    if (!files.length) {
+      return {
+        transactions: [],
+        perFileTransactions,
+        fileStatuses,
+        hasFailures: false,
+        duplicateCount: 0,
+        variantWarnings: [],
+      };
+    }
 
     const allTransactions: BankTransaction[] = [];
     const seenInstructionIds = new Set<string>();
     const seenFileSignatures = new Set<string>();
     const seenCrossFileLedger = new Set<string>();
+    let duplicateCount = 0;
+    let hasFailures = false;
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -1010,15 +1116,46 @@ export const BankParser = {
       seenFileSignatures.add(fileHash);
 
       options.onProgress?.(i + 1, files.length, file.name);
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      if (isDuplicateFile) {
+        duplicateCount++;
+        perFileTransactions.set(file, []);
+        fileStatuses.push({
+          file,
+          fileName: file.name,
+          fileHash,
+          status: "duplicate",
+          transactionCount: 0,
+          rejectedCount: 0,
+          acceptedCount: 0,
+        });
+        continue; // Fast skip: do NOT parse duplicate workbook!
+      }
 
       try {
         const txns = await this.parseBankStatement(file, options);
         perFileTransactions.set(file, txns);
 
-        if (isDuplicateFile) {
-          continue;
-        }
+        const rejected = txns.filter(
+          (t) =>
+            t.category === "REJECT_RETURN" ||
+            t.status === "RJCT" ||
+            String(t.status || "")
+              .toLowerCase()
+              .includes("reject"),
+        ).length;
+        const accepted = txns.length - rejected;
+
+        fileStatuses.push({
+          file,
+          fileName: file.name,
+          fileHash,
+          status: txns.length === 0 ? "empty" : "parsed",
+          transactionCount: txns.length,
+          rejectedCount: rejected,
+          acceptedCount: accepted,
+        });
 
         for (const t of txns) {
           const idRef = t.instructionId || t.referenceId;
@@ -1041,13 +1178,65 @@ export const BankParser = {
 
           allTransactions.push(t);
         }
-      } catch (err) {
-        console.warn(`Failed to parse file ${file.name}:`, err);
+      } catch (err: any) {
+        console.error(`Failed to parse file ${file.name}:`, err);
+        hasFailures = true;
         perFileTransactions.set(file, []);
+        fileStatuses.push({
+          file,
+          fileName: file.name,
+          fileHash,
+          status: "failed",
+          transactionCount: 0,
+          rejectedCount: 0,
+          acceptedCount: 0,
+          error: err?.message || String(err),
+        });
       }
     }
 
-    return { transactions: allTransactions, perFileTransactions };
+    // Detect variant files with differing transaction populations (Finding 6)
+    const variantWarnings: FileVariantWarning[] = [];
+    for (let j = 0; j < fileStatuses.length; j++) {
+      for (let k = j + 1; k < fileStatuses.length; k++) {
+        const a = fileStatuses[j];
+        const b = fileStatuses[k];
+        if (a.status !== "parsed" || b.status !== "parsed") continue;
+
+        const normA = a.fileName
+          .toLowerCase()
+          .replace(/[\s_\-()]/g, "")
+          .replace(/\.[^.]+$/, "");
+        const normB = b.fileName
+          .toLowerCase()
+          .replace(/[\s_\-()]/g, "")
+          .replace(/\.[^.]+$/, "");
+
+        const isRelated =
+          normA.includes(normB) ||
+          normB.includes(normA) ||
+          (normA.slice(0, 15) === normB.slice(0, 15) && normA.length > 10);
+
+        if (isRelated && a.transactionCount !== b.transactionCount) {
+          variantWarnings.push({
+            fileA: a.fileName,
+            fileB: b.fileName,
+            countA: a.transactionCount,
+            countB: b.transactionCount,
+            reason: `Files appear to be variants of the same reporting batch but have differing transaction counts (${a.transactionCount} vs ${b.transactionCount}).`,
+          });
+        }
+      }
+    }
+
+    return {
+      transactions: allTransactions,
+      perFileTransactions,
+      fileStatuses,
+      hasFailures,
+      duplicateCount,
+      variantWarnings,
+    };
   },
 
   /**

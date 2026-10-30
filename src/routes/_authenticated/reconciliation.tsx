@@ -21,7 +21,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import * as XLSX from "xlsx";
 import { ExcelParser } from "@/lib/excel-parser";
-import { BankParser } from "@/lib/bank-parser";
+import {
+  BankParser,
+  classifyReconciliationFile,
+  type FileParseStatus,
+  type FileVariantWarning,
+} from "@/lib/bank-parser";
 import {
   ReconciliationEngine,
   ComprehensiveReconciliationReport,
@@ -115,6 +120,8 @@ export function ReconciliationRoute() {
   const [lotDetailTabs, setLotDetailTabs] = useState<
     Record<string, "all" | "matched" | "rejected" | "discrepancy">
   >({});
+  const [parsedFileStatuses, setParsedFileStatuses] = useState<FileParseStatus[]>([]);
+  const [variantAlerts, setVariantAlerts] = useState<FileVariantWarning[]>([]);
 
   const { hasAny, isAdmin, user, roles } = useAuth();
   const canApply = hasAny(["admin", "finance_operator", "reconciliation_officer"]);
@@ -409,61 +416,34 @@ export function ReconciliationRoute() {
     setIsProcessing(true);
     setProcessingProgress(
       files.length > 1
-        ? `Preparing ${files.length} files for analysis...`
+        ? `Classifying and analyzing ${files.length} files...`
         : `Analyzing ${files[0].name}...`,
     );
     try {
-      // Check if files are bank account statements or raw ACH settlement reports (not shareholder registry lot files)
-      const areBankReports = files.some((f) => {
-        const fileName = f.name.toLowerCase();
-        return (
-          fileName.includes("ips") ||
-          fileName.includes("nchl") ||
-          fileName.includes("connectips") ||
-          fileName.includes("settlement") ||
-          fileName.includes("late rtn") ||
-          fileName.includes("late return") ||
-          fileName.includes("report") ||
-          fileName.includes("mer") ||
-          fileName.includes("error report") ||
-          fileName.includes("debenture") ||
-          fileName.includes("bank") ||
-          fileName.includes("statement")
-        );
-      });
+      // Finding 1: Classify each file independently and reject mixed-mode batches
+      const classifications = await Promise.all(
+        files.map(async (f) => ({
+          file: f,
+          type: await classifyReconciliationFile(f),
+        })),
+      );
 
-      // Also inspect first file headers to see if it contains bank settlement columns
-      let detectedBankByHeader = areBankReports;
-      if (!detectedBankByHeader && files.length > 0) {
-        try {
-          const sampleBuf = await files[0].slice(0, 100000).arrayBuffer();
-          const wb = XLSX.read(sampleBuf, { type: "array", sheetRows: 5, dense: true });
-          const firstSheet = wb.Sheets[wb.SheetNames[0]];
-          if (firstSheet) {
-            const rawRows = XLSX.utils.sheet_to_json(firstSheet, { header: 1 }) as any[][];
-            const headerStr = rawRows
-              .slice(0, 3)
-              .flat()
-              .map((v) => String(v || "").toLowerCase())
-              .join(" ");
-            if (
-              headerStr.includes("instruction") ||
-              headerStr.includes("transaction id") ||
-              headerStr.includes("transid") ||
-              headerStr.includes("creditor") ||
-              headerStr.includes("debit") ||
-              headerStr.includes("credit") ||
-              headerStr.includes("waive fee")
-            ) {
-              detectedBankByHeader = true;
-            }
-          }
-        } catch (e) {
-          console.warn("Header check failed, continuing:", e);
-        }
+      const bankFiles = classifications
+        .filter((c) => c.type === "bank_statement")
+        .map((c) => c.file);
+      const registryFiles = classifications
+        .filter((c) => c.type === "shareholder_registry")
+        .map((c) => c.file);
+
+      if (bankFiles.length > 0 && registryFiles.length > 0) {
+        toast.error(
+          `Mixed upload rejected: Batch contains ${bankFiles.length} bank settlement file(s) and ${registryFiles.length} shareholder register file(s). Please upload bank settlement reports and shareholder registries separately to prevent misinterpretation.`,
+          { duration: 8000 },
+        );
+        return;
       }
 
-      if (areBankReports || detectedBankByHeader) {
+      if (bankFiles.length > 0) {
         if (!reconCompanyIds.length || !reconCompanyIds[0]) {
           toast.error(
             "Target company selection is required before analyzing and ingesting settlement reports.",
@@ -471,29 +451,58 @@ export function ReconciliationRoute() {
           return;
         }
         try {
-          const { transactions, perFileTransactions } =
-            await BankParser.parseMultipleFilesWithProvenance(files, {
-              onProgress: (cur, tot, name) =>
-                setProcessingProgress(`Analyzing settlement report ${cur} of ${tot}: ${name}`),
+          const {
+            transactions,
+            perFileTransactions,
+            fileStatuses,
+            hasFailures,
+            duplicateCount,
+            variantWarnings,
+          } = await BankParser.parseMultipleFilesWithProvenance(bankFiles, {
+            onProgress: (cur, tot, name) =>
+              setProcessingProgress(`Analyzing settlement report ${cur} of ${tot}: ${name}`),
+          });
+
+          setParsedFileStatuses(fileStatuses);
+          setVariantAlerts(variantWarnings);
+
+          // Finding 2: Individual parse failures must be visible and block partial application
+          if (hasFailures) {
+            const failedNames = fileStatuses
+              .filter((s) => s.status === "failed")
+              .map((s) => `${s.fileName} (${s.error || "Parse error"})`)
+              .join("; ");
+            toast.error(
+              `Parse failed for ${fileStatuses.filter((s) => s.status === "failed").length} file(s): ${failedNames}. Partial batches cannot be applied.`,
+              { duration: 9000 },
+            );
+            return;
+          }
+
+          if (variantWarnings.length > 0) {
+            toast.warning(`Source variant discrepancy detected: ${variantWarnings[0].reason}`, {
+              duration: 8000,
             });
+          }
 
           if (transactions.length > 0) {
             // Persist into immutable bank ledger per file with provenance (fail closed)
             const targetCompany = reconCompanyIds.length > 0 ? reconCompanyIds[0] : null;
-            for (const file of files) {
+            for (const file of bankFiles) {
               const fileTxns = perFileTransactions.get(file) || [];
+              if (fileTxns.length === 0) continue;
               setProcessingProgress(`Persisting ledger for ${file.name}...`);
               await ReconciliationService.ingestBankStatementFile(targetCompany, file, fileTxns);
             }
 
             setProcessingProgress("Performing 5-way multi-source reconciliation...");
             const rep = await ReconciliationEngine.analyzeBankStatement(transactions, {
-              fileName: files.map((f) => f.name).join(", "),
+              fileName: bankFiles.map((f) => f.name).join(", "),
               companyIds: reconCompanyIds.length > 0 ? reconCompanyIds : null,
             });
             setReport(rep);
             toast.success(
-              `Successfully analyzed ${files.length} settlement file(s) with ${transactions.length.toLocaleString()} total transactions`,
+              `Successfully analyzed ${bankFiles.length} settlement file(s) with ${transactions.length.toLocaleString()} total transactions${duplicateCount > 0 ? ` (${duplicateCount} duplicate files skipped)` : ""}`,
             );
             return;
           } else {
@@ -510,7 +519,7 @@ export function ReconciliationRoute() {
       }
 
       // Default: parse as multi-file Excel records
-      const parsedData = await ExcelParser.parseMultipleFiles(files, (cur, tot, name) => {
+      const parsedData = await ExcelParser.parseMultipleFiles(registryFiles, (cur, tot, name) => {
         setProcessingProgress(`Parsing Excel workbook ${cur} of ${tot}: ${name}`);
       });
       setProcessingProgress("Matching shareholder records against database...");
@@ -518,8 +527,20 @@ export function ReconciliationRoute() {
         companyIds: reconCompanyIds.length > 0 ? reconCompanyIds : undefined,
       });
       setReport(rep);
+      setParsedFileStatuses(
+        registryFiles.map((f) => ({
+          file: f,
+          fileName: f.name,
+          fileHash: "",
+          status: "parsed",
+          transactionCount: parsedData.grandTotals?.totalRows || 0,
+          rejectedCount: 0,
+          acceptedCount: parsedData.grandTotals?.totalRows || 0,
+        })),
+      );
+      setVariantAlerts([]);
       toast.success(
-        `Successfully analyzed ${files.length} Excel file(s) (${rep.matches.length.toLocaleString()} records)`,
+        `Successfully analyzed ${registryFiles.length} Excel file(s) (${rep.matches.length.toLocaleString()} records)`,
       );
     } catch (error) {
       console.error(error);
@@ -547,29 +568,61 @@ export function ReconciliationRoute() {
         : `Parsing ${files[0].name}...`,
     );
     try {
-      const { transactions, perFileTransactions } =
-        await BankParser.parseMultipleFilesWithProvenance(files, {
-          onProgress: (cur, tot, name) =>
-            setProcessingProgress(`Parsing bank statement ${cur} of ${tot}: ${name}`),
-        });
+      const {
+        transactions,
+        perFileTransactions,
+        fileStatuses,
+        hasFailures,
+        duplicateCount,
+        variantWarnings,
+      } = await BankParser.parseMultipleFilesWithProvenance(files, {
+        onProgress: (cur, tot, name) =>
+          setProcessingProgress(`Parsing bank statement ${cur} of ${tot}: ${name}`),
+      });
 
-      // Persist into immutable bank ledger per file with provenance (fail closed)
-      const targetCompany = reconCompanyIds.length > 0 ? reconCompanyIds[0] : null;
-      for (const file of files) {
-        const fileTxns = perFileTransactions.get(file) || [];
-        setProcessingProgress(`Persisting statement ledger for ${file.name}...`);
-        await ReconciliationService.ingestBankStatementFile(targetCompany, file, fileTxns);
+      setParsedFileStatuses(fileStatuses);
+      setVariantAlerts(variantWarnings);
+
+      if (hasFailures) {
+        const failedNames = fileStatuses
+          .filter((s) => s.status === "failed")
+          .map((s) => `${s.fileName} (${s.error || "Parse error"})`)
+          .join("; ");
+        toast.error(
+          `Parse failed for ${fileStatuses.filter((s) => s.status === "failed").length} file(s): ${failedNames}. Partial batches cannot be applied.`,
+          { duration: 9000 },
+        );
+        return;
       }
 
-      setProcessingProgress("Matching statement transactions with disbursements & payouts...");
-      const rep = await ReconciliationEngine.analyzeBankStatement(transactions, {
-        fileName: files.map((f) => f.name).join(", "),
-        companyIds: reconCompanyIds.length > 0 ? reconCompanyIds : null,
-      });
-      setReport(rep);
-      toast.success(
-        `Successfully analyzed ${files.length} statement file(s) with ${transactions.length.toLocaleString()} total transactions`,
-      );
+      if (variantWarnings.length > 0) {
+        toast.warning(`Source variant discrepancy detected: ${variantWarnings[0].reason}`, {
+          duration: 8000,
+        });
+      }
+
+      if (transactions.length > 0) {
+        // Persist into immutable bank ledger per file with provenance (fail closed)
+        const targetCompany = reconCompanyIds.length > 0 ? reconCompanyIds[0] : null;
+        for (const file of files) {
+          const fileTxns = perFileTransactions.get(file) || [];
+          if (fileTxns.length === 0) continue;
+          setProcessingProgress(`Persisting statement ledger for ${file.name}...`);
+          await ReconciliationService.ingestBankStatementFile(targetCompany, file, fileTxns);
+        }
+
+        setProcessingProgress("Matching statement transactions with disbursements & payouts...");
+        const rep = await ReconciliationEngine.analyzeBankStatement(transactions, {
+          fileName: files.map((f) => f.name).join(", "),
+          companyIds: reconCompanyIds.length > 0 ? reconCompanyIds : null,
+        });
+        setReport(rep);
+        toast.success(
+          `Successfully analyzed ${files.length} statement file(s) with ${transactions.length.toLocaleString()} total transactions${duplicateCount > 0 ? ` (${duplicateCount} duplicate files skipped)` : ""}`,
+        );
+      } else {
+        toast.error("No valid transactions found in the uploaded file(s).");
+      }
     } catch (error: any) {
       console.error(error);
       toast.error(
@@ -624,28 +677,8 @@ export function ReconciliationRoute() {
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const files = Array.from(e.dataTransfer.files);
-      const isBankLike = files.some((f) => {
-        const name = f.name.toLowerCase();
-        return (
-          name.includes("ips") ||
-          name.includes("nchl") ||
-          name.includes("connectips") ||
-          name.includes("settlement") ||
-          name.includes("late rtn") ||
-          name.includes("late return") ||
-          name.includes("report") ||
-          name.includes("mer") ||
-          name.includes("error report") ||
-          name.includes("debenture") ||
-          name.includes("bank") ||
-          name.includes("statement")
-        );
-      });
-      if (isBankLike) {
-        await processBankStatementFiles(files);
-      } else {
-        await processExcelFiles(files);
-      }
+      // Route through processExcelFiles which classifies each file and rejects mixed batches
+      await processExcelFiles(files);
     }
   };
 
@@ -1109,15 +1142,6 @@ export function ReconciliationRoute() {
           sourceType: report.sourceType,
         },
       );
-
-      // If unified RPC already saved results atomically, no secondary save call needed!
-      if (!applyRes.resultsInserted) {
-        try {
-          await ReconciliationService.saveResults(results);
-        } catch (saveErr: any) {
-          console.warn("Legacy saveResults warning:", saveErr);
-        }
-      }
 
       if (
         applyRes.updated === 0 &&
@@ -1831,6 +1855,82 @@ export function ReconciliationRoute() {
               </Button>
             </div>
           </div>
+
+          {/* Source Variant Discrepancy Alert Banner (Finding 6) */}
+          {variantAlerts.length > 0 && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/40">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5 shrink-0" />
+                <div className="space-y-1">
+                  <h4 className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                    Source Variant Discrepancy Detected
+                  </h4>
+                  {variantAlerts.map((va, idx) => (
+                    <p key={idx} className="text-xs text-amber-800 dark:text-amber-300">
+                      • {va.reason} ({va.fileA}: {va.countA.toLocaleString()} rows vs {va.fileB}:{" "}
+                      {va.countB.toLocaleString()} rows).
+                    </p>
+                  ))}
+                  <p className="text-xs font-medium text-amber-900 dark:text-amber-200 pt-1">
+                    Please confirm whether one file represents an incomplete version, copy, or
+                    supplementary sheet before applying reconciliation.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Pre-Apply Source File Provenance & Classification Review (Finding 6) */}
+          {parsedFileStatuses.length > 0 && (
+            <Card>
+              <CardContent className="pt-4 pb-3">
+                <div className="flex items-center justify-between pb-2 border-b">
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-primary" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                      Source File Ingestion Provenance ({parsedFileStatuses.length} files)
+                    </span>
+                  </div>
+                </div>
+                <div className="divide-y text-xs mt-2 max-h-40 overflow-y-auto">
+                  {parsedFileStatuses.map((fs, idx) => (
+                    <div key={idx} className="py-1.5 flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex items-center gap-2">
+                        <FileSpreadsheet className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+                        <span className="font-medium truncate">{fs.fileName}</span>
+                        {fs.status === "duplicate" && (
+                          <Badge variant="outline" className="text-[10px] text-amber-600">
+                            Duplicate (Skipped)
+                          </Badge>
+                        )}
+                        {fs.status === "failed" && (
+                          <Badge variant="destructive" className="text-[10px]">
+                            Failed
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-4 shrink-0 text-muted-foreground font-mono text-[11px]">
+                        <span>{fs.transactionCount.toLocaleString()} rows</span>
+                        {fs.rejectedCount > 0 && (
+                          <span className="text-red-600">
+                            {fs.rejectedCount.toLocaleString()} rejects
+                          </span>
+                        )}
+                        {fs.fileHash && (
+                          <span
+                            className="text-[10px] opacity-70"
+                            title={`SHA-256: ${fs.fileHash}`}
+                          >
+                            Hash: {fs.fileHash.slice(0, 8)}...
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           <ReconciliationDashboard report={report} />
 

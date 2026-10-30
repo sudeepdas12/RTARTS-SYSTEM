@@ -11,7 +11,7 @@ CREATE OR REPLACE FUNCTION public.get_interest_payables_totals(
     p_to_date text DEFAULT NULL::text
 ) RETURNS json
 LANGUAGE plpgsql
-STABLE
+VOLATILE
 SECURITY DEFINER
 SET search_path = public
 AS $$
@@ -107,7 +107,7 @@ CREATE OR REPLACE FUNCTION public.get_report_grand_totals(
     p_classification text DEFAULT NULL::text
 ) RETURNS jsonb
 LANGUAGE plpgsql
-STABLE
+VOLATILE
 SECURITY DEFINER
 SET search_path = public
 AS $$
@@ -161,6 +161,7 @@ BEGIN
         AND (p_company_id IS NULL OR company_id = p_company_id)
         AND (p_fiscal_year IS NULL OR p_fiscal_year = 'all' OR fiscal_year = p_fiscal_year)
         AND (p_status IS NULL OR p_status = 'all' OR payment_status::text = p_status)
+        AND (p_classification IS NULL OR p_classification = 'all' OR payee_classification = p_classification)
         AND (
           p_report_id <> 'allocation_report' AND p_report_id <> 'bonus_share_report'
           OR dividend_type::text IN ('Bonus', 'Stock', 'Combined')
@@ -192,6 +193,7 @@ BEGIN
         AND (p_company_id IS NULL OR company_id = p_company_id)
         AND (p_fiscal_year IS NULL OR p_fiscal_year = 'all' OR fiscal_year = p_fiscal_year)
         AND (p_status IS NULL OR p_status = 'all' OR payment_status::text = p_status)
+        AND (p_classification IS NULL OR p_classification = 'all' OR payee_classification = p_classification)
         AND (p_from_date IS NULL OR p_from_date = '' OR payment_date >= p_from_date::date)
         AND (p_to_date IS NULL OR p_to_date = '' OR payment_date <= p_to_date::date);
 
@@ -211,6 +213,7 @@ BEGIN
         AND (p_company_id IS NULL OR company_id = p_company_id)
         AND (p_fiscal_year IS NULL OR p_fiscal_year = 'all' OR fiscal_year = p_fiscal_year)
         AND (p_status IS NULL OR p_status = 'all' OR payment_status::text = p_status)
+        AND (p_classification IS NULL OR p_classification = 'all' OR payee_classification = p_classification)
         AND (p_from_date IS NULL OR p_from_date = '' OR payment_date >= p_from_date::date)
         AND (p_to_date IS NULL OR p_to_date = '' OR payment_date <= p_to_date::date);
 

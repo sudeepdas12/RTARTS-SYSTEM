@@ -1002,7 +1002,6 @@ DECLARE
   v_completed_count int := 0;
   v_reverted_payables int := 0;
   v_deleted_payments int := 0;
-  v_deleted_results int := 0;
   v_payable_record record;
 BEGIN
   -- 1. Authorization check
