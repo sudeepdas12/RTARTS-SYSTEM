@@ -216,12 +216,17 @@ export async function classifyReconciliationFile(
   file: File,
 ): Promise<"bank_statement" | "shareholder_registry" | "ambiguous"> {
   const name = file.name.toLowerCase();
+  const isSpreadsheet = /\.(xlsx|xls|csv|xlsm)$/i.test(file.name);
 
   // 1. Inspect first few header rows - content inspection is the most deterministic classifier
   try {
-    const slice = await file.slice(0, 65536).arrayBuffer();
-    const wb = XLSX.read(slice, { type: "array", sheetRows: 8, dense: true });
-    if (wb.SheetNames && wb.SheetNames.length > 0) {
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: "array", sheetRows: 8, dense: true });
+    if (!wb.SheetNames || wb.SheetNames.length === 0) {
+      if (isSpreadsheet) {
+        return "ambiguous";
+      }
+    } else {
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
       const headerStr = rows
@@ -260,7 +265,10 @@ export async function classifyReconciliationFile(
       }
     }
   } catch {
-    // If workbook inspection fails, continue to filename heuristic
+    // If workbook inspection fails on a spreadsheet file, fail closed
+    if (isSpreadsheet) {
+      return "ambiguous";
+    }
   }
 
   // 2. Strict filename heuristics (WITHOUT "debenture", which belongs to registries/instruments)

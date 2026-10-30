@@ -59,6 +59,16 @@ describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => 
         type: "text/csv",
       });
       expect(await classifyReconciliationFile(ambiguousFile)).toBe("ambiguous");
+
+      // Corrupt or unreadable spreadsheet fails closed as ambiguous even with bank filename keywords
+      const corruptFile = new File(
+        [new Uint8Array([0x50, 0x4b, 0x00, 0x00, 0x99, 0x88, 0x77])],
+        "ips_settlement_corrupt.xlsx",
+        {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        },
+      );
+      expect(await classifyReconciliationFile(corruptFile)).toBe("ambiguous");
     });
 
     it("parses ERROR REPORT 2026.10.05.xls into 24 rejected transactions totaling NPR 1,593.53", async () => {
@@ -232,7 +242,7 @@ describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => 
         const { data: reconResult } = await db
           .from("reconciliation_results")
           .select(
-            "prior_paid_amount, prior_payment_status, prior_payment_date, prior_payment_reference",
+            "prior_paid_amount, prior_payment_status, prior_payment_date, prior_payment_reference, prior_snapshot",
           )
           .eq("run_id", testRunId)
           .eq("payable_id", testPayableId)
@@ -243,6 +253,10 @@ describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => 
         expect(reconResult!.prior_payment_status).toBe("Partial");
         expect(reconResult!.prior_payment_date).toBe("2026-09-01");
         expect(reconResult!.prior_payment_reference).toBe("INITIAL-PARTIAL-001");
+        expect(reconResult!.prior_snapshot).toBeDefined();
+        expect(Number((reconResult!.prior_snapshot as any).paid_amount)).toBe(50);
+        expect(Number((reconResult!.prior_snapshot as any).shares_held)).toBe(1000);
+        expect((reconResult!.prior_snapshot as any).payment_status).toBe("Partial");
 
         // 3. Verify reconciliation_runs total_amount is 200.00 (NOT duplicated to 400.00)
         const { data: runRecord } = await db
@@ -347,6 +361,246 @@ describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => 
         await db.from("reconciliation_exceptions").delete().eq("run_id", rejRunId);
         await db.from("reconciliation_results").delete().eq("run_id", rejRunId);
         await db.from("reconciliation_runs").delete().eq("id", rejRunId);
+      });
+
+      it("short-circuits already-paid payables without creating duplicate payment records", async () => {
+        // First mark testPayableId as Paid
+        await db
+          .from("mutual_fund_payables")
+          .update({
+            payment_status: "Paid",
+            paid_amount: 250.0,
+            remaining_amount: 0.0,
+          })
+          .eq("id", testPayableId);
+
+        const dupTag = `DUP_${Date.now()}`;
+        const { data: dupRes, error: dupErr } = await db.rpc(
+          "apply_and_record_reconciliation_batch",
+          {
+            p_run_info: {
+              company_id: testCompanyId,
+              fiscal_year: "2082/83",
+              source_type: "bank_statement",
+              file_name: "MER 4.xls",
+              file_hash_sha256: "test_hash_dup",
+              idempotency_key: `test_dup_${dupTag}`,
+              row_count: 1,
+              total_amount: 250.0,
+              chunk_index: 0,
+              total_chunks: 1,
+              is_final_chunk: true,
+            },
+            p_items: [
+              {
+                payable_id: testPayableId,
+                client_id: testClientId,
+                target_table: "mutual_fund",
+                payable_type: "mutual_fund",
+                result: "MATCHED",
+                actual_amount: 250.0,
+                expected_amount: 250.0,
+                difference: 0,
+                payment_reference: `RECON-DUP-${dupTag.slice(-6)}`,
+                instruction_id: `INS-DUP-${dupTag.slice(-6)}`,
+                match_method: "instruction_id",
+                match_confidence: 100,
+                source_reference: `SRC-DUP-${dupTag}`,
+              },
+            ],
+            p_batch_info: null,
+          },
+        );
+
+        expect(dupErr).toBeNull();
+        expect(dupRes.success).toBe(true);
+        // Assert short-circuit behavior:
+        expect(dupRes.payables_updated).toBe(0);
+        expect(dupRes.already_paid_skipped).toBe(1);
+        expect(dupRes.payments_created).toBe(0);
+
+        const dupRunId = dupRes.run_id;
+
+        // Verify NO duplicate payment record was inserted for this run
+        const { data: paymentsForRun } = await db
+          .from("payments")
+          .select("id")
+          .eq("reconciliation_run_id", dupRunId);
+
+        expect(paymentsForRun).toEqual([]);
+
+        // Verify reconciliation_result notes state
+        const { data: dupResult } = await db
+          .from("reconciliation_results")
+          .select("payment_id, notes, prior_payment_status")
+          .eq("run_id", dupRunId)
+          .eq("payable_id", testPayableId)
+          .single();
+
+        expect(dupResult).toBeDefined();
+        expect(dupResult!.payment_id).toBeNull();
+        expect(dupResult!.prior_payment_status).toBe("Paid");
+        expect(dupResult!.notes).toContain("Payable already Paid");
+
+        // Clean up
+        await db.from("reconciliation_results").delete().eq("run_id", dupRunId);
+        await db.from("reconciliation_runs").delete().eq("id", dupRunId);
+      });
+
+      it("preserves pre-run baseline snapshot across multi-item runs on the same payable and safely rolls back", async () => {
+        // Create a new client and payable: 500.00 net, 0 paid, Pending
+        const multiTag = `MULTI_${Date.now()}`;
+        const { data: multiClient, error: clientErr } = await db
+          .from("clients")
+          .insert({
+            client_code: `CLI_M_${multiTag.slice(-6)}`,
+            full_name: `Investor Multi ${multiTag}`,
+            boid: `130123000${multiTag.slice(-7)}`,
+            bank_name: "Rastriya Banijya Bank",
+            bank_account_no: `0110020${multiTag.slice(-6)}`,
+          })
+          .select("id")
+          .single();
+        if (clientErr) throw clientErr;
+
+        const { data: newPay, error: newPayErr } = await db
+          .from("mutual_fund_payables")
+          .insert({
+            company_id: testCompanyId,
+            client_id: multiClient.id,
+            fiscal_year: "2082/83",
+            shares_held: 2000,
+            gross_dividend: 500.0,
+            tax_amount: 0.0,
+            net_payable: 500.0,
+            paid_amount: 0.0,
+            remaining_amount: 500.0,
+            payment_status: "Pending",
+          })
+          .select("id")
+          .single();
+        if (newPayErr) throw newPayErr;
+
+        const multiPayId = newPay.id;
+
+        // Apply a batch with 2 items touching the same payable:
+        // Item 1: REJECTED (100.00)
+        // Item 2: MATCHED (400.00)
+        const { data: multiRes, error: multiErr } = await db.rpc(
+          "apply_and_record_reconciliation_batch",
+          {
+            p_run_info: {
+              company_id: testCompanyId,
+              fiscal_year: "2082/83",
+              source_type: "bank_statement",
+              file_name: "MER 4.xls",
+              file_hash_sha256: "test_hash_multi",
+              idempotency_key: `test_multi_${multiTag}`,
+              row_count: 2,
+              total_amount: 500.0,
+              chunk_index: 0,
+              total_chunks: 1,
+              is_final_chunk: true,
+            },
+            p_items: [
+              {
+                payable_id: multiPayId,
+                client_id: multiClient.id,
+                target_table: "mutual_fund",
+                payable_type: "mutual_fund",
+                result: "REJECTED",
+                actual_amount: 100.0,
+                expected_amount: 100.0,
+                difference: 0,
+                payment_reference: `REJ-${multiTag.slice(-6)}`,
+                instruction_id: `INS-REJ-${multiTag.slice(-6)}`,
+                match_method: "instruction_id",
+                match_confidence: 95,
+                source_reference: `SRC-REJ-${multiTag}`,
+              },
+              {
+                payable_id: multiPayId,
+                client_id: multiClient.id,
+                target_table: "mutual_fund",
+                payable_type: "mutual_fund",
+                result: "MATCHED",
+                actual_amount: 400.0,
+                expected_amount: 400.0,
+                difference: 0,
+                payment_reference: `RECON-${multiTag.slice(-6)}`,
+                instruction_id: `INS-MAT-${multiTag.slice(-6)}`,
+                match_method: "instruction_id",
+                match_confidence: 100,
+                source_reference: `SRC-MAT-${multiTag}`,
+              },
+            ],
+            p_batch_info: null,
+          },
+        );
+
+        expect(multiErr).toBeNull();
+        expect(multiRes.success).toBe(true);
+        expect(multiRes.payables_updated).toBe(1);
+        expect(multiRes.rejected_count).toBe(1);
+        expect(multiRes.exceptions_created).toBe(1);
+
+        const multiRunId = multiRes.run_id;
+
+        // Verify the payable is now Partial (400 paid of 500 net)
+        const { data: settledPay } = await db
+          .from("mutual_fund_payables")
+          .select("payment_status, paid_amount, remaining_amount")
+          .eq("id", multiPayId)
+          .single();
+        expect(settledPay!.payment_status).toBe("Partial");
+        expect(Number(settledPay!.paid_amount)).toBe(400.0);
+        expect(Number(settledPay!.remaining_amount)).toBe(100.0);
+
+        // Verify results recorded the true pre-run baseline (Pending / 0 paid)
+        const { data: itemResults } = await db
+          .from("reconciliation_results")
+          .select("source_reference, prior_payment_status, prior_paid_amount, prior_snapshot")
+          .eq("run_id", multiRunId)
+          .order("id", { ascending: true });
+
+        expect(itemResults?.length).toBe(2);
+        for (const res of itemResults!) {
+          expect(res.prior_payment_status).toBe("Pending");
+          expect(Number(res.prior_paid_amount)).toBe(0);
+          expect((res.prior_snapshot as any).payment_status).toBe("Pending");
+          expect(Number((res.prior_snapshot as any).paid_amount)).toBe(0);
+        }
+
+        // Now revert the multi-item run
+        const { data: revMulti, error: revMultiErr } = await db.rpc(
+          "revert_reconciliation_run_atomic",
+          {
+            p_run_id: multiRunId,
+            p_force: true,
+          },
+        );
+
+        expect(revMultiErr).toBeNull();
+        expect(revMulti.success).toBe(true);
+        expect(revMulti.reverted_payables).toBe(1);
+
+        // Verify payable is restored to exact initial baseline (Pending / 0 paid, remaining 500)
+        const { data: restoredMultiPay } = await db
+          .from("mutual_fund_payables")
+          .select("payment_status, paid_amount, remaining_amount")
+          .eq("id", multiPayId)
+          .single();
+
+        expect(restoredMultiPay!.payment_status).toBe("Pending");
+        expect(Number(restoredMultiPay!.paid_amount)).toBe(0);
+        expect(Number(restoredMultiPay!.remaining_amount)).toBe(500.0);
+
+        // Clean up
+        await db.from("reconciliation_exceptions").delete().eq("run_id", multiRunId);
+        await db.from("reconciliation_results").delete().eq("run_id", multiRunId);
+        await db.from("reconciliation_runs").delete().eq("id", multiRunId);
+        await db.from("mutual_fund_payables").delete().eq("id", multiPayId);
+        await db.from("clients").delete().eq("id", multiClient.id);
       });
     },
   );
