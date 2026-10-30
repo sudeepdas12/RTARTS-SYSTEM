@@ -463,20 +463,19 @@ export function ReconciliationRoute() {
 
       if (areBankReports || detectedBankByHeader) {
         try {
-          const transactions = await BankParser.parseMultipleFiles(files, {
-            onProgress: (cur, tot, name) =>
-              setProcessingProgress(`Analyzing settlement report ${cur} of ${tot}: ${name}`),
-          });
+          const { transactions, perFileTransactions } =
+            await BankParser.parseMultipleFilesWithProvenance(files, {
+              onProgress: (cur, tot, name) =>
+                setProcessingProgress(`Analyzing settlement report ${cur} of ${tot}: ${name}`),
+            });
 
           if (transactions.length > 0) {
-            // Persist into immutable bank ledger
+            // Persist into immutable bank ledger per file with provenance (fail closed)
             const targetCompany = reconCompanyIds.length > 0 ? reconCompanyIds[0] : null;
             for (const file of files) {
-              await ReconciliationService.ingestBankStatementFile(
-                targetCompany,
-                file,
-                transactions,
-              ).catch((e) => console.warn("Settlement ledger ingestion notice:", e));
+              const fileTxns = perFileTransactions.get(file) || [];
+              setProcessingProgress(`Persisting ledger for ${file.name}...`);
+              await ReconciliationService.ingestBankStatementFile(targetCompany, file, fileTxns);
             }
 
             setProcessingProgress("Performing 5-way multi-source reconciliation...");
@@ -496,7 +495,7 @@ export function ReconciliationRoute() {
         } catch (bErr: any) {
           console.error("Settlement report parser error:", bErr);
           toast.error(
-            `Failed to parse settlement file: ${bErr?.message || "Invalid layout"}. Refusing to misinterpret settlement data as shareholder registries.`,
+            `Failed to process settlement file: ${bErr?.message || "Invalid layout"}. Refusing to misinterpret settlement data as shareholder registries.`,
           );
           return;
         }
@@ -533,19 +532,18 @@ export function ReconciliationRoute() {
         : `Parsing ${files[0].name}...`,
     );
     try {
-      const transactions = await BankParser.parseMultipleFiles(files, {
-        onProgress: (cur, tot, name) =>
-          setProcessingProgress(`Parsing bank statement ${cur} of ${tot}: ${name}`),
-      });
+      const { transactions, perFileTransactions } =
+        await BankParser.parseMultipleFilesWithProvenance(files, {
+          onProgress: (cur, tot, name) =>
+            setProcessingProgress(`Parsing bank statement ${cur} of ${tot}: ${name}`),
+        });
 
-      // Persist into immutable bank ledger
+      // Persist into immutable bank ledger per file with provenance (fail closed)
       const targetCompany = reconCompanyIds.length > 0 ? reconCompanyIds[0] : null;
       for (const file of files) {
-        await ReconciliationService.ingestBankStatementFile(
-          targetCompany,
-          file,
-          transactions,
-        ).catch((e) => console.warn("Statement ledger ingestion notice:", e));
+        const fileTxns = perFileTransactions.get(file) || [];
+        setProcessingProgress(`Persisting statement ledger for ${file.name}...`);
+        await ReconciliationService.ingestBankStatementFile(targetCompany, file, fileTxns);
       }
 
       setProcessingProgress("Matching statement transactions with disbursements & payouts...");
@@ -557,9 +555,11 @@ export function ReconciliationRoute() {
       toast.success(
         `Successfully analyzed ${files.length} statement file(s) with ${transactions.length.toLocaleString()} total transactions`,
       );
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      toast.error("Failed to parse bank statement file(s) for reconciliation");
+      toast.error(
+        `Bank statement ingestion failed: ${error?.message || "Failed to parse bank statement file(s)"}`,
+      );
     } finally {
       setIsProcessing(false);
       setProcessingProgress(null);

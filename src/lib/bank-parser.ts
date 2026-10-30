@@ -452,10 +452,23 @@ export const BankParser = {
       }
     }
 
+    const seenWorkbookTxnKeys = new Set<string>();
+    const seenSheetFingerprints = new Set<string>();
+
     for (const sheetName of sheetsToProcess) {
       const sheet = workbook.Sheets[sheetName];
       const rows = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1, defval: "" });
       if (!rows.length) continue;
+
+      // Duplicate-sheet suppression: check fingerprint of sheet contents
+      const sheetSample = rows
+        .slice(0, 15)
+        .map((r) => (Array.isArray(r) ? r.join("|") : ""))
+        .join(";;;");
+      if (seenSheetFingerprints.has(sheetSample) && rows.length > 5) {
+        continue;
+      }
+      seenSheetFingerprints.add(sheetSample);
 
       // 1. Scan metadata in the first 20 rows (Account Holder, Account Number)
       let detectedAccountHolder = "";
@@ -932,6 +945,16 @@ export const BankParser = {
           extractedName ||
           (finalDebit > 0 ? `Debit Payment ${finalDebit}` : `Credit Settlement ${finalCredit}`);
 
+        const uniqueTxnKey =
+          instructionId?.trim().toUpperCase() ||
+          referenceId?.trim().toUpperCase() ||
+          `${indices.date >= 0 ? normalizeDate(row[indices.date]) : ""}_${extractedAccountNo}_${finalDebit}_${finalCredit}_${description}`;
+
+        if (seenWorkbookTxnKeys.has(uniqueTxnKey)) {
+          continue; // Suppress duplicate transaction from copy sheets within same workbook
+        }
+        seenWorkbookTxnKeys.add(uniqueTxnKey);
+
         transactions.push({
           id: `txn-${sheetName}-${i}`,
           date: indices.date >= 0 ? normalizeDate(row[indices.date]) : "",
@@ -959,19 +982,21 @@ export const BankParser = {
 
   /**
    * Parse multiple bank statement or ACH settlement files concurrently/sequentially,
-   * attach fileName, deduplicate, and combine into a unified transaction list.
+   * attach fileName, deduplicate, and combine into a unified transaction list,
+   * while also retaining per-file parsed transaction sets for accurate ledger ingestion provenance.
    */
-  async parseMultipleFiles(
+  async parseMultipleFilesWithProvenance(
     files: File[],
     options: {
       includeCircularSweeps?: boolean;
       onProgress?: (current: number, total: number, fileName: string) => void;
     } = {},
-  ): Promise<BankTransaction[]> {
-    if (!files.length) return [];
-    if (files.length === 1) {
-      return this.parseBankStatement(files[0], options);
-    }
+  ): Promise<{
+    transactions: BankTransaction[];
+    perFileTransactions: Map<File, BankTransaction[]>;
+  }> {
+    const perFileTransactions = new Map<File, BankTransaction[]>();
+    if (!files.length) return { transactions: [], perFileTransactions };
 
     const allTransactions: BankTransaction[] = [];
     const seenInstructionIds = new Set<string>();
@@ -980,19 +1005,21 @@ export const BankParser = {
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      // Compute cryptographic SHA-256 hash to deduplicate renamed identical files across directories
       const fileHash = await computeSha256(file);
-      if (seenFileSignatures.has(fileHash)) {
-        continue;
-      }
+      const isDuplicateFile = seenFileSignatures.has(fileHash);
       seenFileSignatures.add(fileHash);
 
       options.onProgress?.(i + 1, files.length, file.name);
-      // Give the browser event loop a moment to breathe and render the progress UI
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       try {
         const txns = await this.parseBankStatement(file, options);
+        perFileTransactions.set(file, txns);
+
+        if (isDuplicateFile) {
+          continue;
+        }
+
         for (const t of txns) {
           const idRef = t.instructionId || t.referenceId;
           if (idRef && idRef.trim()) {
@@ -1016,9 +1043,25 @@ export const BankParser = {
         }
       } catch (err) {
         console.warn(`Failed to parse file ${file.name}:`, err);
+        perFileTransactions.set(file, []);
       }
     }
 
-    return allTransactions;
+    return { transactions: allTransactions, perFileTransactions };
+  },
+
+  /**
+   * Parse multiple bank statement or ACH settlement files concurrently/sequentially,
+   * attach fileName, deduplicate, and combine into a unified transaction list.
+   */
+  async parseMultipleFiles(
+    files: File[],
+    options: {
+      includeCircularSweeps?: boolean;
+      onProgress?: (current: number, total: number, fileName: string) => void;
+    } = {},
+  ): Promise<BankTransaction[]> {
+    const { transactions } = await this.parseMultipleFilesWithProvenance(files, options);
+    return transactions;
   },
 };

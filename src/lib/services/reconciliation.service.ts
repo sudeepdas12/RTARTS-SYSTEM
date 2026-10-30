@@ -761,6 +761,12 @@ export const ReconciliationService = {
         bank_account_no: (r as any).bank_account_no || r.client?.bank_account_no || null,
         payment_reference: `RECON-${r.id ? String(r.id).slice(0, 8) : "AUTO"}`,
         connectips_ref: (r as any).connectips_ref || (r as any).instruction_id || null,
+        source_reference:
+          (r as any).source_reference ||
+          (r as any).instruction_id ||
+          (r as any).connectips_ref ||
+          (r as any).reference_id ||
+          (r.id ? `REC-${r.id}` : `ITEM-${itemsPayloadByCompany.get(groupKey)!.length}`),
       });
     }
 
@@ -808,7 +814,10 @@ export const ReconciliationService = {
       };
 
       const CHUNK_SIZE = 500;
+      const totalChunks = Math.ceil(groupItems.length / CHUNK_SIZE);
       for (let i = 0; i < groupItems.length; i += CHUNK_SIZE) {
+        const chunkIndex = Math.floor(i / CHUNK_SIZE);
+        const isFinalChunk = chunkIndex === totalChunks - 1;
         const chunk = groupItems.slice(i, i + CHUNK_SIZE);
         const fileHash = await computeSha256(
           `${resolvedCompanyId || "all"}|${lotName || "batch"}|${groupItems.length}|${todayStr}`,
@@ -822,12 +831,14 @@ export const ReconciliationService = {
           {
             p_run_info: {
               run_id: activeRunId,
+              chunk_index: chunkIndex,
+              is_final_chunk: isFinalChunk,
               company_id: resolvedCompanyId,
               fiscal_year: chunk[0]?.fiscal_year || null,
               source_type: chunk[0]?.source_a_type || "excel",
               file_name: lotName || "Reconciliation Batch",
               file_hash_sha256: fileHash,
-              idempotency_key: `${resolvedCompanyId || "all"}_${fileHash || lotName}_chunk_${i}`,
+              idempotency_key: `${resolvedCompanyId || "all"}_${fileHash || lotName}_chunk_${chunkIndex}`,
               row_count: groupItems.length,
               total_amount: groupItems.reduce(
                 (acc: number, item: any) =>
@@ -1203,8 +1214,10 @@ export const ReconciliationService = {
       .single();
 
     if (impErr) {
-      console.warn("Could not insert bank_statement_imports:", impErr.message);
-      return { importId: "", fileHash, insertedCount: 0 };
+      console.error("Could not insert bank_statement_imports:", impErr.message);
+      throw new Error(
+        `Bank statement import ledger creation failed for ${file.name}: ${impErr.message}`,
+      );
     }
 
     const importId = imp.id;
@@ -1237,9 +1250,13 @@ export const ReconciliationService = {
         .from("bank_statement_transactions")
         .upsert(rows, { onConflict: "company_id,transaction_fingerprint", ignoreDuplicates: true });
 
-      if (!insErr) {
-        insertedCount += rows.length;
+      if (insErr) {
+        console.error("Failed to insert bank_statement_transactions:", insErr.message);
+        throw new Error(
+          `Bank transaction ledger persistence failed for ${file.name} (chunk ${i + 1}-${i + chunk.length}): ${insErr.message}`,
+        );
       }
+      insertedCount += rows.length;
     }
 
     return { importId, fileHash, insertedCount };

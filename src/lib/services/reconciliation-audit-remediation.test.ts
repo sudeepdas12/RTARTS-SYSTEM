@@ -421,5 +421,162 @@ describe("Reconciliation Audit Remediation Invariants", () => {
       expect(txns).toHaveLength(1);
       expect(txns[0].instructionId).toBe("INSTR-TEST-001");
     });
+
+    it("suppresses duplicate rows from copy sheets within the same workbook", async () => {
+      const wb = XLSX.utils.book_new();
+      const primarySheet = XLSX.utils.aoa_to_sheet([
+        ["Instruction Id", "Amount", "Beneficiary Bank", "Account Number", "Remarks"],
+        ["INSTR-DUPE-01", "3000.00", "NABIL", "01000000001", "Settlement Payout"],
+      ]);
+      const copySheet = XLSX.utils.aoa_to_sheet([
+        ["Instruction Id", "Amount", "Beneficiary Bank", "Account Number", "Remarks"],
+        ["INSTR-DUPE-01", "3000.00", "NABIL", "01000000001", "Settlement Payout Duplicate Copy"],
+      ]);
+
+      XLSX.utils.book_append_sheet(wb, primarySheet, "Transactions_Primary");
+      XLSX.utils.book_append_sheet(wb, copySheet, "Transactions_Copy");
+
+      const wbBuf = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+      const mockFile = new File([wbBuf], "settlement_with_copy_sheet.xlsx", {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+
+      const txns = await BankParser.parseExcelSettlement(mockFile);
+      // Row identity tracking within workbook ensures the duplicated row in copySheet is suppressed
+      expect(txns).toHaveLength(1);
+      expect(txns[0].instructionId).toBe("INSTR-DUPE-01");
+    });
+  });
+
+  describe("6. Chunked Multi-Batch Apply & State Accumulation (>500 rows)", () => {
+    it("coordinates chunked apply across >500 rows with run_id persistence and is_final_chunk flags", async () => {
+      const totalRecords = 1050; // Requires 3 chunks: 500, 500, 50
+      const mockRecords: any[] = [];
+      for (let i = 0; i < totalRecords; i++) {
+        mockRecords.push({
+          id: `00000000-0000-0000-0000-${String(i + 1).padStart(12, "0")}`,
+          company_id: "00000000-0000-0000-0000-000000000001",
+          client_id: "00000000-0000-0000-0000-000000000002",
+          payable_type: "dividend",
+          payable_id: `00000000-0000-0000-0000-${String(i + 1).padStart(12, "0")}`,
+          result: "Matched",
+          actual_amount: 1000,
+          expected_amount: 1000,
+          match_method: "instruction_id",
+          match_confidence: 90,
+          source_reference: `INSTR-${i + 1}`,
+        });
+      }
+
+      const chunkCalls: any[] = [];
+      const rpcSpy = vi
+        .spyOn(supabase, "rpc")
+        .mockImplementation(async (name: string, params: any) => {
+          if (name === "apply_and_record_reconciliation_batch") {
+            chunkCalls.push(params);
+            return {
+              data: {
+                success: true,
+                run_id: "run-multi-chunk-id-999",
+                payables_updated: params.p_items.length,
+                payments_created: params.p_items.length,
+                results_inserted: params.p_items.length,
+                exceptions_created: 0,
+                already_paid_skipped: 0,
+                errors: [],
+              },
+              error: null,
+            } as any;
+          }
+          return { data: null, error: null } as any;
+        });
+
+      const result = await ReconciliationService.applyReconciliation(
+        mockRecords,
+        "Large Batch 1050",
+      );
+
+      expect(chunkCalls).toHaveLength(3);
+
+      // Verify Chunk 0
+      expect(chunkCalls[0].p_run_info.chunk_index).toBe(0);
+      expect(chunkCalls[0].p_run_info.is_final_chunk).toBe(false);
+      expect(chunkCalls[0].p_run_info.run_id).toBeNull();
+      expect(chunkCalls[0].p_items).toHaveLength(500);
+
+      // Verify Chunk 1
+      expect(chunkCalls[1].p_run_info.chunk_index).toBe(1);
+      expect(chunkCalls[1].p_run_info.is_final_chunk).toBe(false);
+      expect(chunkCalls[1].p_run_info.run_id).toBe("run-multi-chunk-id-999");
+      expect(chunkCalls[1].p_items).toHaveLength(500);
+
+      // Verify Chunk 2 (Final chunk)
+      expect(chunkCalls[2].p_run_info.chunk_index).toBe(2);
+      expect(chunkCalls[2].p_run_info.is_final_chunk).toBe(true);
+      expect(chunkCalls[2].p_run_info.run_id).toBe("run-multi-chunk-id-999");
+      expect(chunkCalls[2].p_items).toHaveLength(50);
+
+      // Verify stats accumulated across all 3 chunks
+      expect(result.updated).toBe(1050);
+      expect(result.paymentsCreated).toBe(1050);
+
+      rpcSpy.mockRestore();
+    });
+  });
+
+  describe("7. Bank Ledger Multi-File Provenance & Fail-Closed Invariants", () => {
+    it("returns per-file transactions alongside combined transactions in parseMultipleFilesWithProvenance", async () => {
+      const csvA = [
+        "Instruction ID,Debit,Credit,Date,Description",
+        "INSTR-A1,1000,0,2026-03-01,Div A1",
+        "INSTR-A2,2000,0,2026-03-01,Div A2",
+      ].join("\n");
+      const csvB = [
+        "Instruction ID,Debit,Credit,Date,Description",
+        "INSTR-B1,3000,0,2026-03-01,Div B1",
+        "INSTR-B2,4000,0,2026-03-01,Div B2",
+        "INSTR-B3,5000,0,2026-03-01,Div B3",
+      ].join("\n");
+
+      const fileA = new File([csvA], "fileA.csv", { type: "text/csv" });
+      const fileB = new File([csvB], "fileB.csv", { type: "text/csv" });
+
+      const { transactions, perFileTransactions } =
+        await BankParser.parseMultipleFilesWithProvenance([fileA, fileB]);
+
+      expect(transactions).toHaveLength(5);
+      expect(perFileTransactions.get(fileA)).toHaveLength(2);
+      expect(perFileTransactions.get(fileB)).toHaveLength(3);
+    });
+
+    it("fails closed and throws error when bank statement import ledger persistence fails", async () => {
+      const fromSpy = vi.spyOn(supabase, "from").mockImplementation((table: string) => {
+        if (table === "bank_statement_imports") {
+          return {
+            insert: () => ({
+              select: () => ({
+                single: () =>
+                  Promise.resolve({
+                    data: null,
+                    error: { message: "Foreign key violation or permission denied" },
+                  }),
+              }),
+            }),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const file = new File(["test data"], "statement.csv", { type: "text/csv" });
+      await expect(
+        ReconciliationService.ingestBankStatementFile(
+          "00000000-0000-0000-0000-000000000001",
+          file,
+          [{ debit: 1000, credit: 0, date: "2026-03-01", description: "Test" }],
+        ),
+      ).rejects.toThrow(/Bank statement import ledger creation failed/i);
+
+      fromSpy.mockRestore();
+    });
   });
 });

@@ -134,7 +134,8 @@ CREATE TABLE IF NOT EXISTS public.reconciliation_runs (
     rejected_count integer DEFAULT 0 NOT NULL,
     parser_version text DEFAULT '2.0.0',
     matching_rule_version text DEFAULT '2.0.0',
-    status text DEFAULT 'draft' CHECK (status IN ('draft', 'review', 'approved', 'applied', 'reverted', 'failed')),
+    status text DEFAULT 'draft' CHECK (status IN ('draft', 'review', 'approved', 'processing', 'applied', 'reverted', 'failed')),
+    processed_chunks jsonb DEFAULT '[]'::jsonb,
     batch_id uuid REFERENCES public.payment_batches(id) ON DELETE SET NULL,
     notes text,
     applied_by uuid,
@@ -222,7 +223,7 @@ CREATE INDEX IF NOT EXISTS idx_reconciliation_results_run_id
   ON public.reconciliation_results(run_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reconciliation_results_idempotency
-  ON public.reconciliation_results(run_id, COALESCE(payable_id::text, ''), COALESCE(source_reference, ''))
+  ON public.reconciliation_results(run_id, source_reference)
   WHERE run_id IS NOT NULL;
 
 -- ============================================================================
@@ -288,13 +289,33 @@ CREATE TABLE IF NOT EXISTS public.bank_statement_transactions (
     transaction_fingerprint text NOT NULL,
     reconciliation_status text DEFAULT 'unreconciled' CHECK (reconciliation_status IN ('unreconciled', 'matched', 'ignored', 'exception')),
     reconciliation_run_id uuid REFERENCES public.reconciliation_runs(id) ON DELETE SET NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT uq_bank_txn_fingerprint UNIQUE (company_id, transaction_fingerprint)
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+-- Ensure NULL company_ids are treated as identical for deduplication
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'uq_bank_txn_fingerprint'
+  ) THEN
+    ALTER TABLE public.bank_statement_transactions DROP CONSTRAINT uq_bank_txn_fingerprint;
+  END IF;
+  ALTER TABLE public.bank_statement_transactions 
+    ADD CONSTRAINT uq_bank_txn_fingerprint UNIQUE NULLS NOT DISTINCT (company_id, transaction_fingerprint);
+EXCEPTION
+  WHEN OTHERS THEN
+    -- Fallback for environments where NULLS NOT DISTINCT is not supported
+    NULL;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_bank_stmt_txns_import ON public.bank_statement_transactions(import_id);
 CREATE INDEX IF NOT EXISTS idx_bank_stmt_txns_company ON public.bank_statement_transactions(company_id);
 CREATE INDEX IF NOT EXISTS idx_bank_stmt_txns_status ON public.bank_statement_transactions(reconciliation_status);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_bank_txn_fingerprint_scoped 
+  ON public.bank_statement_transactions (
+    COALESCE(company_id, '00000000-0000-0000-0000-000000000000'::uuid),
+    transaction_fingerprint
+  );
 
 ALTER TABLE public.bank_statement_transactions ENABLE ROW LEVEL SECURITY;
 
@@ -429,6 +450,11 @@ DECLARE
   v_notes text;
   v_idempotency_key text;
   v_existing_status text;
+  v_chunk_index int;
+  v_is_final_chunk boolean;
+  v_existing_chunks jsonb;
+  v_applied_payable_amt numeric;
+  v_source_reference text;
   
   v_payables_updated int := 0;
   v_payments_created int := 0;
@@ -453,14 +479,18 @@ BEGIN
     END IF;
   END IF;
 
-  -- 2. Idempotency Check: prevent duplicate runs or double posting
+  -- 2. Idempotency Check & Multi-Chunk State Management
+  v_chunk_index := COALESCE(NULLIF(p_run_info->>'chunk_index', '')::int, 0);
+  v_is_final_chunk := COALESCE(NULLIF(p_run_info->>'is_final_chunk', '')::boolean, true);
   v_idempotency_key := NULLIF(p_run_info->>'idempotency_key', '');
-  IF v_idempotency_key IS NOT NULL THEN
+  v_run_id := NULLIF(p_run_info->>'run_id', '')::uuid;
+
+  IF v_idempotency_key IS NOT NULL AND v_run_id IS NULL THEN
     SELECT id, status INTO v_run_id, v_existing_status
     FROM public.reconciliation_runs
     WHERE idempotency_key = v_idempotency_key;
 
-    IF v_run_id IS NOT NULL AND v_existing_status = 'applied' THEN
+    IF v_run_id IS NOT NULL AND v_existing_status = 'applied' AND v_chunk_index = 0 THEN
       RETURN jsonb_build_object(
         'success', true,
         'idempotent', true,
@@ -476,18 +506,35 @@ BEGIN
     END IF;
   END IF;
 
-  IF v_run_id IS NULL THEN
-    v_run_id := NULLIF(p_run_info->>'run_id', '')::uuid;
-  END IF;
-
   IF v_run_id IS NOT NULL THEN
-    SELECT status INTO v_existing_status FROM public.reconciliation_runs WHERE id = v_run_id;
+    SELECT status, COALESCE(processed_chunks, '[]'::jsonb)
+    INTO v_existing_status, v_existing_chunks
+    FROM public.reconciliation_runs
+    WHERE id = v_run_id;
+
+    -- Chunk-level idempotency: skip if this chunk was already processed
+    IF v_existing_chunks ? v_chunk_index::text THEN
+      RETURN jsonb_build_object(
+        'success', true,
+        'idempotent', true,
+        'run_id', v_run_id,
+        'message', 'Reconciliation chunk ' || v_chunk_index || ' already applied',
+        'payables_updated', 0,
+        'payments_created', 0,
+        'results_inserted', 0,
+        'exceptions_created', 0,
+        'already_paid_skipped', 0,
+        'errors', '[]'::jsonb
+      );
+    END IF;
+
+    -- If run was previously marked applied, protect against re-run
     IF v_existing_status = 'applied' THEN
       RETURN jsonb_build_object(
         'success', true,
         'idempotent', true,
         'run_id', v_run_id,
-        'message', 'Reconciliation run already applied',
+        'message', 'Reconciliation run already finalized',
         'payables_updated', 0,
         'payments_created', 0,
         'results_inserted', 0,
@@ -511,6 +558,7 @@ BEGIN
       parser_version,
       matching_rule_version,
       status,
+      processed_chunks,
       applied_by,
       applied_at,
       created_by
@@ -522,19 +570,21 @@ BEGIN
       COALESCE(NULLIF(p_run_info->>'file_name', ''), 'Reconciliation Batch'),
       COALESCE(NULLIF(p_run_info->>'file_hash_sha256', ''), md5(now()::text || p_run_info::text)),
       COALESCE(NULLIF(p_run_info->>'row_count', '')::int, jsonb_array_length(p_items)),
-      COALESCE(NULLIF(p_run_info->>'total_amount', '')::numeric, 0),
+      0,
       COALESCE(NULLIF(p_run_info->>'parser_version', ''), '2.0.0'),
       COALESCE(NULLIF(p_run_info->>'matching_rule_version', ''), '2.0.0'),
-      'applied',
-      v_uid,
-      now(),
+      CASE WHEN v_is_final_chunk THEN 'applied' ELSE 'processing' END,
+      jsonb_build_array(v_chunk_index::text),
+      CASE WHEN v_is_final_chunk THEN v_uid ELSE NULL END,
+      CASE WHEN v_is_final_chunk THEN now() ELSE NULL END,
       v_uid
     ) RETURNING id INTO v_run_id;
   ELSE
     UPDATE public.reconciliation_runs
-    SET status = 'applied',
-        applied_by = v_uid,
-        applied_at = now(),
+    SET status = CASE WHEN v_is_final_chunk THEN 'applied' ELSE 'processing' END,
+        processed_chunks = COALESCE(processed_chunks, '[]'::jsonb) || jsonb_build_array(v_chunk_index::text),
+        applied_by = CASE WHEN v_is_final_chunk THEN v_uid ELSE applied_by END,
+        applied_at = CASE WHEN v_is_final_chunk THEN now() ELSE applied_at END,
         updated_at = now()
     WHERE id = v_run_id;
   END IF;
@@ -652,6 +702,12 @@ BEGIN
           END IF;
         END IF;
 
+        -- Cap payments.paid_amount/net_amount at expected_amount (net_payable) to preserve ledger balance invariants
+        v_applied_payable_amt := CASE 
+          WHEN v_expected_amt > 0 THEN LEAST(v_expected_amt, v_paid_amt) 
+          ELSE v_paid_amt 
+        END;
+
         -- Create or stamp payment record with reconciliation_run_id
         INSERT INTO public.payments (
           batch_id,
@@ -680,8 +736,8 @@ BEGIN
           v_payable_id,
           v_expected_amt,
           0,
-          v_paid_amt,
-          v_paid_amt,
+          v_applied_payable_amt,
+          v_applied_payable_amt,
           'ConnectIPS'::public.payment_method,
           CURRENT_DATE,
           v_payment_ref,
@@ -693,6 +749,17 @@ BEGIN
 
         v_payments_created := v_payments_created + 1;
       END IF;
+
+      -- Derive deterministic, unique source reference per record in run
+      v_source_reference := COALESCE(
+        NULLIF(v_item->>'source_reference', ''),
+        NULLIF(v_item->>'id', ''),
+        NULLIF(v_item->>'instruction_id', ''),
+        NULLIF(v_item->>'connectips_ref', ''),
+        NULLIF(v_item->>'payment_reference', ''),
+        NULLIF(v_item->>'reference_id', ''),
+        'ITEM-' || md5(v_item::text)
+      );
 
       -- B. Persist result record in reconciliation_results linked to run_id
       INSERT INTO public.reconciliation_results (
@@ -725,7 +792,7 @@ BEGIN
       ) VALUES (
         v_run_id,
         CURRENT_DATE,
-        COALESCE(v_instruction_id, v_payment_ref, v_payable_id::text, ''),
+        v_source_reference,
         COALESCE(NULLIF(v_item->>'source_a_type', ''), 'bank_statement'),
         NULLIF(v_item->>'source_a_id', '')::uuid,
         COALESCE(NULLIF(v_item->>'source_b_type', ''), 'payable'),
@@ -750,7 +817,7 @@ BEGIN
         v_uid,
         now()
       )
-      ON CONFLICT (run_id, COALESCE(payable_id::text, ''), COALESCE(source_reference, '')) DO NOTHING;
+      ON CONFLICT (run_id, source_reference) WHERE run_id IS NOT NULL DO NOTHING;
       v_results_inserted := v_results_inserted + 1;
 
       -- C. If exception/unmatched, record durable exception
@@ -770,7 +837,7 @@ BEGIN
           v_company_id,
           v_payable_id,
           v_target_table,
-          COALESCE(v_payment_ref, v_instruction_id),
+          v_source_reference,
           v_actual_amt,
           CASE 
             WHEN v_result = 'MISSING' THEN 'Record not found in core ledger'
@@ -784,19 +851,20 @@ BEGIN
       END IF;
 
     EXCEPTION WHEN OTHERS THEN
-      v_errors := v_errors || jsonb_build_object(
-        'payable_id', v_item->>'payable_id',
-        'error', SQLERRM,
-        'code', SQLSTATE
-      );
+      -- Truly atomic: re-raise error to roll back transaction completely
+      RAISE EXCEPTION 'Atomic reconciliation batch failed at record (payable_id: %, source_ref: %): % (SQLSTATE: %)',
+        v_item->>'payable_id', v_source_reference, SQLERRM, SQLSTATE;
     END;
   END LOOP;
 
-  -- 5. Update run stats
+  -- 5. Update run stats cumulatively
   UPDATE public.reconciliation_runs
-  SET matched_count = v_payables_updated,
-      unmatched_count = v_exceptions_created,
-      total_amount = GREATEST(total_amount, v_total_amount),
+  SET matched_count = COALESCE(matched_count, 0) + v_payables_updated,
+      unmatched_count = COALESCE(unmatched_count, 0) + v_exceptions_created,
+      total_amount = COALESCE(total_amount, 0) + v_total_amount,
+      status = CASE WHEN v_is_final_chunk THEN 'applied' ELSE 'processing' END,
+      applied_by = CASE WHEN v_is_final_chunk THEN v_uid ELSE applied_by END,
+      applied_at = CASE WHEN v_is_final_chunk THEN now() ELSE applied_at END,
       updated_at = now()
   WHERE id = v_run_id;
 
@@ -919,6 +987,8 @@ BEGIN
     ELSIF LOWER(v_payable_record.payable_type) LIKE '%mutual%' THEN
       UPDATE public.mutual_fund_payables
       SET payment_status = 'Pending'::public.payment_status,
+          paid_amount = 0,
+          remaining_amount = net_payable,
           payment_date = NULL,
           payment_reference = NULL,
           updated_at = now()
@@ -1066,6 +1136,8 @@ BEGIN
   IF array_length(v_mf_ids, 1) > 0 THEN
     UPDATE public.mutual_fund_payables
     SET payment_status = 'Pending'::public.payment_status,
+        paid_amount = 0,
+        remaining_amount = net_payable,
         payment_date = NULL,
         payment_reference = NULL,
         updated_at = now()
