@@ -221,6 +221,7 @@ export const ReconciliationEngine = {
       companyId?: string | string[] | null;
       companyIds?: string[] | null;
       client?: any;
+      allowUniqueAmountOnly?: boolean;
     },
   ): Promise<ComprehensiveReconciliationReport> {
     const db = options?.client || supabase;
@@ -950,6 +951,7 @@ export const ReconciliationEngine = {
       companyId?: string | string[] | null;
       companyIds?: string[] | null;
       client?: any;
+      allowUniqueAmountOnly?: boolean;
     },
   ): Promise<ComprehensiveReconciliationReport> {
     const db = options?.client || supabase;

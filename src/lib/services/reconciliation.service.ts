@@ -121,23 +121,8 @@ export interface ReconciliationExceptionRow {
   updated_at: string;
 }
 
-export async function computeSha256(data: string | ArrayBuffer | Blob): Promise<string> {
-  let buffer: ArrayBuffer;
-  if (typeof data === "string") {
-    const enc = new TextEncoder().encode(data);
-    buffer = enc.buffer.slice(enc.byteOffset, enc.byteOffset + enc.byteLength);
-  } else if (data instanceof ArrayBuffer) {
-    buffer = data;
-  } else if (data instanceof Blob) {
-    buffer = await data.arrayBuffer();
-  } else {
-    const arr = new Uint8Array(data);
-    buffer = arr.buffer.slice(arr.byteOffset, arr.byteOffset + arr.byteLength);
-  }
-  const digest = await crypto.subtle.digest("SHA-256", buffer);
-  const hashArray = Array.from(new Uint8Array(digest));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
+export { computeSha256 } from "../crypto-hash";
+import { computeSha256 } from "../crypto-hash";
 
 export const ReconciliationService = {
   async getResultsCount(): Promise<number> {
@@ -831,7 +816,7 @@ export const ReconciliationService = {
 
         let rpcRes: any = null;
 
-        // Try unified atomic apply + persist RPC
+        // Call unified atomic apply + persist RPC (fails closed, no insecure legacy fallback)
         const { data: unifiedData, error: unifiedErr } = await (supabase as any).rpc(
           "apply_and_record_reconciliation_batch",
           {
@@ -842,6 +827,7 @@ export const ReconciliationService = {
               source_type: chunk[0]?.source_a_type || "excel",
               file_name: lotName || "Reconciliation Batch",
               file_hash_sha256: fileHash,
+              idempotency_key: `${resolvedCompanyId || "all"}_${fileHash || lotName}_chunk_${i}`,
               row_count: groupItems.length,
               total_amount: groupItems.reduce(
                 (acc: number, item: any) =>
@@ -856,30 +842,24 @@ export const ReconciliationService = {
           },
         );
 
-        if (!unifiedErr && unifiedData) {
-          rpcRes = unifiedData;
-          if (rpcRes.run_id && !activeRunId) {
-            activeRunId = rpcRes.run_id;
-          }
-          resultsInserted += Number(rpcRes.results_inserted ?? 0);
-          exceptionsCreated += Number(rpcRes.exceptions_created ?? 0);
-        } else {
-          // Fallback to apply_reconciliation_batch if unified RPC not deployed yet
-          const { data: legacyData, error: legacyErr } = await (supabase as any).rpc(
-            "apply_reconciliation_batch",
-            {
-              p_items: chunk,
-              p_batch_info: i === 0 ? batchInfo : null,
-            },
+        if (unifiedErr) {
+          throw new Error(
+            `Atomic reconciliation batch failed (records ${i + 1}-${i + chunk.length}): ${unifiedErr.message}`,
           );
-
-          if (legacyErr) {
-            throw new Error(
-              `Atomic reconciliation batch failed (records ${i + 1}-${i + chunk.length}): ${legacyErr.message}`,
-            );
-          }
-          rpcRes = legacyData;
         }
+
+        if (!unifiedData || !unifiedData.success) {
+          throw new Error(
+            `Reconciliation transaction failed (records ${i + 1}-${i + chunk.length}): ${unifiedData?.error || "Transaction rolled back"}`,
+          );
+        }
+
+        rpcRes = unifiedData;
+        if (rpcRes.run_id && !activeRunId) {
+          activeRunId = rpcRes.run_id;
+        }
+        resultsInserted += Number(rpcRes.results_inserted ?? 0);
+        exceptionsCreated += Number(rpcRes.exceptions_created ?? 0);
 
         if (!rpcRes || !rpcRes.success) {
           throw new Error(
@@ -1059,7 +1039,7 @@ export const ReconciliationService = {
     // Direct table query fallback
     let query = (supabase as any)
       .from("reconciliation_runs")
-      .select("*, company:companies(name)", { count: "exact" });
+      .select("*, company:companies(company_name)", { count: "exact" });
 
     if (filter?.companyId) query = query.eq("company_id", filter.companyId);
     if (filter?.sourceType) query = query.eq("source_type", filter.sourceType);
@@ -1083,7 +1063,7 @@ export const ReconciliationService = {
 
     const runs = (data || []).map((r: any) => ({
       ...r,
-      company_name: r.company?.name || null,
+      company_name: r.company?.company_name || null,
     })) as ReconciliationRunRow[];
 
     return {
@@ -1181,7 +1161,7 @@ export const ReconciliationService = {
   },
 
   async ingestBankStatementFile(
-    companyId: string,
+    companyId: string | null | undefined,
     file: File,
     transactions: any[],
     metadata?: {
@@ -1192,6 +1172,7 @@ export const ReconciliationService = {
     },
   ): Promise<{ importId: string; fileHash: string; insertedCount: number }> {
     const fileHash = await computeSha256(file);
+    const resolvedCompanyId = companyId || null;
     const bankName = metadata?.bankName || "Commercial Bank";
     const accountNo = metadata?.accountNo || "Statement Account";
     const totalDebit = transactions.reduce((acc, t) => acc + (Number(t.debit) || 0), 0);
@@ -1201,7 +1182,7 @@ export const ReconciliationService = {
     const { data: imp, error: impErr } = await (supabase as any)
       .from("bank_statement_imports")
       .insert({
-        company_id: companyId,
+        company_id: resolvedCompanyId,
         bank_name: bankName,
         account_no: accountNo,
         file_name: file.name,
@@ -1235,11 +1216,11 @@ export const ReconciliationService = {
       const chunk = transactions.slice(i, i + batchSize);
       const rows = await Promise.all(
         chunk.map(async (t) => {
-          const rawFingerprintStr = `${companyId}|${t.date}|${t.description}|${t.reference || t.instructionId || ""}|${t.debit || 0}|${t.credit || 0}`;
+          const rawFingerprintStr = `${resolvedCompanyId || "unassigned"}|${t.date}|${t.description}|${t.reference || t.instructionId || ""}|${t.debit || 0}|${t.credit || 0}`;
           const fingerprint = await computeSha256(rawFingerprintStr);
           return {
             import_id: importId,
-            company_id: companyId,
+            company_id: resolvedCompanyId,
             transaction_date: t.date || new Date().toISOString().slice(0, 10),
             description: t.description || null,
             reference: t.reference || t.instructionId || null,

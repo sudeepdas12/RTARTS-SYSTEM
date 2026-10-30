@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { computeSha256 } from "./crypto-hash";
 
 const parseCsvRow = (row: string): string[] => {
   const values: string[] = [];
@@ -407,32 +408,47 @@ export const BankParser = {
     const workbook = XLSX.read(data, { type: "array", cellDates: true, dense: true });
     const transactions: BankTransaction[] = [];
 
-    // Choose sheets to process
+    // Choose sheets to process based on semantic priority
     let sheetsToProcess = workbook.SheetNames;
     const isMultiBankLateRtn = workbook.SheetNames.some((s) => /LATE\s*RTN/i.test(s));
     const isMultiLotWorkbook =
-      !workbook.SheetNames.some(
-        (s) => s.toLowerCase().includes("thapathali") || s.toLowerCase().includes("nchl"),
-      ) &&
-      workbook.SheetNames.some((s) => /^Sheet\d+$/i.test(s)) &&
-      workbook.SheetNames.length > 1;
+      workbook.SheetNames.every((s) => /^Sheet\d+$/i.test(s)) && workbook.SheetNames.length > 1;
 
     if (isMultiBankLateRtn || isMultiLotWorkbook) {
-      // Process all sheets in multi-bank late return or multi-lot files
+      // Process all sheets in multi-bank late return or pure multi-lot files (Sheet1, Sheet2...)
       sheetsToProcess = workbook.SheetNames;
     } else {
-      const nchlSheet = workbook.SheetNames.find(
-        (s) =>
-          s.toLowerCase().includes("nchl") ||
-          s.toLowerCase().includes("bankcentral") ||
-          s.toLowerCase().includes("thapathali"),
-      );
-      if (nchlSheet) {
-        sheetsToProcess = [nchlSheet];
-      } else if (workbook.SheetNames.includes("Statement") && workbook.SheetNames.length > 1) {
-        sheetsToProcess = ["Statement"];
-      } else if (workbook.SheetNames.includes("Sheet1") && workbook.SheetNames.length > 1) {
-        sheetsToProcess = ["Sheet1"];
+      // Prioritize semantic settlement & transaction data sheets
+      const semanticSheets = workbook.SheetNames.filter((s) => {
+        const lower = s.toLowerCase();
+        return (
+          lower.includes("accept") ||
+          lower.includes("credit_transaction") ||
+          lower.includes("credittransaction") ||
+          lower.includes("transaction") ||
+          lower.includes("thapathali") ||
+          lower.includes("nchl") ||
+          lower.includes("bankcentral") ||
+          lower.includes("statement") ||
+          lower.includes("settlement") ||
+          lower.includes("report") ||
+          /late\s*rtn/i.test(s)
+        );
+      });
+
+      if (semanticSheets.length > 0) {
+        // Exclude generic phantom sheets like "Sheet1" when semantic sheets are present
+        sheetsToProcess = semanticSheets;
+      } else {
+        // No explicit semantic name; select the first sheet that actually has content
+        const nonPhantomSheets = workbook.SheetNames.filter((name) => {
+          const s = workbook.Sheets[name];
+          if (!s || !s["!ref"]) return false;
+          const range = XLSX.utils.decode_range(s["!ref"]);
+          return range.e.r > 0 || range.e.c > 0;
+        });
+        sheetsToProcess =
+          nonPhantomSheets.length > 0 ? [nonPhantomSheets[0]] : [workbook.SheetNames[0]];
       }
     }
 
@@ -964,11 +980,12 @@ export const BankParser = {
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const fileSig = `${file.name}_${file.size}`;
-      if (seenFileSignatures.has(fileSig)) {
+      // Compute cryptographic SHA-256 hash to deduplicate renamed identical files across directories
+      const fileHash = await computeSha256(file);
+      if (seenFileSignatures.has(fileHash)) {
         continue;
       }
-      seenFileSignatures.add(fileSig);
+      seenFileSignatures.add(fileHash);
 
       options.onProgress?.(i + 1, files.length, file.name);
       // Give the browser event loop a moment to breathe and render the progress UI

@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS public.reconciliation_runs (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id uuid REFERENCES public.companies(id) ON DELETE CASCADE,
     fiscal_year text,
+    idempotency_key text,
     source_type text NOT NULL, -- 'excel', 'bank_statement', 'connectips', 'nchl'
     file_name text NOT NULL,
     file_hash_sha256 text NOT NULL,
@@ -147,6 +148,7 @@ CREATE TABLE IF NOT EXISTS public.reconciliation_runs (
 
 CREATE INDEX IF NOT EXISTS idx_reconciliation_runs_company_id ON public.reconciliation_runs(company_id);
 CREATE INDEX IF NOT EXISTS idx_reconciliation_runs_file_hash ON public.reconciliation_runs(file_hash_sha256);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reconciliation_runs_idempotency ON public.reconciliation_runs(idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_reconciliation_runs_status ON public.reconciliation_runs(status);
 CREATE INDEX IF NOT EXISTS idx_reconciliation_runs_created_at ON public.reconciliation_runs(created_at DESC);
 
@@ -208,6 +210,7 @@ CREATE INDEX IF NOT EXISTS idx_payments_reconciliation_run_id
 -- Enrich reconciliation_results with run reference & explainability decision model
 ALTER TABLE public.reconciliation_results 
   ADD COLUMN IF NOT EXISTS run_id uuid REFERENCES public.reconciliation_runs(id) ON DELETE CASCADE,
+  ADD COLUMN IF NOT EXISTS source_reference text,
   ADD COLUMN IF NOT EXISTS match_method text,
   ADD COLUMN IF NOT EXISTS match_confidence numeric(5,2),
   ADD COLUMN IF NOT EXISTS candidate_count integer DEFAULT 1,
@@ -217,6 +220,10 @@ ALTER TABLE public.reconciliation_results
 
 CREATE INDEX IF NOT EXISTS idx_reconciliation_results_run_id 
   ON public.reconciliation_results(run_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reconciliation_results_idempotency
+  ON public.reconciliation_results(run_id, COALESCE(payable_id::text, ''), COALESCE(source_reference, ''))
+  WHERE run_id IS NOT NULL;
 
 -- ============================================================================
 -- 4. IMMUTABLE BANK STATEMENT INGESTION LEDGER & FINGERPRINTING
@@ -420,6 +427,8 @@ DECLARE
   v_confidence numeric;
   v_rule_ver text;
   v_notes text;
+  v_idempotency_key text;
+  v_existing_status text;
   
   v_payables_updated int := 0;
   v_payments_created int := 0;
@@ -444,12 +453,56 @@ BEGIN
     END IF;
   END IF;
 
-  -- 2. Create or reuse reconciliation_run record
-  v_run_id := NULLIF(p_run_info->>'run_id', '')::uuid;
+  -- 2. Idempotency Check: prevent duplicate runs or double posting
+  v_idempotency_key := NULLIF(p_run_info->>'idempotency_key', '');
+  IF v_idempotency_key IS NOT NULL THEN
+    SELECT id, status INTO v_run_id, v_existing_status
+    FROM public.reconciliation_runs
+    WHERE idempotency_key = v_idempotency_key;
+
+    IF v_run_id IS NOT NULL AND v_existing_status = 'applied' THEN
+      RETURN jsonb_build_object(
+        'success', true,
+        'idempotent', true,
+        'run_id', v_run_id,
+        'message', 'Reconciliation run already applied with this idempotency key',
+        'payables_updated', 0,
+        'payments_created', 0,
+        'results_inserted', 0,
+        'exceptions_created', 0,
+        'already_paid_skipped', 0,
+        'errors', '[]'::jsonb
+      );
+    END IF;
+  END IF;
+
+  IF v_run_id IS NULL THEN
+    v_run_id := NULLIF(p_run_info->>'run_id', '')::uuid;
+  END IF;
+
+  IF v_run_id IS NOT NULL THEN
+    SELECT status INTO v_existing_status FROM public.reconciliation_runs WHERE id = v_run_id;
+    IF v_existing_status = 'applied' THEN
+      RETURN jsonb_build_object(
+        'success', true,
+        'idempotent', true,
+        'run_id', v_run_id,
+        'message', 'Reconciliation run already applied',
+        'payables_updated', 0,
+        'payments_created', 0,
+        'results_inserted', 0,
+        'exceptions_created', 0,
+        'already_paid_skipped', 0,
+        'errors', '[]'::jsonb
+      );
+    END IF;
+  END IF;
+
   IF v_run_id IS NULL THEN
     INSERT INTO public.reconciliation_runs (
       company_id,
       fiscal_year,
+      idempotency_key,
       source_type,
       file_name,
       file_hash_sha256,
@@ -464,6 +517,7 @@ BEGIN
     ) VALUES (
       v_company_id,
       v_fiscal_year,
+      v_idempotency_key,
       COALESCE(NULLIF(p_run_info->>'source_type', ''), 'excel'),
       COALESCE(NULLIF(p_run_info->>'file_name', ''), 'Reconciliation Batch'),
       COALESCE(NULLIF(p_run_info->>'file_hash_sha256', ''), md5(now()::text || p_run_info::text)),
@@ -545,7 +599,7 @@ BEGIN
 
           UPDATE public.dividend_payables
           SET payment_status = CASE WHEN v_result = 'PARTIAL' THEN 'Partial'::public.payment_status ELSE 'Paid'::public.payment_status END,
-              paid_amount = COALESCE(paid_amount, 0) + v_paid_amt,
+              paid_amount = LEAST(net_payable, COALESCE(paid_amount, 0) + v_paid_amt),
               remaining_amount = GREATEST(0, COALESCE(net_payable, 0) - (COALESCE(paid_amount, 0) + v_paid_amt)),
               payment_date = COALESCE(payment_date, CURRENT_DATE),
               payment_reference = COALESCE(payment_reference, v_payment_ref),
@@ -564,7 +618,7 @@ BEGIN
 
           UPDATE public.interest_payables
           SET payment_status = CASE WHEN v_result = 'PARTIAL' THEN 'Partial'::public.payment_status ELSE 'Paid'::public.payment_status END,
-              paid_amount = COALESCE(paid_amount, 0) + v_paid_amt,
+              paid_amount = LEAST(net_payable, COALESCE(paid_amount, 0) + v_paid_amt),
               remaining_amount = GREATEST(0, COALESCE(net_payable, 0) - (COALESCE(paid_amount, 0) + v_paid_amt)),
               payment_date = COALESCE(payment_date, CURRENT_DATE),
               payment_reference = COALESCE(payment_reference, v_payment_ref),
@@ -582,7 +636,9 @@ BEGIN
           PERFORM 1 FROM public.mutual_fund_payables WHERE id = v_payable_id FOR UPDATE;
 
           UPDATE public.mutual_fund_payables
-          SET payment_status = 'Paid'::public.payment_status,
+          SET payment_status = CASE WHEN v_result = 'PARTIAL' THEN 'Partial'::public.payment_status ELSE 'Paid'::public.payment_status END,
+              paid_amount = LEAST(net_payable, COALESCE(paid_amount, 0) + v_paid_amt),
+              remaining_amount = GREATEST(0, COALESCE(net_payable, 0) - (COALESCE(paid_amount, 0) + v_paid_amt)),
               payment_date = COALESCE(payment_date, CURRENT_DATE),
               payment_reference = COALESCE(payment_reference, v_payment_ref),
               updated_at = now()
@@ -642,6 +698,7 @@ BEGIN
       INSERT INTO public.reconciliation_results (
         run_id,
         reconciliation_date,
+        source_reference,
         source_a_type,
         source_a_id,
         source_b_type,
@@ -668,6 +725,7 @@ BEGIN
       ) VALUES (
         v_run_id,
         CURRENT_DATE,
+        COALESCE(v_instruction_id, v_payment_ref, v_payable_id::text, ''),
         COALESCE(NULLIF(v_item->>'source_a_type', ''), 'bank_statement'),
         NULLIF(v_item->>'source_a_id', '')::uuid,
         COALESCE(NULLIF(v_item->>'source_b_type', ''), 'payable'),
@@ -691,7 +749,8 @@ BEGIN
         v_rule_ver,
         v_uid,
         now()
-      );
+      )
+      ON CONFLICT (run_id, COALESCE(payable_id::text, ''), COALESCE(source_reference, '')) DO NOTHING;
       v_results_inserted := v_results_inserted + 1;
 
       -- C. If exception/unmatched, record durable exception
@@ -1127,7 +1186,7 @@ BEGIN
     SELECT 
       rr.id,
       rr.company_id,
-      c.name as company_name,
+      c.company_name as company_name,
       rr.fiscal_year,
       rr.source_type,
       rr.file_name,

@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
+import * as XLSX from "xlsx";
 import { ReconciliationEngine, amountEqualsPaisa } from "../reconciliation-engine";
+import { BankParser } from "../bank-parser";
 import {
   ReconciliationService,
   computeSha256,
@@ -294,6 +296,130 @@ describe("Reconciliation Audit Remediation Invariants", () => {
       expect(lots[0].lotKey).toBe("run-abc-123");
       expect(lots[0].totalRecords).toBe(2);
       expect(lots[0].totalAmount).toBe(3000);
+    });
+
+    it("fails closed without falling back to legacy RPC if apply_and_record_reconciliation_batch fails", async () => {
+      const rpcSpy = vi.spyOn(supabase, "rpc").mockImplementation(async (name: string) => {
+        if (name === "apply_and_record_reconciliation_batch") {
+          return {
+            data: null,
+            error: { message: "Database connection timeout or schema constraint" },
+          } as any;
+        }
+        if (name === "apply_reconciliation_batch") {
+          // If legacy fallback is incorrectly triggered, this would be called
+          return { data: { success: true, updated_payables: 1 }, error: null } as any;
+        }
+        return { data: null, error: null } as any;
+      });
+
+      const dummyItems = [
+        {
+          id: "00000000-0000-0000-0000-000000000001",
+          company_id: "00000000-0000-0000-0000-000000000001",
+          client_id: "00000000-0000-0000-0000-000000000002",
+          payable_type: "dividend",
+          payable_id: "00000000-0000-0000-0000-000000000003",
+          result: "Matched",
+          actual_amount: 5000,
+          expected_amount: 5000,
+          match_method: "instruction_id",
+          match_confidence: 95,
+        },
+      ];
+
+      await expect(
+        ReconciliationService.applyReconciliation(dummyItems as any, "Batch Test"),
+      ).rejects.toThrow(/Atomic reconciliation batch failed/i);
+
+      // Verify that legacy apply_reconciliation_batch was NEVER called
+      expect(rpcSpy).not.toHaveBeenCalledWith("apply_reconciliation_batch", expect.anything());
+
+      rpcSpy.mockRestore();
+    });
+
+    it("uses company:companies(company_name) when falling back to table query", async () => {
+      let selectedFields = "";
+      const selectMock: any = {
+        order: () => selectMock,
+        range: () =>
+          Promise.resolve({
+            data: [
+              {
+                id: "run-1",
+                file_name: "Test.xlsx",
+                file_hash_sha256: "hash-123",
+                company: { company_name: "Nepal Hydro Ltd" },
+              },
+            ],
+            count: 1,
+            error: null,
+          }),
+      };
+
+      const fromSpy = vi.spyOn(supabase, "from").mockImplementation((table: string) => {
+        if (table === "reconciliation_runs") {
+          return {
+            select: (fields: string) => {
+              selectedFields = fields;
+              return selectMock;
+            },
+          } as any;
+        }
+        return {} as any;
+      });
+
+      // Force RPC to fail so it uses table fallback
+      const rpcSpy = vi.spyOn(supabase, "rpc").mockRejectedValueOnce(new Error("RPC not found"));
+
+      const res = await ReconciliationService.getReconciliationRuns();
+
+      expect(selectedFields).toContain("company:companies(company_name)");
+      expect(res.runs[0].company_name).toBe("Nepal Hydro Ltd");
+
+      fromSpy.mockRestore();
+      rpcSpy.mockRestore();
+    });
+  });
+
+  describe("5. Bank Settlement Sheet Selection & Content-Hash Deduplication", () => {
+    it("selects named settlement sheet over phantom Sheet1 when both exist in workbook", async () => {
+      const wb = XLSX.utils.book_new();
+      // Phantom Sheet1 with no settlement header
+      const emptySheet = XLSX.utils.aoa_to_sheet([["Generic Header", "Value"]]);
+      // Named dataset sheet with settlement columns
+      const settlementSheet = XLSX.utils.aoa_to_sheet([
+        ["Instruction Id", "Amount", "Beneficiary Bank", "Account Number"],
+        ["INSTR-99901", "12500.00", "RBB", "1700100000036006"],
+      ]);
+
+      XLSX.utils.book_append_sheet(wb, emptySheet, "Sheet1");
+      XLSX.utils.book_append_sheet(wb, settlementSheet, "Credit_Transactions__Thapathali");
+
+      const wbBuf = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+      const mockFile = new File([wbBuf], "settlement_report.xlsx", {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+
+      const txns = await BankParser.parseExcelSettlement(mockFile);
+      expect(txns).toHaveLength(1);
+      expect(txns[0].instructionId).toBe("INSTR-99901");
+      expect(txns[0].debit).toBe(12500);
+    });
+
+    it("deduplicates identical files with different names using SHA-256 content hash", async () => {
+      const csvData = [
+        "Instruction ID,Debit,Credit,Date,Description",
+        "INSTR-TEST-001,4500,0,2026-03-01,Dividend Payment",
+      ].join("\n");
+
+      const file1 = new File([csvData], "file_alpha.csv", { type: "text/csv" });
+      const file2 = new File([csvData], "file_beta_renamed_copy.csv", { type: "text/csv" });
+
+      const txns = await BankParser.parseMultipleFiles([file1, file2]);
+      // Content-hash deduplication ensures file2 is skipped completely
+      expect(txns).toHaveLength(1);
+      expect(txns[0].instructionId).toBe("INSTR-TEST-001");
     });
   });
 });

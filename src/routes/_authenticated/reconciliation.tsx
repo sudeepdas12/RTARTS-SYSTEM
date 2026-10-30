@@ -32,6 +32,7 @@ import {
 import {
   ReconciliationService,
   ReconciliationResultRow,
+  ReconciliationRunRow,
 } from "@/lib/services/reconciliation.service";
 import { useAuth } from "@/hooks/use-auth";
 import {
@@ -102,6 +103,15 @@ export function ReconciliationRoute() {
   const [historySearchQuery, setHistorySearchQuery] = useState<string>("");
   const [historyCompanyFilter, setHistoryCompanyFilter] = useState<string>("all");
   const [historySourceFilter, setHistorySourceFilter] = useState<string>("all");
+  const [reconciliationRuns, setReconciliationRuns] = useState<ReconciliationRunRow[]>([]);
+  const [totalRunsCount, setTotalRunsCount] = useState<number>(0);
+  const [runsSummary, setRunsSummary] = useState<{
+    total_amount: number;
+    matched_count: number;
+    unmatched_count: number;
+    row_count: number;
+  }>({ total_amount: 0, matched_count: 0, unmatched_count: 0, row_count: 0 });
+  const [historyViewMode, setHistoryViewMode] = useState<"runs" | "lots">("runs");
   const [lotDetailTabs, setLotDetailTabs] = useState<
     Record<string, "all" | "matched" | "rejected" | "discrepancy">
   >({});
@@ -359,12 +369,27 @@ export function ReconciliationRoute() {
   const loadHistory = async (limit = 1000, offset = 0) => {
     setIsLoadingHistory(true);
     try {
-      const [results, count] = await Promise.all([
+      const [results, count, runsData] = await Promise.all([
         ReconciliationService.getResults(limit, offset),
         ReconciliationService.getResultsCount(),
+        ReconciliationService.getReconciliationRuns({
+          companyId: historyCompanyFilter !== "all" ? historyCompanyFilter : null,
+          sourceType: historySourceFilter !== "all" ? historySourceFilter : undefined,
+          search: historySearchQuery || undefined,
+          limit: 100,
+          offset: 0,
+        }).catch((e) => {
+          console.warn("Could not load reconciliation runs:", e);
+          return null;
+        }),
       ]);
       setSavedResults(results);
       setTotalHistoryRecords(count);
+      if (runsData) {
+        setReconciliationRuns(runsData.runs);
+        setTotalRunsCount(runsData.totalCount);
+        setRunsSummary(runsData.summary);
+      }
     } catch (error) {
       console.warn("Could not load reconciliation history:", error);
     } finally {
@@ -444,6 +469,16 @@ export function ReconciliationRoute() {
           });
 
           if (transactions.length > 0) {
+            // Persist into immutable bank ledger
+            const targetCompany = reconCompanyIds.length > 0 ? reconCompanyIds[0] : null;
+            for (const file of files) {
+              await ReconciliationService.ingestBankStatementFile(
+                targetCompany,
+                file,
+                transactions,
+              ).catch((e) => console.warn("Settlement ledger ingestion notice:", e));
+            }
+
             setProcessingProgress("Performing 5-way multi-source reconciliation...");
             const rep = await ReconciliationEngine.analyzeBankStatement(transactions, {
               fileName: files.map((f) => f.name).join(", "),
@@ -454,9 +489,16 @@ export function ReconciliationRoute() {
               `Successfully analyzed ${files.length} settlement file(s) with ${transactions.length.toLocaleString()} total transactions`,
             );
             return;
+          } else {
+            toast.error("No valid settlement transactions found in the uploaded file(s).");
+            return;
           }
-        } catch (bErr) {
-          console.warn("Bank parser fallback to Excel parser:", bErr);
+        } catch (bErr: any) {
+          console.error("Settlement report parser error:", bErr);
+          toast.error(
+            `Failed to parse settlement file: ${bErr?.message || "Invalid layout"}. Refusing to misinterpret settlement data as shareholder registries.`,
+          );
+          return;
         }
       }
 
@@ -495,6 +537,17 @@ export function ReconciliationRoute() {
         onProgress: (cur, tot, name) =>
           setProcessingProgress(`Parsing bank statement ${cur} of ${tot}: ${name}`),
       });
+
+      // Persist into immutable bank ledger
+      const targetCompany = reconCompanyIds.length > 0 ? reconCompanyIds[0] : null;
+      for (const file of files) {
+        await ReconciliationService.ingestBankStatementFile(
+          targetCompany,
+          file,
+          transactions,
+        ).catch((e) => console.warn("Statement ledger ingestion notice:", e));
+      }
+
       setProcessingProgress("Matching statement transactions with disbursements & payouts...");
       const rep = await ReconciliationEngine.analyzeBankStatement(transactions, {
         fileName: files.map((f) => f.name).join(", "),
@@ -2676,17 +2729,38 @@ export function ReconciliationRoute() {
       <Card className="border mt-4">
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
-            <CardTitle>Reconciliation History</CardTitle>
+            <CardTitle>Reconciliation History &amp; Audit Trail</CardTitle>
             <CardDescription>
               {isLoadingHistory
-                ? "Loading latest saved reconciliation lots..."
-                : `${groupedLots.length} saved lot${groupedLots.length === 1 ? "" : "s"} (${savedResults.length.toLocaleString()}${totalHistoryRecords > savedResults.length ? ` of ${totalHistoryRecords.toLocaleString()}` : ""} records) loaded.`}
+                ? "Loading reconciliation audit runs and lots..."
+                : historyViewMode === "runs"
+                  ? `${totalRunsCount.toLocaleString()} immutable reconciliation run${totalRunsCount === 1 ? "" : "s"} tracked across all fiscal files.`
+                  : `${groupedLots.length} saved lot${groupedLots.length === 1 ? "" : "s"} (${savedResults.length.toLocaleString()}${totalHistoryRecords > savedResults.length ? ` of ${totalHistoryRecords.toLocaleString()}` : ""} records) loaded.`}
             </CardDescription>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 bg-muted p-1 rounded-lg">
+              <Button
+                variant={historyViewMode === "runs" ? "default" : "ghost"}
+                size="sm"
+                className="h-7 text-xs px-2.5"
+                onClick={() => setHistoryViewMode("runs")}
+              >
+                Audit Runs ({totalRunsCount})
+              </Button>
+              <Button
+                variant={historyViewMode === "lots" ? "default" : "ghost"}
+                size="sm"
+                className="h-7 text-xs px-2.5"
+                onClick={() => setHistoryViewMode("lots")}
+              >
+                Grouped Lots ({groupedLots.length})
+              </Button>
+            </div>
             <Button
               variant="outline"
               size="sm"
+              className="h-7 text-xs"
               onClick={() => loadHistory()}
               disabled={isLoadingHistory}
             >
@@ -2702,6 +2776,205 @@ export function ReconciliationRoute() {
             <div className="text-center py-8 text-sm text-muted-foreground flex items-center justify-center gap-2">
               <RefreshCw className="w-4 h-4 animate-spin" />
               Loading saved reconciliation lots...
+            </div>
+          ) : historyViewMode === "runs" ? (
+            <div className="space-y-4">
+              {/* Summary KPIs */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="p-3 bg-muted/40 rounded-lg border">
+                  <div className="text-[11px] text-muted-foreground font-medium">
+                    Reconciliation Runs
+                  </div>
+                  <div className="text-lg font-bold text-foreground mt-0.5">
+                    {totalRunsCount.toLocaleString()}
+                  </div>
+                </div>
+                <div className="p-3 bg-muted/40 rounded-lg border">
+                  <div className="text-[11px] text-muted-foreground font-medium">
+                    Total Ingested Amount
+                  </div>
+                  <div className="text-lg font-bold text-foreground mt-0.5">
+                    NPR{" "}
+                    {runsSummary.total_amount.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </div>
+                </div>
+                <div className="p-3 bg-emerald-50/50 dark:bg-emerald-950/20 rounded-lg border border-emerald-200 dark:border-emerald-800">
+                  <div className="text-[11px] text-emerald-800 dark:text-emerald-300 font-medium">
+                    Matched Rows
+                  </div>
+                  <div className="text-lg font-bold text-emerald-700 dark:text-emerald-400 mt-0.5">
+                    {runsSummary.matched_count.toLocaleString()}
+                  </div>
+                </div>
+                <div className="p-3 bg-amber-50/50 dark:bg-amber-950/20 rounded-lg border border-amber-200 dark:border-amber-800">
+                  <div className="text-[11px] text-amber-800 dark:text-amber-300 font-medium">
+                    Exceptions / Variance
+                  </div>
+                  <div className="text-lg font-bold text-amber-700 dark:text-amber-400 mt-0.5">
+                    {runsSummary.unmatched_count.toLocaleString()}
+                  </div>
+                </div>
+              </div>
+
+              {/* Filters */}
+              <div className="flex flex-wrap gap-2 items-center">
+                <div className="relative flex-1 min-w-[220px]">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search runs by file name, run ID, or notes..."
+                    value={historySearchQuery}
+                    onChange={(e) => setHistorySearchQuery(e.target.value)}
+                    className="pl-8 text-xs h-8"
+                  />
+                  {historySearchQuery && (
+                    <button
+                      onClick={() => setHistorySearchQuery("")}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+                {companiesList.length > 0 && (
+                  <Select
+                    value={historyCompanyFilter}
+                    onValueChange={(val) => {
+                      setHistoryCompanyFilter(val);
+                    }}
+                  >
+                    <SelectTrigger className="w-52 h-8 text-xs">
+                      <SelectValue placeholder="All Companies" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Companies</SelectItem>
+                      {companiesList.map((c) => (
+                        <SelectItem key={c.id} value={c.id} className="text-xs">
+                          {c.company_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                <Select value={historySourceFilter} onValueChange={setHistorySourceFilter}>
+                  <SelectTrigger className="w-44 h-8 text-xs">
+                    <SelectValue placeholder="All Sources" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all" className="text-xs">
+                      All Source Types
+                    </SelectItem>
+                    <SelectItem value="excel" className="text-xs">
+                      Excel Lots
+                    </SelectItem>
+                    <SelectItem value="bank_statement" className="text-xs">
+                      Bank Statements
+                    </SelectItem>
+                    <SelectItem value="connectips" className="text-xs">
+                      ConnectIPS
+                    </SelectItem>
+                    <SelectItem value="nchl" className="text-xs">
+                      NCHL Settlements
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Runs Table */}
+              {reconciliationRuns.length === 0 ? (
+                <div className="text-center py-8 text-sm text-muted-foreground">
+                  <p>No reconciliation runs found for the current filter criteria.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-lg border">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/50 text-muted-foreground font-medium border-b">
+                      <tr>
+                        <th className="p-2.5 text-left">Date / Run</th>
+                        <th className="p-2.5 text-left">File Name</th>
+                        <th className="p-2.5 text-left">SHA-256 Hash</th>
+                        <th className="p-2.5 text-left">Company</th>
+                        <th className="p-2.5 text-right">Rows</th>
+                        <th className="p-2.5 text-right">Total NPR</th>
+                        <th className="p-2.5 text-center">Status</th>
+                        <th className="p-2.5 text-center">Engine Ver</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {reconciliationRuns.map((run) => (
+                        <tr key={run.id} className="hover:bg-muted/30 transition-colors">
+                          <td className="p-2.5 font-mono text-[11px] whitespace-nowrap">
+                            <div>
+                              {run.created_at ? new Date(run.created_at).toLocaleDateString() : "-"}
+                            </div>
+                            <span className="text-[10px] text-muted-foreground">
+                              {run.id.slice(0, 8)}
+                            </span>
+                          </td>
+                          <td
+                            className="p-2.5 font-medium max-w-[200px] truncate"
+                            title={run.file_name}
+                          >
+                            <div className="flex items-center gap-1.5">
+                              <FileSpreadsheet className="w-3.5 h-3.5 text-primary shrink-0" />
+                              <span className="truncate">{run.file_name}</span>
+                            </div>
+                            <span className="text-[10px] text-muted-foreground uppercase">
+                              {run.source_type}
+                            </span>
+                          </td>
+                          <td className="p-2.5 font-mono text-[11px] text-muted-foreground whitespace-nowrap">
+                            <span title={run.file_hash_sha256}>
+                              {run.file_hash_sha256
+                                ? `${run.file_hash_sha256.slice(0, 10)}...`
+                                : "-"}
+                            </span>
+                          </td>
+                          <td className="p-2.5 text-muted-foreground whitespace-nowrap">
+                            {run.company_name || "All / Unassigned"}
+                          </td>
+                          <td className="p-2.5 text-right whitespace-nowrap">
+                            <div>
+                              <strong>{run.row_count}</strong> total
+                            </div>
+                            <div className="text-[10px] text-emerald-600 dark:text-emerald-400">
+                              {run.matched_count} matched
+                            </div>
+                          </td>
+                          <td className="p-2.5 text-right font-medium whitespace-nowrap">
+                            NPR{" "}
+                            {Number(run.total_amount || 0).toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </td>
+                          <td className="p-2.5 text-center whitespace-nowrap">
+                            <Badge
+                              variant={
+                                run.status === "applied"
+                                  ? "default"
+                                  : run.status === "review"
+                                    ? "secondary"
+                                    : run.status === "reverted"
+                                      ? "destructive"
+                                      : "outline"
+                              }
+                              className="text-[10px] capitalize"
+                            >
+                              {run.status}
+                            </Badge>
+                          </td>
+                          <td className="p-2.5 text-center text-muted-foreground font-mono text-[10px]">
+                            {run.matching_rule_version || "2.0.0"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           ) : filteredGroupedLots.length === 0 ? (
             <div className="text-center py-8 text-sm text-muted-foreground">
