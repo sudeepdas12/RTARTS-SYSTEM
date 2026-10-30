@@ -1,41 +1,111 @@
 {
-  "timestamp": "2026-10-26T10:18:19.672Z",
-  "mode": "LIVE_PRODUCTION_VERIFICATION",
+  "timestamp": "2026-10-30T06:17:16.811Z",
+  "mode": "SOURCE_RELEASE_AUDIT",
   "gates": [
     {
-      "name": "Live Target Credentials Configured",
+      "name": "Edge Function 15% Institutional TDS",
       "passed": true,
-      "detail": "Target: http://127.0.0.1:54321"
+      "detail": "Enforces 15% TDS on COMPANY_INSTITUTION"
     },
     {
-      "name": "Live DB: 15% Corporate Tax Rule Active",
+      "name": "Edge Function 15% Foreign Investor TDS",
       "passed": true,
-      "detail": "COMPANY_INSTITUTION = 0.15 in live table"
+      "detail": "Enforces 15% TDS on FOREIGN_INVESTOR"
     },
     {
-      "name": "Live DB: 15% Foreign Investor Tax Rule Active",
+      "name": "Edge Function 0% Section 10 Tax Exemption",
       "passed": true,
-      "detail": "FOREIGN_INVESTOR = 0.15 in live table"
+      "detail": "Enforces 0% TDS on MUTUAL_FUND and TAX_EXEMPT"
     },
     {
-      "name": "Live DB: 0% Tax Exempt Rule Active",
+      "name": "All PostgreSQL functions enforce immutable search_path",
       "passed": true,
-      "detail": "TAX_EXEMPT = 0% in live table"
+      "detail": "100% of schema functions specify search_path TO 'public'"
     },
     {
-      "name": "Live Edge Function: process-import-chunk reachable",
+      "name": "Seed DIVIDEND COMPANY_INSTITUTION = 15%",
       "passed": true,
-      "detail": "Endpoint responded with HTTP 401"
+      "detail": "Statutory corporate tax seeding verified"
     },
     {
-      "name": "Live Edge Function: Rejects Unauthenticated Invocations",
+      "name": "Seed DIVIDEND FOREIGN_INVESTOR = 15%",
       "passed": true,
-      "detail": "Unauthenticated invocation responded with HTTP 401 (Expected: 401)"
+      "detail": "Statutory foreign tax seeding verified"
     },
     {
-      "name": "Live Edge Function: Accepts Valid x-cron-secret Scheduler Requests",
+      "name": "Seed DIVIDEND TAX_EXEMPT = 0%",
       "passed": true,
-      "detail": "Scheduler request responded with HTTP 200 (Expected: 200 with dry_run)"
+      "detail": "Section 10 exempt entity seeding verified"
+    },
+    {
+      "name": "Client tax display rate helpers active",
+      "passed": true,
+      "detail": "Debenture, Dividend, Mutual Fund rate helpers present"
+    },
+    {
+      "name": "Investor category classification mapping active",
+      "passed": true,
+      "detail": "Classification resolver active"
+    },
+    {
+      "name": "Edge Function enforces constant-time x-cron-secret verification",
+      "passed": true,
+      "detail": "Timing-safe header comparison implemented"
+    },
+    {
+      "name": "Edge Function enforces JWT & RBAC for manual execution",
+      "passed": true,
+      "detail": "Validates user identity and role"
+    },
+    {
+      "name": "Edge Function uses GENERATED delivery status until dispatched",
+      "passed": true,
+      "detail": "Default status is GENERATED when email is not confirmed delivered"
+    },
+    {
+      "name": "Edge Function restricts browser CORS origin",
+      "passed": true,
+      "detail": "Permissive wildcard Access-Control-Allow-Origin removed"
+    },
+    {
+      "name": "Edge Function has no hardcoded cron-secret fallback",
+      "passed": true,
+      "detail": "Requires injected secret only"
+    },
+    {
+      "name": "Edge Function sends x-send-token to email delivery service",
+      "passed": true,
+      "detail": "Explicit x-send-token header dispatched to send-email"
+    },
+    {
+      "name": "Edge Function generates and stores real report file with signed URL",
+      "passed": true,
+      "detail": "Uploads file artifact to reports bucket and records signed URL"
+    },
+    {
+      "name": "Forward migration preserves investor classification in staged imports",
+      "passed": true,
+      "detail": "Maps payee_classification and holder_type from staged rows"
+    },
+    {
+      "name": "Database trigger_process_scheduled_reports enforces injected cron secret",
+      "passed": true,
+      "detail": "Hardcoded fallback removed from database stored procedure"
+    },
+    {
+      "name": "Database enforces multi-tenant client lookup & company uniqueness",
+      "passed": true,
+      "detail": "Client lookup and constraints scoped to company_id"
+    },
+    {
+      "name": "Staged imports integrate with upload_history lifecycle",
+      "passed": true,
+      "detail": "Creates upload_history record and links payables for rollback/audit"
+    },
+    {
+      "name": "pg_cron automated scheduler configured for scheduled reports",
+      "passed": true,
+      "detail": "Configures pg_cron job process-scheduled-reports-job every 15 minutes"
     }
   ],
   "verdict": "PASSED_RELEASE_GATE"

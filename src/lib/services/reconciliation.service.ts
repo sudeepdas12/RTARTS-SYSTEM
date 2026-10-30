@@ -27,6 +27,13 @@ export interface ReconciliationResultRow {
   matched_by: string | null;
   matched_at: string | null;
   created_at: string;
+  run_id?: string | null;
+  match_method?: string | null;
+  match_confidence?: number | null;
+  candidate_count?: number | null;
+  rejected_candidates?: any;
+  rule_version?: string | null;
+  requires_manual_approval?: boolean;
   client?: {
     full_name?: string;
     boid?: string;
@@ -55,7 +62,81 @@ export interface ReconciliationGroupedLot {
   totalAmount: number;
   matchedAmount: number;
   rejectedAmount: number;
+  runId?: string;
+  fileHash?: string;
+  status?: string;
   records: ReconciliationResultRow[];
+}
+
+export interface ReconciliationRunRow {
+  id: string;
+  company_id: string | null;
+  company_name?: string | null;
+  fiscal_year?: string | null;
+  source_type: string;
+  file_name: string;
+  file_hash_sha256: string;
+  row_count: number;
+  total_amount: number;
+  matched_count: number;
+  unmatched_count: number;
+  partial_count: number;
+  rejected_count: number;
+  parser_version: string;
+  matching_rule_version: string;
+  status: "draft" | "review" | "approved" | "applied" | "reverted" | "failed";
+  batch_id?: string | null;
+  notes?: string | null;
+  applied_by?: string | null;
+  applied_at?: string | null;
+  reverted_by?: string | null;
+  reverted_at?: string | null;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ReconciliationExceptionLifecycleStatus =
+  "Open" | "Investigating" | "Accepted" | "Rejected" | "Resolved" | "Escalated";
+
+export interface ReconciliationExceptionRow {
+  id: string;
+  run_id: string;
+  company_id: string;
+  result_id?: string | null;
+  payable_id?: string | null;
+  payable_type?: string | null;
+  source_reference?: string | null;
+  amount?: number | null;
+  exception_reason: string;
+  status: ReconciliationExceptionLifecycleStatus;
+  assigned_to?: string | null;
+  deadline?: string | null;
+  notes?: string | null;
+  resolution_notes?: string | null;
+  resolved_by?: string | null;
+  resolved_at?: string | null;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function computeSha256(data: string | ArrayBuffer | Blob): Promise<string> {
+  let buffer: ArrayBuffer;
+  if (typeof data === "string") {
+    const enc = new TextEncoder().encode(data);
+    buffer = enc.buffer.slice(enc.byteOffset, enc.byteOffset + enc.byteLength);
+  } else if (data instanceof ArrayBuffer) {
+    buffer = data;
+  } else if (data instanceof Blob) {
+    buffer = await data.arrayBuffer();
+  } else {
+    const arr = new Uint8Array(data);
+    buffer = arr.buffer.slice(arr.byteOffset, arr.byteOffset + arr.byteLength);
+  }
+  const digest = await crypto.subtle.digest("SHA-256", buffer);
+  const hashArray = Array.from(new Uint8Array(digest));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 export const ReconciliationService = {
@@ -154,8 +235,8 @@ export const ReconciliationService = {
       const companyName = r.company?.company_name || "General Payables";
       const payableType = (r.payable_type || "interest").toUpperCase();
 
-      // Cluster key by Date + Batch/File + Company + Payable Type
-      const lotKey = `${dateStr}__${batchRef}__${companyName}__${payableType}`;
+      // Canonical grouping by reconciliation run_id when available, otherwise cluster key
+      const lotKey = r.run_id || `${dateStr}__${batchRef}__${companyName}__${payableType}`;
       const lotName = `${batchRef} (${payableType})`;
 
       if (!map.has(lotKey)) {
@@ -177,11 +258,13 @@ export const ReconciliationService = {
           totalAmount: 0,
           matchedAmount: 0,
           rejectedAmount: 0,
+          runId: r.run_id || undefined,
           records: [],
         });
       }
 
       const lot = map.get(lotKey)!;
+      if (r.run_id && !lot.runId) lot.runId = r.run_id;
       if (r.source_a_type === "bank_statement") {
         lot.sourceType = "bank_statement";
       }
@@ -222,6 +305,7 @@ export const ReconciliationService = {
 
     const ALLOWED_COLUMNS = new Set([
       "id",
+      "run_id",
       "reconciliation_date",
       "source_a_type",
       "source_a_id",
@@ -231,16 +315,22 @@ export const ReconciliationService = {
       "company_id",
       "payable_type",
       "payable_id",
+      "payment_id",
+      "batch_id",
       "expected_amount",
       "actual_amount",
       "difference",
       "result",
       "notes",
+      "match_method",
+      "match_confidence",
+      "candidate_count",
+      "rejected_candidates",
+      "rule_version",
+      "requires_manual_approval",
       "matched_by",
       "matched_at",
       "fiscal_year",
-      "payment_id",
-      "batch_id",
     ]);
 
     for (let i = 0; i < results.length; i += chunkSize) {
@@ -292,124 +382,48 @@ export const ReconciliationService = {
     success: boolean;
   }> {
     const resultIds = (lot.records || []).map((r) => r.id).filter(Boolean);
+    const runId = lot.runId || lot.records?.[0]?.run_id;
+
+    // 1. Primary: Use atomic run-scoped revert if runId is available
+    if (runId) {
+      const { data, error } = await (supabase as any).rpc("revert_reconciliation_run_atomic", {
+        p_run_id: runId,
+        p_force: false,
+      });
+
+      if (error) {
+        console.error("revert_reconciliation_run_atomic failed:", error.message);
+        throw new Error(`Failed to safely revert reconciliation run: ${error.message}`);
+      }
+
+      return {
+        revertedPayables: Number(data?.reverted_payables ?? 0),
+        deletedPayments: Number(data?.deleted_payments ?? 0),
+        historyDeleted: true,
+        success: Boolean(data?.success),
+      };
+    }
+
     if (!resultIds.length) {
       return { revertedPayables: 0, deletedPayments: 0, historyDeleted: false, success: true };
     }
 
-    try {
-      // 1. Primary: Use atomic SECURITY DEFINER database transaction
-      const { data, error } = await (supabase as any).rpc("revert_reconciliation_lot_atomic", {
-        p_result_ids: resultIds,
-      });
+    // 2. Fallback to atomic lot-scoped revert (Strictly fail-closed, no un-transactional client-side fallback)
+    const { data, error } = await (supabase as any).rpc("revert_reconciliation_lot_atomic", {
+      p_result_ids: resultIds,
+    });
 
-      if (!error && data) {
-        return {
-          revertedPayables: Number(data.reverted_payables ?? 0),
-          deletedPayments: Number(data.updated_payments ?? 0),
-          historyDeleted: Number(data.deleted_results ?? 0) > 0,
-          success: Boolean(data.success),
-        };
-      }
-      if (error) {
-        console.warn(
-          "revert_reconciliation_lot_atomic RPC failed, trying fallback:",
-          error.message,
-        );
-      }
-    } catch (rpcErr: any) {
-      console.warn(
-        "revert_reconciliation_lot_atomic invocation error, falling back:",
-        rpcErr?.message,
-      );
+    if (error) {
+      console.error("revert_reconciliation_lot_atomic failed (fail closed):", error.message);
+      throw new Error(`Atomic reconciliation lot revert failed: ${error.message}`);
     }
 
-    let revertedPayables = 0;
-    let deletedPayments = 0;
-
-    try {
-      const payableIdsByTable: Record<string, string[]> = {
-        dividend_payables: [],
-        interest_payables: [],
-        mutual_fund_payables: [],
-      };
-
-      for (const r of lot.records) {
-        if (r.payable_id) {
-          const type = r.payable_type?.toLowerCase() || "interest";
-          if (type === "dividend") payableIdsByTable.dividend_payables.push(r.payable_id);
-          else if (type === "mutual_fund")
-            payableIdsByTable.mutual_fund_payables.push(r.payable_id);
-          else payableIdsByTable.interest_payables.push(r.payable_id);
-        }
-      }
-
-      const allPayableIds = [
-        ...payableIdsByTable.dividend_payables,
-        ...payableIdsByTable.interest_payables,
-        ...payableIdsByTable.mutual_fund_payables,
-      ];
-
-      // 1. Reset payables back to Pending
-      for (const [table, ids] of Object.entries(payableIdsByTable)) {
-        if (!ids.length) continue;
-        const chunkSize = 100;
-        for (let i = 0; i < ids.length; i += chunkSize) {
-          const chunk = ids.slice(i, i + chunkSize);
-          const { error } = await (supabase as any)
-            .from(table)
-            .update({
-              payment_status: "Pending",
-              payment_date: null,
-              payment_reference: null,
-            })
-            .in("id", chunk);
-
-          if (!error) {
-            revertedPayables += chunk.length;
-          }
-        }
-      }
-
-      // 2. Reset associated payment records
-      if (allPayableIds.length > 0) {
-        const chunkSize = 100;
-        for (let i = 0; i < allPayableIds.length; i += chunkSize) {
-          const chunk = allPayableIds.slice(i, i + chunkSize);
-          const { data: pList } = await (supabase as any)
-            .from("payments")
-            .select("id")
-            .in("payable_id", chunk);
-
-          if (pList && pList.length > 0) {
-            const pIds = pList.map((p: any) => p.id);
-            // Only revert payments that are not already Completed/ExternallySettled
-            const { error: pErr } = await (supabase as any)
-              .from("payments")
-              .update({
-                status: "Pending",
-                payment_date: null,
-                paid_amount: 0,
-                remarks: null,
-                payment_reference: null,
-              })
-              .in("id", pIds)
-              .neq("status", "Completed");
-
-            if (!pErr) {
-              deletedPayments += pIds.length;
-            }
-          }
-        }
-      }
-
-      // 3. Delete reconciliation history records for this lot
-      const historyDeleted = await this.deleteRecords(resultIds);
-
-      return { revertedPayables, deletedPayments, historyDeleted, success: true };
-    } catch (err: any) {
-      console.error("Failed to revert lot:", err);
-      return { revertedPayables, deletedPayments, historyDeleted: false, success: false };
-    }
+    return {
+      revertedPayables: Number(data?.reverted_payables ?? 0),
+      deletedPayments: Number(data?.updated_payments ?? data?.deleted_payments ?? 0),
+      historyDeleted: Number(data?.deleted_results ?? 0) > 0,
+      success: Boolean(data?.success),
+    };
   },
 
   async clearHistory(date?: string): Promise<boolean> {
@@ -429,105 +443,65 @@ export const ReconciliationService = {
   },
 
   /**
-   * Revert an applied reconciliation batch or results:
-   * - Reverts associated payables back to "Pending" (clears payment_date, payment_reference)
-   * - Sets associated payments back to "Pending" or deletes auto-created payment batches
+   * Safe operation-scoped revert:
+   * - If a runId UUID is provided, atomically reverts that specific run.
+   * - Never resets Completed/Settled payments without explicit supervisor approval.
+   * - Fails closed if atomic RPC encounters an error.
    */
   async revertReconciliation(
-    batchIdOrDate?: string,
+    batchIdOrRunId?: string,
   ): Promise<{ revertedPayables: number; deletedPayments: number; success: boolean }> {
-    let revertedPayables = 0;
-    let deletedPayments = 0;
+    const isUuid =
+      batchIdOrRunId &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        batchIdOrRunId,
+      );
 
-    try {
-      // 1. Find all payables across dividend, interest, mutual fund with RECON references
-      const payableTables = [
-        "dividend_payables",
-        "interest_payables",
-        "mutual_fund_payables",
-      ] as const;
-      const revertedPayableIds: string[] = [];
+    if (isUuid) {
+      const { data, error } = await (supabase as any).rpc("revert_reconciliation_run_atomic", {
+        p_run_id: batchIdOrRunId,
+        p_force: false,
+      });
 
-      for (const table of payableTables) {
-        let q = (supabase as any).from(table).select("id, payment_reference");
-        if (batchIdOrDate) {
-          q = q.ilike("payment_reference", `%${batchIdOrDate}%`);
-        } else {
-          q = q.ilike("payment_reference", "RECON-%");
-        }
-
-        const { data: rows, error: qErr } = await q;
-        if (!qErr && rows && rows.length > 0) {
-          const ids = rows.map((r: any) => r.id);
-          const chunkSize = 100;
-          for (let i = 0; i < ids.length; i += chunkSize) {
-            const chunkIds = ids.slice(i, i + chunkSize);
-            const { error: updErr } = await (supabase as any)
-              .from(table)
-              .update({
-                payment_status: "Pending",
-                payment_date: null,
-                payment_reference: null,
-              })
-              .in("id", chunkIds);
-
-            if (!updErr) {
-              revertedPayables += chunkIds.length;
-              revertedPayableIds.push(...chunkIds);
-            }
-          }
-        }
+      if (error) {
+        console.error("revert_reconciliation_run_atomic failed:", error.message);
+        throw new Error(`Atomic run revert failed: ${error.message}`);
       }
 
-      // 2. Reset or delete associated payment records
-      if (revertedPayableIds.length > 0) {
-        // Chunk lookup in payments table
-        const chunkSize = 200;
-        for (let i = 0; i < revertedPayableIds.length; i += chunkSize) {
-          const chunkIds = revertedPayableIds.slice(i, i + chunkSize);
-          const { data: pList } = await (supabase as any)
-            .from("payments")
-            .select("id, batch_id, remarks, payment_reference")
-            .in("payable_id", chunkIds);
-
-          if (pList && pList.length > 0) {
-            const pIds = pList.map((p: any) => p.id);
-            const { error: pUpdErr } = await (supabase as any)
-              .from("payments")
-              .update({
-                status: "Pending",
-                payment_date: null,
-                paid_amount: 0,
-                remarks: null,
-                payment_reference: null,
-              })
-              .in("id", pIds)
-              .neq("status", "Completed");
-
-            if (!pUpdErr) {
-              deletedPayments += pIds.length;
-            }
-          }
-        }
-      }
-
-      // 3. Delete any auto-created Reconciliation batches
-      const { data: autoBatches } = await (supabase as any)
-        .from("payment_batches")
-        .select("id")
-        .or("cds_batch_ref.eq.RECON-APPLY,batch_name.ilike.%Reconciliation Auto-Batch%");
-
-      if (autoBatches && autoBatches.length > 0) {
-        const autoBatchIds = autoBatches.map((b: any) => b.id);
-        await (supabase as any).from("payments").delete().in("batch_id", autoBatchIds);
-        await (supabase as any).from("payment_batches").delete().in("id", autoBatchIds);
-      }
-
-      return { revertedPayables, deletedPayments, success: true };
-    } catch (err: any) {
-      console.error("Revert reconciliation failed:", err);
-      return { revertedPayables, deletedPayments, success: false };
+      return {
+        revertedPayables: Number(data?.reverted_payables ?? 0),
+        deletedPayments: Number(data?.deleted_payments ?? 0),
+        success: Boolean(data?.success),
+      };
     }
+
+    // If query string or date, find runs matching notes/date
+    let query = (supabase as any).from("reconciliation_runs").select("id").limit(10);
+    if (batchIdOrRunId) {
+      query = query.or(`file_name.ilike.%${batchIdOrRunId}%,notes.ilike.%${batchIdOrRunId}%`);
+    }
+    const { data: runs } = await query;
+    if (runs && runs.length > 0) {
+      let totPayables = 0;
+      let totPayments = 0;
+      for (const r of runs) {
+        const { data: revData, error: revErr } = await (supabase as any).rpc(
+          "revert_reconciliation_run_atomic",
+          {
+            p_run_id: r.id,
+            p_force: false,
+          },
+        );
+        if (revErr) {
+          throw new Error(`Failed to revert reconciliation run ${r.id}: ${revErr.message}`);
+        }
+        totPayables += Number(revData?.reverted_payables ?? 0);
+        totPayments += Number(revData?.deleted_payments ?? 0);
+      }
+      return { revertedPayables: totPayables, deletedPayments: totPayments, success: true };
+    }
+
+    return { revertedPayables: 0, deletedPayments: 0, success: true };
   },
 
   /**
@@ -543,7 +517,21 @@ export const ReconciliationService = {
   async applyReconciliation(
     results: ReconciliationResultRow[],
     paymentMethod: string = "ConnectIPS",
-  ): Promise<{ updated: number; paymentsCreated: number; alreadyPaid: number; errors: string[] }> {
+    runOptions?: {
+      fileName?: string;
+      fileHash?: string;
+      sourceType?: string;
+      fiscalYear?: string;
+    },
+  ): Promise<{
+    updated: number;
+    paymentsCreated: number;
+    alreadyPaid: number;
+    resultsInserted?: number;
+    exceptionsCreated?: number;
+    runId?: string;
+    errors: string[];
+  }> {
     const matchedResults = results.filter(
       (r) =>
         r.result === "Matched" ||
@@ -552,7 +540,14 @@ export const ReconciliationService = {
         r.result === "Partial",
     );
     if (!matchedResults.length) {
-      return { updated: 0, paymentsCreated: 0, alreadyPaid: 0, errors: [] };
+      return {
+        updated: 0,
+        paymentsCreated: 0,
+        alreadyPaid: 0,
+        resultsInserted: 0,
+        exceptionsCreated: 0,
+        errors: [],
+      };
     }
 
     let updated = 0;
@@ -755,7 +750,10 @@ export const ReconciliationService = {
         payment_id: paymentId,
         company_id: r.company_id || null,
         client_id: r.client_id,
+        fiscal_year: r.fiscal_year || null,
         payable_type: payableType,
+        source_a_type: r.source_a_type || "excel",
+        source_b_type: r.source_b_type || "payable",
         target_table:
           payableType === "interest"
             ? "interest_payables"
@@ -764,9 +762,16 @@ export const ReconciliationService = {
               : "dividend_payables",
         actual_amount: Number(r.actual_amount || r.expected_amount || 0),
         expected_amount: Number(r.expected_amount || r.actual_amount || 0),
+        difference: Number(r.difference || 0),
         paid_amount: Number(r.actual_amount || r.expected_amount || 0),
         result: r.result,
         reconciliation_result: r.result,
+        notes: r.notes || null,
+        match_method: (r as any).match_method || (r as any).matchMethod || "instruction_id",
+        match_confidence: (r as any).match_confidence || (r as any).confidenceScore || 80,
+        candidate_count: (r as any).candidate_count || (r as any).candidateCount || 1,
+        rejected_candidates: (r as any).rejected_candidates || (r as any).rejectedCandidates || [],
+        rule_version: (r as any).rule_version || (r as any).ruleVersion || "2.0.0",
         bank_name: (r as any).bank_name || r.client?.bank_name || null,
         bank_account_no: (r as any).bank_account_no || r.client?.bank_account_no || null,
         payment_reference: `RECON-${r.id ? String(r.id).slice(0, 8) : "AUTO"}`,
@@ -776,6 +781,10 @@ export const ReconciliationService = {
 
     // 5. Execute atomic RPC call per company and lot group
     let totalItemsProcessed = 0;
+    let activeRunId: string | null = null;
+    let resultsInserted = 0;
+    let exceptionsCreated = 0;
+
     for (const [groupKey, groupItems] of itemsPayloadByCompany.entries()) {
       if (groupItems.length === 0) continue;
       totalItemsProcessed += groupItems.length;
@@ -816,18 +825,60 @@ export const ReconciliationService = {
       const CHUNK_SIZE = 500;
       for (let i = 0; i < groupItems.length; i += CHUNK_SIZE) {
         const chunk = groupItems.slice(i, i + CHUNK_SIZE);
-        const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc(
-          "apply_reconciliation_batch",
+        const fileHash = await computeSha256(
+          `${resolvedCompanyId || "all"}|${lotName || "batch"}|${groupItems.length}|${todayStr}`,
+        );
+
+        let rpcRes: any = null;
+
+        // Try unified atomic apply + persist RPC
+        const { data: unifiedData, error: unifiedErr } = await (supabase as any).rpc(
+          "apply_and_record_reconciliation_batch",
           {
+            p_run_info: {
+              run_id: activeRunId,
+              company_id: resolvedCompanyId,
+              fiscal_year: chunk[0]?.fiscal_year || null,
+              source_type: chunk[0]?.source_a_type || "excel",
+              file_name: lotName || "Reconciliation Batch",
+              file_hash_sha256: fileHash,
+              row_count: groupItems.length,
+              total_amount: groupItems.reduce(
+                (acc: number, item: any) =>
+                  acc + Number(item.actual_amount || item.expected_amount || 0),
+                0,
+              ),
+              parser_version: "2.0.0",
+              matching_rule_version: "2.0.0",
+            },
             p_items: chunk,
             p_batch_info: i === 0 ? batchInfo : null,
           },
         );
 
-        if (rpcErr) {
-          throw new Error(
-            `Atomic reconciliation batch failed (records ${i + 1}-${i + chunk.length}): ${rpcErr.message}`,
+        if (!unifiedErr && unifiedData) {
+          rpcRes = unifiedData;
+          if (rpcRes.run_id && !activeRunId) {
+            activeRunId = rpcRes.run_id;
+          }
+          resultsInserted += Number(rpcRes.results_inserted ?? 0);
+          exceptionsCreated += Number(rpcRes.exceptions_created ?? 0);
+        } else {
+          // Fallback to apply_reconciliation_batch if unified RPC not deployed yet
+          const { data: legacyData, error: legacyErr } = await (supabase as any).rpc(
+            "apply_reconciliation_batch",
+            {
+              p_items: chunk,
+              p_batch_info: i === 0 ? batchInfo : null,
+            },
           );
+
+          if (legacyErr) {
+            throw new Error(
+              `Atomic reconciliation batch failed (records ${i + 1}-${i + chunk.length}): ${legacyErr.message}`,
+            );
+          }
+          rpcRes = legacyData;
         }
 
         if (!rpcRes || !rpcRes.success) {
@@ -938,7 +989,15 @@ export const ReconciliationService = {
       }
     }
 
-    return { updated, paymentsCreated, alreadyPaid, errors };
+    return {
+      updated,
+      paymentsCreated,
+      alreadyPaid,
+      resultsInserted,
+      exceptionsCreated,
+      runId: activeRunId ?? undefined,
+      errors,
+    };
   },
 
   getExceptions(
@@ -946,6 +1005,263 @@ export const ReconciliationService = {
     varianceThresholdNpr = 1.0,
   ): ReconciliationExceptionSummary {
     return extractReconciliationExceptions(matches, varianceThresholdNpr);
+  },
+
+  async getReconciliationRuns(filter?: {
+    companyId?: string | null;
+    sourceType?: string;
+    status?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+    startDate?: string;
+    endDate?: string;
+  }): Promise<{
+    runs: ReconciliationRunRow[];
+    totalCount: number;
+    summary: {
+      total_amount: number;
+      matched_count: number;
+      unmatched_count: number;
+      row_count: number;
+    };
+  }> {
+    const limit = filter?.limit ?? 50;
+    const offset = filter?.offset ?? 0;
+    try {
+      const { data, error } = await (supabase as any).rpc("get_reconciliation_runs_paginated", {
+        p_company_id: filter?.companyId || null,
+        p_source_type: filter?.sourceType || null,
+        p_status: filter?.status || null,
+        p_search: filter?.search || null,
+        p_limit: limit,
+        p_offset: offset,
+        p_start_date: filter?.startDate || null,
+        p_end_date: filter?.endDate || null,
+      });
+
+      if (!error && data) {
+        return {
+          runs: (data.runs || []) as ReconciliationRunRow[],
+          totalCount: Number(data.total_count ?? 0),
+          summary: data.summary || {
+            total_amount: 0,
+            matched_count: 0,
+            unmatched_count: 0,
+            row_count: 0,
+          },
+        };
+      }
+    } catch (rpcErr) {
+      console.warn("get_reconciliation_runs_paginated RPC error, falling back:", rpcErr);
+    }
+
+    // Direct table query fallback
+    let query = (supabase as any)
+      .from("reconciliation_runs")
+      .select("*, company:companies(name)", { count: "exact" });
+
+    if (filter?.companyId) query = query.eq("company_id", filter.companyId);
+    if (filter?.sourceType) query = query.eq("source_type", filter.sourceType);
+    if (filter?.status) query = query.eq("status", filter.status);
+    if (filter?.startDate) query = query.gte("created_at", filter.startDate);
+    if (filter?.endDate) query = query.lte("created_at", filter.endDate);
+    if (filter?.search) query = query.ilike("file_name", `%${filter.search}%`);
+
+    const { data, count, error } = await query
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) {
+      console.error("Failed to query reconciliation_runs:", error.message);
+      return {
+        runs: [],
+        totalCount: 0,
+        summary: { total_amount: 0, matched_count: 0, unmatched_count: 0, row_count: 0 },
+      };
+    }
+
+    const runs = (data || []).map((r: any) => ({
+      ...r,
+      company_name: r.company?.name || null,
+    })) as ReconciliationRunRow[];
+
+    return {
+      runs,
+      totalCount: count ?? runs.length,
+      summary: {
+        total_amount: runs.reduce((acc, r) => acc + Number(r.total_amount || 0), 0),
+        matched_count: runs.reduce((acc, r) => acc + Number(r.matched_count || 0), 0),
+        unmatched_count: runs.reduce((acc, r) => acc + Number(r.unmatched_count || 0), 0),
+        row_count: runs.reduce((acc, r) => acc + Number(r.row_count || 0), 0),
+      },
+    };
+  },
+
+  async getDurableExceptions(filter?: {
+    companyId?: string | null;
+    runId?: string;
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ exceptions: ReconciliationExceptionRow[]; totalCount: number }> {
+    const limit = filter?.limit ?? 50;
+    const offset = filter?.offset ?? 0;
+    let query = (supabase as any).from("reconciliation_exceptions").select("*", { count: "exact" });
+
+    if (filter?.companyId) query = query.eq("company_id", filter.companyId);
+    if (filter?.runId) query = query.eq("run_id", filter.runId);
+    if (filter?.status) query = query.eq("status", filter.status);
+
+    const { data, count, error } = await query
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) {
+      console.error("Failed to fetch reconciliation exceptions:", error.message);
+      return { exceptions: [], totalCount: 0 };
+    }
+
+    return {
+      exceptions: (data || []) as ReconciliationExceptionRow[],
+      totalCount: count ?? data?.length ?? 0,
+    };
+  },
+
+  async updateExceptionStatus(
+    exceptionId: string,
+    status: ReconciliationExceptionLifecycleStatus,
+    notes?: string,
+    resolutionNotes?: string,
+  ): Promise<boolean> {
+    const updatePayload: Record<string, any> = {
+      status,
+      updated_at: new Date().toISOString(),
+    };
+    if (notes) updatePayload.notes = notes;
+    if (resolutionNotes) {
+      updatePayload.resolution_notes = resolutionNotes;
+      updatePayload.resolved_at = new Date().toISOString();
+    }
+
+    const { error } = await (supabase as any)
+      .from("reconciliation_exceptions")
+      .update(updatePayload)
+      .eq("id", exceptionId);
+
+    if (error) {
+      console.error("Failed to update exception status:", error.message);
+      return false;
+    }
+    return true;
+  },
+
+  async assignException(
+    exceptionId: string,
+    assignedTo: string,
+    deadline?: string,
+  ): Promise<boolean> {
+    const updatePayload: Record<string, any> = {
+      assigned_to: assignedTo,
+      status: "Investigating",
+      updated_at: new Date().toISOString(),
+    };
+    if (deadline) updatePayload.deadline = deadline;
+
+    const { error } = await (supabase as any)
+      .from("reconciliation_exceptions")
+      .update(updatePayload)
+      .eq("id", exceptionId);
+
+    if (error) {
+      console.error("Failed to assign exception:", error.message);
+      return false;
+    }
+    return true;
+  },
+
+  async ingestBankStatementFile(
+    companyId: string,
+    file: File,
+    transactions: any[],
+    metadata?: {
+      bankName?: string;
+      accountNo?: string;
+      openingBalance?: number;
+      closingBalance?: number;
+    },
+  ): Promise<{ importId: string; fileHash: string; insertedCount: number }> {
+    const fileHash = await computeSha256(file);
+    const bankName = metadata?.bankName || "Commercial Bank";
+    const accountNo = metadata?.accountNo || "Statement Account";
+    const totalDebit = transactions.reduce((acc, t) => acc + (Number(t.debit) || 0), 0);
+    const totalCredit = transactions.reduce((acc, t) => acc + (Number(t.credit) || 0), 0);
+
+    // 1. Create bank_statement_imports record
+    const { data: imp, error: impErr } = await (supabase as any)
+      .from("bank_statement_imports")
+      .insert({
+        company_id: companyId,
+        bank_name: bankName,
+        account_no: accountNo,
+        file_name: file.name,
+        file_hash_sha256: fileHash,
+        opening_balance: metadata?.openingBalance ?? 0,
+        closing_balance: metadata?.closingBalance ?? 0,
+        total_debit: totalDebit,
+        total_credit: totalCredit,
+        row_count: transactions.length,
+        parser_metadata: {
+          fileSize: file.size,
+          lastModified: file.lastModified,
+          type: file.type,
+        },
+        status: "imported",
+      })
+      .select("id")
+      .single();
+
+    if (impErr) {
+      console.warn("Could not insert bank_statement_imports:", impErr.message);
+      return { importId: "", fileHash, insertedCount: 0 };
+    }
+
+    const importId = imp.id;
+
+    // 2. Insert transactions with fingerprint
+    const batchSize = 250;
+    let insertedCount = 0;
+    for (let i = 0; i < transactions.length; i += batchSize) {
+      const chunk = transactions.slice(i, i + batchSize);
+      const rows = await Promise.all(
+        chunk.map(async (t) => {
+          const rawFingerprintStr = `${companyId}|${t.date}|${t.description}|${t.reference || t.instructionId || ""}|${t.debit || 0}|${t.credit || 0}`;
+          const fingerprint = await computeSha256(rawFingerprintStr);
+          return {
+            import_id: importId,
+            company_id: companyId,
+            transaction_date: t.date || new Date().toISOString().slice(0, 10),
+            description: t.description || null,
+            reference: t.reference || t.instructionId || null,
+            debit_amount: Number(t.debit || 0),
+            credit_amount: Number(t.credit || 0),
+            balance: t.balance != null ? Number(t.balance) : null,
+            transaction_fingerprint: fingerprint,
+            reconciliation_status: "unreconciled",
+          };
+        }),
+      );
+
+      const { error: insErr } = await (supabase as any)
+        .from("bank_statement_transactions")
+        .upsert(rows, { onConflict: "company_id,transaction_fingerprint", ignoreDuplicates: true });
+
+      if (!insErr) {
+        insertedCount += rows.length;
+      }
+    }
+
+    return { importId, fileHash, insertedCount };
   },
 
   async acknowledgeException(
@@ -966,6 +1282,16 @@ export const ReconciliationService = {
           acknowledged_at: acknowledgedAt,
         },
       });
+
+      // Also update durable exceptions table if record exists
+      await (supabase as any)
+        .from("reconciliation_exceptions")
+        .update({
+          status: "Accepted",
+          notes,
+          updated_at: acknowledgedAt,
+        })
+        .eq("id", exceptionId);
     } catch (e) {
       console.warn("Could not persist audit log for exception acknowledgement:", e);
     }

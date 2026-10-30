@@ -53,6 +53,16 @@ export interface BankTransaction {
   accountHolder?: string;
 }
 
+export type ReconciliationMatchMethod =
+  | "instruction_id"
+  | "payment_reference"
+  | "bank_account_and_amount"
+  | "boid_and_amount"
+  | "name_and_amount"
+  | "unique_amount"
+  | "batch_reference"
+  | "manual";
+
 export interface ReconciliationMatch {
   id: string;
   boid: string;
@@ -82,6 +92,12 @@ export interface ReconciliationMatch {
   instructionId?: string;
   referenceId?: string;
   confidenceScore?: number;
+  matchMethod?: ReconciliationMatchMethod;
+  candidateCount?: number;
+  rejectedCandidates?: Array<{ id: string; reason: string }>;
+  ruleVersion?: string;
+  requiresManualApproval?: boolean;
+  runId?: string;
 }
 
 export interface ComprehensiveReconciliationReport {
@@ -815,11 +831,36 @@ export const ReconciliationEngine = {
         }
 
         let confidenceScore = 0;
+        let matchMethod: ReconciliationMatchMethod | undefined = undefined;
+        let requiresManualApproval = false;
+
+        if (bestPayable || bestPayment) {
+          if (instructionId) {
+            matchMethod = "instruction_id";
+          } else if (boid && clientId) {
+            matchMethod = "boid_and_amount";
+          } else if (bankAccountNo) {
+            matchMethod = "bank_account_and_amount";
+          } else if (name) {
+            matchMethod = "name_and_amount";
+          } else {
+            matchMethod = "unique_amount";
+            requiresManualApproval = true;
+          }
+        }
+
         if (status === "Matched") {
           confidenceScore = 70;
           if (clientId) confidenceScore += 15;
           if (bankAccountNo) confidenceScore += 10;
           if (instructionId || batchIdVal) confidenceScore += 5;
+          if (matchMethod === "unique_amount") {
+            confidenceScore = 55;
+            requiresManualApproval = true;
+            if (options && (options as any).allowUniqueAmountOnly === false) {
+              status = "Pending";
+            }
+          }
         } else if (status === "Under_Paid" || status === "Over_Paid") {
           confidenceScore = clientId ? 65 : 45;
         } else if (status === "Pending") {
@@ -857,6 +898,10 @@ export const ReconciliationEngine = {
           instructionId,
           batchId: batchIdVal || null,
           confidenceScore,
+          matchMethod,
+          candidateCount: matchMethod ? 1 : 0,
+          ruleVersion: "2.0.0",
+          requiresManualApproval,
         });
       });
 
@@ -1285,6 +1330,9 @@ export const ReconciliationEngine = {
       let matchedPayable: any = null;
       let matchedBatch: any = null;
       const matchSources: string[] = [];
+      let matchMethod: ReconciliationMatchMethod | undefined = undefined;
+      let requiresManualApproval = false;
+      let candidateCount = 0;
 
       // PHASE 1: EXACT MATCHES (within RECONCILIATION_TOLERANCE_NPR)
       // 1a. Match against Payments by ConnectIPS Reference or Instruction ID (MUST match amount within tolerance)
@@ -1299,6 +1347,10 @@ export const ReconciliationEngine = {
                 (Number(p.paid_amount || 0) > 0 &&
                   amountEqualsPaisa(Number(p.paid_amount), amount))),
           ) || null;
+        if (bestPayment) {
+          matchMethod = txn.instructionId ? "instruction_id" : "payment_reference";
+          candidateCount = 1;
+        }
       }
       if (!bestPayment && txn.description) {
         // Extract 10-20 char alphanumeric reference pattern from description (e.g. 0201260720JRL7)
@@ -1315,6 +1367,10 @@ export const ReconciliationEngine = {
                   (Number(p.paid_amount || 0) > 0 &&
                     amountEqualsPaisa(Number(p.paid_amount), amount))),
             ) || null;
+          if (bestPayment) {
+            matchMethod = "payment_reference";
+            candidateCount = 1;
+          }
         }
       }
 
@@ -1330,6 +1386,10 @@ export const ReconciliationEngine = {
                 (Number(p.paid_amount || 0) > 0 &&
                   amountEqualsPaisa(Number(p.paid_amount), amount))),
           ) || null;
+        if (bestPayment) {
+          matchMethod = "bank_account_and_amount";
+          candidateCount = 1;
+        }
       }
 
       // 1c. Match against Payables by Account + Exact Amount (full or prorated) with Date & Company Compatibility
@@ -1345,6 +1405,10 @@ export const ReconciliationEngine = {
         );
         matchedPayable =
           validPayables.find((p) => p.payment_status !== "Paid") || validPayables[0] || null;
+        if (matchedPayable) {
+          matchMethod = "bank_account_and_amount";
+          candidateCount = validPayables.length;
+        }
       }
 
       // 1d. Match against Payments by Name + Exact Amount (net_amount or paid_amount)
@@ -1359,6 +1423,10 @@ export const ReconciliationEngine = {
                 (Number(p.paid_amount || 0) > 0 &&
                   amountEqualsPaisa(Number(p.paid_amount), amount))),
           ) || null;
+        if (bestPayment) {
+          matchMethod = "name_and_amount";
+          candidateCount = 1;
+        }
       }
 
       // 1e. Match against Payables by Name + Exact Amount (full or prorated) with Date & Company Compatibility
@@ -1373,6 +1441,10 @@ export const ReconciliationEngine = {
         );
         matchedPayable =
           validPayables.find((p) => p.payment_status !== "Paid") || validPayables[0] || null;
+        if (matchedPayable) {
+          matchMethod = "name_and_amount";
+          candidateCount = validPayables.length;
+        }
       }
 
       // 1f. Match against Payment Batches (for aggregate statement entries) by Exact Amount or Batch Reference
@@ -1431,6 +1503,8 @@ export const ReconciliationEngine = {
 
         if (batchMatch) {
           matchedBatch = batchMatch;
+          matchMethod = "batch_reference";
+          candidateCount = 1;
         }
       }
 
@@ -1445,6 +1519,9 @@ export const ReconciliationEngine = {
         );
         if (validAmtPayments.length === 1) {
           bestPayment = validAmtPayments[0];
+          matchMethod = "unique_amount";
+          requiresManualApproval = true;
+          candidateCount = 1;
         }
       }
 
@@ -1463,6 +1540,9 @@ export const ReconciliationEngine = {
         // Only accept if uniquely identifiable (length === 1) to avoid assigning someone else's dividend
         if (validAmtPayables.length === 1) {
           matchedPayable = validAmtPayables[0];
+          matchMethod = "unique_amount";
+          requiresManualApproval = true;
+          candidateCount = 1;
         }
       }
 
@@ -1632,6 +1712,13 @@ export const ReconciliationEngine = {
         if (client) confidenceScore += 15;
         if (txn.accountNo && client?.bank_account_no) confidenceScore += 10;
         if (txn.instructionId || txn.referenceId) confidenceScore += 5;
+        if (matchMethod === "unique_amount") {
+          confidenceScore = 55;
+          requiresManualApproval = true;
+          if (options && (options as any).allowUniqueAmountOnly === false) {
+            status = "Pending";
+          }
+        }
       } else if (status === "Under_Paid" || status === "Over_Paid") {
         confidenceScore = client ? 65 : 45;
       } else if (status === "Rejected") {
@@ -1691,6 +1778,10 @@ export const ReconciliationEngine = {
         instructionId: txn.instructionId || undefined,
         referenceId: txn.referenceId || undefined,
         confidenceScore,
+        matchMethod,
+        candidateCount: matchMethod ? candidateCount || 1 : 0,
+        ruleVersion: "2.0.0",
+        requiresManualApproval,
       });
     }
 

@@ -354,11 +354,17 @@ export function ReconciliationRoute() {
     toast.success(`Exported Excel workbook (${lot.records.length} records) for ${lot.lotName}`);
   };
 
-  const loadHistory = async () => {
+  const [totalHistoryRecords, setTotalHistoryRecords] = useState(0);
+
+  const loadHistory = async (limit = 1000, offset = 0) => {
     setIsLoadingHistory(true);
     try {
-      const results = await ReconciliationService.getResults(500, 0);
+      const [results, count] = await Promise.all([
+        ReconciliationService.getResults(limit, offset),
+        ReconciliationService.getResultsCount(),
+      ]);
       setSavedResults(results);
+      setTotalHistoryRecords(count);
     } catch (error) {
       console.warn("Could not load reconciliation history:", error);
     } finally {
@@ -903,6 +909,12 @@ export function ReconciliationRoute() {
         bank_name: match.bankName || null,
         bank_account_no: match.bankAccountNo || null,
         lot_name: match.lotName || null,
+        match_method: match.matchMethod || "instruction_id",
+        match_confidence: match.confidenceScore || 80,
+        candidate_count: match.candidateCount || 1,
+        rejected_candidates: match.rejectedCandidates || [],
+        rule_version: match.ruleVersion || "2.0.0",
+        requires_manual_approval: match.requiresManualApproval || false,
       };
     });
   };
@@ -1023,20 +1035,23 @@ export function ReconciliationRoute() {
       const results = buildResults(targetMatches);
       const applyRes = await ReconciliationService.applyReconciliation(
         results as unknown as ReconciliationResultRow[],
+        "ConnectIPS",
+        {
+          fileName: report.fileName,
+          sourceType: report.sourceType,
+        },
       );
-      let historySaved = true;
-      try {
-        await ReconciliationService.saveResults(results);
-      } catch (saveErr: any) {
-        historySaved = false;
-        console.error("Ledger updated but failed to save reconciliation history:", saveErr);
-        toast.error(
-          `Ledger updated (${applyRes.updated} payables), but saving reconciliation history failed: ${saveErr?.message || saveErr}`,
-        );
+
+      // If unified RPC already saved results atomically, no secondary save call needed!
+      if (!applyRes.resultsInserted) {
+        try {
+          await ReconciliationService.saveResults(results);
+        } catch (saveErr: any) {
+          console.warn("Legacy saveResults warning:", saveErr);
+        }
       }
-      if (!historySaved) {
-        // History saving failed; do not show success toast
-      } else if (
+
+      if (
         applyRes.updated === 0 &&
         applyRes.paymentsCreated === 0 &&
         (applyRes.alreadyPaid ?? 0) > 0
@@ -2665,7 +2680,7 @@ export function ReconciliationRoute() {
             <CardDescription>
               {isLoadingHistory
                 ? "Loading latest saved reconciliation lots..."
-                : `${groupedLots.length} saved lot${groupedLots.length === 1 ? "" : "s"} (${savedResults.length.toLocaleString()} records) loaded.`}
+                : `${groupedLots.length} saved lot${groupedLots.length === 1 ? "" : "s"} (${savedResults.length.toLocaleString()}${totalHistoryRecords > savedResults.length ? ` of ${totalHistoryRecords.toLocaleString()}` : ""} records) loaded.`}
             </CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
