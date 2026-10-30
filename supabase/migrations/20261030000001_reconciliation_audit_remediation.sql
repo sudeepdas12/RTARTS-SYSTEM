@@ -136,6 +136,7 @@ CREATE TABLE IF NOT EXISTS public.reconciliation_runs (
     matching_rule_version text DEFAULT '2.0.0',
     status text DEFAULT 'draft' CHECK (status IN ('draft', 'review', 'approved', 'processing', 'applied', 'reverted', 'failed')),
     processed_chunks jsonb DEFAULT '[]'::jsonb,
+    expected_chunk_count integer DEFAULT 1 NOT NULL,
     batch_id uuid REFERENCES public.payment_batches(id) ON DELETE SET NULL,
     notes text,
     applied_by uuid,
@@ -152,7 +153,8 @@ ALTER TABLE public.reconciliation_runs
   ADD COLUMN IF NOT EXISTS batch_id uuid REFERENCES public.payment_batches(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS partial_count integer DEFAULT 0 NOT NULL,
   ADD COLUMN IF NOT EXISTS rejected_count integer DEFAULT 0 NOT NULL,
-  ADD COLUMN IF NOT EXISTS processed_chunks jsonb DEFAULT '[]'::jsonb;
+  ADD COLUMN IF NOT EXISTS processed_chunks jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS expected_chunk_count integer DEFAULT 1 NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_reconciliation_runs_company_id ON public.reconciliation_runs(company_id);
 CREATE INDEX IF NOT EXISTS idx_reconciliation_runs_file_hash ON public.reconciliation_runs(file_hash_sha256);
@@ -215,6 +217,10 @@ ALTER TABLE public.payments
 CREATE INDEX IF NOT EXISTS idx_payments_reconciliation_run_id 
   ON public.payments(reconciliation_run_id);
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_recon_run_payable
+  ON public.payments (reconciliation_run_id, payable_type, payable_id)
+  WHERE reconciliation_run_id IS NOT NULL;
+
 -- Enrich reconciliation_results with run reference & explainability decision model
 ALTER TABLE public.reconciliation_results 
   ADD COLUMN IF NOT EXISTS run_id uuid REFERENCES public.reconciliation_runs(id) ON DELETE CASCADE,
@@ -258,6 +264,20 @@ CREATE TABLE IF NOT EXISTS public.bank_statement_imports (
 
 CREATE INDEX IF NOT EXISTS idx_bank_statement_imports_company ON public.bank_statement_imports(company_id);
 CREATE INDEX IF NOT EXISTS idx_bank_statement_imports_hash ON public.bank_statement_imports(file_hash_sha256);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_stmt_imports_company_hash ON public.bank_statement_imports(company_id, file_hash_sha256);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'uq_bank_statement_imports_company_hash'
+  ) THEN
+    ALTER TABLE public.bank_statement_imports 
+      ADD CONSTRAINT uq_bank_statement_imports_company_hash UNIQUE (company_id, file_hash_sha256);
+  END IF;
+EXCEPTION
+  WHEN OTHERS THEN
+    NULL;
+END $$;
 
 ALTER TABLE public.bank_statement_imports ENABLE ROW LEVEL SECURITY;
 
@@ -458,6 +478,7 @@ DECLARE
   v_idempotency_key text;
   v_existing_status text;
   v_chunk_index int;
+  v_expected_chunks int := 1;
   v_is_final_chunk boolean;
   v_existing_chunks jsonb;
   v_applied_payable_amt numeric;
@@ -465,6 +486,7 @@ DECLARE
   v_rows_affected int := 0;
   v_partial_count int := 0;
   v_rejected_count int := 0;
+  v_item_count int := 0;
   
   v_payables_updated int := 0;
   v_payments_created int := 0;
@@ -491,7 +513,19 @@ BEGIN
 
   -- 2. Idempotency Check & Multi-Chunk State Management
   v_chunk_index := COALESCE(NULLIF(p_run_info->>'chunk_index', '')::int, 0);
-  v_is_final_chunk := COALESCE(NULLIF(p_run_info->>'is_final_chunk', '')::boolean, true);
+  v_expected_chunks := COALESCE(
+    NULLIF(p_run_info->>'total_chunks', '')::int,
+    NULLIF(p_run_info->>'expected_chunk_count', '')::int,
+    1
+  );
+  v_item_count := jsonb_array_length(p_items);
+
+  -- Validate chunk bounds strictly
+  IF v_chunk_index < 0 OR v_chunk_index >= v_expected_chunks THEN
+    RAISE EXCEPTION 'Invalid chunk bounds: chunk_index % is out of range for total_chunks %',
+      v_chunk_index, v_expected_chunks USING ERRCODE = '22003';
+  END IF;
+
   v_idempotency_key := NULLIF(p_run_info->>'idempotency_key', '');
   v_run_id := NULLIF(p_run_info->>'run_id', '')::uuid;
 
@@ -518,8 +552,8 @@ BEGIN
 
   IF v_run_id IS NOT NULL THEN
     -- Acquire exclusive row lock on reconciliation_runs to serialize concurrent retries
-    SELECT status, COALESCE(processed_chunks, '[]'::jsonb), batch_id
-    INTO v_existing_status, v_existing_chunks, v_batch_id
+    SELECT status, COALESCE(processed_chunks, '[]'::jsonb), batch_id, COALESCE(expected_chunk_count, 1)
+    INTO v_existing_status, v_existing_chunks, v_batch_id, v_expected_chunks
     FROM public.reconciliation_runs
     WHERE id = v_run_id
     FOR UPDATE;
@@ -573,6 +607,7 @@ BEGIN
       matching_rule_version,
       status,
       processed_chunks,
+      expected_chunk_count,
       applied_by,
       applied_at,
       created_by
@@ -583,28 +618,32 @@ BEGIN
       COALESCE(NULLIF(p_run_info->>'source_type', ''), 'excel'),
       COALESCE(NULLIF(p_run_info->>'file_name', ''), 'Reconciliation Batch'),
       COALESCE(NULLIF(p_run_info->>'file_hash_sha256', ''), md5(now()::text || p_run_info::text)),
-      COALESCE(NULLIF(p_run_info->>'row_count', '')::int, jsonb_array_length(p_items)),
+      0,
       0,
       COALESCE(NULLIF(p_run_info->>'parser_version', ''), '2.0.0'),
       COALESCE(NULLIF(p_run_info->>'matching_rule_version', ''), '2.0.0'),
-      CASE WHEN v_is_final_chunk THEN 'applied' ELSE 'processing' END,
+      'processing',
       jsonb_build_array(v_chunk_index::text),
-      CASE WHEN v_is_final_chunk THEN v_uid ELSE NULL END,
-      CASE WHEN v_is_final_chunk THEN now() ELSE NULL END,
+      v_expected_chunks,
+      NULL,
+      NULL,
       v_uid
     ) RETURNING id INTO v_run_id;
+    v_existing_chunks := jsonb_build_array(v_chunk_index::text);
   ELSE
-    UPDATE public.reconciliation_runs
-    SET status = CASE WHEN v_is_final_chunk THEN 'applied' ELSE 'processing' END,
-        processed_chunks = CASE 
-          WHEN v_existing_chunks ? v_chunk_index::text THEN v_existing_chunks 
-          ELSE v_existing_chunks || jsonb_build_array(v_chunk_index::text) 
-        END,
-        applied_by = CASE WHEN v_is_final_chunk THEN v_uid ELSE applied_by END,
-        applied_at = CASE WHEN v_is_final_chunk THEN now() ELSE applied_at END,
-        updated_at = now()
-    WHERE id = v_run_id;
+    IF NOT (v_existing_chunks ? v_chunk_index::text) THEN
+      v_existing_chunks := v_existing_chunks || jsonb_build_array(v_chunk_index::text);
+    END IF;
   END IF;
+
+  -- Server-authoritative finalization check: only finalize when all chunks 0..expected_chunks-1 are recorded
+  v_is_final_chunk := true;
+  FOR i IN 0..(v_expected_chunks - 1) LOOP
+    IF NOT (v_existing_chunks ? i::text) THEN
+      v_is_final_chunk := false;
+      EXIT;
+    END IF;
+  END LOOP;
 
   -- 3. Create or Link Payment Batch if requested
   IF p_batch_info IS NOT NULL AND jsonb_typeof(p_batch_info) = 'object' THEN
@@ -651,6 +690,7 @@ BEGIN
       v_actual_amt   := COALESCE(NULLIF(v_item->>'actual_amount', '')::numeric, 0);
       v_expected_amt := COALESCE(NULLIF(v_item->>'expected_amount', '')::numeric, 0);
       v_diff         := COALESCE(NULLIF(v_item->>'difference', '')::numeric, v_actual_amt - v_expected_amt);
+      v_total_amount := v_total_amount + v_actual_amt;
       v_payment_ref  := COALESCE(NULLIF(v_item->>'payment_reference', ''), NULLIF(v_item->>'reference_id', ''), 'RECON-' || substr(COALESCE(v_run_id::text, gen_random_uuid()::text), 1, 8));
       v_instruction_id := COALESCE(NULLIF(v_item->>'instruction_id', ''), NULLIF(v_item->>'connectips_ref', ''));
       v_match_method := COALESCE(NULLIF(v_item->>'match_method', ''), 'instruction_id');
@@ -722,52 +762,62 @@ BEGIN
           END IF;
         END IF;
 
-        -- Cap payments.paid_amount/net_amount at expected_amount (net_payable) to preserve ledger balance invariants
-        v_applied_payable_amt := CASE 
-          WHEN v_expected_amt > 0 THEN LEAST(v_expected_amt, v_paid_amt) 
-          ELSE v_paid_amt 
-        END;
+        -- Deduplicate payment: prevent duplicate payment creation for the same payable in this run
+        SELECT id INTO v_payment_id
+        FROM public.payments
+        WHERE reconciliation_run_id = v_run_id
+          AND payable_id = v_payable_id
+          AND payable_type = v_target_table
+        LIMIT 1;
 
-        -- Create or stamp payment record with reconciliation_run_id
-        INSERT INTO public.payments (
-          batch_id,
-          reconciliation_run_id,
-          company_id,
-          client_id,
-          payable_type,
-          payable_id,
-          gross_amount,
-          tax_amount,
-          net_amount,
-          paid_amount,
-          payment_method,
-          payment_date,
-          payment_reference,
-          connectips_ref,
-          status,
-          processed_by,
-          processed_at
-        ) VALUES (
-          v_batch_id,
-          v_run_id,
-          v_company_id,
-          v_client_id,
-          v_target_table,
-          v_payable_id,
-          v_expected_amt,
-          0,
-          v_applied_payable_amt,
-          v_applied_payable_amt,
-          'ConnectIPS'::public.payment_method,
-          CURRENT_DATE,
-          v_payment_ref,
-          v_instruction_id,
-          'Paid',
-          v_uid,
-          now()
-        ) RETURNING id INTO v_payment_id;
+        IF v_payment_id IS NULL THEN
+          -- Cap payments.paid_amount/net_amount at expected_amount (net_payable) to preserve ledger balance invariants
+          v_applied_payable_amt := CASE 
+            WHEN v_expected_amt > 0 THEN LEAST(v_expected_amt, v_paid_amt) 
+            ELSE v_paid_amt 
+          END;
 
-        v_payments_created := v_payments_created + 1;
+          -- Create or stamp payment record with reconciliation_run_id
+          INSERT INTO public.payments (
+            batch_id,
+            reconciliation_run_id,
+            company_id,
+            client_id,
+            payable_type,
+            payable_id,
+            gross_amount,
+            tax_amount,
+            net_amount,
+            paid_amount,
+            payment_method,
+            payment_date,
+            payment_reference,
+            connectips_ref,
+            status,
+            processed_by,
+            processed_at
+          ) VALUES (
+            v_batch_id,
+            v_run_id,
+            v_company_id,
+            v_client_id,
+            v_target_table,
+            v_payable_id,
+            v_expected_amt,
+            0,
+            v_applied_payable_amt,
+            v_applied_payable_amt,
+            'ConnectIPS'::public.payment_method,
+            CURRENT_DATE,
+            v_payment_ref,
+            v_instruction_id,
+            'Paid',
+            v_uid,
+            now()
+          ) RETURNING id INTO v_payment_id;
+
+          v_payments_created := v_payments_created + 1;
+        END IF;
       END IF;
 
       -- Derive deterministic, unique source reference per record in run
@@ -887,13 +937,15 @@ BEGIN
     END;
   END LOOP;
 
-  -- 5. Update run stats cumulatively
+  -- 5. Update run stats cumulatively from accepted items
   UPDATE public.reconciliation_runs
   SET matched_count = COALESCE(matched_count, 0) + v_payables_updated,
       unmatched_count = COALESCE(unmatched_count, 0) + v_exceptions_created,
       partial_count = COALESCE(partial_count, 0) + v_partial_count,
       rejected_count = COALESCE(rejected_count, 0) + v_rejected_count,
+      row_count = COALESCE(row_count, 0) + v_item_count,
       total_amount = COALESCE(total_amount, 0) + v_total_amount,
+      processed_chunks = v_existing_chunks,
       batch_id = COALESCE(batch_id, v_batch_id),
       status = CASE WHEN v_is_final_chunk THEN 'applied' ELSE 'processing' END,
       applied_by = CASE WHEN v_is_final_chunk THEN v_uid ELSE applied_by END,
@@ -1354,8 +1406,8 @@ GRANT EXECUTE ON FUNCTION public.apply_and_record_reconciliation_batch(jsonb, js
 REVOKE EXECUTE ON FUNCTION public.revert_reconciliation_run_atomic(uuid, boolean) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.revert_reconciliation_run_atomic(uuid, boolean) TO authenticated, service_role;
 
-REVOKE EXECUTE ON FUNCTION public.revert_reconciliation_lot_atomic(text, boolean) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.revert_reconciliation_lot_atomic(text, boolean) TO authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.revert_reconciliation_lot_atomic(uuid[]) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.revert_reconciliation_lot_atomic(uuid[]) TO authenticated, service_role;
 
 REVOKE EXECUTE ON FUNCTION public.get_reconciliation_runs_paginated(uuid, text, text, text, int, int, date, date) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.get_reconciliation_runs_paginated(uuid, text, text, text, int, int, date, date) TO authenticated, service_role;

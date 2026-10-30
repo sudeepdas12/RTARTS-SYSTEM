@@ -365,9 +365,11 @@ export function ReconciliationRoute() {
   };
 
   const [totalHistoryRecords, setTotalHistoryRecords] = useState(0);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   const loadHistory = async (limit = 1000, offset = 0) => {
     setIsLoadingHistory(true);
+    setHistoryError(null);
     try {
       const [results, count, runsData] = await Promise.all([
         ReconciliationService.getResults(limit, offset),
@@ -378,9 +380,6 @@ export function ReconciliationRoute() {
           search: historySearchQuery || undefined,
           limit: 100,
           offset: 0,
-        }).catch((e) => {
-          console.warn("Could not load reconciliation runs:", e);
-          return null;
         }),
       ]);
       setSavedResults(results);
@@ -390,8 +389,11 @@ export function ReconciliationRoute() {
         setTotalRunsCount(runsData.totalCount);
         setRunsSummary(runsData.summary);
       }
-    } catch (error) {
-      console.warn("Could not load reconciliation history:", error);
+    } catch (error: any) {
+      console.error("Could not load reconciliation history:", error);
+      setHistoryError(
+        error?.message || "Failed to load reconciliation run history from the server.",
+      );
     } finally {
       setIsLoadingHistory(false);
     }
@@ -2896,7 +2898,14 @@ export function ReconciliationRoute() {
               </div>
 
               {/* Runs Table */}
-              {reconciliationRuns.length === 0 ? (
+              {historyError ? (
+                <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-6 text-center my-4">
+                  <p className="text-sm font-medium text-destructive mb-3">{historyError}</p>
+                  <Button variant="outline" size="sm" onClick={() => loadHistory()}>
+                    <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Retry Loading History
+                  </Button>
+                </div>
+              ) : reconciliationRuns.length === 0 ? (
                 <div className="text-center py-8 text-sm text-muted-foreground">
                   <p>No reconciliation runs found for the current filter criteria.</p>
                 </div>

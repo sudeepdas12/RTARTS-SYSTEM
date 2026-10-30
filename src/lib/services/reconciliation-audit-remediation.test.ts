@@ -724,5 +724,139 @@ describe("Reconciliation Audit Remediation Invariants", () => {
       rpcSpy.mockRestore();
       fromSpy.mockRestore();
     });
+
+    it("marks bank_statement_imports status as rejected if transaction ledger persistence fails", async () => {
+      let updatedStatus = "";
+      const fromSpy = vi.spyOn(supabase, "from").mockImplementation((table: string) => {
+        if (table === "bank_statement_imports") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: () => Promise.resolve({ data: null, error: null }),
+                }),
+              }),
+            }),
+            insert: () => ({
+              select: () => ({
+                single: () =>
+                  Promise.resolve({
+                    data: { id: "import-fail-test" },
+                    error: null,
+                  }),
+              }),
+            }),
+            update: (payload: any) => {
+              updatedStatus = payload.status;
+              return {
+                eq: () => Promise.resolve({ error: null }),
+              };
+            },
+          } as any;
+        }
+        if (table === "bank_statement_transactions") {
+          return {
+            upsert: () => Promise.resolve({ error: { message: "Disk full or unique violation" } }),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const file = new File(["test data"], "statement_fail.csv", { type: "text/csv" });
+      await expect(
+        ReconciliationService.ingestBankStatementFile(
+          "00000000-0000-0000-0000-000000000001",
+          file,
+          [{ debit: 1000, credit: 0, date: "2026-03-01", description: "Test Fail" }],
+        ),
+      ).rejects.toThrow(/Bank transaction ledger persistence failed/i);
+
+      expect(updatedStatus).toBe("rejected");
+      fromSpy.mockRestore();
+    });
+
+    it("handles database unique constraint violation (code 23505) on import by returning existing import", async () => {
+      const existingImportId = "00000000-0000-0000-0000-111122223333";
+      const fromSpy = vi.spyOn(supabase, "from").mockImplementation((table: string) => {
+        if (table === "bank_statement_imports") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  // Initial pre-check simulates race condition where both pass SELECT
+                  maybeSingle: () => Promise.resolve({ data: null, error: null }),
+                }),
+              }),
+            }),
+            insert: () => ({
+              select: () => ({
+                single: () =>
+                  Promise.resolve({
+                    data: null,
+                    error: {
+                      code: "23505",
+                      message:
+                        "duplicate key value violates unique constraint uq_bank_statement_imports_company_hash",
+                    },
+                  }),
+              }),
+            }),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      // After unique conflict, second query returns existing import
+      const file = new File(["concurrent content"], "concurrent.csv", { type: "text/csv" });
+
+      // Override maybeSingle on fallback query
+      let queryCallCount = 0;
+      fromSpy.mockImplementation((table: string) => {
+        if (table === "bank_statement_imports") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: () => {
+                    queryCallCount++;
+                    if (queryCallCount === 1) return Promise.resolve({ data: null, error: null });
+                    return Promise.resolve({
+                      data: { id: existingImportId, file_name: "concurrent.csv", row_count: 5 },
+                      error: null,
+                    });
+                  },
+                }),
+              }),
+            }),
+            insert: () => ({
+              select: () => ({
+                single: () =>
+                  Promise.resolve({
+                    data: null,
+                    error: {
+                      code: "23505",
+                      message:
+                        "duplicate key value violates unique constraint uq_bank_statement_imports_company_hash",
+                    },
+                  }),
+              }),
+            }),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const res = await ReconciliationService.ingestBankStatementFile(
+        "00000000-0000-0000-0000-000000000001",
+        file,
+        [{ debit: 500, credit: 0, date: "2026-03-01", description: "Test" }],
+      );
+
+      expect(res.isDuplicate).toBe(true);
+      expect(res.importId).toBe(existingImportId);
+      expect(res.insertedCount).toBe(0);
+
+      fromSpy.mockRestore();
+    });
   });
 });

@@ -832,6 +832,8 @@ export const ReconciliationService = {
             p_run_info: {
               run_id: activeRunId,
               chunk_index: chunkIndex,
+              total_chunks: totalChunks,
+              expected_chunk_count: totalChunks,
               is_final_chunk: isFinalChunk,
               company_id: resolvedCompanyId,
               fiscal_year: chunk[0]?.fiscal_year || null,
@@ -1236,6 +1238,28 @@ export const ReconciliationService = {
       .single();
 
     if (impErr) {
+      // Handle unique conflict on (company_id, file_hash_sha256) gracefully
+      if (
+        impErr.code === "23505" ||
+        impErr.message?.includes("uq_bank_statement_imports_company_hash") ||
+        impErr.message?.includes("duplicate key")
+      ) {
+        const { data: dupImport } = await (supabase as any)
+          .from("bank_statement_imports")
+          .select("id, file_name, row_count")
+          .eq("file_hash_sha256", fileHash)
+          .eq("company_id", resolvedCompanyId)
+          .maybeSingle();
+
+        if (dupImport) {
+          return {
+            importId: dupImport.id,
+            fileHash,
+            insertedCount: 0,
+            isDuplicate: true,
+          };
+        }
+      }
       console.error("Could not insert bank_statement_imports:", impErr.message);
       throw new Error(
         `Bank statement import ledger creation failed for ${file.name}: ${impErr.message}`,
@@ -1247,48 +1271,67 @@ export const ReconciliationService = {
     // 3. Insert transactions with fingerprint
     const batchSize = 250;
     let insertedCount = 0;
-    for (let i = 0; i < transactions.length; i += batchSize) {
-      const chunk = transactions.slice(i, i + batchSize);
-      const rows = await Promise.all(
-        chunk.map(async (t) => {
-          const resolvedRef = t.reference || t.instructionId || t.referenceId || null;
-          const rawFingerprintStr = `${resolvedCompanyId}|${t.date || ""}|${t.accountNo || ""}|${t.description || ""}|${resolvedRef || ""}|${t.category || ""}|${t.status || ""}|${t.batchId || ""}|${t.debit || 0}|${t.credit || 0}|${t.balance ?? ""}`;
-          const fingerprint = await computeSha256(rawFingerprintStr);
-          return {
-            import_id: importId,
-            company_id: resolvedCompanyId,
-            transaction_date: t.date || new Date().toISOString().slice(0, 10),
-            description: t.description || null,
-            reference: resolvedRef,
-            debit_amount: Number(t.debit || 0),
-            credit_amount: Number(t.credit || 0),
-            balance: t.balance != null ? Number(t.balance) : null,
-            raw_data: {
-              accountNo: t.accountNo || null,
-              category: t.category || null,
-              status: t.status || null,
-              batchId: t.batchId || null,
-              beneficiaryName: t.beneficiaryName || null,
-              instructionId: t.instructionId || null,
-              referenceId: t.referenceId || null,
-            },
-            transaction_fingerprint: fingerprint,
-            reconciliation_status: "unreconciled",
-          };
-        }),
-      );
-
-      const { error: insErr } = await (supabase as any)
-        .from("bank_statement_transactions")
-        .upsert(rows, { onConflict: "company_id,transaction_fingerprint", ignoreDuplicates: true });
-
-      if (insErr) {
-        console.error("Failed to insert bank_statement_transactions:", insErr.message);
-        throw new Error(
-          `Bank transaction ledger persistence failed for ${file.name} (chunk ${i + 1}-${i + chunk.length}): ${insErr.message}`,
+    try {
+      for (let i = 0; i < transactions.length; i += batchSize) {
+        const chunk = transactions.slice(i, i + batchSize);
+        const rows = await Promise.all(
+          chunk.map(async (t) => {
+            const resolvedRef = t.reference || t.instructionId || t.referenceId || null;
+            const rawFingerprintStr = `${resolvedCompanyId}|${t.date || ""}|${t.accountNo || ""}|${t.description || ""}|${resolvedRef || ""}|${t.category || ""}|${t.status || ""}|${t.batchId || ""}|${t.debit || 0}|${t.credit || 0}|${t.balance ?? ""}`;
+            const fingerprint = await computeSha256(rawFingerprintStr);
+            return {
+              import_id: importId,
+              company_id: resolvedCompanyId,
+              transaction_date: t.date || new Date().toISOString().slice(0, 10),
+              description: t.description || null,
+              reference: resolvedRef,
+              debit_amount: Number(t.debit || 0),
+              credit_amount: Number(t.credit || 0),
+              balance: t.balance != null ? Number(t.balance) : null,
+              raw_data: {
+                accountNo: t.accountNo || null,
+                category: t.category || null,
+                status: t.status || null,
+                batchId: t.batchId || null,
+                beneficiaryName: t.beneficiaryName || null,
+                instructionId: t.instructionId || null,
+                referenceId: t.referenceId || null,
+              },
+              transaction_fingerprint: fingerprint,
+              reconciliation_status: "unreconciled",
+            };
+          }),
         );
+
+        const { error: insErr } = await (supabase as any)
+          .from("bank_statement_transactions")
+          .upsert(rows, {
+            onConflict: "company_id,transaction_fingerprint",
+            ignoreDuplicates: true,
+          });
+
+        if (insErr) {
+          console.error("Failed to insert bank_statement_transactions:", insErr.message);
+          throw new Error(
+            `Bank transaction ledger persistence failed for ${file.name} (chunk ${i + 1}-${i + chunk.length}): ${insErr.message}`,
+          );
+        }
+        insertedCount += rows.length;
       }
-      insertedCount += rows.length;
+    } catch (txnErr: any) {
+      // Mark import record rejected so partial imports are clearly audited and visible
+      await (supabase as any)
+        .from("bank_statement_imports")
+        .update({
+          status: "rejected",
+          parser_metadata: {
+            fileSize: file.size,
+            error: txnErr?.message || "Transaction persistence failed",
+          },
+        })
+        .eq("id", importId)
+        .catch(() => {});
+      throw txnErr;
     }
 
     return { importId, fileHash, insertedCount };
