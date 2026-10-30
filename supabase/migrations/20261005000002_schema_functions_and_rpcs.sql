@@ -614,7 +614,7 @@ BEGIN
       UPDATE public.clients
       SET
         kitta = COALESCE(v_update.kitta, kitta),
-        holder_type = COALESCE(v_update.holder_type, holder_type),
+        holder_type = COALESCE(NULLIF(v_update.holder_type, '')::public.holder_type, holder_type),
         boid = CASE
           WHEN v_update.boid IS NOT NULL AND trim(v_update.boid) <> '' THEN v_update.boid
           ELSE boid
@@ -651,7 +651,10 @@ BEGIN
       p_company_id,
       (x->>'client_id')::uuid,
       p_fiscal_year,
-      COALESCE(x->>'dividend_type', p_conversion_type || ' Fraction Cash'),
+      CASE 
+        WHEN x->>'dividend_type' IN ('Cash', 'Bonus', 'Right', 'Stock') THEN (x->>'dividend_type')::public.dividend_type
+        ELSE 'Cash'::public.dividend_type
+      END,
       COALESCE((x->>'shares_held')::numeric, 0),
       COALESCE((x->>'dividend_rate')::numeric, p_ratio),
       COALESCE((x->>'gross_dividend')::numeric, 0),
@@ -660,7 +663,7 @@ BEGIN
       'Pending'::public.payment_status,
       x->>'bank_name',
       x->>'bank_account_no',
-      x->>'remarks',
+      COALESCE(x->>'remarks', p_conversion_type || ' Fraction Cash'),
       NOW(),
       NOW()
     FROM jsonb_array_elements(p_fractional_payables) AS x;
@@ -670,19 +673,18 @@ BEGIN
 
   -- 3. Record audit log
   INSERT INTO public.audit_logs (
-    company_id,
     user_id,
     action,
     table_name,
     record_id,
-    metadata
+    new_value
   ) VALUES (
-    p_company_id,
     v_uid,
     'SHARE_CONVERSION',
     'clients',
-    p_company_id,
+    p_company_id::text,
     jsonb_build_object(
+      'company_id', p_company_id,
       'conversion_type', p_conversion_type,
       'fiscal_year', p_fiscal_year,
       'ratio', p_ratio,
@@ -5416,6 +5418,8 @@ CREATE FUNCTION public.rollback_upload_atomic(p_upload_id uuid, p_user_id uuid D
     AS $$
 DECLARE
   v_rec record;
+  v_target_payable_ids uuid[];
+  v_target_client_ids uuid[];
   v_interest_deleted int := 0;
   v_dividend_deleted int := 0;
   v_mf_deleted int := 0;
@@ -5466,25 +5470,23 @@ BEGIN
     );
   END IF;
 
-  -- 4. Capture target payables and candidate clients in temp table
-  CREATE TEMP TABLE IF NOT EXISTS temp_rollback_targets (
-    id uuid,
-    client_id uuid
-  ) ON COMMIT DROP;
-
-  TRUNCATE temp_rollback_targets;
-
-  INSERT INTO temp_rollback_targets (id, client_id)
-  SELECT id, client_id FROM public.interest_payables WHERE upload_id = p_upload_id
-  UNION ALL
-  SELECT id, client_id FROM public.dividend_payables WHERE upload_id = p_upload_id
-  UNION ALL
-  SELECT id, client_id FROM public.mutual_fund_payables WHERE upload_id = p_upload_id;
+  -- 4. Capture target payables and candidate clients
+  SELECT
+    coalesce(array_agg(id), ARRAY[]::uuid[]),
+    coalesce(array_agg(DISTINCT client_id) FILTER (WHERE client_id IS NOT NULL), ARRAY[]::uuid[])
+  INTO v_target_payable_ids, v_target_client_ids
+  FROM (
+    SELECT id, client_id FROM public.interest_payables WHERE upload_id = p_upload_id
+    UNION ALL
+    SELECT id, client_id FROM public.dividend_payables WHERE upload_id = p_upload_id
+    UNION ALL
+    SELECT id, client_id FROM public.mutual_fund_payables WHERE upload_id = p_upload_id
+  ) targets;
 
   -- 5. Clean up any un-finalized payments referencing payables in this upload
   WITH del_pmts AS (
     DELETE FROM public.payments
-    WHERE payable_id IN (SELECT id FROM temp_rollback_targets)
+    WHERE payable_id = ANY(v_target_payable_ids)
       AND status IN ('Draft', 'Pending', 'Failed', 'Rejected')
     RETURNING id
   )
@@ -5525,12 +5527,9 @@ BEGIN
   SELECT count(*) INTO v_errors_deleted FROM del_err;
 
   -- 10. Safely delete orphan clients that belonged to this upload and have no remaining payables
-  WITH candidate_clients AS (
-    SELECT DISTINCT client_id FROM temp_rollback_targets WHERE client_id IS NOT NULL
-  ),
-  del_clients AS (
+  WITH del_clients AS (
     DELETE FROM public.clients c
-    WHERE c.id IN (SELECT client_id FROM candidate_clients)
+    WHERE c.id = ANY(v_target_client_ids)
       AND NOT EXISTS (SELECT 1 FROM public.dividend_payables d WHERE d.client_id = c.id)
       AND NOT EXISTS (SELECT 1 FROM public.interest_payables i WHERE i.client_id = c.id)
       AND NOT EXISTS (SELECT 1 FROM public.mutual_fund_payables m WHERE m.client_id = c.id)
@@ -6366,7 +6365,8 @@ BEGIN
 
   UPDATE public.payment_batches
   SET
-    status = 'Dispatched',
+    status = 'Processed'::public.payment_batch_status,
+    processed_at = COALESCE(processed_at, now()),
     updated_at = now()
   WHERE id = p_batch_id;
 
@@ -6438,9 +6438,7 @@ BEGIN
       IF FOUND THEN
         UPDATE public.bank_transactions
         SET
-          status = 'Reconciled',
-          reconciled_at = now(),
-          updated_at = now()
+          is_reconciled = true
         WHERE id = v_txn_id;
       END IF;
     END IF;
@@ -6453,8 +6451,8 @@ BEGIN
           paid_amount = LEAST(net_payable, round(COALESCE(paid_amount, 0) + v_match_amount, 2)),
           remaining_amount = GREATEST(0, round(net_payable - LEAST(net_payable, round(COALESCE(paid_amount, 0) + v_match_amount, 2)), 2)),
           payment_status = CASE 
-            WHEN round(COALESCE(paid_amount, 0) + v_match_amount, 2) >= net_payable THEN 'Paid' 
-            ELSE 'Partial' 
+            WHEN round(COALESCE(paid_amount, 0) + v_match_amount, 2) >= net_payable THEN 'Paid'::public.payment_status 
+            ELSE 'Partial'::public.payment_status 
           END,
           updated_at = now()
         WHERE id = v_payable_id;
@@ -6464,8 +6462,8 @@ BEGIN
           paid_amount = LEAST(net_payable, round(COALESCE(paid_amount, 0) + v_match_amount, 2)),
           remaining_amount = GREATEST(0, round(net_payable - LEAST(net_payable, round(COALESCE(paid_amount, 0) + v_match_amount, 2)), 2)),
           payment_status = CASE 
-            WHEN round(COALESCE(paid_amount, 0) + v_match_amount, 2) >= net_payable THEN 'Paid' 
-            ELSE 'Partial' 
+            WHEN round(COALESCE(paid_amount, 0) + v_match_amount, 2) >= net_payable THEN 'Paid'::public.payment_status 
+            ELSE 'Partial'::public.payment_status 
           END,
           updated_at = now()
         WHERE id = v_payable_id;
@@ -6475,8 +6473,8 @@ BEGIN
           paid_amount = LEAST(net_payable, round(COALESCE(paid_amount, 0) + v_match_amount, 2)),
           remaining_amount = GREATEST(0, round(net_payable - LEAST(net_payable, round(COALESCE(paid_amount, 0) + v_match_amount, 2)), 2)),
           payment_status = CASE 
-            WHEN round(COALESCE(paid_amount, 0) + v_match_amount, 2) >= net_payable THEN 'Paid' 
-            ELSE 'Partial' 
+            WHEN round(COALESCE(paid_amount, 0) + v_match_amount, 2) >= net_payable THEN 'Paid'::public.payment_status 
+            ELSE 'Partial'::public.payment_status 
           END,
           updated_at = now()
         WHERE id = v_payable_id;

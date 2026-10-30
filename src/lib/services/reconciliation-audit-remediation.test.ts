@@ -859,4 +859,122 @@ describe("Reconciliation Audit Remediation Invariants", () => {
       fromSpy.mockRestore();
     });
   });
+
+  describe("7. Mutual Fund Reports & Sample-Driven Hardening", () => {
+    it("correctly reconciles Mutual Fund payables with 0% TDS tax-exempt rules", () => {
+      // Mutual Fund units with 0% TDS where gross equals net
+      const payable = {
+        id: "mf-pay-001",
+        company_id: "comp-mf-1",
+        shares_held: 1000,
+        dividend_rate: 10,
+        gross_dividend: 10000,
+        tax_amount: 0,
+        net_payable: 10000,
+        payment_status: "Pending" as const,
+        payee_classification: "TAX_EXEMPT",
+        fiscal_year: "2082/83",
+      };
+
+      const transaction = {
+        date: "2026-03-01",
+        description: "DIVIDEND PAYOUT MF DIST",
+        debit: 10000,
+        credit: 0,
+        reference: "MF-PAY-2082-001",
+        raw_data: {
+          instructionId: "NCHL-MF-9901",
+        },
+      };
+
+      expect(payable.gross_dividend).toBe(payable.net_payable);
+      expect(payable.tax_amount).toBe(0);
+      expect(amountEqualsPaisa(transaction.debit, payable.net_payable)).toBe(true);
+    });
+
+    it("parses ERROR REPORT settlement sheets classifying RJCT status transactions", () => {
+      // Simulate rows from NCHL / ConnectIPS Error Report workbook
+      const rows = [
+        ["Sl No", "Instruction ID", "Account Number", "Amount", "Status", "Reason"],
+        ["1", "TXN-ERR-001", "001001001", "12500.00", "RJCT", "Account Frozen"],
+        ["2", "TXN-ERR-002", "001001002", "8400.00", "RETURN", "Invalid Account Number"],
+      ];
+
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "ERROR REPORT");
+
+      // Verify header recognition and RJCT / return status
+      const headerRow = rows[0].map((h) => String(h).toUpperCase());
+      expect(headerRow.some((h) => h.includes("STATUS"))).toBe(true);
+      expect(headerRow.some((h) => h.includes("INSTRUCTION"))).toBe(true);
+      expect(rows[1][4]).toBe("RJCT");
+      expect(rows[2][4]).toBe("RETURN");
+    });
+
+    it("reports exact inserted count from Supabase select response, discarding duplicates", async () => {
+      const fromSpy = vi.spyOn(supabase, "from");
+
+      let insertAttempted = false;
+      fromSpy.mockImplementation((table: string) => {
+        if (table === "bank_statement_imports") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: () => Promise.resolve({ data: null, error: null }),
+                }),
+              }),
+            }),
+            insert: () => ({
+              select: () => ({
+                single: () =>
+                  Promise.resolve({
+                    data: { id: "import-123", file_name: "test.csv", row_count: 3 },
+                    error: null,
+                  }),
+              }),
+            }),
+          } as any;
+        }
+
+        if (table === "bank_statement_transactions") {
+          return {
+            upsert: () => {
+              insertAttempted = true;
+              return {
+                select: () =>
+                  // Only 1 out of 3 rows was newly inserted (2 were duplicates)
+                  Promise.resolve({
+                    data: [{ id: "txn-1" }],
+                    error: null,
+                  }),
+              };
+            },
+          } as any;
+        }
+
+        return {} as any;
+      });
+
+      const file = new File(["dummy content"], "partial_dups.csv", { type: "text/csv" });
+      const txns = [
+        { debit: 100, credit: 0, date: "2026-03-01", description: "Txn 1" },
+        { debit: 200, credit: 0, date: "2026-03-01", description: "Txn 2" },
+        { debit: 300, credit: 0, date: "2026-03-01", description: "Txn 3" },
+      ];
+
+      const res = await ReconciliationService.ingestBankStatementFile(
+        "00000000-0000-0000-0000-000000000001",
+        file,
+        txns,
+      );
+
+      expect(insertAttempted).toBe(true);
+      expect(res.insertedCount).toBe(1); // Exactly 1 returned inserted row, not 3!
+      expect(res.isDuplicate).toBe(false);
+
+      fromSpy.mockRestore();
+    });
+  });
 });

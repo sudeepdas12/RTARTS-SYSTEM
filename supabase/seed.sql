@@ -226,4 +226,11 @@ BEGIN
     ON CONFLICT (payable_category, payee_classification)
     DO UPDATE SET tax_rate = EXCLUDED.tax_rate;
   END IF;
+
+  -- 6. Seed default cron secret in system_settings if missing
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'system_settings') THEN
+    INSERT INTO public.system_settings (setting_key, setting_value, description)
+    VALUES ('cron_secret', '{"secret": "rtarts-internal-cron-secret"}'::jsonb, 'Internal cron secret for scheduled reports')
+    ON CONFLICT (setting_key) DO NOTHING;
+  END IF;
 END $$;

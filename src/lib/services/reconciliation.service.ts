@@ -1303,12 +1303,15 @@ export const ReconciliationService = {
           }),
         );
 
-        const { error: insErr } = await (supabase as any)
-          .from("bank_statement_transactions")
-          .upsert(rows, {
-            onConflict: "company_id,transaction_fingerprint",
-            ignoreDuplicates: true,
-          });
+        const upsertQuery = (supabase as any).from("bank_statement_transactions").upsert(rows, {
+          onConflict: "company_id,transaction_fingerprint",
+          ignoreDuplicates: true,
+        });
+
+        const { data: insertedRows, error: insErr } =
+          typeof upsertQuery?.select === "function"
+            ? await upsertQuery.select("id")
+            : await upsertQuery;
 
         if (insErr) {
           console.error("Failed to insert bank_statement_transactions:", insErr.message);
@@ -1316,25 +1319,37 @@ export const ReconciliationService = {
             `Bank transaction ledger persistence failed for ${file.name} (chunk ${i + 1}-${i + chunk.length}): ${insErr.message}`,
           );
         }
-        insertedCount += rows.length;
+        insertedCount += Array.isArray(insertedRows) ? insertedRows.length : rows.length;
       }
     } catch (txnErr: any) {
       // Mark import record rejected so partial imports are clearly audited and visible
-      await (supabase as any)
-        .from("bank_statement_imports")
-        .update({
-          status: "rejected",
-          parser_metadata: {
-            fileSize: file.size,
-            error: txnErr?.message || "Transaction persistence failed",
-          },
-        })
-        .eq("id", importId)
-        .catch(() => {});
+      try {
+        const updateBuilder = (supabase as any).from("bank_statement_imports");
+        if (typeof updateBuilder?.update === "function") {
+          const { error: rejectErr } = await updateBuilder
+            .update({
+              status: "rejected",
+              parser_metadata: {
+                fileSize: file.size,
+                error: txnErr?.message || "Transaction persistence failed",
+              },
+            })
+            .eq("id", importId);
+
+          if (rejectErr) {
+            console.error("Failed to mark bank_statement_imports as rejected:", rejectErr.message);
+          }
+        }
+      } catch (secondaryErr: any) {
+        console.error(
+          "Secondary error updating bank_statement_imports status to rejected:",
+          secondaryErr,
+        );
+      }
       throw txnErr;
     }
 
-    return { importId, fileHash, insertedCount };
+    return { importId, fileHash, insertedCount, isDuplicate: false };
   },
 
   async acknowledgeException(

@@ -29,13 +29,8 @@ export async function computeSha256(data: string | ArrayBuffer | Blob): Promise<
     hash.update(Buffer.from(buffer));
     return hash.digest("hex");
   } catch {
-    // Basic fallback if neither subtle nor node:crypto available
-    let hash = 0;
-    const view = new Uint8Array(buffer);
-    for (let i = 0; i < view.length; i++) {
-      hash = (hash << 5) - hash + view[i];
-      hash |= 0;
-    }
-    return Math.abs(hash).toString(16).padStart(64, "0");
+    throw new Error(
+      "Cryptographic SHA-256 digest is unavailable in the current runtime environment.",
+    );
   }
 }

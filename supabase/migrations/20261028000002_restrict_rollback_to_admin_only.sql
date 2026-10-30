@@ -16,6 +16,8 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_rec record;
+  v_target_payable_ids uuid[];
+  v_target_client_ids uuid[];
   v_interest_deleted int := 0;
   v_dividend_deleted int := 0;
   v_mf_deleted int := 0;
@@ -64,25 +66,23 @@ BEGIN
     );
   END IF;
 
-  -- 4. Capture target payables and candidate clients in temp table
-  CREATE TEMP TABLE IF NOT EXISTS temp_rollback_targets (
-    id uuid,
-    client_id uuid
-  ) ON COMMIT DROP;
-
-  TRUNCATE temp_rollback_targets;
-
-  INSERT INTO temp_rollback_targets (id, client_id)
-  SELECT id, client_id FROM public.interest_payables WHERE upload_id = p_upload_id
-  UNION ALL
-  SELECT id, client_id FROM public.dividend_payables WHERE upload_id = p_upload_id
-  UNION ALL
-  SELECT id, client_id FROM public.mutual_fund_payables WHERE upload_id = p_upload_id;
+  -- 4. Capture target payables and candidate clients
+  SELECT
+    coalesce(array_agg(id), ARRAY[]::uuid[]),
+    coalesce(array_agg(DISTINCT client_id) FILTER (WHERE client_id IS NOT NULL), ARRAY[]::uuid[])
+  INTO v_target_payable_ids, v_target_client_ids
+  FROM (
+    SELECT id, client_id FROM public.interest_payables WHERE upload_id = p_upload_id
+    UNION ALL
+    SELECT id, client_id FROM public.dividend_payables WHERE upload_id = p_upload_id
+    UNION ALL
+    SELECT id, client_id FROM public.mutual_fund_payables WHERE upload_id = p_upload_id
+  ) targets;
 
   -- 5. Clean up any un-finalized payments referencing payables in this upload
   WITH del_pmts AS (
     DELETE FROM public.payments
-    WHERE payable_id IN (SELECT id FROM temp_rollback_targets)
+    WHERE payable_id = ANY(v_target_payable_ids)
       AND status IN ('Draft', 'Pending', 'Failed', 'Rejected')
     RETURNING id
   )
@@ -123,12 +123,9 @@ BEGIN
   SELECT count(*) INTO v_errors_deleted FROM del_err;
 
   -- 10. Safely delete orphan clients that belonged to this upload and have no remaining payables
-  WITH candidate_clients AS (
-    SELECT DISTINCT client_id FROM temp_rollback_targets WHERE client_id IS NOT NULL
-  ),
-  del_clients AS (
+  WITH del_clients AS (
     DELETE FROM public.clients c
-    WHERE c.id IN (SELECT client_id FROM candidate_clients)
+    WHERE c.id = ANY(v_target_client_ids)
       AND NOT EXISTS (SELECT 1 FROM public.dividend_payables d WHERE d.client_id = c.id)
       AND NOT EXISTS (SELECT 1 FROM public.interest_payables i WHERE i.client_id = c.id)
       AND NOT EXISTS (SELECT 1 FROM public.mutual_fund_payables m WHERE m.client_id = c.id)

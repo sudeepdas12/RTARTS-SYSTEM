@@ -651,19 +651,19 @@ BEGIN
     IF v_batch_id IS NULL THEN
       INSERT INTO public.payment_batches (
         batch_name,
-        batch_type,
+        payable_type,
         company_id,
         status,
         cds_batch_ref,
-        total_records,
-        total_net,
+        total_payments,
+        total_amount,
         total_tax,
         created_by
       ) VALUES (
         COALESCE(NULLIF(p_batch_info->>'batch_name', ''), 'Reconciliation Auto-Batch ' || to_char(now(), 'YYYY-MM-DD')),
         COALESCE(NULLIF(p_batch_info->>'payable_type', ''), 'dividend'),
         v_company_id,
-        'Processing',
+        'Draft'::public.payment_batch_status,
         COALESCE(NULLIF(p_batch_info->>'cds_batch_ref', ''), 'RECON-APPLY'),
         COALESCE(NULLIF(p_batch_info->>'total_records', '')::int, 0),
         COALESCE(NULLIF(p_batch_info->>'total_net', '')::numeric, 0),
