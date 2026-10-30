@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/page-header";
@@ -374,41 +374,44 @@ export function ReconciliationRoute() {
   const [totalHistoryRecords, setTotalHistoryRecords] = useState(0);
   const [historyError, setHistoryError] = useState<string | null>(null);
 
-  const loadHistory = async (limit = 1000, offset = 0) => {
-    setIsLoadingHistory(true);
-    setHistoryError(null);
-    try {
-      const [results, count, runsData] = await Promise.all([
-        ReconciliationService.getResults(limit, offset),
-        ReconciliationService.getResultsCount(),
-        ReconciliationService.getReconciliationRuns({
-          companyId: historyCompanyFilter !== "all" ? historyCompanyFilter : null,
-          sourceType: historySourceFilter !== "all" ? historySourceFilter : undefined,
-          search: historySearchQuery || undefined,
-          limit: 100,
-          offset: 0,
-        }),
-      ]);
-      setSavedResults(results);
-      setTotalHistoryRecords(count);
-      if (runsData) {
-        setReconciliationRuns(runsData.runs);
-        setTotalRunsCount(runsData.totalCount);
-        setRunsSummary(runsData.summary);
+  const loadHistory = useCallback(
+    async (limit = 1000, offset = 0) => {
+      setIsLoadingHistory(true);
+      setHistoryError(null);
+      try {
+        const [results, count, runsData] = await Promise.all([
+          ReconciliationService.getResults(limit, offset),
+          ReconciliationService.getResultsCount(),
+          ReconciliationService.getReconciliationRuns({
+            companyId: historyCompanyFilter !== "all" ? historyCompanyFilter : null,
+            sourceType: historySourceFilter !== "all" ? historySourceFilter : undefined,
+            search: historySearchQuery || undefined,
+            limit: 100,
+            offset: 0,
+          }),
+        ]);
+        setSavedResults(results);
+        setTotalHistoryRecords(count);
+        if (runsData) {
+          setReconciliationRuns(runsData.runs);
+          setTotalRunsCount(runsData.totalCount);
+          setRunsSummary(runsData.summary);
+        }
+      } catch (error: any) {
+        console.error("Could not load reconciliation history:", error);
+        setHistoryError(
+          error?.message || "Failed to load reconciliation run history from the server.",
+        );
+      } finally {
+        setIsLoadingHistory(false);
       }
-    } catch (error: any) {
-      console.error("Could not load reconciliation history:", error);
-      setHistoryError(
-        error?.message || "Failed to load reconciliation run history from the server.",
-      );
-    } finally {
-      setIsLoadingHistory(false);
-    }
-  };
+    },
+    [historyCompanyFilter, historySourceFilter, historySearchQuery],
+  );
 
   useEffect(() => {
     loadHistory();
-  }, []);
+  }, [loadHistory]);
 
   const processExcelFiles = async (files: File[]) => {
     if (!files.length) return;
@@ -427,6 +430,18 @@ export function ReconciliationRoute() {
           type: await classifyReconciliationFile(f),
         })),
       );
+
+      const ambiguousFiles = classifications
+        .filter((c) => c.type === "ambiguous")
+        .map((c) => c.file);
+
+      if (ambiguousFiles.length > 0) {
+        toast.error(
+          `Indeterminate file format: ${ambiguousFiles.map((f) => f.name).join(", ")}. Upload rejected because the file does not contain recognizable settlement or shareholder registry headers.`,
+          { duration: 8000 },
+        );
+        return;
+      }
 
       const bankFiles = classifications
         .filter((c) => c.type === "bank_statement")
@@ -1146,6 +1161,14 @@ export function ReconciliationRoute() {
       if (
         applyRes.updated === 0 &&
         applyRes.paymentsCreated === 0 &&
+        (applyRes.rejectedCount ?? 0) > 0
+      ) {
+        toast.success(
+          `Successfully recorded ${applyRes.rejectedCount} rejected payout transaction(s) into reconciliation run audit trail and exceptions ledger.`,
+        );
+      } else if (
+        applyRes.updated === 0 &&
+        applyRes.paymentsCreated === 0 &&
         (applyRes.alreadyPaid ?? 0) > 0
       ) {
         toast.info(
@@ -1164,10 +1187,12 @@ export function ReconciliationRoute() {
       } else {
         const alreadyNote =
           (applyRes.alreadyPaid ?? 0) > 0 ? ` (${applyRes.alreadyPaid} already paid)` : "";
+        const rejNote =
+          (applyRes.rejectedCount ?? 0) > 0 ? ` (${applyRes.rejectedCount} rejected recorded)` : "";
         const skippedNote =
           applyRes.errors?.length > 0 ? ` (${applyRes.errors.length} unlinked items skipped)` : "";
         toast.success(
-          `Applied reconciliation: ${applyRes.updated} payables updated, ${applyRes.paymentsCreated} payments created${alreadyNote}${skippedNote}.`,
+          `Applied reconciliation: ${applyRes.updated} payables updated, ${applyRes.paymentsCreated} payments created${alreadyNote}${rejNote}${skippedNote}.`,
         );
       }
       qc.invalidateQueries({ queryKey: ["payments"] });
@@ -3521,6 +3546,7 @@ export function ReconciliationRoute() {
         operatorName={user?.user_metadata?.full_name || user?.email || "Authorized Operator"}
         operatorRole={roles?.[0] || "Checker / Approver"}
         isAll={postingIsAll}
+        variantAlerts={variantAlerts}
       />
     </div>
   );

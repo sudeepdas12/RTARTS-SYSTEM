@@ -392,7 +392,7 @@ function ClientsPage() {
         setCompanyFilter(paramComp);
       }
     }
-  }, []);
+  }, [companyFilter]);
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [verFilter, setVerFilter] = useState("all");

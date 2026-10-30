@@ -209,12 +209,61 @@ export interface ParseMultipleFilesResult {
 }
 
 /**
- * Classifies a file as either a bank settlement / statement report or a shareholder payable registry.
+ * Classifies a file as either a bank settlement / statement report, a shareholder payable registry,
+ * or ambiguous (fails closed to prevent misinterpretation).
  */
 export async function classifyReconciliationFile(
   file: File,
-): Promise<"bank_statement" | "shareholder_registry"> {
+): Promise<"bank_statement" | "shareholder_registry" | "ambiguous"> {
   const name = file.name.toLowerCase();
+
+  // 1. Inspect first few header rows - content inspection is the most deterministic classifier
+  try {
+    const slice = await file.slice(0, 65536).arrayBuffer();
+    const wb = XLSX.read(slice, { type: "array", sheetRows: 8, dense: true });
+    if (wb.SheetNames && wb.SheetNames.length > 0) {
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+      const headerStr = rows
+        .slice(0, 7)
+        .flat()
+        .map((v) => String(v || "").toLowerCase())
+        .join(" ");
+
+      const hasBankHeaders =
+        headerStr.includes("instruction") ||
+        headerStr.includes("transid") ||
+        headerStr.includes("transaction id") ||
+        headerStr.includes("creditor") ||
+        headerStr.includes("waive fee") ||
+        headerStr.includes("batch id") ||
+        headerStr.includes("nchl") ||
+        headerStr.includes("connectips") ||
+        headerStr.includes("late rtn") ||
+        headerStr.includes("late return") ||
+        (headerStr.includes("debit") && headerStr.includes("credit"));
+
+      const hasRegistryHeaders =
+        headerStr.includes("boid") ||
+        headerStr.includes("shareholder") ||
+        headerStr.includes("kitta") ||
+        headerStr.includes("folio") ||
+        headerStr.includes("units held") ||
+        headerStr.includes("gross dividend") ||
+        headerStr.includes("gross interest");
+
+      if (hasBankHeaders && !hasRegistryHeaders) {
+        return "bank_statement";
+      }
+      if (hasRegistryHeaders && !hasBankHeaders) {
+        return "shareholder_registry";
+      }
+    }
+  } catch {
+    // If workbook inspection fails, continue to filename heuristic
+  }
+
+  // 2. Strict filename heuristics (WITHOUT "debenture", which belongs to registries/instruments)
   const bankKeywords = [
     "ips",
     "nchl",
@@ -225,54 +274,33 @@ export async function classifyReconciliationFile(
     "late_rtn",
     "error report",
     "mer",
-    "bank",
     "statement",
     "payout",
-    "debenture",
   ];
 
-  if (bankKeywords.some((kw) => name.includes(kw))) {
+  const registryKeywords = [
+    "registry",
+    "shareholder",
+    "dividend",
+    "interest payable",
+    "payable",
+    "boid",
+    "kitta",
+    "demat",
+  ];
+
+  const matchesBank = bankKeywords.some((kw) => name.includes(kw));
+  const matchesRegistry = registryKeywords.some((kw) => name.includes(kw));
+
+  if (matchesBank && !matchesRegistry) {
     return "bank_statement";
   }
-
-  // If name is ambiguous or doesn't have an obvious indicator, inspect first few header rows
-  try {
-    const slice = await file.slice(0, 65536).arrayBuffer();
-    const wb = XLSX.read(slice, { type: "array", sheetRows: 5, dense: true });
-    if (wb.SheetNames && wb.SheetNames.length > 0) {
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
-      const headerStr = rows
-        .slice(0, 4)
-        .flat()
-        .map((v) => String(v || "").toLowerCase())
-        .join(" ");
-
-      if (
-        headerStr.includes("instruction") ||
-        headerStr.includes("transid") ||
-        headerStr.includes("transaction id") ||
-        headerStr.includes("creditor") ||
-        headerStr.includes("waive fee") ||
-        (headerStr.includes("debit") && headerStr.includes("credit"))
-      ) {
-        return "bank_statement";
-      }
-
-      if (
-        headerStr.includes("boid") ||
-        headerStr.includes("shareholder") ||
-        headerStr.includes("kitta") ||
-        headerStr.includes("folio")
-      ) {
-        return "shareholder_registry";
-      }
-    }
-  } catch {
-    // If workbook inspection fails, default to shareholder registry safely
+  if (matchesRegistry && !matchesBank) {
+    return "shareholder_registry";
   }
 
-  return "shareholder_registry";
+  // 3. Fail closed if indeterminate
+  return "ambiguous";
 }
 
 export const BankParser = {
@@ -1007,10 +1035,18 @@ export const BankParser = {
         // Extract ConnectIPS instruction ID or reference ID from description if not in dedicated column
         let instructionId =
           indices.instructionId >= 0 ? String(row[indices.instructionId] || "").trim() : undefined;
-        // If transId matches ConnectIPS pattern (/^0201\d{6}[A-Za-z0-9]+$/), prioritize it over static scheme name in instructionId
+        // If static text or scheme name ended up in instructionId, ignore it
+        if (instructionId && !/\d/.test(instructionId)) {
+          instructionId = undefined;
+        }
+
+        // If transId exists, prioritize it over static scheme names, restoring stripped leading 0 if needed
         if (indices.transId >= 0 && row[indices.transId]) {
-          const transVal = String(row[indices.transId] || "").trim();
-          if (/^0201\d{6}[A-Za-z0-9]+$/i.test(transVal)) {
+          let transVal = String(row[indices.transId] || "").trim();
+          if (/^201\d{6}[A-Za-z0-9]+$/i.test(transVal)) {
+            transVal = "0" + transVal;
+          }
+          if (/^0201\d{6}[A-Za-z0-9]+$/i.test(transVal) || /^[0-9A-Za-z]{10,25}$/i.test(transVal)) {
             instructionId = transVal;
           }
         }

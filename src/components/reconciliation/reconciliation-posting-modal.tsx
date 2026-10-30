@@ -25,6 +25,7 @@ import {
   ComprehensiveReconciliationReport,
   ReconciliationMatch,
 } from "@/lib/reconciliation-engine";
+import type { FileVariantWarning } from "@/lib/bank-parser";
 
 export interface ReconciliationPostingModalProps {
   open: boolean;
@@ -36,6 +37,7 @@ export interface ReconciliationPostingModalProps {
   operatorName?: string;
   operatorRole?: string;
   isAll?: boolean;
+  variantAlerts?: FileVariantWarning[];
 }
 
 function fmtNpr(n: number) {
@@ -58,8 +60,13 @@ export function ReconciliationPostingModal({
   operatorName = "Authorized Operator",
   operatorRole = "Checker / Approver",
   isAll = true,
+  variantAlerts = [],
 }: ReconciliationPostingModalProps) {
   const [acknowledged, setAcknowledged] = useState(false);
+  const [variantAcknowledged, setVariantAcknowledged] = useState(false);
+
+  const hasVariants = Boolean(variantAlerts && variantAlerts.length > 0);
+  const canConfirm = acknowledged && (!hasVariants || variantAcknowledged) && !isApplying;
 
   const stats = useMemo(() => {
     if (!report?.matches) {
@@ -107,9 +114,10 @@ export function ReconciliationPostingModal({
   }, [report, selectedMatchIds, isAll]);
 
   const handleConfirm = async () => {
-    if (!acknowledged || isApplying) return;
+    if (!canConfirm || isApplying) return;
     await onConfirmApply();
     setAcknowledged(false);
+    setVariantAcknowledged(false);
     onOpenChange(false);
   };
 
@@ -217,6 +225,43 @@ export function ReconciliationPostingModal({
             </ul>
           </div>
 
+          {/* Source Variant Alert and Explicit Clearance */}
+          {hasVariants && (
+            <div className="bg-destructive/10 border border-destructive/30 p-3 rounded-lg text-xs space-y-2">
+              <div className="font-semibold text-destructive flex items-center gap-1.5">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                Source Variant Warnings Detected ({variantAlerts.length})
+              </div>
+              <p className="text-muted-foreground text-[11px]">
+                Potential file duplicate or superseded revision detected. Confirm that this posting
+                batch represents the authoritative clearing data:
+              </p>
+              <ul className="list-disc list-inside text-muted-foreground space-y-1 pl-1 max-h-28 overflow-y-auto font-mono text-[11px]">
+                {variantAlerts.map((va, idx) => (
+                  <li key={idx}>
+                    <span className="font-semibold text-foreground">{va.fileA}</span> vs{" "}
+                    <span className="font-semibold text-foreground">{va.fileB}</span>: {va.reason}
+                  </li>
+                ))}
+              </ul>
+              <div className="flex items-start gap-2 pt-1 border-t border-destructive/20">
+                <Checkbox
+                  id="recon-variant-ack"
+                  checked={variantAcknowledged}
+                  onCheckedChange={(c) => setVariantAcknowledged(Boolean(c))}
+                  className="mt-0.5"
+                />
+                <Label
+                  htmlFor="recon-variant-ack"
+                  className="text-xs leading-relaxed cursor-pointer font-medium text-destructive-foreground"
+                >
+                  I have reviewed the source variant discrepancies across uploaded files and confirm
+                  this batch contains the authoritative records.
+                </Label>
+              </div>
+            </div>
+          )}
+
           {/* Explicit Acknowledgement */}
           <div className="flex items-start gap-2.5 pt-2">
             <Checkbox
@@ -244,7 +289,7 @@ export function ReconciliationPostingModal({
           </Button>
           <Button
             onClick={handleConfirm}
-            disabled={!acknowledged || isApplying}
+            disabled={!canConfirm}
             className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
           >
             {isApplying ? "Committing Settlement..." : "Confirm & Commit Posting"}

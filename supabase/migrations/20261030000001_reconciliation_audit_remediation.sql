@@ -10,6 +10,10 @@
 --  7. Match explainability model and metadata persistence
 --  8. Durable reconciliation_exceptions tracking
 
+-- Extend reconciliation_result enum with Partial and Exception if not present
+ALTER TYPE public.reconciliation_result ADD VALUE IF NOT EXISTS 'Partial';
+ALTER TYPE public.reconciliation_result ADD VALUE IF NOT EXISTS 'Exception';
+
 -- ============================================================================
 -- 1. HARDEN BANK STATEMENTS & BANK TRANSACTIONS (RLS & TENANT ISOLATION)
 -- ============================================================================
@@ -230,7 +234,11 @@ ALTER TABLE public.reconciliation_results
   ADD COLUMN IF NOT EXISTS candidate_count integer DEFAULT 1,
   ADD COLUMN IF NOT EXISTS rejected_candidates jsonb DEFAULT '[]'::jsonb,
   ADD COLUMN IF NOT EXISTS rule_version text DEFAULT '2.0.0',
-  ADD COLUMN IF NOT EXISTS requires_manual_approval boolean DEFAULT false;
+  ADD COLUMN IF NOT EXISTS requires_manual_approval boolean DEFAULT false,
+  ADD COLUMN IF NOT EXISTS prior_paid_amount numeric(15,2),
+  ADD COLUMN IF NOT EXISTS prior_payment_status text,
+  ADD COLUMN IF NOT EXISTS prior_payment_date date,
+  ADD COLUMN IF NOT EXISTS prior_payment_reference text;
 
 CREATE INDEX IF NOT EXISTS idx_reconciliation_results_run_id 
   ON public.reconciliation_results(run_id);
@@ -495,9 +503,14 @@ DECLARE
   v_already_paid int := 0;
   v_errors jsonb := '[]'::jsonb;
   v_total_amount numeric := 0;
+  v_old_paid_amount numeric;
+  v_old_payment_status text;
+  v_old_payment_date date;
+  v_old_payment_reference text;
+  v_result_enum public.reconciliation_result;
 BEGIN
   -- 1. Authorization check
-  IF current_user != 'service_role' AND current_user != 'postgres' THEN
+  IF current_user != 'service_role' AND current_user != 'postgres' AND auth.role() != 'service_role' THEN
     PERFORM public.require_role('admin', 'supervisor', 'finance_operator', 'reconciliation_officer');
   END IF;
 
@@ -505,7 +518,7 @@ BEGIN
   v_fiscal_year := NULLIF(p_run_info->>'fiscal_year', '');
 
   -- Tenant check
-  IF current_user != 'service_role' AND v_company_id IS NOT NULL THEN
+  IF current_user != 'service_role' AND current_user != 'postgres' AND auth.role() != 'service_role' AND v_company_id IS NOT NULL THEN
     IF NOT public.has_company_access(v_uid, v_company_id) THEN
       RAISE EXCEPTION 'Unauthorized: caller lacks access to target company %', v_company_id USING ERRCODE = '42501';
     END IF;
@@ -683,6 +696,10 @@ BEGIN
   FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
   LOOP
     BEGIN
+      v_old_paid_amount := NULL;
+      v_old_payment_status := NULL;
+      v_old_payment_date := NULL;
+      v_old_payment_reference := NULL;
       v_payable_id   := NULLIF(v_item->>'payable_id', '')::uuid;
       v_client_id    := NULLIF(v_item->>'client_id', '')::uuid;
       v_target_table := LOWER(COALESCE(NULLIF(v_item->>'target_table', ''), NULLIF(v_item->>'payable_type', ''), 'dividend'));
@@ -690,7 +707,6 @@ BEGIN
       v_actual_amt   := COALESCE(NULLIF(v_item->>'actual_amount', '')::numeric, 0);
       v_expected_amt := COALESCE(NULLIF(v_item->>'expected_amount', '')::numeric, 0);
       v_diff         := COALESCE(NULLIF(v_item->>'difference', '')::numeric, v_actual_amt - v_expected_amt);
-      v_total_amount := v_total_amount + v_actual_amt;
       v_payment_ref  := COALESCE(NULLIF(v_item->>'payment_reference', ''), NULLIF(v_item->>'reference_id', ''), 'RECON-' || substr(COALESCE(v_run_id::text, gen_random_uuid()::text), 1, 8));
       v_instruction_id := COALESCE(NULLIF(v_item->>'instruction_id', ''), NULLIF(v_item->>'connectips_ref', ''));
       v_match_method := COALESCE(NULLIF(v_item->>'match_method', ''), 'instruction_id');
@@ -698,14 +714,33 @@ BEGIN
       v_rule_ver     := COALESCE(NULLIF(v_item->>'rule_version', ''), '2.0.0');
       v_notes        := NULLIF(v_item->>'notes', '');
 
+      v_result_enum := CASE v_result
+        WHEN 'MATCHED' THEN 'Matched'::public.reconciliation_result
+        WHEN 'NOT_MATCHED' THEN 'Not_Matched'::public.reconciliation_result
+        WHEN 'MISSING' THEN 'Missing'::public.reconciliation_result
+        WHEN 'DUPLICATE' THEN 'Duplicate'::public.reconciliation_result
+        WHEN 'OVER_PAID' THEN 'Over_Paid'::public.reconciliation_result
+        WHEN 'UNDER_PAID' THEN 'Under_Paid'::public.reconciliation_result
+        WHEN 'PARTIAL' THEN 'Partial'::public.reconciliation_result
+        WHEN 'PENDING' THEN 'Pending'::public.reconciliation_result
+        WHEN 'PLEDGED' THEN 'Pledged'::public.reconciliation_result
+        WHEN 'REJECTED' THEN 'Rejected'::public.reconciliation_result
+        WHEN 'EXCEPTION' THEN 'Exception'::public.reconciliation_result
+        ELSE 'Not_Matched'::public.reconciliation_result
+      END;
+
       v_paid_amt := CASE WHEN v_actual_amt > 0 THEN v_actual_amt ELSE v_expected_amt END;
       v_total_amount := v_total_amount + v_paid_amt;
 
       -- A. Settle payable if payable_id exists and status is MATCHED / PARTIAL
       IF v_payable_id IS NOT NULL AND v_result IN ('MATCHED', 'PARTIAL', 'OVER_PAID', 'UNDER_PAID') THEN
         IF v_target_table LIKE '%dividend%' THEN
-          -- Lock row FOR UPDATE to prevent race conditions
-          PERFORM 1 FROM public.dividend_payables WHERE id = v_payable_id FOR UPDATE;
+          -- Lock row and capture pre-execution snapshot for safe idempotent reversal
+          SELECT paid_amount, payment_status::text, payment_date, payment_reference
+          INTO v_old_paid_amount, v_old_payment_status, v_old_payment_date, v_old_payment_reference
+          FROM public.dividend_payables
+          WHERE id = v_payable_id
+          FOR UPDATE;
 
           UPDATE public.dividend_payables
           SET payment_status = CASE WHEN v_result = 'PARTIAL' THEN 'Partial'::public.payment_status ELSE 'Paid'::public.payment_status END,
@@ -724,7 +759,11 @@ BEGIN
           END IF;
 
         ELSIF v_target_table LIKE '%interest%' OR v_target_table LIKE '%debenture%' THEN
-          PERFORM 1 FROM public.interest_payables WHERE id = v_payable_id FOR UPDATE;
+          SELECT paid_amount, payment_status::text, payment_date, payment_reference
+          INTO v_old_paid_amount, v_old_payment_status, v_old_payment_date, v_old_payment_reference
+          FROM public.interest_payables
+          WHERE id = v_payable_id
+          FOR UPDATE;
 
           UPDATE public.interest_payables
           SET payment_status = CASE WHEN v_result = 'PARTIAL' THEN 'Partial'::public.payment_status ELSE 'Paid'::public.payment_status END,
@@ -743,7 +782,11 @@ BEGIN
           END IF;
 
         ELSIF v_target_table LIKE '%mutual%' THEN
-          PERFORM 1 FROM public.mutual_fund_payables WHERE id = v_payable_id FOR UPDATE;
+          SELECT paid_amount, payment_status::text, payment_date, payment_reference
+          INTO v_old_paid_amount, v_old_payment_status, v_old_payment_date, v_old_payment_reference
+          FROM public.mutual_fund_payables
+          WHERE id = v_payable_id
+          FOR UPDATE;
 
           UPDATE public.mutual_fund_payables
           SET payment_status = CASE WHEN v_result = 'PARTIAL' THEN 'Partial'::public.payment_status ELSE 'Paid'::public.payment_status END,
@@ -858,7 +901,11 @@ BEGIN
         rejected_candidates,
         rule_version,
         matched_by,
-        matched_at
+        matched_at,
+        prior_paid_amount,
+        prior_payment_status,
+        prior_payment_date,
+        prior_payment_reference
       ) VALUES (
         v_run_id,
         CURRENT_DATE,
@@ -877,7 +924,7 @@ BEGIN
         v_expected_amt,
         v_actual_amt,
         v_diff,
-        v_result::public.reconciliation_result,
+        v_result_enum,
         v_notes,
         v_match_method,
         v_confidence,
@@ -885,7 +932,11 @@ BEGIN
         COALESCE(v_item->'rejected_candidates', '[]'::jsonb),
         v_rule_ver,
         v_uid,
-        now()
+        now(),
+        v_old_paid_amount,
+        v_old_payment_status,
+        v_old_payment_date,
+        v_old_payment_reference
       )
       ON CONFLICT (run_id, source_reference) WHERE run_id IS NOT NULL DO NOTHING;
 
@@ -967,7 +1018,8 @@ BEGIN
       'payments_created', v_payments_created,
       'results_inserted', v_results_inserted,
       'exceptions_created', v_exceptions_created,
-      'already_paid_skipped', v_already_paid
+      'already_paid_skipped', v_already_paid,
+      'rejected_count', v_rejected_count
     )
   );
 
@@ -980,6 +1032,7 @@ BEGIN
     'results_inserted', v_results_inserted,
     'exceptions_created', v_exceptions_created,
     'already_paid_skipped', v_already_paid,
+    'rejected_count', v_rejected_count,
     'errors', v_errors
   );
 END;
@@ -1005,7 +1058,9 @@ DECLARE
   v_payable_record record;
 BEGIN
   -- 1. Authorization check
-  PERFORM public.require_role('admin', 'supervisor');
+  IF current_user != 'service_role' AND current_user != 'postgres' AND auth.role() != 'service_role' THEN
+    PERFORM public.require_role('admin', 'supervisor');
+  END IF;
 
   -- 2. Fetch run record
   SELECT * INTO v_run FROM public.reconciliation_runs WHERE id = p_run_id;
@@ -1014,7 +1069,7 @@ BEGIN
   END IF;
 
   -- Verify tenant access
-  IF current_user != 'service_role' AND v_run.company_id IS NOT NULL THEN
+  IF current_user != 'service_role' AND current_user != 'postgres' AND auth.role() != 'service_role' AND v_run.company_id IS NOT NULL THEN
     IF NOT public.has_company_access(v_uid, v_run.company_id) THEN
       RAISE EXCEPTION 'Unauthorized: caller lacks access to company %', v_run.company_id USING ERRCODE = '42501';
     END IF;
@@ -1040,41 +1095,48 @@ BEGIN
       USING ERRCODE = '55000';
   END IF;
 
-  -- 4. Revert ONLY payables linked to this run
+  -- 4. Revert ONLY payables linked to this run, restoring their prior snapshot
   FOR v_payable_record IN (
-    SELECT DISTINCT payable_type, payable_id, expected_amount, actual_amount
+    SELECT DISTINCT ON (payable_type, payable_id)
+      payable_type,
+      payable_id,
+      prior_paid_amount,
+      prior_payment_status,
+      prior_payment_date,
+      prior_payment_reference
     FROM public.reconciliation_results
     WHERE run_id = p_run_id AND payable_id IS NOT NULL
+    ORDER BY payable_type, payable_id, id ASC
   ) LOOP
     IF LOWER(v_payable_record.payable_type) LIKE '%dividend%' THEN
       UPDATE public.dividend_payables
-      SET payment_status = 'Pending'::public.payment_status,
-          paid_amount = 0,
-          remaining_amount = net_payable,
-          payment_date = NULL,
-          payment_reference = NULL,
+      SET payment_status = COALESCE(v_payable_record.prior_payment_status::public.payment_status, 'Pending'::public.payment_status),
+          paid_amount = COALESCE(v_payable_record.prior_paid_amount, 0),
+          remaining_amount = GREATEST(0, COALESCE(net_payable, 0) - COALESCE(v_payable_record.prior_paid_amount, 0)),
+          payment_date = v_payable_record.prior_payment_date,
+          payment_reference = v_payable_record.prior_payment_reference,
           updated_at = now()
       WHERE id = v_payable_record.payable_id;
       IF FOUND THEN v_reverted_payables := v_reverted_payables + 1; END IF;
 
     ELSIF LOWER(v_payable_record.payable_type) LIKE '%interest%' OR LOWER(v_payable_record.payable_type) LIKE '%debenture%' THEN
       UPDATE public.interest_payables
-      SET payment_status = 'Pending'::public.payment_status,
-          paid_amount = 0,
-          remaining_amount = net_payable,
-          payment_date = NULL,
-          payment_reference = NULL,
+      SET payment_status = COALESCE(v_payable_record.prior_payment_status::public.payment_status, 'Pending'::public.payment_status),
+          paid_amount = COALESCE(v_payable_record.prior_paid_amount, 0),
+          remaining_amount = GREATEST(0, COALESCE(net_payable, 0) - COALESCE(v_payable_record.prior_paid_amount, 0)),
+          payment_date = v_payable_record.prior_payment_date,
+          payment_reference = v_payable_record.prior_payment_reference,
           updated_at = now()
       WHERE id = v_payable_record.payable_id;
       IF FOUND THEN v_reverted_payables := v_reverted_payables + 1; END IF;
 
     ELSIF LOWER(v_payable_record.payable_type) LIKE '%mutual%' THEN
       UPDATE public.mutual_fund_payables
-      SET payment_status = 'Pending'::public.payment_status,
-          paid_amount = 0,
-          remaining_amount = net_payable,
-          payment_date = NULL,
-          payment_reference = NULL,
+      SET payment_status = COALESCE(v_payable_record.prior_payment_status::public.payment_status, 'Pending'::public.payment_status),
+          paid_amount = COALESCE(v_payable_record.prior_paid_amount, 0),
+          remaining_amount = GREATEST(0, COALESCE(net_payable, 0) - COALESCE(v_payable_record.prior_paid_amount, 0)),
+          payment_date = v_payable_record.prior_payment_date,
+          payment_reference = v_payable_record.prior_payment_reference,
           updated_at = now()
       WHERE id = v_payable_record.payable_id;
       IF FOUND THEN v_reverted_payables := v_reverted_payables + 1; END IF;
@@ -1141,16 +1203,14 @@ DECLARE
   v_reverted_payables int := 0;
   v_updated_payments int := 0;
   v_deleted_results int := 0;
-  v_div_ids uuid[];
-  v_int_ids uuid[];
-  v_mf_ids uuid[];
   v_payment_ids uuid[];
   v_completed_count int := 0;
+  v_payable_record record;
 BEGIN
-  PERFORM public.require_role('admin', 'supervisor', 'finance_operator', 'reconciliation_officer');
+  IF current_user != 'service_role' AND current_user != 'postgres' AND auth.role() != 'service_role' THEN
+    PERFORM public.require_role('admin', 'supervisor', 'finance_operator', 'reconciliation_officer');
 
-  -- Verify caller has access to the companies of these reconciliation records
-  IF current_user != 'service_role' THEN
+    -- Verify caller has access to the companies of these reconciliation records
     IF EXISTS (
       SELECT 1 FROM public.reconciliation_results rr
       WHERE rr.id = ANY(p_result_ids)
@@ -1179,55 +1239,53 @@ BEGIN
     END IF;
   END IF;
 
-  -- 2. Extract payable IDs grouped by type
-  SELECT COALESCE(array_agg(payable_id), '{}') INTO v_div_ids
-  FROM public.reconciliation_results
-  WHERE id = ANY(p_result_ids) AND LOWER(COALESCE(payable_type, '')) = 'dividend' AND payable_id IS NOT NULL;
+  -- 2. Restore payables back to prior snapshot (or Pending/0 if prior snapshot is null)
+  FOR v_payable_record IN (
+    SELECT DISTINCT ON (payable_type, payable_id)
+      payable_type,
+      payable_id,
+      prior_paid_amount,
+      prior_payment_status,
+      prior_payment_date,
+      prior_payment_reference
+    FROM public.reconciliation_results
+    WHERE id = ANY(p_result_ids) AND payable_id IS NOT NULL
+    ORDER BY payable_type, payable_id, id ASC
+  ) LOOP
+    IF LOWER(COALESCE(v_payable_record.payable_type, '')) = 'dividend' THEN
+      UPDATE public.dividend_payables
+      SET payment_status = COALESCE(v_payable_record.prior_payment_status::public.payment_status, 'Pending'::public.payment_status),
+          paid_amount = COALESCE(v_payable_record.prior_paid_amount, 0),
+          remaining_amount = GREATEST(0, COALESCE(net_payable, 0) - COALESCE(v_payable_record.prior_paid_amount, 0)),
+          payment_date = v_payable_record.prior_payment_date,
+          payment_reference = v_payable_record.prior_payment_reference,
+          updated_at = now()
+      WHERE id = v_payable_record.payable_id;
+      IF FOUND THEN v_reverted_payables := v_reverted_payables + 1; END IF;
 
-  SELECT COALESCE(array_agg(payable_id), '{}') INTO v_int_ids
-  FROM public.reconciliation_results
-  WHERE id = ANY(p_result_ids) AND LOWER(COALESCE(payable_type, '')) IN ('interest', 'debenture') AND payable_id IS NOT NULL;
+    ELSIF LOWER(COALESCE(v_payable_record.payable_type, '')) IN ('interest', 'debenture') THEN
+      UPDATE public.interest_payables
+      SET payment_status = COALESCE(v_payable_record.prior_payment_status::public.payment_status, 'Pending'::public.payment_status),
+          paid_amount = COALESCE(v_payable_record.prior_paid_amount, 0),
+          remaining_amount = GREATEST(0, COALESCE(net_payable, 0) - COALESCE(v_payable_record.prior_paid_amount, 0)),
+          payment_date = v_payable_record.prior_payment_date,
+          payment_reference = v_payable_record.prior_payment_reference,
+          updated_at = now()
+      WHERE id = v_payable_record.payable_id;
+      IF FOUND THEN v_reverted_payables := v_reverted_payables + 1; END IF;
 
-  SELECT COALESCE(array_agg(payable_id), '{}') INTO v_mf_ids
-  FROM public.reconciliation_results
-  WHERE id = ANY(p_result_ids) AND LOWER(COALESCE(payable_type, '')) = 'mutual_fund' AND payable_id IS NOT NULL;
-
-  -- 3. Reset payables back to Pending
-  IF array_length(v_div_ids, 1) > 0 THEN
-    UPDATE public.dividend_payables
-    SET payment_status = 'Pending'::public.payment_status,
-        paid_amount = 0,
-        remaining_amount = net_payable,
-        payment_date = NULL,
-        payment_reference = NULL,
-        updated_at = now()
-    WHERE id = ANY(v_div_ids);
-    v_reverted_payables := v_reverted_payables + array_length(v_div_ids, 1);
-  END IF;
-
-  IF array_length(v_int_ids, 1) > 0 THEN
-    UPDATE public.interest_payables
-    SET payment_status = 'Pending'::public.payment_status,
-        paid_amount = 0,
-        remaining_amount = net_payable,
-        payment_date = NULL,
-        payment_reference = NULL,
-        updated_at = now()
-    WHERE id = ANY(v_int_ids);
-    v_reverted_payables := v_reverted_payables + array_length(v_int_ids, 1);
-  END IF;
-
-  IF array_length(v_mf_ids, 1) > 0 THEN
-    UPDATE public.mutual_fund_payables
-    SET payment_status = 'Pending'::public.payment_status,
-        paid_amount = 0,
-        remaining_amount = net_payable,
-        payment_date = NULL,
-        payment_reference = NULL,
-        updated_at = now()
-    WHERE id = ANY(v_mf_ids);
-    v_reverted_payables := v_reverted_payables + array_length(v_mf_ids, 1);
-  END IF;
+    ELSIF LOWER(COALESCE(v_payable_record.payable_type, '')) = 'mutual_fund' THEN
+      UPDATE public.mutual_fund_payables
+      SET payment_status = COALESCE(v_payable_record.prior_payment_status::public.payment_status, 'Pending'::public.payment_status),
+          paid_amount = COALESCE(v_payable_record.prior_paid_amount, 0),
+          remaining_amount = GREATEST(0, COALESCE(net_payable, 0) - COALESCE(v_payable_record.prior_paid_amount, 0)),
+          payment_date = v_payable_record.prior_payment_date,
+          payment_reference = v_payable_record.prior_payment_reference,
+          updated_at = now()
+      WHERE id = v_payable_record.payable_id;
+      IF FOUND THEN v_reverted_payables := v_reverted_payables + 1; END IF;
+    END IF;
+  END LOOP;
 
   -- 4. Delete or reset ONLY the explicitly linked payment rows (never unlinked external payments)
   IF array_length(v_payment_ids, 1) > 0 THEN
@@ -1410,3 +1468,8 @@ GRANT EXECUTE ON FUNCTION public.revert_reconciliation_lot_atomic(uuid[]) TO aut
 
 REVOKE EXECUTE ON FUNCTION public.get_reconciliation_runs_paginated(uuid, text, text, text, int, int, date, date) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.get_reconciliation_runs_paginated(uuid, text, text, text, int, int, date, date) TO authenticated, service_role;
+
+-- Grant table privileges on newly introduced tables to authenticated and service_role (access controlled by RLS)
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.reconciliation_runs TO authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.reconciliation_exceptions TO authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.bank_statement_imports TO authenticated, service_role;

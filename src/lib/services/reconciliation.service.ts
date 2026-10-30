@@ -514,23 +514,26 @@ export const ReconciliationService = {
     alreadyPaid: number;
     resultsInserted?: number;
     exceptionsCreated?: number;
+    rejectedCount?: number;
     runId?: string;
     errors: string[];
   }> {
-    const matchedResults = results.filter(
+    const applicableResults = results.filter(
       (r) =>
         r.result === "Matched" ||
         r.result === "Over_Paid" ||
         r.result === "Under_Paid" ||
-        r.result === "Partial",
+        r.result === "Partial" ||
+        r.result === "Rejected",
     );
-    if (!matchedResults.length) {
+    if (!applicableResults.length) {
       return {
         updated: 0,
         paymentsCreated: 0,
         alreadyPaid: 0,
         resultsInserted: 0,
         exceptionsCreated: 0,
+        rejectedCount: 0,
         errors: [],
       };
     }
@@ -538,6 +541,7 @@ export const ReconciliationService = {
     let updated = 0;
     let paymentsCreated = 0;
     let alreadyPaid = 0;
+    let rejectedCount = 0;
     const errors: string[] = [];
 
     // Helper to normalize payable types from any source format
@@ -561,8 +565,8 @@ export const ReconciliationService = {
       );
     };
 
-    const batchMatches = matchedResults.filter(isBatchRecord);
-    const individualMatches = matchedResults.filter((r) => !isBatchRecord(r));
+    const batchMatches = applicableResults.filter(isBatchRecord);
+    const individualMatches = applicableResults.filter((r) => !isBatchRecord(r));
 
     // 1. Process Batch Header matches (aggregate debit in bank statement)
     let batchesUpdated = 0;
@@ -887,6 +891,7 @@ export const ReconciliationService = {
           rpcRes.updated_payments ?? rpcRes.payments_created ?? rpcRes.paymentsCreated ?? 0,
         );
         alreadyPaid += Number(rpcRes.already_paid_skipped ?? rpcRes.already_paid ?? 0);
+        rejectedCount += Number(rpcRes.rejected_count ?? 0);
         if (Array.isArray(rpcRes.errors) && rpcRes.errors.length > 0) {
           for (const err of rpcRes.errors) {
             errors.push(err?.error || JSON.stringify(err));
@@ -899,11 +904,20 @@ export const ReconciliationService = {
       updated === 0 &&
       paymentsCreated === 0 &&
       alreadyPaid === 0 &&
+      rejectedCount === 0 &&
       totalItemsProcessed === 0 &&
       batchesUpdated === 0 &&
       batchesAlreadyCompleted === 0
     ) {
-      return { updated: 0, paymentsCreated: 0, alreadyPaid: 0, errors };
+      return {
+        updated: 0,
+        paymentsCreated: 0,
+        alreadyPaid: 0,
+        resultsInserted,
+        exceptionsCreated,
+        rejectedCount: 0,
+        errors,
+      };
     }
 
     // 5. Process remarks for Rejected transactions strictly
@@ -988,6 +1002,7 @@ export const ReconciliationService = {
       alreadyPaid,
       resultsInserted,
       exceptionsCreated,
+      rejectedCount,
       runId: activeRunId ?? undefined,
       errors,
     };
