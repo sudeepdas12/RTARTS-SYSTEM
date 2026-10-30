@@ -1065,11 +1065,7 @@ export const ReconciliationService = {
 
     if (error) {
       console.error("Failed to query reconciliation_runs:", error.message);
-      return {
-        runs: [],
-        totalCount: 0,
-        summary: { total_amount: 0, matched_count: 0, unmatched_count: 0, row_count: 0 },
-      };
+      throw new Error(`Failed to load reconciliation run history: ${error.message}`);
     }
 
     const runs = (data || []).map((r: any) => ({
@@ -1181,15 +1177,41 @@ export const ReconciliationService = {
       openingBalance?: number;
       closingBalance?: number;
     },
-  ): Promise<{ importId: string; fileHash: string; insertedCount: number }> {
+  ): Promise<{ importId: string; fileHash: string; insertedCount: number; isDuplicate?: boolean }> {
+    if (!companyId) {
+      throw new Error(
+        `Target company must be selected before ingesting bank statements into the immutable ledger for file ${file.name}.`,
+      );
+    }
+
     const fileHash = await computeSha256(file);
-    const resolvedCompanyId = companyId || null;
+    const resolvedCompanyId = companyId;
     const bankName = metadata?.bankName || "Commercial Bank";
     const accountNo = metadata?.accountNo || "Statement Account";
     const totalDebit = transactions.reduce((acc, t) => acc + (Number(t.debit) || 0), 0);
     const totalCredit = transactions.reduce((acc, t) => acc + (Number(t.credit) || 0), 0);
 
-    // 1. Create bank_statement_imports record
+    // 1. Check for existing import with identical file hash to prevent duplicate import rows
+    const { data: existingImport } = await (supabase as any)
+      .from("bank_statement_imports")
+      .select("id, file_name, row_count")
+      .eq("file_hash_sha256", fileHash)
+      .eq("company_id", resolvedCompanyId)
+      .maybeSingle();
+
+    if (existingImport) {
+      console.info(
+        `Duplicate bank statement file already ingested: ${file.name} (matches import ${existingImport.id})`,
+      );
+      return {
+        importId: existingImport.id,
+        fileHash,
+        insertedCount: 0,
+        isDuplicate: true,
+      };
+    }
+
+    // 2. Create bank_statement_imports record
     const { data: imp, error: impErr } = await (supabase as any)
       .from("bank_statement_imports")
       .insert({
@@ -1222,24 +1244,34 @@ export const ReconciliationService = {
 
     const importId = imp.id;
 
-    // 2. Insert transactions with fingerprint
+    // 3. Insert transactions with fingerprint
     const batchSize = 250;
     let insertedCount = 0;
     for (let i = 0; i < transactions.length; i += batchSize) {
       const chunk = transactions.slice(i, i + batchSize);
       const rows = await Promise.all(
         chunk.map(async (t) => {
-          const rawFingerprintStr = `${resolvedCompanyId || "unassigned"}|${t.date}|${t.description}|${t.reference || t.instructionId || ""}|${t.debit || 0}|${t.credit || 0}`;
+          const resolvedRef = t.reference || t.instructionId || t.referenceId || null;
+          const rawFingerprintStr = `${resolvedCompanyId}|${t.date || ""}|${t.accountNo || ""}|${t.description || ""}|${resolvedRef || ""}|${t.category || ""}|${t.status || ""}|${t.batchId || ""}|${t.debit || 0}|${t.credit || 0}|${t.balance ?? ""}`;
           const fingerprint = await computeSha256(rawFingerprintStr);
           return {
             import_id: importId,
             company_id: resolvedCompanyId,
             transaction_date: t.date || new Date().toISOString().slice(0, 10),
             description: t.description || null,
-            reference: t.reference || t.instructionId || null,
+            reference: resolvedRef,
             debit_amount: Number(t.debit || 0),
             credit_amount: Number(t.credit || 0),
             balance: t.balance != null ? Number(t.balance) : null,
+            raw_data: {
+              accountNo: t.accountNo || null,
+              category: t.category || null,
+              status: t.status || null,
+              batchId: t.batchId || null,
+              beneficiaryName: t.beneficiaryName || null,
+              instructionId: t.instructionId || null,
+              referenceId: t.referenceId || null,
+            },
             transaction_fingerprint: fingerprint,
             reconciliation_status: "unreconciled",
           };

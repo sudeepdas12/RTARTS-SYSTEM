@@ -147,6 +147,13 @@ CREATE TABLE IF NOT EXISTS public.reconciliation_runs (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+-- Ensure auxiliary columns exist on reconciliation_runs if table pre-existed
+ALTER TABLE public.reconciliation_runs
+  ADD COLUMN IF NOT EXISTS batch_id uuid REFERENCES public.payment_batches(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS partial_count integer DEFAULT 0 NOT NULL,
+  ADD COLUMN IF NOT EXISTS rejected_count integer DEFAULT 0 NOT NULL,
+  ADD COLUMN IF NOT EXISTS processed_chunks jsonb DEFAULT '[]'::jsonb;
+
 CREATE INDEX IF NOT EXISTS idx_reconciliation_runs_company_id ON public.reconciliation_runs(company_id);
 CREATE INDEX IF NOT EXISTS idx_reconciliation_runs_file_hash ON public.reconciliation_runs(file_hash_sha256);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reconciliation_runs_idempotency ON public.reconciliation_runs(idempotency_key) WHERE idempotency_key IS NOT NULL;
@@ -455,6 +462,9 @@ DECLARE
   v_existing_chunks jsonb;
   v_applied_payable_amt numeric;
   v_source_reference text;
+  v_rows_affected int := 0;
+  v_partial_count int := 0;
+  v_rejected_count int := 0;
   
   v_payables_updated int := 0;
   v_payments_created int := 0;
@@ -507,10 +517,12 @@ BEGIN
   END IF;
 
   IF v_run_id IS NOT NULL THEN
-    SELECT status, COALESCE(processed_chunks, '[]'::jsonb)
-    INTO v_existing_status, v_existing_chunks
+    -- Acquire exclusive row lock on reconciliation_runs to serialize concurrent retries
+    SELECT status, COALESCE(processed_chunks, '[]'::jsonb), batch_id
+    INTO v_existing_status, v_existing_chunks, v_batch_id
     FROM public.reconciliation_runs
-    WHERE id = v_run_id;
+    WHERE id = v_run_id
+    FOR UPDATE;
 
     -- Chunk-level idempotency: skip if this chunk was already processed
     IF v_existing_chunks ? v_chunk_index::text THEN
@@ -518,6 +530,7 @@ BEGIN
         'success', true,
         'idempotent', true,
         'run_id', v_run_id,
+        'batch_id', v_batch_id,
         'message', 'Reconciliation chunk ' || v_chunk_index || ' already applied',
         'payables_updated', 0,
         'payments_created', 0,
@@ -534,6 +547,7 @@ BEGIN
         'success', true,
         'idempotent', true,
         'run_id', v_run_id,
+        'batch_id', v_batch_id,
         'message', 'Reconciliation run already finalized',
         'payables_updated', 0,
         'payments_created', 0,
@@ -582,7 +596,10 @@ BEGIN
   ELSE
     UPDATE public.reconciliation_runs
     SET status = CASE WHEN v_is_final_chunk THEN 'applied' ELSE 'processing' END,
-        processed_chunks = COALESCE(processed_chunks, '[]'::jsonb) || jsonb_build_array(v_chunk_index::text),
+        processed_chunks = CASE 
+          WHEN v_existing_chunks ? v_chunk_index::text THEN v_existing_chunks 
+          ELSE v_existing_chunks || jsonb_build_array(v_chunk_index::text) 
+        END,
         applied_by = CASE WHEN v_is_final_chunk THEN v_uid ELSE applied_by END,
         applied_at = CASE WHEN v_is_final_chunk THEN now() ELSE applied_at END,
         updated_at = now()
@@ -618,6 +635,9 @@ BEGIN
       -- Update run with linked batch
       UPDATE public.reconciliation_runs SET batch_id = v_batch_id WHERE id = v_run_id;
     END IF;
+  ELSIF v_batch_id IS NULL AND v_run_id IS NOT NULL THEN
+    -- In subsequent chunks (where p_batch_info is null), inherit batch_id from the existing run
+    SELECT batch_id INTO v_batch_id FROM public.reconciliation_runs WHERE id = v_run_id;
   END IF;
 
   -- 4. Process each reconciliation item atomically
@@ -818,7 +838,17 @@ BEGIN
         now()
       )
       ON CONFLICT (run_id, source_reference) WHERE run_id IS NOT NULL DO NOTHING;
-      v_results_inserted := v_results_inserted + 1;
+
+      -- Increment results_inserted only when a row was actually inserted
+      GET DIAGNOSTICS v_rows_affected = ROW_COUNT;
+      v_results_inserted := v_results_inserted + v_rows_affected;
+
+      -- Track status counters
+      IF v_result = 'REJECTED' THEN
+        v_rejected_count := v_rejected_count + 1;
+      ELSIF v_result = 'PARTIAL' OR (v_target_table = 'mutual_fund' AND v_paid_amt < v_expected_amt AND v_paid_amt > 0) THEN
+        v_partial_count := v_partial_count + 1;
+      END IF;
 
       -- C. If exception/unmatched, record durable exception
       IF v_result IN ('MISSING', 'REJECTED', 'EXCEPTION') OR v_diff != 0 THEN
@@ -861,7 +891,10 @@ BEGIN
   UPDATE public.reconciliation_runs
   SET matched_count = COALESCE(matched_count, 0) + v_payables_updated,
       unmatched_count = COALESCE(unmatched_count, 0) + v_exceptions_created,
+      partial_count = COALESCE(partial_count, 0) + v_partial_count,
+      rejected_count = COALESCE(rejected_count, 0) + v_rejected_count,
       total_amount = COALESCE(total_amount, 0) + v_total_amount,
+      batch_id = COALESCE(batch_id, v_batch_id),
       status = CASE WHEN v_is_final_chunk THEN 'applied' ELSE 'processing' END,
       applied_by = CASE WHEN v_is_final_chunk THEN v_uid ELSE applied_by END,
       applied_at = CASE WHEN v_is_final_chunk THEN now() ELSE applied_at END,
@@ -1309,3 +1342,20 @@ BEGIN
   );
 END;
 $$;
+
+-- ============================================================================
+-- 9. EXPLICIT RPC PRIVILEGE REVOCATION & LEAST-PRIVILEGE GRANTS
+-- ============================================================================
+
+-- Restrict SECURITY DEFINER RPC execution from PUBLIC, grant exclusively to authenticated and service_role
+REVOKE EXECUTE ON FUNCTION public.apply_and_record_reconciliation_batch(jsonb, jsonb, jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.apply_and_record_reconciliation_batch(jsonb, jsonb, jsonb) TO authenticated, service_role;
+
+REVOKE EXECUTE ON FUNCTION public.revert_reconciliation_run_atomic(uuid, boolean) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.revert_reconciliation_run_atomic(uuid, boolean) TO authenticated, service_role;
+
+REVOKE EXECUTE ON FUNCTION public.revert_reconciliation_lot_atomic(text, boolean) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.revert_reconciliation_lot_atomic(text, boolean) TO authenticated, service_role;
+
+REVOKE EXECUTE ON FUNCTION public.get_reconciliation_runs_paginated(uuid, text, text, text, int, int, date, date) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_reconciliation_runs_paginated(uuid, text, text, text, int, int, date, date) TO authenticated, service_role;

@@ -553,6 +553,13 @@ describe("Reconciliation Audit Remediation Invariants", () => {
       const fromSpy = vi.spyOn(supabase, "from").mockImplementation((table: string) => {
         if (table === "bank_statement_imports") {
           return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: () => Promise.resolve({ data: null, error: null }),
+                }),
+              }),
+            }),
             insert: () => ({
               select: () => ({
                 single: () =>
@@ -576,6 +583,145 @@ describe("Reconciliation Audit Remediation Invariants", () => {
         ),
       ).rejects.toThrow(/Bank statement import ledger creation failed/i);
 
+      fromSpy.mockRestore();
+    });
+
+    it("rejects bank statement ingestion when company_id is NULL or unassigned", async () => {
+      const file = new File(["test data"], "statement.csv", { type: "text/csv" });
+      await expect(
+        ReconciliationService.ingestBankStatementFile(null, file, [
+          { debit: 1000, credit: 0, date: "2026-03-01", description: "Test" },
+        ]),
+      ).rejects.toThrow(/Target company must be selected/i);
+    });
+
+    it("detects existing duplicate import by hash and company, avoiding duplicate import row creation", async () => {
+      const existingImportId = "00000000-0000-0000-0000-999999999999";
+      const fromSpy = vi.spyOn(supabase, "from").mockImplementation((table: string) => {
+        if (table === "bank_statement_imports") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: () =>
+                    Promise.resolve({
+                      data: { id: existingImportId, file_name: "duplicate.csv", row_count: 5 },
+                      error: null,
+                    }),
+                }),
+              }),
+            }),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const file = new File(["duplicate content"], "duplicate.csv", { type: "text/csv" });
+      const result = await ReconciliationService.ingestBankStatementFile(
+        "00000000-0000-0000-0000-000000000001",
+        file,
+        [{ debit: 500, credit: 0, date: "2026-03-01", description: "Test" }],
+      );
+
+      expect(result.isDuplicate).toBe(true);
+      expect(result.importId).toBe(existingImportId);
+      expect(result.insertedCount).toBe(0);
+
+      fromSpy.mockRestore();
+    });
+
+    it("constructs high-fidelity transaction fingerprints including referenceId, category, and status", async () => {
+      const insertedRows: any[] = [];
+      const fromSpy = vi.spyOn(supabase, "from").mockImplementation((table: string) => {
+        if (table === "bank_statement_imports") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: () => Promise.resolve({ data: null, error: null }),
+                }),
+              }),
+            }),
+            insert: () => ({
+              select: () => ({
+                single: () =>
+                  Promise.resolve({
+                    data: { id: "import-123" },
+                    error: null,
+                  }),
+              }),
+            }),
+          } as any;
+        }
+        if (table === "bank_statement_transactions") {
+          return {
+            upsert: (rows: any[]) => {
+              insertedRows.push(...rows);
+              return Promise.resolve({ error: null });
+            },
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const file = new File(["content"], "settlement.csv", { type: "text/csv" });
+      await ReconciliationService.ingestBankStatementFile(
+        "00000000-0000-0000-0000-000000000001",
+        file,
+        [
+          {
+            date: "2026-03-01",
+            accountNo: "0100000001",
+            description: "Direct Switch Payout",
+            referenceId: "SWITCH-REF-777", // Only referenceId present
+            category: "ACH_SETTLEMENT",
+            status: "SUCCESS",
+            batchId: "BATCH-888",
+            debit: 4500,
+            credit: 0,
+            balance: 50000,
+          },
+        ],
+      );
+
+      expect(insertedRows).toHaveLength(1);
+      expect(insertedRows[0].reference).toBe("SWITCH-REF-777");
+      expect(insertedRows[0].transaction_fingerprint).toBeDefined();
+      expect(insertedRows[0].raw_data.referenceId).toBe("SWITCH-REF-777");
+      expect(insertedRows[0].raw_data.category).toBe("ACH_SETTLEMENT");
+
+      fromSpy.mockRestore();
+    });
+  });
+
+  describe("8. Operational Error Propagation & Counter Precision", () => {
+    it("fails closed and throws error when getReconciliationRuns encounters database errors", async () => {
+      // Mock RPC failure
+      const rpcSpy = vi.spyOn(supabase, "rpc").mockRejectedValueOnce(new Error("RPC unavailable"));
+
+      // Mock table query error
+      const fromSpy = vi.spyOn(supabase, "from").mockImplementation((table: string) => {
+        if (table === "reconciliation_runs") {
+          const chain: any = {
+            select: () => chain,
+            order: () => chain,
+            range: () =>
+              Promise.resolve({
+                data: null,
+                count: null,
+                error: { message: "Permission denied on table reconciliation_runs" },
+              }),
+          };
+          return chain;
+        }
+        return {} as any;
+      });
+
+      await expect(ReconciliationService.getReconciliationRuns()).rejects.toThrow(
+        /Failed to load reconciliation run history/i,
+      );
+
+      rpcSpy.mockRestore();
       fromSpy.mockRestore();
     });
   });

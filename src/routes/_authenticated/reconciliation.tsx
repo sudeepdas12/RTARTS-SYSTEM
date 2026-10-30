@@ -462,6 +462,12 @@ export function ReconciliationRoute() {
       }
 
       if (areBankReports || detectedBankByHeader) {
+        if (!reconCompanyIds.length || !reconCompanyIds[0]) {
+          toast.error(
+            "Target company selection is required before analyzing and ingesting settlement reports.",
+          );
+          return;
+        }
         try {
           const { transactions, perFileTransactions } =
             await BankParser.parseMultipleFilesWithProvenance(files, {
@@ -524,6 +530,13 @@ export function ReconciliationRoute() {
 
   const processBankStatementFiles = async (files: File[]) => {
     if (!files.length) return;
+
+    if (!reconCompanyIds.length || !reconCompanyIds[0]) {
+      toast.error(
+        "Target company selection is required before analyzing and ingesting bank statements.",
+      );
+      return;
+    }
 
     setIsProcessing(true);
     setProcessingProgress(
