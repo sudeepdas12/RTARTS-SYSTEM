@@ -33,6 +33,9 @@ export interface TaxRule {
   payee_classification: TaxClassification;
   tax_rate: number;
   is_active: boolean;
+  statutory_citation?: string | null;
+  comparison_rate?: number | null;
+  effective_from?: string | null;
 }
 
 export const TAX_CATEGORY_LABEL: Record<TaxPayableCategory, string> = {
@@ -58,7 +61,9 @@ export async function loadTaxRules(force = false): Promise<TaxRule[]> {
   if (!force && cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.rules;
   const { data, error } = await (supabase as any)
     .from("payable_tax_rules")
-    .select("id, payable_category, payee_classification, tax_rate, is_active")
+    .select(
+      "id, payable_category, payee_classification, tax_rate, is_active, statutory_citation, comparison_rate, effective_from",
+    )
     .eq("is_active", true)
     .order("payable_category")
     .order("payee_classification");

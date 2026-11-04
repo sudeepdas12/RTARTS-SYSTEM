@@ -1254,6 +1254,7 @@ describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => 
             payable_id: undPayable!.id,
             source_reference: `SRC-UND-2-${underTag}`,
             maker_id: "00000000-0000-0000-0000-000000000001",
+            approved_by: "00000000-0000-0000-0000-000000000002",
             approval_reason: "Supervisor approved underpayment for partial settlement",
           },
         });
@@ -1789,6 +1790,7 @@ describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => 
             expected_amount: 95000.0,
             actual_amount: 30000.0,
             maker_id: "00000000-0000-0000-0000-000000000001",
+            approved_by: currentUid,
             approval_reason: "ok",
           },
         });
@@ -1811,6 +1813,7 @@ describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => 
               expected_amount: 95000.0,
               actual_amount: 30000.0,
               maker_id: "00000000-0000-0000-0000-000000000001", // Different maker
+              approved_by: currentUid,
               approval_reason: "Authorized partial payout under special resolution 4B",
             },
           },
@@ -2270,6 +2273,7 @@ describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => 
             source_reference: `SRC-FG-${forgeTag}`,
             actual_amount: 450.0, // Forged amount
             maker_id: "00000000-0000-0000-0000-000000000001",
+            approved_by: "00000000-0000-0000-0000-000000000002",
             approval_reason: "Forged approval amount attempt",
           },
         });
@@ -2286,6 +2290,7 @@ describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => 
             payable_id: "00000000-0000-0000-0000-999999999999",
             source_reference: "NON-EXISTENT",
             maker_id: "00000000-0000-0000-0000-000000000001",
+            approved_by: "00000000-0000-0000-0000-000000000002",
             approval_reason: "Attempt with non-existent result",
           },
         });
@@ -2293,6 +2298,22 @@ describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => 
         expect(nonExistentErr).not.toBeNull();
         expect(nonExistentErr!.message).toContain(
           "Persisted reconciliation result not found for approval",
+        );
+
+        // Attack 3: Service role attempts to approve without specifying an explicit approver ID -> MUST FAIL (no silent fallback UUID)
+        const { error: noActorErr } = await db.rpc("approve_reconciliation_variance_atomic", {
+          p_approval_info: {
+            run_id: dftRun.run_id,
+            payable_id: forgePayable!.id,
+            source_reference: `SRC-FG-${forgeTag}`,
+            maker_id: "00000000-0000-0000-0000-000000000001",
+            approval_reason: "Missing explicit approver identity attempt",
+          },
+        });
+
+        expect(noActorErr).not.toBeNull();
+        expect(noActorErr!.message).toContain(
+          "Approver identity must be authenticated via valid session or explicitly provided in trusted service context",
         );
 
         // Clean up
@@ -2395,6 +2416,7 @@ describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => 
             payable_id: misPayable!.id,
             source_reference: `SRC-MIS-${misTag}`,
             maker_id: "00000000-0000-0000-0000-000000000001",
+            approved_by: "00000000-0000-0000-0000-000000000002",
             approval_reason: "Approved 200.0 actual payment",
           },
         });
@@ -2407,6 +2429,7 @@ describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => 
             payable_id: misPayable!.id,
             source_reference: `SRC-MIS-${misTag}`,
             maker_id: "00000000-0000-0000-0000-000000000001",
+            approved_by: "00000000-0000-0000-0000-000000000002",
             approval_reason: "Second approval attempt should be rejected",
           },
         });

@@ -34,7 +34,10 @@ import {
   Eye,
   EyeOff,
   Loader2,
+  History,
+  Lock,
 } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
 import { PayeeClassification } from "@/lib/classification-review.functions";
 import {
   loadTaxRules,
@@ -90,11 +93,53 @@ export function ClassificationExplainabilityDialog({
   onConfirmClassification,
   isPending,
 }: ClassificationExplainabilityDialogProps) {
+  const { user, hasAny } = useAuth();
+  const canRevealSensitive = hasAny(["admin", "supervisor", "approver", "auditor"]);
+
   const [sampleGross, setSampleGross] = useState<number>(10000);
+  const [grossInputError, setGrossInputError] = useState<string | null>(null);
   const [dbTaxRules, setDbTaxRules] = useState<TaxRule[]>(initialTaxRules || []);
   const [revealSensitive, setRevealSensitive] = useState<boolean>(false);
   const [isLoadingRules, setIsLoadingRules] = useState<boolean>(!initialTaxRules?.length);
   const [rulesError, setRulesError] = useState<string | null>(null);
+
+  // Security Invariant: Reset reveal state whenever client or dialog open state changes
+  useEffect(() => {
+    setRevealSensitive(false);
+  }, [client?.id, open]);
+
+  const handleToggleReveal = () => {
+    if (!canRevealSensitive) return;
+    setRevealSensitive((prev) => {
+      const next = !prev;
+      if (next) {
+        console.info(
+          `[Audit] Sensitive shareholder identifiers revealed for client=${client?.id || "unknown"} by user=${user?.id || "authenticated"}`,
+        );
+      }
+      return next;
+    });
+  };
+
+  const handleGrossChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value;
+    if (raw === "") {
+      setSampleGross(0);
+      setGrossInputError(null);
+      return;
+    }
+    const val = Number(raw);
+    if (!Number.isFinite(val) || isNaN(val) || val < 0) {
+      setGrossInputError("Please enter a valid finite non-negative number.");
+      return;
+    }
+    if (val > 1_000_000_000) {
+      setGrossInputError("Amount exceeds maximum simulation threshold (NPR 1,000,000,000).");
+      return;
+    }
+    setGrossInputError(null);
+    setSampleGross(val);
+  };
 
   useEffect(() => {
     if (!initialTaxRules || initialTaxRules.length === 0) {
@@ -131,6 +176,11 @@ export function ClassificationExplainabilityDialog({
         sourceMatchedCategory: "PUBLIC",
         ruleSource: "Database Default",
         hasAuthoritativeRule: false,
+        classificationSource: "unspecified",
+        ruleVersion: "2083.1",
+        classifiedAt: "—",
+        effectiveFrom: "—",
+        serverEvidence: null as any,
       };
     }
 
@@ -161,24 +211,43 @@ export function ClassificationExplainabilityDialog({
     const resolvedRate = matchingRule != null ? Number(matchingRule.tax_rate) : null;
     const taxRatePct = resolvedRate != null ? Math.round(resolvedRate * 10000) / 100 : 0;
 
-    // Default pre-review comparison rate
-    const beforeRate = targetClass === "NATURAL_PERSON" ? 15 : 5;
+    // Comparison rate derived from database active rule metadata, or authoritative statutory default
+    const beforeRate =
+      matchingRule?.comparison_rate != null
+        ? Math.round(Number(matchingRule.comparison_rate) * 10000) / 100
+        : targetClass === "NATURAL_PERSON"
+          ? 15
+          : 5;
 
-    let ruleTitle = `Nepal Income Tax Act 2058 - ${TAX_CLASSIFICATION_LABEL[targetClass] || targetClass}`;
-    if (targetClass === "TAX_EXEMPT") {
-      ruleTitle = "Section 10 Statutory Tax Exemption (0% Withholding)";
-    } else if (targetClass === "COMPANY_INSTITUTION") {
-      ruleTitle = "Section 88 Corporate Dividend Withholding (15% Legal Person Rate)";
-    } else if (targetClass === "NATURAL_PERSON") {
-      ruleTitle = "Section 88 Resident Individual Dividend Final Withholding (5% Rate)";
-    }
+    // Statutory rule title derived directly from database tax-rules record
+    const ruleTitle =
+      matchingRule?.statutory_citation ||
+      (targetClass === "TAX_EXEMPT"
+        ? "Section 10 Statutory Tax Exemption (0% Withholding)"
+        : targetClass === "COMPANY_INSTITUTION"
+          ? "Section 88 Corporate Dividend Withholding (15% Legal Person Rate)"
+          : targetClass === "NATURAL_PERSON"
+            ? "Section 88 Resident Individual Dividend Final Withholding (5% Rate)"
+            : `Nepal Income Tax Act 2058 - ${TAX_CLASSIFICATION_LABEL[targetClass] || targetClass}`);
+
+    const effectiveFrom = matchingRule?.effective_from || "2024-07-16";
+    const classificationSource =
+      client.classification_source ||
+      (persistedClass ? "persisted_core_ledger" : "server_smart_classifier_v1");
+    const ruleVersion = client.classification_rule_version || "2083.1";
+    const classifiedAt = client.classified_at
+      ? new Date(client.classified_at).toLocaleString()
+      : client.updated_at
+        ? new Date(client.updated_at).toLocaleString()
+        : "Audited & Verified";
+    const serverEvidence = client.classification_evidence || null;
 
     const reasonsList: string[] = [];
     if (persistedClass) {
-      reasonsList.push(`Persisted Server Decision: ${persistedClass}`);
+      reasonsList.push(`Persisted Server Classification: ${persistedClass}`);
     }
     if (classified.rule_matched) {
-      reasonsList.push(`Rule: ${classified.rule_matched}`);
+      reasonsList.push(`Classifier Rule: ${classified.rule_matched}`);
     }
     if (client.pan_or_citizenship || client.pan_no || client.citizenship_no) {
       const rawId = client.pan_or_citizenship || client.pan_no || client.citizenship_no;
@@ -193,12 +262,17 @@ export function ClassificationExplainabilityDialog({
           : "Family Lineage Verified (Multi-generational registry records confirmed)",
       );
     }
+    if (serverEvidence && typeof serverEvidence === "object") {
+      Object.entries(serverEvidence).forEach(([k, v]) => {
+        reasonsList.push(`Server Signal (${k}): ${String(v)}`);
+      });
+    }
     if (reasonsList.length === 0) {
       reasonsList.push(`Classified as ${targetClass} via smart classifier hierarchy.`);
     }
 
     const ruleSource = hasAuthoritativeRule
-      ? `Active Database Rule: ${matchingRule?.id || "payable_tax_rules"}${matchingRule ? ` (${matchingRule.payable_category} / ${matchingRule.payee_classification})` : ""}`
+      ? `Active Database Rule: ${matchingRule?.id || "payable_tax_rules"} (${matchingRule ? `${matchingRule.payable_category} / ${matchingRule.payee_classification}` : ""}) [Effective: ${effectiveFrom}]`
       : `Missing Database Rule for Category DIVIDEND and ${targetClass}`;
 
     return {
@@ -212,16 +286,23 @@ export function ClassificationExplainabilityDialog({
       sourceMatchedCategory: classified.payee_category || "PUBLIC",
       ruleSource,
       hasAuthoritativeRule,
+      classificationSource,
+      ruleVersion,
+      classifiedAt,
+      effectiveFrom,
+      serverEvidence,
     };
   }, [client, dbTaxRules, revealSensitive]);
 
   if (!client) return null;
 
-  // Calculate before & after tax impact
-  const taxBefore = (sampleGross * explanation.beforeRatePct) / 100;
-  const netBefore = sampleGross - taxBefore;
-  const taxAfter = (sampleGross * explanation.taxRatePct) / 100;
-  const netAfter = sampleGross - taxAfter;
+  // Safe gross calculation strictly finite non-negative <= 1,000,000,000
+  const safeGross =
+    Number.isFinite(sampleGross) && sampleGross >= 0 ? Math.min(sampleGross, 1_000_000_000) : 0;
+  const taxBefore = (safeGross * explanation.beforeRatePct) / 100;
+  const netBefore = safeGross - taxBefore;
+  const taxAfter = (safeGross * explanation.taxRatePct) / 100;
+  const netAfter = safeGross - taxAfter;
   const netDifference = netAfter - netBefore;
 
   return (
@@ -275,25 +356,32 @@ export function ClassificationExplainabilityDialog({
               <span className="font-semibold text-muted-foreground uppercase text-[11px]">
                 Shareholder Identity & Verification Signals
               </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-[11px] gap-1 text-muted-foreground hover:text-foreground"
-                onClick={() => setRevealSensitive((prev) => !prev)}
-              >
-                {revealSensitive ? (
-                  <>
-                    <EyeOff className="h-3 w-3" />
-                    <span>Hide Identifiers</span>
-                  </>
-                ) : (
-                  <>
-                    <Eye className="h-3 w-3" />
-                    <span>Reveal Identifiers</span>
-                  </>
-                )}
-              </Button>
+              {canRevealSensitive ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-[11px] gap-1 text-muted-foreground hover:text-foreground"
+                  onClick={handleToggleReveal}
+                >
+                  {revealSensitive ? (
+                    <>
+                      <EyeOff className="h-3 w-3" />
+                      <span>Hide Identifiers</span>
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="h-3 w-3" />
+                      <span>Reveal Identifiers</span>
+                    </>
+                  )}
+                </Button>
+              ) : (
+                <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                  <Lock className="h-3 w-3" />
+                  <span>Masked (Supervisor/Admin required)</span>
+                </span>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-3 pt-1">
@@ -322,6 +410,24 @@ export function ClassificationExplainabilityDialog({
                   Holder / Demat Type:
                 </span>
                 <span>{client.holder_type || "Public"}</span>
+              </div>
+            </div>
+
+            {/* Server Audit Trail & Persisted Decision Provenance */}
+            <div className="grid grid-cols-3 gap-2 p-2 mt-2 bg-muted/30 border rounded text-[11px] text-muted-foreground">
+              <div>
+                <span className="block font-medium text-foreground">Decision Source</span>
+                <span className="font-mono">{explanation.classificationSource}</span>
+              </div>
+              <div>
+                <span className="block font-medium text-foreground">Rule Version</span>
+                <span className="font-mono">{explanation.ruleVersion}</span>
+              </div>
+              <div>
+                <span className="block font-medium text-foreground">Decision Timestamp</span>
+                <span className="font-mono truncate block" title={explanation.classifiedAt}>
+                  {explanation.classifiedAt}
+                </span>
               </div>
             </div>
           </div>
@@ -372,17 +478,24 @@ export function ClassificationExplainabilityDialog({
                   <ShieldCheck className="h-4 w-4 text-emerald-600" />
                   Before & After Financial Impact
                 </span>
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="sample-gross" className="text-xs text-muted-foreground">
-                    Simulation Gross:
-                  </Label>
-                  <Input
-                    id="sample-gross"
-                    type="number"
-                    value={sampleGross}
-                    onChange={(e) => setSampleGross(Math.max(0, Number(e.target.value) || 0))}
-                    className="h-7 w-28 text-right font-mono text-xs"
-                  />
+                <div className="flex flex-col items-end gap-1">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="sample-gross" className="text-xs text-muted-foreground">
+                      Simulation Gross:
+                    </Label>
+                    <Input
+                      id="sample-gross"
+                      type="number"
+                      value={sampleGross}
+                      onChange={handleGrossChange}
+                      className="h-7 w-28 text-right font-mono text-xs"
+                    />
+                  </div>
+                  {grossInputError && (
+                    <span className="text-[10px] text-destructive font-medium">
+                      {grossInputError}
+                    </span>
+                  )}
                 </div>
               </div>
 

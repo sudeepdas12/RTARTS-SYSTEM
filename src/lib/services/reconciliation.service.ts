@@ -1580,7 +1580,7 @@ export const ReconciliationService = {
 
   /**
    * Approves an underpaid or overpaid reconciliation variance with server-side maker-checker enforcement.
-   * Derives run, payable, amounts, and variance attributes exclusively from persisted result records.
+   * Derives run, payable, amounts, variance attributes, and actor identity exclusively server-side.
    */
   async approveVariance(approvalInfo: {
     resultId?: string;
@@ -1588,8 +1588,6 @@ export const ReconciliationService = {
     payableId?: string;
     sourceReference?: string | null;
     approvalReason: string;
-    makerId?: string;
-    approvedBy?: string;
   }): Promise<{ success: boolean; approvalId: string; resultId?: string }> {
     const { data, error } = await (supabase as any).rpc("approve_reconciliation_variance_atomic", {
       p_approval_info: {
@@ -1598,8 +1596,6 @@ export const ReconciliationService = {
         payable_id: approvalInfo.payableId || null,
         source_reference: approvalInfo.sourceReference || null,
         approval_reason: approvalInfo.approvalReason,
-        maker_id: approvalInfo.makerId || null,
-        approved_by: approvalInfo.approvedBy || null,
       },
     });
 

@@ -252,6 +252,41 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_reconciliation_results_idempotency
   ON public.reconciliation_results(run_id, source_reference)
   WHERE run_id IS NOT NULL;
 
+-- Enrich payable_tax_rules with statutory citations and comparison rates for authoritative UI explainability
+ALTER TABLE public.payable_tax_rules
+  ADD COLUMN IF NOT EXISTS statutory_citation text,
+  ADD COLUMN IF NOT EXISTS comparison_rate numeric(7,6),
+  ADD COLUMN IF NOT EXISTS effective_from date DEFAULT '2024-07-16';
+
+UPDATE public.payable_tax_rules
+SET statutory_citation = CASE
+      WHEN payable_category = 'DIVIDEND' AND payee_classification = 'NATURAL_PERSON' THEN 'Section 88 Resident Individual Final Withholding (5% Rate)'
+      WHEN payable_category = 'DIVIDEND' AND payee_classification = 'PUBLIC_LEGAL_PERSON' THEN 'Section 88 Public/Statutory Legal Entity (5% Rate)'
+      WHEN payable_category = 'DIVIDEND' AND payee_classification = 'COMPANY_INSTITUTION' THEN 'Section 88 Corporate Dividend Withholding (15% Legal Person Rate)'
+      WHEN payable_category = 'DIVIDEND' AND payee_classification = 'FOREIGN_INVESTOR' THEN 'Section 88 Non-Resident / Foreign Investor Withholding (15% Rate)'
+      WHEN payable_category = 'DIVIDEND' AND payee_classification = 'TAX_EXEMPT' THEN 'Section 10 Statutory Tax Exemption (0% Withholding)'
+      WHEN payable_category = 'DIVIDEND' AND payee_classification = 'BANK_FI' THEN 'Section 88 Bank & Financial Institution Withholding (5% Rate)'
+      WHEN payable_category = 'MUTUAL_FUND' AND payee_classification = 'NATURAL_PERSON' THEN 'Mutual Fund Scheme Individual Distribution (0% TDS per SEBON)'
+      WHEN payable_category = 'MUTUAL_FUND' AND payee_classification = 'COMPANY_INSTITUTION' THEN 'Mutual Fund Institutional Distribution (15% TDS per RMF Rules)'
+      WHEN payable_category = 'MUTUAL_FUND' AND payee_classification = 'TAX_EXEMPT' THEN 'Section 10 Mutual Fund Tax Exempt Entity (0% TDS)'
+      WHEN payable_category = 'INTEREST' AND payee_classification = 'NATURAL_PERSON' THEN 'Section 87 Debenture Individual Interest (5% Final)'
+      WHEN payable_category = 'INTEREST' AND payee_classification = 'COMPANY_INSTITUTION' THEN 'Section 87 Corporate Debenture Interest (15% Rate)'
+      WHEN payable_category = 'INTEREST' AND payee_classification = 'BANK_FI' THEN 'Section 87 Bank / Financial Institution Debenture (0% Inter-bank TDS)'
+      ELSE 'Statutory Withholding Rule'
+    END,
+    comparison_rate = CASE
+      WHEN payee_classification IN ('COMPANY_INSTITUTION', 'FOREIGN_INVESTOR') THEN 0.05
+      ELSE 0.15
+    END,
+    effective_from = COALESCE(effective_from, '2024-07-16'::date)
+WHERE statutory_citation IS NULL;
+
+-- Enrich clients with classification rule version, timestamp, and audit evidence
+ALTER TABLE public.clients
+  ADD COLUMN IF NOT EXISTS classification_rule_version text DEFAULT '2083.1',
+  ADD COLUMN IF NOT EXISTS classified_at timestamp with time zone,
+  ADD COLUMN IF NOT EXISTS classification_evidence jsonb DEFAULT '{}'::jsonb;
+
 -- ============================================================================
 -- 4. IMMUTABLE BANK STATEMENT INGESTION LEDGER & FINGERPRINTING
 -- ============================================================================
@@ -2442,8 +2477,8 @@ DECLARE
   c_max_supervisor_pct CONSTANT numeric := 50.0;
 BEGIN
   v_is_service_role := (
-    current_user = 'service_role' OR 
-    current_user = 'postgres' OR 
+    current_user = 'service_role' OR
+    current_user = 'postgres' OR
     COALESCE((auth.jwt()->>'role'), current_setting('request.jwt.claim.role', true), '') = 'service_role'
   );
 
@@ -2451,15 +2486,15 @@ BEGIN
     PERFORM public.require_role('admin', 'supervisor');
     v_uid := auth.uid();
   ELSE
-    v_uid := COALESCE(auth.uid(), NULLIF(p_approval_info->>'approved_by', '')::uuid, '00000000-0000-0000-0000-000000000002'::uuid);
+    v_uid := COALESCE(auth.uid(), NULLIF(p_approval_info->>'approved_by', '')::uuid);
   END IF;
 
   IF v_uid IS NULL THEN
-    RAISE EXCEPTION 'Approver identity must be authenticated via valid session or service role' USING ERRCODE = '42501';
+    RAISE EXCEPTION 'Approver identity must be authenticated via valid session or explicitly provided in trusted service context' USING ERRCODE = '42501';
   END IF;
 
   v_is_admin := (
-    v_is_service_role OR 
+    v_is_service_role OR
     (v_uid IS NOT NULL AND public.has_role(v_uid, 'admin'::public.app_role))
   );
 
