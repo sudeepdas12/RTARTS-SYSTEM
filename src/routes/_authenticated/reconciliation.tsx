@@ -119,6 +119,9 @@ export function ReconciliationRoute() {
   const [historySearchQuery, setHistorySearchQuery] = useState<string>("");
   const debouncedHistorySearch = useDebounce(historySearchQuery, 300);
   const [lotToDelete, setLotToDelete] = useState<ReconciliationGroupedLot | null>(null);
+  const [lotToRevert, setLotToRevert] = useState<ReconciliationGroupedLot | null>(null);
+  const [showClearHistoryDialog, setShowClearHistoryDialog] = useState<boolean>(false);
+  const [showRevertAllDialog, setShowRevertAllDialog] = useState<boolean>(false);
   const [historyCompanyFilter, setHistoryCompanyFilter] = useState<string>("all");
   const [historySourceFilter, setHistorySourceFilter] = useState<string>("all");
   const [reconciliationRuns, setReconciliationRuns] = useState<ReconciliationRunRow[]>([]);
@@ -212,17 +215,17 @@ export function ReconciliationRoute() {
     [savedResults],
   );
 
-  const handleRevertLot = async (lot: ReconciliationGroupedLot) => {
+  const handleRevertLot = (lot: ReconciliationGroupedLot) => {
     if (!isAdmin) {
       toast.error("Only administrators are authorized to revert and remove reconciliation lots.");
       return;
     }
-    if (
-      !window.confirm(
-        `Are you sure you want to revert and remove "${lot.lotName}"? This will reset all its payables back to "Pending" and remove this lot from history.`,
-      )
-    )
-      return;
+    setLotToRevert(lot);
+  };
+
+  const confirmRevertLot = async () => {
+    if (!lotToRevert) return;
+    const lot = lotToRevert;
     setIsApplying(true);
     try {
       const res = await ReconciliationService.revertLot(lot);
@@ -243,6 +246,7 @@ export function ReconciliationRoute() {
       }
     } finally {
       setIsApplying(false);
+      setLotToRevert(null);
     }
   };
 
@@ -1082,13 +1086,15 @@ export function ReconciliationRoute() {
     }
   };
 
-  const handleClearHistory = async () => {
+  const handleClearHistory = () => {
     if (!isAdmin) {
       toast.error("Only administrators are authorized to clear reconciliation history.");
       return;
     }
-    if (!window.confirm("Are you sure you want to clear saved reconciliation history logs?"))
-      return;
+    setShowClearHistoryDialog(true);
+  };
+
+  const confirmClearHistory = async () => {
     setIsLoadingHistory(true);
     try {
       const ok = await ReconciliationService.clearHistory();
@@ -1100,20 +1106,19 @@ export function ReconciliationRoute() {
       }
     } finally {
       setIsLoadingHistory(false);
+      setShowClearHistoryDialog(false);
     }
   };
 
-  const handleRevertReconciliation = async () => {
+  const handleRevertReconciliation = () => {
     if (!isAdmin) {
       toast.error("Only administrators are authorized to revert reconciliation.");
       return;
     }
-    if (
-      !window.confirm(
-        'Are you sure you want to revert auto-reconciled payments? This will set payables back to "Pending" and delete auto-created reconciliation payments.',
-      )
-    )
-      return;
+    setShowRevertAllDialog(true);
+  };
+
+  const confirmRevertReconciliation = async () => {
     setIsApplying(true);
     try {
       const res = await ReconciliationService.revertReconciliation();
@@ -1132,6 +1137,7 @@ export function ReconciliationRoute() {
       }
     } finally {
       setIsApplying(false);
+      setShowRevertAllDialog(false);
     }
   };
 
@@ -3594,6 +3600,73 @@ export function ReconciliationRoute() {
               onClick={confirmDeleteLot}
             >
               Delete Records
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={Boolean(lotToRevert)}
+        onOpenChange={(open) => !open && setLotToRevert(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revert Reconciliation Lot</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to revert and remove &quot;{lotToRevert?.lotName}&quot;? This
+              will reset all its linked payables back to &quot;Pending&quot; and remove this lot
+              from history.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={confirmRevertLot}
+            >
+              Revert Lot
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={showClearHistoryDialog} onOpenChange={setShowClearHistoryDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear Reconciliation History</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to clear saved reconciliation history logs? This action cannot
+              be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={confirmClearHistory}
+            >
+              Clear History
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={showRevertAllDialog} onOpenChange={setShowRevertAllDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revert Auto-Reconciled Payments</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to revert auto-reconciled payments? This will set payables back
+              to &quot;Pending&quot; and delete auto-created reconciliation payments.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={confirmRevertReconciliation}
+            >
+              Revert Payments
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

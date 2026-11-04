@@ -317,29 +317,29 @@ export const ReconciliationService = {
       const fileHash = await computeSha256(`${companyId || ""}-${fileName}-${Date.now()}`);
 
       try {
-        const { data: runRecord } = await (supabase as any)
-          .from("reconciliation_runs")
-          .insert({
-            company_id: companyId,
-            source_type: "manual",
-            file_name: fileName,
-            file_hash_sha256: fileHash,
-            row_count: results.length,
-            total_amount: totalAmount,
-            matched_count: matchedCount,
-            partial_count: partialCount,
-            rejected_count: rejectedCount,
-            unmatched_count: unmatchedCount,
-            status: "draft",
-          })
-          .select("id")
-          .maybeSingle();
+        const { data: runRes, error: runRpcErr } = await (supabase as any).rpc(
+          "create_reconciliation_draft_run_atomic",
+          {
+            p_run_info: {
+              company_id: companyId,
+              source_type: "manual",
+              file_name: fileName,
+              file_hash_sha256: fileHash,
+              row_count: results.length,
+              total_amount: totalAmount,
+              matched_count: matchedCount,
+              partial_count: partialCount,
+              rejected_count: rejectedCount,
+              unmatched_count: unmatchedCount,
+            },
+          },
+        );
 
-        if (runRecord?.id) {
-          activeRunId = runRecord.id;
+        if (!runRpcErr && runRes?.run_id) {
+          activeRunId = runRes.run_id;
         }
       } catch (runErr) {
-        console.warn("Could not create reconciliation_runs draft entry:", runErr);
+        console.warn("Could not create reconciliation_runs draft entry via RPC:", runErr);
       }
     }
 
@@ -574,6 +574,7 @@ export const ReconciliationService = {
     exceptionsCreated?: number;
     rejectedCount?: number;
     runId?: string;
+    runIds?: string[];
     errors: string[];
   }> {
     const applicableResults = results.filter(
@@ -834,13 +835,16 @@ export const ReconciliationService = {
 
     // 5. Execute atomic RPC call per company and lot group
     let totalItemsProcessed = 0;
-    let activeRunId: string | null = null;
+    const allRunIds: string[] = [];
     let resultsInserted = 0;
     let exceptionsCreated = 0;
 
     for (const [groupKey, groupItems] of itemsPayloadByCompany.entries()) {
       if (groupItems.length === 0) continue;
       totalItemsProcessed += groupItems.length;
+
+      // Each company and lot group maintains its own isolated reconciliation run
+      let activeRunId: string | null = null;
 
       const [groupCid, lotName] = groupKey.split(":::");
       const resolvedCompanyId = groupCid === "__no_company__" ? null : groupCid;
@@ -932,6 +936,9 @@ export const ReconciliationService = {
         rpcRes = unifiedData;
         if (rpcRes.run_id && !activeRunId) {
           activeRunId = rpcRes.run_id;
+          if (!allRunIds.includes(rpcRes.run_id)) {
+            allRunIds.push(rpcRes.run_id);
+          }
         }
         resultsInserted += Number(rpcRes.results_inserted ?? 0);
         exceptionsCreated += Number(rpcRes.exceptions_created ?? 0);
@@ -1061,7 +1068,8 @@ export const ReconciliationService = {
       resultsInserted,
       exceptionsCreated,
       rejectedCount,
-      runId: activeRunId ?? undefined,
+      runId: allRunIds[0] ?? undefined,
+      runIds: allRunIds,
       errors,
     };
   },
@@ -1266,6 +1274,18 @@ export const ReconciliationService = {
     const totalDebit = transactions.reduce((acc, t) => acc + (Number(t.debit) || 0), 0);
     const totalCredit = transactions.reduce((acc, t) => acc + (Number(t.credit) || 0), 0);
 
+    // Balance integrity validation: opening + credit - debit = closing
+    const openingBalance = Number(metadata?.openingBalance ?? 0);
+    const closingBalance = Number(metadata?.closingBalance ?? 0);
+    if (openingBalance !== 0 || closingBalance !== 0) {
+      const calculatedClosing = openingBalance + totalCredit - totalDebit;
+      if (Math.abs(calculatedClosing - closingBalance) > 0.05) {
+        throw new Error(
+          `Bank statement balance integrity violation for ${file.name}: opening (${openingBalance.toFixed(2)}) + credit (${totalCredit.toFixed(2)}) - debit (${totalDebit.toFixed(2)}) = ${calculatedClosing.toFixed(2)}, but expected closing balance is ${closingBalance.toFixed(2)}.`,
+        );
+      }
+    }
+
     // 1. Check for existing import with identical file hash to prevent duplicate import rows
     const { data: existingImport } = await (supabase as any)
       .from("bank_statement_imports")
@@ -1348,20 +1368,30 @@ export const ReconciliationService = {
           isDuplicate: Boolean(rpcRes.is_duplicate),
         };
       }
-      if (
-        rpcErr &&
-        rpcErr.code !== "PGRST202" &&
-        !rpcErr.message?.includes("function") &&
-        !rpcErr.message?.includes("not exist")
-      ) {
-        console.error("import_bank_statement_ledger_atomic failed:", rpcErr.message);
-        throw new Error(`Bank statement import failed for ${file.name}: ${rpcErr.message}`);
+      if (rpcErr) {
+        const isOfflineMock =
+          (rpcErr.code === "PGRST202" ||
+            rpcErr.message?.includes("does not exist") ||
+            rpcErr.message?.includes("function")) &&
+          (process.env.NODE_ENV === "test" || !import.meta.env?.PROD);
+        if (!isOfflineMock) {
+          console.error("import_bank_statement_ledger_atomic failed:", rpcErr.message);
+          throw new Error(`Bank statement import failed for ${file.name}: ${rpcErr.message}`);
+        }
       }
     } catch (e: any) {
-      if (e?.message?.includes("Bank statement import failed")) {
+      if (
+        e?.message?.includes("Bank statement import failed") ||
+        e?.message?.includes("balance integrity violation")
+      ) {
         throw e;
       }
-      // If RPC is unavailable (e.g. offline unit mocks), continue to fallback
+      if (import.meta.env?.PROD) {
+        throw new Error(
+          `Bank statement import ledger creation failed for ${file.name}: ${e?.message || e}`,
+        );
+      }
+      // If RPC is unavailable in offline unit tests, continue to direct fallback
     }
 
     // Fallback: Direct table insert

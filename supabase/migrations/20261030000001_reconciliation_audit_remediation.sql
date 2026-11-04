@@ -197,40 +197,13 @@ CREATE POLICY recon_runs_read ON public.reconciliation_runs FOR SELECT TO authen
 );
 
 DROP POLICY IF EXISTS recon_runs_write ON public.reconciliation_runs;
-CREATE POLICY recon_runs_write ON public.reconciliation_runs FOR INSERT TO authenticated WITH CHECK (
-  (SELECT public.has_any_role((SELECT auth.uid()), ARRAY[
-    'admin'::public.app_role,
-    'supervisor'::public.app_role,
-    'finance_operator'::public.app_role,
-    'reconciliation_officer'::public.app_role
-  ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
-);
+CREATE POLICY recon_runs_write ON public.reconciliation_runs FOR INSERT TO authenticated WITH CHECK (false);
 
 DROP POLICY IF EXISTS recon_runs_update ON public.reconciliation_runs;
-CREATE POLICY recon_runs_update ON public.reconciliation_runs FOR UPDATE TO authenticated USING (
-  (SELECT public.has_any_role((SELECT auth.uid()), ARRAY[
-    'admin'::public.app_role,
-    'supervisor'::public.app_role,
-    'finance_operator'::public.app_role,
-    'reconciliation_officer'::public.app_role
-  ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
-) WITH CHECK (
-  (SELECT public.has_any_role((SELECT auth.uid()), ARRAY[
-    'admin'::public.app_role,
-    'supervisor'::public.app_role,
-    'finance_operator'::public.app_role,
-    'reconciliation_officer'::public.app_role
-  ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
-);
+CREATE POLICY recon_runs_update ON public.reconciliation_runs FOR UPDATE TO authenticated USING (false);
 
 DROP POLICY IF EXISTS recon_runs_delete ON public.reconciliation_runs;
-CREATE POLICY recon_runs_delete ON public.reconciliation_runs FOR DELETE TO authenticated USING (
-  (SELECT public.has_role((SELECT auth.uid()), 'admin'::public.app_role))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
-);
+CREATE POLICY recon_runs_delete ON public.reconciliation_runs FOR DELETE TO authenticated USING (false);
 
 -- ============================================================================
 -- 3. LINK PAYMENTS & RECONCILIATION RESULTS TO RUNS & EXPLAINABILITY
@@ -551,6 +524,11 @@ DECLARE
   v_authoritative_client_id uuid;
   v_authoritative_net numeric(15,2);
   v_result_enum public.reconciliation_result;
+  v_ex_company_id uuid;
+  v_ex_file_hash text;
+  v_ex_source_type text;
+  v_ex_fiscal_year text;
+  v_chunk_hash text;
 BEGIN
   -- 1. Authorization check
   IF current_user != 'service_role' AND current_user != 'postgres' AND COALESCE((auth.jwt()->>'role'), current_setting('request.jwt.claim.role', true), '') != 'service_role' THEN
@@ -586,6 +564,9 @@ BEGIN
       v_chunk_index, v_expected_chunks USING ERRCODE = '22003';
   END IF;
 
+  -- Deterministic chunk content digest
+  v_chunk_hash := encode(extensions.digest(p_items::text::bytea, 'sha256'), 'hex');
+
   v_idempotency_key := NULLIF(p_run_info->>'idempotency_key', '');
   v_run_id := NULLIF(p_run_info->>'run_id', '')::uuid;
 
@@ -612,27 +593,58 @@ BEGIN
 
   IF v_run_id IS NOT NULL THEN
     -- Acquire exclusive row lock on reconciliation_runs to serialize concurrent retries
-    SELECT status, COALESCE(processed_chunks, '[]'::jsonb), batch_id, COALESCE(expected_chunk_count, 1)
-    INTO v_existing_status, v_existing_chunks, v_batch_id, v_expected_chunks
+    SELECT status, COALESCE(processed_chunks, '{}'::jsonb), batch_id, COALESCE(expected_chunk_count, 1),
+           company_id, file_hash_sha256, source_type, fiscal_year
+    INTO v_existing_status, v_existing_chunks, v_batch_id, v_expected_chunks,
+         v_ex_company_id, v_ex_file_hash, v_ex_source_type, v_ex_fiscal_year
     FROM public.reconciliation_runs
     WHERE id = v_run_id
     FOR UPDATE;
 
-    -- Chunk-level idempotency: skip if this chunk was already processed
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Reconciliation run % not found', v_run_id USING ERRCODE = '23503';
+    END IF;
+
+    -- Validate immutable metadata against stored run on retry / chunk submission
+    IF v_ex_company_id IS DISTINCT FROM v_company_id THEN
+      RAISE EXCEPTION 'Run metadata mismatch: company_id % does not match run company_id %', v_company_id, v_ex_company_id USING ERRCODE = '23514';
+    END IF;
+
+    IF NULLIF(p_run_info->>'file_hash_sha256', '') IS NOT NULL AND v_ex_file_hash IS NOT NULL AND v_ex_file_hash != p_run_info->>'file_hash_sha256' THEN
+      RAISE EXCEPTION 'Run metadata mismatch: file_hash_sha256 does not match run record' USING ERRCODE = '23514';
+    END IF;
+
+    IF NULLIF(p_run_info->>'source_type', '') IS NOT NULL AND v_ex_source_type != p_run_info->>'source_type' THEN
+      RAISE EXCEPTION 'Run metadata mismatch: source_type does not match run record' USING ERRCODE = '23514';
+    END IF;
+
+    IF NULLIF(p_run_info->>'fiscal_year', '') IS NOT NULL AND v_ex_fiscal_year IS NOT NULL AND v_ex_fiscal_year != p_run_info->>'fiscal_year' THEN
+      RAISE EXCEPTION 'Run metadata mismatch: fiscal_year does not match run record' USING ERRCODE = '23514';
+    END IF;
+
+    IF v_expected_chunks != v_expected_chunks THEN
+      RAISE EXCEPTION 'Run metadata mismatch: total_chunks % does not match expected_chunk_count %', v_expected_chunks, v_expected_chunks USING ERRCODE = '23514';
+    END IF;
+
+    -- Chunk-level idempotency and payload collision verification
     IF v_existing_chunks ? v_chunk_index::text THEN
-      RETURN jsonb_build_object(
-        'success', true,
-        'idempotent', true,
-        'run_id', v_run_id,
-        'batch_id', v_batch_id,
-        'message', 'Reconciliation chunk ' || v_chunk_index || ' already applied',
-        'payables_updated', 0,
-        'payments_created', 0,
-        'results_inserted', 0,
-        'exceptions_created', 0,
-        'already_paid_skipped', 0,
-        'errors', '[]'::jsonb
-      );
+      IF (v_existing_chunks->>v_chunk_index::text) = v_chunk_hash OR (v_existing_chunks->>v_chunk_index::text) = 'true' THEN
+        RETURN jsonb_build_object(
+          'success', true,
+          'idempotent', true,
+          'run_id', v_run_id,
+          'batch_id', v_batch_id,
+          'message', 'Reconciliation chunk ' || v_chunk_index || ' already applied',
+          'payables_updated', 0,
+          'payments_created', 0,
+          'results_inserted', 0,
+          'exceptions_created', 0,
+          'already_paid_skipped', 0,
+          'errors', '[]'::jsonb
+        );
+      ELSE
+        RAISE EXCEPTION 'Chunk % payload collision: incoming chunk hash does not match previously processed chunk', v_chunk_index USING ERRCODE = '23514';
+      END IF;
     END IF;
 
     -- If run was previously marked applied, protect against re-run
@@ -651,6 +663,17 @@ BEGIN
         'errors', '[]'::jsonb
       );
     END IF;
+
+    IF jsonb_typeof(v_existing_chunks) != 'object' THEN
+      v_existing_chunks := '{}'::jsonb;
+    END IF;
+    v_existing_chunks := jsonb_set(
+      v_existing_chunks,
+      ARRAY[v_chunk_index::text],
+      to_jsonb(v_chunk_hash)
+    );
+  ELSE
+    v_existing_chunks := jsonb_build_object(v_chunk_index::text, v_chunk_hash);
   END IF;
 
   IF v_run_id IS NULL THEN
@@ -683,17 +706,12 @@ BEGIN
       COALESCE(NULLIF(p_run_info->>'parser_version', ''), '2.0.0'),
       COALESCE(NULLIF(p_run_info->>'matching_rule_version', ''), '2.0.0'),
       'processing',
-      jsonb_build_array(v_chunk_index::text),
+      v_existing_chunks,
       v_expected_chunks,
       NULL,
       NULL,
       v_uid
     ) RETURNING id INTO v_run_id;
-    v_existing_chunks := jsonb_build_array(v_chunk_index::text);
-  ELSE
-    IF NOT (v_existing_chunks ? v_chunk_index::text) THEN
-      v_existing_chunks := v_existing_chunks || jsonb_build_array(v_chunk_index::text);
-    END IF;
   END IF;
 
   -- Server-authoritative finalization check: only finalize when all chunks 0..expected_chunks-1 are recorded
@@ -1255,6 +1273,7 @@ DECLARE
   v_uid uuid := auth.uid();
   v_run record;
   v_completed_count int := 0;
+  v_conflict_count int := 0;
   v_reverted_payables int := 0;
   v_deleted_payments int := 0;
   v_payable_record record;
@@ -1295,6 +1314,26 @@ BEGIN
   IF v_completed_count > 0 AND NOT p_force THEN
     RAISE EXCEPTION 'Safety violation: % payments are already finalized/completed. Reversal requires explicit supervisor override (p_force = true).', v_completed_count
       USING ERRCODE = '55000';
+  END IF;
+
+  -- Post-apply concurrency check: verify payable has not been modified by subsequent external payments or actions
+  IF NOT p_force THEN
+    FOR v_payable_record IN (
+      SELECT DISTINCT ON (payable_type, payable_id) payable_type, payable_id
+      FROM public.reconciliation_results
+      WHERE run_id = p_run_id AND payable_id IS NOT NULL
+    ) LOOP
+      SELECT count(*) INTO v_conflict_count
+      FROM public.payments
+      WHERE payable_id = v_payable_record.payable_id
+        AND (reconciliation_run_id IS NULL OR reconciliation_run_id != p_run_id)
+        AND created_at > v_run.created_at;
+
+      IF v_conflict_count > 0 THEN
+        RAISE EXCEPTION 'Concurrency conflict: payable % has been modified by % subsequent payment(s) after reconciliation. Reversal refused without supervisor override (p_force = true).',
+          v_payable_record.payable_id, v_conflict_count USING ERRCODE = '55000';
+      END IF;
+    END LOOP;
   END IF;
 
   -- 4. Revert ONLY payables linked to this run, restoring their prior snapshot
@@ -1772,8 +1811,12 @@ AS $$
 DECLARE
   v_uid uuid := auth.uid();
   v_company_id uuid;
+  v_bank_name text;
+  v_account_no text;
   v_file_hash text;
   v_file_name text;
+  v_opening_balance numeric(15,2);
+  v_closing_balance numeric(15,2);
   v_row_count int;
   v_total_credit numeric(15,2);
   v_total_debit numeric(15,2);
@@ -1802,11 +1845,24 @@ BEGIN
     END IF;
   END IF;
 
+  v_bank_name := COALESCE(NULLIF(p_import_info->>'bank_name', ''), 'Bank Statement Ledger');
+  v_account_no := COALESCE(NULLIF(p_import_info->>'account_no', ''), 'UNKNOWN_ACCT');
   v_file_hash := NULLIF(p_import_info->>'file_hash_sha256', '');
   v_file_name := COALESCE(NULLIF(p_import_info->>'file_name', ''), 'unknown.xlsx');
+  v_opening_balance := COALESCE(NULLIF(p_import_info->>'opening_balance', '')::numeric, 0);
+  v_closing_balance := COALESCE(NULLIF(p_import_info->>'closing_balance', '')::numeric, 0);
   v_row_count := COALESCE(NULLIF(p_import_info->>'row_count', '')::int, jsonb_array_length(p_transactions));
   v_total_credit := COALESCE(NULLIF(p_import_info->>'total_credit', '')::numeric, 0);
   v_total_debit := COALESCE(NULLIF(p_import_info->>'total_debit', '')::numeric, 0);
+
+  -- Balance integrity validation: opening_balance + total_credit - total_debit = closing_balance
+  -- Enforced whenever non-zero opening or closing balances are provided
+  IF (v_opening_balance != 0 OR v_closing_balance != 0) THEN
+    IF abs((v_opening_balance + v_total_credit - v_total_debit) - v_closing_balance) > 0.05 THEN
+      RAISE EXCEPTION 'Bank statement balance integrity violation: opening (%) + credit (%) - debit (%) = %, which does not match closing (%)',
+        v_opening_balance, v_total_credit, v_total_debit, (v_opening_balance + v_total_credit - v_total_debit), v_closing_balance USING ERRCODE = '23514';
+    END IF;
+  END IF;
 
   -- 3. Idempotency: check if identical file was already imported for this company
   IF v_file_hash IS NOT NULL THEN
@@ -1814,7 +1870,7 @@ BEGIN
     FROM public.bank_statement_imports
     WHERE company_id = v_company_id
       AND file_hash_sha256 = v_file_hash
-      AND status = 'applied'
+      AND status IN ('imported', 'reconciled')
     LIMIT 1;
 
     IF v_import_id IS NOT NULL THEN
@@ -1832,8 +1888,12 @@ BEGIN
   -- 4. Create bank statement import ledger record
   INSERT INTO public.bank_statement_imports (
     company_id,
+    bank_name,
+    account_no,
     file_name,
     file_hash_sha256,
+    opening_balance,
+    closing_balance,
     row_count,
     total_credit,
     total_debit,
@@ -1842,12 +1902,16 @@ BEGIN
     created_by
   ) VALUES (
     v_company_id,
+    v_bank_name,
+    v_account_no,
     v_file_name,
     v_file_hash,
+    v_opening_balance,
+    v_closing_balance,
     v_row_count,
     v_total_credit,
     v_total_debit,
-    'applied',
+    'imported',
     COALESCE(p_import_info->'parser_metadata', '{}'::jsonb),
     v_uid
   ) RETURNING id INTO v_import_id;
@@ -1923,7 +1987,78 @@ GRANT EXECUTE ON FUNCTION public.get_reconciliation_runs_paginated(uuid, text, t
 REVOKE EXECUTE ON FUNCTION public.import_bank_statement_ledger_atomic(jsonb, jsonb) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.import_bank_statement_ledger_atomic(jsonb, jsonb) TO authenticated, service_role;
 
--- Grant table privileges on newly introduced tables to authenticated and service_role (access controlled by RLS)
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.reconciliation_runs TO authenticated, service_role;
+-- 8b. CONTROLLED DRAFT RECONCILIATION RUN CREATION
+CREATE OR REPLACE FUNCTION public.create_reconciliation_draft_run_atomic(
+  p_run_info jsonb
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_company_id uuid;
+  v_run_id uuid;
+BEGIN
+  IF current_user != 'service_role' AND current_user != 'postgres' AND COALESCE((auth.jwt()->>'role'), current_setting('request.jwt.claim.role', true), '') != 'service_role' THEN
+    PERFORM public.require_role('admin', 'supervisor', 'finance_operator', 'reconciliation_officer');
+  END IF;
+
+  v_company_id := NULLIF(p_run_info->>'company_id', '')::uuid;
+  IF v_company_id IS NOT NULL THEN
+    IF current_user != 'service_role' AND current_user != 'postgres' AND COALESCE((auth.jwt()->>'role'), current_setting('request.jwt.claim.role', true), '') != 'service_role' THEN
+      IF NOT public.has_company_access(v_uid, v_company_id) THEN
+        RAISE EXCEPTION 'Unauthorized: caller lacks access to target company %', v_company_id USING ERRCODE = '42501';
+      END IF;
+    END IF;
+  END IF;
+
+  INSERT INTO public.reconciliation_runs (
+    company_id,
+    fiscal_year,
+    source_type,
+    file_name,
+    file_hash_sha256,
+    row_count,
+    total_amount,
+    matched_count,
+    partial_count,
+    rejected_count,
+    unmatched_count,
+    status,
+    created_by
+  ) VALUES (
+    v_company_id,
+    NULLIF(p_run_info->>'fiscal_year', ''),
+    COALESCE(NULLIF(p_run_info->>'source_type', ''), 'manual'),
+    COALESCE(NULLIF(p_run_info->>'file_name', ''), 'manual-reconciliation'),
+    COALESCE(NULLIF(p_run_info->>'file_hash_sha256', ''), md5(now()::text || p_run_info::text)),
+    COALESCE(NULLIF(p_run_info->>'row_count', '')::int, 0),
+    COALESCE(NULLIF(p_run_info->>'total_amount', '')::numeric, 0),
+    COALESCE(NULLIF(p_run_info->>'matched_count', '')::int, 0),
+    COALESCE(NULLIF(p_run_info->>'partial_count', '')::int, 0),
+    COALESCE(NULLIF(p_run_info->>'rejected_count', '')::int, 0),
+    COALESCE(NULLIF(p_run_info->>'unmatched_count', '')::int, 0),
+    'draft',
+    v_uid
+  ) RETURNING id INTO v_run_id;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'run_id', v_run_id
+  );
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.create_reconciliation_draft_run_atomic(jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.create_reconciliation_draft_run_atomic(jsonb) TO authenticated, service_role;
+
+-- Grant table privileges on newly introduced tables (access controlled by RLS)
+-- Reconciliation runs table: direct writes strictly REVOKED from authenticated clients, allowed only via atomic RPCs
+REVOKE INSERT, UPDATE, DELETE ON TABLE public.reconciliation_runs FROM authenticated;
+GRANT SELECT ON TABLE public.reconciliation_runs TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.reconciliation_runs TO service_role;
+
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.reconciliation_exceptions TO authenticated, service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.bank_statement_imports TO authenticated, service_role;
