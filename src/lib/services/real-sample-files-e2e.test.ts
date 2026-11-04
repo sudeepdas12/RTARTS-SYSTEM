@@ -1131,6 +1131,521 @@ describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => 
         await db.from("companies").delete().eq("id", compA!.id);
         await db.from("companies").delete().eq("id", compB!.id);
       });
+
+      it("enforces that underpayments remain Partial or Exception and require approval before settlement", async () => {
+        const underTag = `UND_${Date.now()}`;
+        const { data: undClient } = await db
+          .from("clients")
+          .insert({
+            client_code: `CLI_U_${underTag.slice(-6)}`,
+            full_name: `Underpay Investor ${underTag}`,
+            boid: `130123000${underTag.slice(-7)}`,
+          })
+          .select("id")
+          .single();
+
+        const { data: undPayable } = await db
+          .from("mutual_fund_payables")
+          .insert({
+            company_id: testCompanyId,
+            client_id: undClient!.id,
+            fiscal_year: "2082/83",
+            shares_held: 1000,
+            gross_dividend: 500.0,
+            tax_amount: 0.0,
+            net_payable: 500.0,
+            paid_amount: 0.0,
+            remaining_amount: 500.0,
+            payment_status: "Pending",
+          })
+          .select("id")
+          .single();
+
+        // 1. Unapproved UNDER_PAID: should NOT mutate payable, must flag requires_manual_approval and create exception
+        const { data: unapprovedRes, error: unapprovedErr } = await db.rpc(
+          "apply_and_record_reconciliation_batch",
+          {
+            p_run_info: {
+              company_id: testCompanyId,
+              fiscal_year: "2082/83",
+              source_type: "bank_statement",
+              file_name: `underpay_${underTag}.xlsx`,
+              file_hash_sha256: `hash_under_${underTag}`,
+              idempotency_key: `key_under_${underTag}`,
+              row_count: 1,
+              total_amount: 200.0,
+              chunk_index: 0,
+              total_chunks: 1,
+              is_final_chunk: true,
+            },
+            p_items: [
+              {
+                payable_id: undPayable!.id,
+                client_id: undClient!.id,
+                target_table: "mutual_fund",
+                payable_type: "mutual_fund",
+                result: "UNDER_PAID",
+                actual_amount: 200.0,
+                expected_amount: 500.0,
+                difference: -300.0,
+                payment_reference: `UND-REF-1-${underTag.slice(-6)}`,
+                source_reference: `SRC-UND-1-${underTag}`,
+                approved: false, // Not approved
+              },
+            ],
+            p_batch_info: null,
+          },
+        );
+
+        expect(unapprovedErr).toBeNull();
+        expect(unapprovedRes.success).toBe(true);
+        expect(unapprovedRes.payables_updated).toBe(0); // NOT mutated
+        expect(unapprovedRes.exceptions_created).toBe(1); // Exception logged
+
+        // Verify payable remained Pending / 0 paid
+        const { data: payableUnchanged } = await db
+          .from("mutual_fund_payables")
+          .select("payment_status, paid_amount, remaining_amount")
+          .eq("id", undPayable!.id)
+          .single();
+        expect(payableUnchanged!.payment_status).toBe("Pending");
+        expect(Number(payableUnchanged!.paid_amount)).toBe(0.0);
+
+        // 2. Approved UNDER_PAID: when supervisor approves, must settle as 'Partial' (NEVER 'Paid')
+        const { data: approvedRes, error: approvedErr } = await db.rpc(
+          "apply_and_record_reconciliation_batch",
+          {
+            p_run_info: {
+              company_id: testCompanyId,
+              fiscal_year: "2082/83",
+              source_type: "bank_statement",
+              file_name: `underpay_app_${underTag}.xlsx`,
+              file_hash_sha256: `hash_under_app_${underTag}`,
+              idempotency_key: `key_under_app_${underTag}`,
+              row_count: 1,
+              total_amount: 200.0,
+              chunk_index: 0,
+              total_chunks: 1,
+              is_final_chunk: true,
+            },
+            p_items: [
+              {
+                payable_id: undPayable!.id,
+                client_id: undClient!.id,
+                target_table: "mutual_fund",
+                payable_type: "mutual_fund",
+                result: "UNDER_PAID",
+                actual_amount: 200.0,
+                expected_amount: 500.0,
+                difference: -300.0,
+                payment_reference: `UND-REF-2-${underTag.slice(-6)}`,
+                source_reference: `SRC-UND-2-${underTag}`,
+                approved: true, // Supervisor approved
+              },
+            ],
+            p_batch_info: null,
+          },
+        );
+
+        expect(approvedErr).toBeNull();
+        expect(approvedRes.success).toBe(true);
+        expect(approvedRes.payables_updated).toBe(1);
+
+        // Verify payable is marked Partial (NOT Paid) with exactly 200 paid and 300 remaining
+        const { data: payableSettledPartial } = await db
+          .from("mutual_fund_payables")
+          .select("payment_status, paid_amount, remaining_amount")
+          .eq("id", undPayable!.id)
+          .single();
+        expect(payableSettledPartial!.payment_status).toBe("Partial");
+        expect(Number(payableSettledPartial!.paid_amount)).toBe(200.0);
+        expect(Number(payableSettledPartial!.remaining_amount)).toBe(300.0);
+
+        // Clean up
+        await db.from("payments").delete().eq("reconciliation_run_id", approvedRes.run_id);
+        await db.from("reconciliation_results").delete().eq("run_id", approvedRes.run_id);
+        await db.from("reconciliation_runs").delete().eq("id", approvedRes.run_id);
+        await db.from("reconciliation_exceptions").delete().eq("run_id", unapprovedRes.run_id);
+        await db.from("reconciliation_results").delete().eq("run_id", unapprovedRes.run_id);
+        await db.from("reconciliation_runs").delete().eq("id", unapprovedRes.run_id);
+        await db.from("mutual_fund_payables").delete().eq("id", undPayable!.id);
+        await db.from("clients").delete().eq("id", undClient!.id);
+      });
+
+      it("rejects chunk retry when changed chunk count is submitted (SQLSTATE 23514)", async () => {
+        const chunkTag = `CHK_${Date.now()}`;
+        // Submit chunk 0 with total_chunks = 3
+        const { data: initialChunk, error: initialErr } = await db.rpc(
+          "apply_and_record_reconciliation_batch",
+          {
+            p_run_info: {
+              company_id: testCompanyId,
+              fiscal_year: "2082/83",
+              source_type: "bank_statement",
+              file_name: `chunk_test_${chunkTag}.xlsx`,
+              file_hash_sha256: `hash_${chunkTag}`,
+              idempotency_key: `key_${chunkTag}`,
+              row_count: 3,
+              total_amount: 30.0,
+              chunk_index: 0,
+              total_chunks: 3,
+              is_final_chunk: false,
+            },
+            p_items: [
+              {
+                payable_id: testPayableId,
+                client_id: testClientId,
+                target_table: "mutual_fund",
+                payable_type: "mutual_fund",
+                result: "MATCHED",
+                actual_amount: 10.0,
+                expected_amount: 10.0,
+                difference: 0,
+                payment_reference: `CHK-1-${chunkTag.slice(-6)}`,
+                source_reference: `SRC-CHK-1-${chunkTag}`,
+              },
+            ],
+            p_batch_info: null,
+          },
+        );
+
+        expect(initialErr).toBeNull();
+        expect(initialChunk.success).toBe(true);
+        const chunkRunId = initialChunk.run_id;
+
+        // Submit chunk 1 to same run_id but with total_chunks = 5 (divergent chunk count)
+        const { error: divergentErr } = await db.rpc("apply_and_record_reconciliation_batch", {
+          p_run_info: {
+            run_id: chunkRunId,
+            company_id: testCompanyId,
+            fiscal_year: "2082/83",
+            source_type: "bank_statement",
+            file_name: `chunk_test_${chunkTag}.xlsx`,
+            file_hash_sha256: `hash_${chunkTag}`,
+            idempotency_key: `key_${chunkTag}`,
+            row_count: 3,
+            total_amount: 30.0,
+            chunk_index: 1,
+            total_chunks: 5, // Deliberately altered from 3
+            is_final_chunk: false,
+          },
+          p_items: [
+            {
+              payable_id: testPayableId,
+              client_id: testClientId,
+              target_table: "mutual_fund",
+              payable_type: "mutual_fund",
+              result: "MATCHED",
+              actual_amount: 10.0,
+              expected_amount: 10.0,
+              difference: 0,
+              payment_reference: `CHK-2-${chunkTag.slice(-6)}`,
+              source_reference: `SRC-CHK-2-${chunkTag}`,
+            },
+          ],
+          p_batch_info: null,
+        });
+
+        expect(divergentErr).not.toBeNull();
+        expect(divergentErr!.message).toContain(
+          "total_chunks 5 does not match expected_chunk_count 3",
+        );
+
+        // Clean up
+        await db.from("reconciliation_results").delete().eq("run_id", chunkRunId);
+        await db.from("reconciliation_runs").delete().eq("id", chunkRunId);
+      });
+
+      it("detects duplicate source rows before mutation and causes no second financial mutation", async () => {
+        const dupRowTag = `DUP_ROW_${Date.now()}`;
+        const { data: dupClient } = await db
+          .from("clients")
+          .insert({
+            client_code: `CLI_D_${dupRowTag.slice(-6)}`,
+            full_name: `DupRow Investor ${dupRowTag}`,
+            boid: `130123000${dupRowTag.slice(-7)}`,
+          })
+          .select("id")
+          .single();
+
+        const { data: dupPayable } = await db
+          .from("mutual_fund_payables")
+          .insert({
+            company_id: testCompanyId,
+            client_id: dupClient!.id,
+            fiscal_year: "2082/83",
+            shares_held: 1000,
+            gross_dividend: 500.0,
+            tax_amount: 0.0,
+            net_payable: 500.0,
+            paid_amount: 0.0,
+            remaining_amount: 500.0,
+            payment_status: "Pending",
+          })
+          .select("id")
+          .single();
+
+        // Submit a batch where two items share the identical source_reference
+        const sharedSourceRef = `SHARED-SRC-${dupRowTag}`;
+        const { data: batchRes, error: batchErr } = await db.rpc(
+          "apply_and_record_reconciliation_batch",
+          {
+            p_run_info: {
+              company_id: testCompanyId,
+              fiscal_year: "2082/83",
+              source_type: "bank_statement",
+              file_name: `dup_source_${dupRowTag}.xlsx`,
+              file_hash_sha256: `hash_dup_src_${dupRowTag}`,
+              idempotency_key: `key_dup_src_${dupRowTag}`,
+              row_count: 2,
+              total_amount: 200.0,
+              chunk_index: 0,
+              total_chunks: 1,
+              is_final_chunk: true,
+            },
+            p_items: [
+              {
+                payable_id: dupPayable!.id,
+                client_id: dupClient!.id,
+                target_table: "mutual_fund",
+                payable_type: "mutual_fund",
+                result: "MATCHED",
+                actual_amount: 100.0,
+                expected_amount: 500.0,
+                difference: -400.0,
+                payment_reference: `PAY-1-${dupRowTag.slice(-6)}`,
+                source_reference: sharedSourceRef,
+              },
+              {
+                payable_id: dupPayable!.id,
+                client_id: dupClient!.id,
+                target_table: "mutual_fund",
+                payable_type: "mutual_fund",
+                result: "MATCHED",
+                actual_amount: 100.0,
+                expected_amount: 500.0,
+                difference: -400.0,
+                payment_reference: `PAY-2-${dupRowTag.slice(-6)}`,
+                source_reference: sharedSourceRef, // Identical duplicate source reference
+              },
+            ],
+            p_batch_info: null,
+          },
+        );
+
+        expect(batchErr).toBeNull();
+        expect(batchRes.success).toBe(true);
+        expect(batchRes.payables_updated).toBe(1); // Only ONE update executed
+        expect(batchRes.exceptions_created).toBe(1); // Duplicate row logged as exception
+
+        // Verify financial mutation occurred only ONCE: paid_amount is 100.00, NOT 200.00!
+        const { data: payableAfterDup } = await db
+          .from("mutual_fund_payables")
+          .select("paid_amount, remaining_amount")
+          .eq("id", dupPayable!.id)
+          .single();
+
+        expect(Number(payableAfterDup!.paid_amount)).toBe(100.0);
+        expect(Number(payableAfterDup!.remaining_amount)).toBe(400.0);
+
+        // Clean up
+        await db.from("payments").delete().eq("reconciliation_run_id", batchRes.run_id);
+        await db.from("reconciliation_exceptions").delete().eq("run_id", batchRes.run_id);
+        await db.from("reconciliation_results").delete().eq("run_id", batchRes.run_id);
+        await db.from("reconciliation_runs").delete().eq("id", batchRes.run_id);
+        await db.from("mutual_fund_payables").delete().eq("id", dupPayable!.id);
+        await db.from("clients").delete().eq("id", dupClient!.id);
+      });
+
+      it("allows rejected bank imports to be cleanly retried and reset to imported", async () => {
+        const retryTag = `REJ_RETRY_${Date.now()}`;
+        const fileHash = `hash_rej_${retryTag}`;
+
+        // 1. Initial bank import
+        const { data: imp1, error: err1 } = await db.rpc("import_bank_statement_ledger_atomic", {
+          p_import_info: {
+            company_id: testCompanyId,
+            bank_name: "Test Bank",
+            account_no: "12345",
+            file_name: `file_${retryTag}.csv`,
+            file_hash_sha256: fileHash,
+            opening_balance: 1000.0,
+            closing_balance: 1200.0,
+            total_debit: 0.0,
+            total_credit: 200.0,
+            row_count: 1,
+            parser_metadata: {},
+          },
+          p_transactions: [
+            {
+              transaction_date: "2026-02-01",
+              credit_amount: 200.0,
+              debit_amount: 0.0,
+              transaction_fingerprint: `fp_1_${retryTag}`,
+              raw_data: {},
+            },
+          ],
+        });
+
+        expect(err1).toBeNull();
+        expect(imp1.success).toBe(true);
+        const importId = imp1.import_id;
+
+        // 2. Mark import record as rejected (simulating processing/validation failure)
+        await db
+          .from("bank_statement_imports")
+          .update({ status: "rejected", parser_metadata: { error: "Processing failed" } })
+          .eq("id", importId);
+
+        // 3. Retry import of the exact same file (same file_hash_sha256)
+        const { data: retryRes, error: retryErr } = await db.rpc(
+          "import_bank_statement_ledger_atomic",
+          {
+            p_import_info: {
+              company_id: testCompanyId,
+              bank_name: "Test Bank Corrected",
+              account_no: "12345",
+              file_name: `file_${retryTag}.csv`,
+              file_hash_sha256: fileHash,
+              opening_balance: 1000.0,
+              closing_balance: 1200.0,
+              total_debit: 0.0,
+              total_credit: 200.0,
+              row_count: 1,
+              parser_metadata: { retry: true },
+            },
+            p_transactions: [
+              {
+                transaction_date: "2026-02-01",
+                credit_amount: 200.0,
+                debit_amount: 0.0,
+                transaction_fingerprint: `fp_1_retry_${retryTag}`,
+                raw_data: {},
+              },
+            ],
+          },
+        );
+
+        // Must succeed without unique constraint collision
+        expect(retryErr).toBeNull();
+        expect(retryRes.success).toBe(true);
+        expect(retryRes.import_id).toBe(importId);
+
+        // Verify status was reset to 'imported' and metadata was updated
+        const { data: updatedImport } = await db
+          .from("bank_statement_imports")
+          .select("status, bank_name")
+          .eq("id", importId)
+          .single();
+
+        expect(updatedImport!.status).toBe("imported");
+        expect(updatedImport!.bank_name).toBe("Test Bank Corrected");
+
+        // Clean up
+        await db.from("bank_statement_transactions").delete().eq("import_id", importId);
+        await db.from("bank_statement_imports").delete().eq("id", importId);
+      });
+
+      it("blocks automatic reversal when the payable has been modified after reconciliation", async () => {
+        const postTag = `POST_${Date.now()}`;
+        const { data: postClient } = await db
+          .from("clients")
+          .insert({
+            client_code: `CLI_P_${postTag.slice(-6)}`,
+            full_name: `Post State Investor ${postTag}`,
+            boid: `130123000${postTag.slice(-7)}`,
+          })
+          .select("id")
+          .single();
+
+        const { data: postPayable } = await db
+          .from("mutual_fund_payables")
+          .insert({
+            company_id: testCompanyId,
+            client_id: postClient!.id,
+            fiscal_year: "2082/83",
+            shares_held: 500,
+            gross_dividend: 150.0,
+            tax_amount: 0.0,
+            net_payable: 150.0,
+            paid_amount: 0.0,
+            remaining_amount: 150.0,
+            payment_status: "Pending",
+          })
+          .select("id")
+          .single();
+
+        // 1. Apply reconciliation run
+        const { data: postApply } = await db.rpc("apply_and_record_reconciliation_batch", {
+          p_run_info: {
+            company_id: testCompanyId,
+            fiscal_year: "2082/83",
+            source_type: "bank_statement",
+            file_name: `post_mod_${postTag}.xlsx`,
+            file_hash_sha256: `hash_post_${postTag}`,
+            idempotency_key: `key_post_${postTag}`,
+            row_count: 1,
+            total_amount: 150.0,
+            chunk_index: 0,
+            total_chunks: 1,
+            is_final_chunk: true,
+          },
+          p_items: [
+            {
+              payable_id: postPayable!.id,
+              client_id: postClient!.id,
+              target_table: "mutual_fund",
+              payable_type: "mutual_fund",
+              result: "MATCHED",
+              actual_amount: 150.0,
+              expected_amount: 150.0,
+              difference: 0,
+              payment_reference: `POST-REF-${postTag.slice(-6)}`,
+              source_reference: `SRC-POST-${postTag}`,
+            },
+          ],
+          p_batch_info: null,
+        });
+
+        const postRunId = postApply.run_id;
+
+        // 2. Simulate subsequent independent mutation on the payable record
+        await db
+          .from("mutual_fund_payables")
+          .update({
+            remarks: "Independent post-reconciliation ledger adjustment",
+            updated_at: new Date(Date.now() + 10000).toISOString(),
+          })
+          .eq("id", postPayable!.id);
+
+        // 3. Attempt reversal WITHOUT p_force -> MUST FAIL
+        const { error: postRevertErr } = await db.rpc("revert_reconciliation_run_atomic", {
+          p_run_id: postRunId,
+          p_force: false,
+        });
+
+        expect(postRevertErr).not.toBeNull();
+        expect(postRevertErr!.message).toContain("Concurrency conflict: payable");
+        expect(postRevertErr!.message).toContain("modified after reconciliation was applied");
+
+        // 4. Reversal WITH p_force = true -> SUCCEEDS
+        const { data: forcedRevert, error: forcedErr } = await db.rpc(
+          "revert_reconciliation_run_atomic",
+          {
+            p_run_id: postRunId,
+            p_force: true,
+          },
+        );
+
+        expect(forcedErr).toBeNull();
+        expect(forcedRevert.success).toBe(true);
+
+        // Clean up
+        await db.from("reconciliation_results").delete().eq("run_id", postRunId);
+        await db.from("reconciliation_runs").delete().eq("id", postRunId);
+        await db.from("mutual_fund_payables").delete().eq("id", postPayable!.id);
+        await db.from("clients").delete().eq("id", postClient!.id);
+      });
     },
   );
 });

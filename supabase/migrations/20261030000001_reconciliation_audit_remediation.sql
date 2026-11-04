@@ -153,7 +153,7 @@ CREATE TABLE IF NOT EXISTS public.reconciliation_runs (
     parser_version text DEFAULT '2.0.0',
     matching_rule_version text DEFAULT '2.0.0',
     status text DEFAULT 'draft' CHECK (status IN ('draft', 'review', 'approved', 'processing', 'applied', 'reverted', 'failed')),
-    processed_chunks jsonb DEFAULT '[]'::jsonb,
+    processed_chunks jsonb DEFAULT '{}'::jsonb,
     expected_chunk_count integer DEFAULT 1 NOT NULL,
     batch_id uuid REFERENCES public.payment_batches(id) ON DELETE SET NULL,
     notes text,
@@ -171,8 +171,16 @@ ALTER TABLE public.reconciliation_runs
   ADD COLUMN IF NOT EXISTS batch_id uuid REFERENCES public.payment_batches(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS partial_count integer DEFAULT 0 NOT NULL,
   ADD COLUMN IF NOT EXISTS rejected_count integer DEFAULT 0 NOT NULL,
-  ADD COLUMN IF NOT EXISTS processed_chunks jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS processed_chunks jsonb DEFAULT '{}'::jsonb,
   ADD COLUMN IF NOT EXISTS expected_chunk_count integer DEFAULT 1 NOT NULL;
+
+-- Normalize existing processed_chunks values from legacy array format to object
+UPDATE public.reconciliation_runs
+SET processed_chunks = '{}'::jsonb
+WHERE jsonb_typeof(processed_chunks) = 'array' OR processed_chunks IS NULL;
+
+ALTER TABLE public.reconciliation_runs 
+ALTER COLUMN processed_chunks SET DEFAULT '{}'::jsonb;
 
 CREATE INDEX IF NOT EXISTS idx_reconciliation_runs_company_id ON public.reconciliation_runs(company_id);
 CREATE INDEX IF NOT EXISTS idx_reconciliation_runs_file_hash ON public.reconciliation_runs(file_hash_sha256);
@@ -193,7 +201,7 @@ CREATE POLICY recon_runs_read ON public.reconciliation_runs FOR SELECT TO authen
     'report_viewer'::public.app_role,
     'read_only'::public.app_role
   ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 );
 
 DROP POLICY IF EXISTS recon_runs_write ON public.reconciliation_runs;
@@ -294,7 +302,7 @@ CREATE POLICY bsi_read ON public.bank_statement_imports FOR SELECT TO authentica
     'auditor'::public.app_role,
     'report_viewer'::public.app_role
   ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 );
 
 CREATE POLICY bsi_write ON public.bank_statement_imports FOR INSERT TO authenticated WITH CHECK (
@@ -303,7 +311,7 @@ CREATE POLICY bsi_write ON public.bank_statement_imports FOR INSERT TO authentic
     'reconciliation_officer'::public.app_role,
     'finance_operator'::public.app_role
   ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 );
 
 CREATE TABLE IF NOT EXISTS public.bank_statement_transactions (
@@ -428,7 +436,7 @@ CREATE POLICY re_read ON public.reconciliation_exceptions FOR SELECT TO authenti
     'auditor'::public.app_role,
     'report_viewer'::public.app_role
   ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 );
 
 CREATE POLICY re_write ON public.reconciliation_exceptions FOR INSERT TO authenticated WITH CHECK (
@@ -438,7 +446,7 @@ CREATE POLICY re_write ON public.reconciliation_exceptions FOR INSERT TO authent
     'finance_operator'::public.app_role,
     'supervisor'::public.app_role
   ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 );
 
 CREATE POLICY re_update ON public.reconciliation_exceptions FOR UPDATE TO authenticated USING (
@@ -448,7 +456,7 @@ CREATE POLICY re_update ON public.reconciliation_exceptions FOR UPDATE TO authen
     'finance_operator'::public.app_role,
     'supervisor'::public.app_role
   ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 ) WITH CHECK (
   (SELECT public.has_any_role((SELECT auth.uid()), ARRAY[
     'admin'::public.app_role,
@@ -456,7 +464,7 @@ CREATE POLICY re_update ON public.reconciliation_exceptions FOR UPDATE TO authen
     'finance_operator'::public.app_role,
     'supervisor'::public.app_role
   ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 );
 
 -- ============================================================================
@@ -497,7 +505,10 @@ DECLARE
   v_idempotency_key text;
   v_existing_status text;
   v_chunk_index int;
+  v_requested_chunks int := 1;
+  v_ex_expected_chunks int := 1;
   v_expected_chunks int := 1;
+  v_requires_approval boolean := false;
   v_is_final_chunk boolean;
   v_existing_chunks jsonb;
   v_applied_payable_amt numeric;
@@ -551,11 +562,12 @@ BEGIN
 
   -- 2. Idempotency Check & Multi-Chunk State Management
   v_chunk_index := COALESCE(NULLIF(p_run_info->>'chunk_index', '')::int, 0);
-  v_expected_chunks := COALESCE(
+  v_requested_chunks := COALESCE(
     NULLIF(p_run_info->>'total_chunks', '')::int,
     NULLIF(p_run_info->>'expected_chunk_count', '')::int,
     1
   );
+  v_expected_chunks := v_requested_chunks;
   v_item_count := jsonb_array_length(p_items);
 
   -- Validate chunk bounds strictly
@@ -595,7 +607,7 @@ BEGIN
     -- Acquire exclusive row lock on reconciliation_runs to serialize concurrent retries
     SELECT status, COALESCE(processed_chunks, '{}'::jsonb), batch_id, COALESCE(expected_chunk_count, 1),
            company_id, file_hash_sha256, source_type, fiscal_year
-    INTO v_existing_status, v_existing_chunks, v_batch_id, v_expected_chunks,
+    INTO v_existing_status, v_existing_chunks, v_batch_id, v_ex_expected_chunks,
          v_ex_company_id, v_ex_file_hash, v_ex_source_type, v_ex_fiscal_year
     FROM public.reconciliation_runs
     WHERE id = v_run_id
@@ -622,9 +634,11 @@ BEGIN
       RAISE EXCEPTION 'Run metadata mismatch: fiscal_year does not match run record' USING ERRCODE = '23514';
     END IF;
 
-    IF v_expected_chunks != v_expected_chunks THEN
-      RAISE EXCEPTION 'Run metadata mismatch: total_chunks % does not match expected_chunk_count %', v_expected_chunks, v_expected_chunks USING ERRCODE = '23514';
+    IF v_requested_chunks != v_ex_expected_chunks THEN
+      RAISE EXCEPTION 'Run metadata mismatch: total_chunks % does not match expected_chunk_count %', v_requested_chunks, v_ex_expected_chunks USING ERRCODE = '23514';
     END IF;
+
+    v_expected_chunks := v_ex_expected_chunks;
 
     -- Chunk-level idempotency and payload collision verification
     IF v_existing_chunks ? v_chunk_index::text THEN
@@ -953,8 +967,77 @@ BEGIN
       v_total_amount := v_total_amount + GREATEST(0, v_paid_amt);
       v_payment_id := NULL;
 
-      -- A. Settle payable if payable_id exists and status is MATCHED / PARTIAL
-      IF v_payable_id IS NOT NULL AND v_result IN ('MATCHED', 'PARTIAL', 'OVER_PAID', 'UNDER_PAID') THEN
+      -- Derive deterministic, unique source reference per record in run BEFORE any mutation
+      v_source_reference := COALESCE(
+        NULLIF(v_item->>'source_reference', ''),
+        NULLIF(v_item->>'id', ''),
+        NULLIF(v_item->>'instruction_id', ''),
+        NULLIF(v_item->>'connectips_ref', ''),
+        NULLIF(v_item->>'payment_reference', ''),
+        NULLIF(v_item->>'reference_id', ''),
+        'ITEM-' || md5(v_item::text)
+      );
+
+      -- Check duplicate source reference BEFORE any financial mutation
+      IF EXISTS (
+        SELECT 1 FROM public.reconciliation_results
+        WHERE run_id = v_run_id AND source_reference = v_source_reference
+      ) THEN
+        INSERT INTO public.reconciliation_exceptions (
+          run_id,
+          company_id,
+          payable_id,
+          payable_type,
+          source_reference,
+          amount,
+          exception_reason,
+          status,
+          created_by
+        ) VALUES (
+          v_run_id,
+          v_company_id,
+          v_payable_id,
+          v_target_table,
+          v_source_reference,
+          v_actual_amt,
+          'Duplicate source reference detected within run: ' || v_source_reference,
+          'Open',
+          v_uid
+        );
+        v_exceptions_created := v_exceptions_created + 1;
+        CONTINUE; -- Strictly skip mutation on duplicate source reference
+      END IF;
+
+      -- Check if transaction is underpaid, overpaid, or requires supervisor approval
+      v_requires_approval := (v_result IN ('UNDER_PAID', 'OVER_PAID')) AND NOT COALESCE((v_item->>'approved')::boolean, (p_run_info->>'approved')::boolean, false);
+
+      IF v_requires_approval THEN
+        v_notes := COALESCE(v_notes || '; ', '') || 'Variance requires manual supervisor approval before settlement for ' || v_result;
+        v_payment_id := NULL;
+        INSERT INTO public.reconciliation_exceptions (
+          run_id,
+          company_id,
+          payable_id,
+          payable_type,
+          source_reference,
+          amount,
+          exception_reason,
+          status,
+          created_by
+        ) VALUES (
+          v_run_id,
+          v_company_id,
+          v_payable_id,
+          v_target_table,
+          v_source_reference,
+          v_actual_amt,
+          'Variance (' || v_result || ') requires manual supervisor approval before settlement',
+          'Open',
+          v_uid
+        );
+        v_exceptions_created := v_exceptions_created + 1;
+      -- A. Settle payable if payable_id exists and status is MATCHED / PARTIAL or an approved variance
+      ELSIF v_payable_id IS NOT NULL AND (v_result IN ('MATCHED', 'PARTIAL') OR (v_result IN ('OVER_PAID', 'UNDER_PAID') AND NOT v_requires_approval)) THEN
         IF v_paid_amt <= 0 THEN
           -- Strictly reject zero or negative actual amounts: underpayments or malformed rows must never settle as paid
           v_notes := COALESCE(v_notes || '; ', '') || 'Settlement rejected: actual payment amount must be strictly positive';
@@ -967,9 +1050,14 @@ BEGIN
           v_notes := COALESCE(v_notes || '; ', '') || 'Payable already Paid prior to reconciliation run';
           v_payment_id := NULL;
         ELSE
+          -- Apply settlement update to payable:
+          -- UNDER_PAID and PARTIAL, or any remaining balance > 0.005 MUST set payment_status = 'Partial'
           IF v_target_table LIKE '%dividend%' THEN
             UPDATE public.dividend_payables
-            SET payment_status = CASE WHEN v_result = 'PARTIAL' THEN 'Partial'::public.payment_status ELSE 'Paid'::public.payment_status END,
+            SET payment_status = CASE 
+                  WHEN v_result IN ('PARTIAL', 'UNDER_PAID') OR (COALESCE(net_payable, 0) - (COALESCE(paid_amount, 0) + v_paid_amt)) > 0.005 THEN 'Partial'::public.payment_status 
+                  ELSE 'Paid'::public.payment_status 
+                END,
                 paid_amount = LEAST(net_payable, COALESCE(paid_amount, 0) + v_paid_amt),
                 remaining_amount = GREATEST(0, COALESCE(net_payable, 0) - (COALESCE(paid_amount, 0) + v_paid_amt)),
                 payment_date = COALESCE(payment_date, CURRENT_DATE),
@@ -987,7 +1075,10 @@ BEGIN
 
           ELSIF v_target_table LIKE '%interest%' OR v_target_table LIKE '%debenture%' THEN
             UPDATE public.interest_payables
-            SET payment_status = CASE WHEN v_result = 'PARTIAL' THEN 'Partial'::public.payment_status ELSE 'Paid'::public.payment_status END,
+            SET payment_status = CASE 
+                  WHEN v_result IN ('PARTIAL', 'UNDER_PAID') OR (COALESCE(net_payable, 0) - (COALESCE(paid_amount, 0) + v_paid_amt)) > 0.005 THEN 'Partial'::public.payment_status 
+                  ELSE 'Paid'::public.payment_status 
+                END,
                 paid_amount = LEAST(net_payable, COALESCE(paid_amount, 0) + v_paid_amt),
                 remaining_amount = GREATEST(0, COALESCE(net_payable, 0) - (COALESCE(paid_amount, 0) + v_paid_amt)),
                 payment_date = COALESCE(payment_date, CURRENT_DATE),
@@ -1005,7 +1096,10 @@ BEGIN
 
           ELSIF v_target_table LIKE '%mutual%' THEN
             UPDATE public.mutual_fund_payables
-            SET payment_status = CASE WHEN v_result = 'PARTIAL' THEN 'Partial'::public.payment_status ELSE 'Paid'::public.payment_status END,
+            SET payment_status = CASE 
+                  WHEN v_result IN ('PARTIAL', 'UNDER_PAID') OR (COALESCE(net_payable, 0) - (COALESCE(paid_amount, 0) + v_paid_amt)) > 0.005 THEN 'Partial'::public.payment_status 
+                  ELSE 'Paid'::public.payment_status 
+                END,
                 paid_amount = LEAST(net_payable, COALESCE(paid_amount, 0) + v_paid_amt),
                 remaining_amount = GREATEST(0, COALESCE(net_payable, 0) - (COALESCE(paid_amount, 0) + v_paid_amt)),
                 payment_date = COALESCE(payment_date, CURRENT_DATE),
@@ -1081,17 +1175,6 @@ BEGIN
         END IF;
       END IF;
 
-      -- Derive deterministic, unique source reference per record in run
-      v_source_reference := COALESCE(
-        NULLIF(v_item->>'source_reference', ''),
-        NULLIF(v_item->>'id', ''),
-        NULLIF(v_item->>'instruction_id', ''),
-        NULLIF(v_item->>'connectips_ref', ''),
-        NULLIF(v_item->>'payment_reference', ''),
-        NULLIF(v_item->>'reference_id', ''),
-        'ITEM-' || md5(v_item::text)
-      );
-
       -- B. Persist result record in reconciliation_results linked to run_id
       INSERT INTO public.reconciliation_results (
         run_id,
@@ -1118,6 +1201,7 @@ BEGIN
         candidate_count,
         rejected_candidates,
         rule_version,
+        requires_manual_approval,
         matched_by,
         matched_at,
         prior_paid_amount,
@@ -1150,6 +1234,7 @@ BEGIN
         COALESCE(NULLIF(v_item->>'candidate_count', '')::int, 1),
         COALESCE(v_item->'rejected_candidates', '[]'::jsonb),
         v_rule_ver,
+        v_requires_approval,
         v_uid,
         now(),
         v_old_paid_amount,
@@ -1167,12 +1252,16 @@ BEGIN
       -- Track status counters
       IF v_result = 'REJECTED' THEN
         v_rejected_count := v_rejected_count + 1;
-      ELSIF v_result = 'PARTIAL' OR (v_target_table = 'mutual_fund' AND v_paid_amt < v_expected_amt AND v_paid_amt > 0) THEN
+      ELSIF v_result IN ('PARTIAL', 'UNDER_PAID') OR (v_target_table = 'mutual_fund' AND v_paid_amt < v_expected_amt AND v_paid_amt > 0) THEN
         v_partial_count := v_partial_count + 1;
       END IF;
 
-      -- C. If exception/unmatched, record durable exception
-      IF v_result IN ('MISSING', 'REJECTED', 'EXCEPTION') OR (v_result NOT IN ('MATCHED', 'PARTIAL') AND abs(v_diff) > 0.05) THEN
+      -- C. If exception/unmatched, record durable exception (if not already recorded)
+      IF (v_result IN ('MISSING', 'REJECTED', 'EXCEPTION') OR (v_result NOT IN ('MATCHED', 'PARTIAL') AND abs(v_diff) > 0.05))
+         AND NOT EXISTS (
+           SELECT 1 FROM public.reconciliation_exceptions
+           WHERE run_id = v_run_id AND source_reference = v_source_reference
+         ) THEN
         INSERT INTO public.reconciliation_exceptions (
           run_id,
           company_id,
@@ -1277,6 +1366,7 @@ DECLARE
   v_reverted_payables int := 0;
   v_deleted_payments int := 0;
   v_payable_record record;
+  v_payable_updated_at timestamp with time zone;
 BEGIN
   -- 1. Authorization check
   IF current_user != 'service_role' AND current_user != 'postgres' AND COALESCE((auth.jwt()->>'role'), current_setting('request.jwt.claim.role', true), '') != 'service_role' THEN
@@ -1332,6 +1422,20 @@ BEGIN
       IF v_conflict_count > 0 THEN
         RAISE EXCEPTION 'Concurrency conflict: payable % has been modified by % subsequent payment(s) after reconciliation. Reversal refused without supervisor override (p_force = true).',
           v_payable_record.payable_id, v_conflict_count USING ERRCODE = '55000';
+      END IF;
+
+      -- Post-state verification: verify the payable record itself was not independently updated after reconciliation
+      IF LOWER(v_payable_record.payable_type) LIKE '%dividend%' THEN
+        SELECT updated_at INTO v_payable_updated_at FROM public.dividend_payables WHERE id = v_payable_record.payable_id;
+      ELSIF LOWER(v_payable_record.payable_type) LIKE '%interest%' OR LOWER(v_payable_record.payable_type) LIKE '%debenture%' THEN
+        SELECT updated_at INTO v_payable_updated_at FROM public.interest_payables WHERE id = v_payable_record.payable_id;
+      ELSIF LOWER(v_payable_record.payable_type) LIKE '%mutual%' THEN
+        SELECT updated_at INTO v_payable_updated_at FROM public.mutual_fund_payables WHERE id = v_payable_record.payable_id;
+      END IF;
+
+      IF v_payable_updated_at IS NOT NULL AND v_payable_updated_at > COALESCE(v_run.applied_at, v_run.created_at) THEN
+        RAISE EXCEPTION 'Concurrency conflict: payable % has been modified after reconciliation was applied (last updated: %). Reversal refused without supervisor override (p_force = true).',
+          v_payable_record.payable_id, v_payable_updated_at USING ERRCODE = '55000';
       END IF;
     END LOOP;
   END IF;
@@ -1721,7 +1825,7 @@ BEGIN
     AND (p_start_date IS NULL OR rr.created_at::date >= p_start_date)
     AND (p_end_date IS NULL OR rr.created_at::date <= p_end_date)
     AND (p_search IS NULL OR rr.file_name ILIKE '%' || p_search || '%' OR rr.notes ILIKE '%' || p_search || '%')
-    AND (rr.company_id IS NULL OR public.has_company_access(v_uid, rr.company_id));
+    AND (CASE WHEN rr.company_id IS NULL THEN public.has_role(v_uid, 'admin'::public.app_role) ELSE public.has_company_access(v_uid, rr.company_id) END);
 
   -- Aggregate summary metrics
   SELECT 
@@ -1737,7 +1841,7 @@ BEGIN
     AND (p_start_date IS NULL OR rr.created_at::date >= p_start_date)
     AND (p_end_date IS NULL OR rr.created_at::date <= p_end_date)
     AND (p_search IS NULL OR rr.file_name ILIKE '%' || p_search || '%' OR rr.notes ILIKE '%' || p_search || '%')
-    AND (rr.company_id IS NULL OR public.has_company_access(v_uid, rr.company_id));
+    AND (CASE WHEN rr.company_id IS NULL THEN public.has_role(v_uid, 'admin'::public.app_role) ELSE public.has_company_access(v_uid, rr.company_id) END);
 
   -- Paginated records query
   SELECT COALESCE(jsonb_agg(to_jsonb(r_sub)), '[]'::jsonb) INTO v_runs
@@ -1776,7 +1880,7 @@ BEGIN
       AND (p_start_date IS NULL OR rr.created_at::date >= p_start_date)
       AND (p_end_date IS NULL OR rr.created_at::date <= p_end_date)
       AND (p_search IS NULL OR rr.file_name ILIKE '%' || p_search || '%' OR rr.notes ILIKE '%' || p_search || '%')
-      AND (rr.company_id IS NULL OR public.has_company_access(v_uid, rr.company_id))
+      AND (CASE WHEN rr.company_id IS NULL THEN public.has_role(v_uid, 'admin'::public.app_role) ELSE public.has_company_access(v_uid, rr.company_id) END)
     ORDER BY rr.created_at DESC
     LIMIT GREATEST(1, LEAST(p_limit, 500))
     OFFSET GREATEST(0, p_offset)
@@ -1821,6 +1925,7 @@ DECLARE
   v_total_credit numeric(15,2);
   v_total_debit numeric(15,2);
   v_import_id uuid;
+  v_existing_import_status text;
   v_inserted_txns int := 0;
   v_t jsonb;
   v_fingerprint text;
@@ -1864,57 +1969,80 @@ BEGIN
     END IF;
   END IF;
 
-  -- 3. Idempotency: check if identical file was already imported for this company
+  -- 3. Idempotency & Retry Check
   IF v_file_hash IS NOT NULL THEN
-    SELECT id INTO v_import_id
+    SELECT id, status INTO v_import_id, v_existing_import_status
     FROM public.bank_statement_imports
     WHERE company_id = v_company_id
       AND file_hash_sha256 = v_file_hash
-      AND status IN ('imported', 'reconciled')
     LIMIT 1;
 
     IF v_import_id IS NOT NULL THEN
-      RETURN jsonb_build_object(
-        'success', true,
-        'import_id', v_import_id,
-        'file_hash', v_file_hash,
-        'inserted_count', 0,
-        'is_duplicate', true,
-        'message', 'Bank statement file already imported for this company'
-      );
+      IF v_existing_import_status IN ('imported', 'reconciled') THEN
+        RETURN jsonb_build_object(
+          'success', true,
+          'import_id', v_import_id,
+          'file_hash', v_file_hash,
+          'inserted_count', 0,
+          'is_duplicate', true,
+          'message', 'Bank statement file already imported for this company'
+        );
+      ELSIF v_existing_import_status = 'rejected' THEN
+        -- Retry / Reset previously rejected import:
+        -- Remove any partial orphaned transactions from previous failed attempt
+        DELETE FROM public.bank_statement_transactions WHERE import_id = v_import_id;
+
+        -- Update the rejected import record to fresh 'imported' state
+        UPDATE public.bank_statement_imports
+        SET bank_name = v_bank_name,
+            account_no = v_account_no,
+            file_name = v_file_name,
+            opening_balance = v_opening_balance,
+            closing_balance = v_closing_balance,
+            row_count = v_row_count,
+            total_credit = v_total_credit,
+            total_debit = v_total_debit,
+            status = 'imported',
+            parser_metadata = COALESCE(p_import_info->'parser_metadata', '{}'::jsonb),
+            created_by = v_uid,
+            created_at = now()
+        WHERE id = v_import_id;
+      END IF;
     END IF;
   END IF;
 
-  -- 4. Create bank statement import ledger record
-  INSERT INTO public.bank_statement_imports (
-    company_id,
-    bank_name,
-    account_no,
-    file_name,
-    file_hash_sha256,
-    opening_balance,
-    closing_balance,
-    row_count,
-    total_credit,
-    total_debit,
-    status,
-    parser_metadata,
-    created_by
-  ) VALUES (
-    v_company_id,
-    v_bank_name,
-    v_account_no,
-    v_file_name,
-    v_file_hash,
-    v_opening_balance,
-    v_closing_balance,
-    v_row_count,
-    v_total_credit,
-    v_total_debit,
-    'imported',
-    COALESCE(p_import_info->'parser_metadata', '{}'::jsonb),
-    v_uid
-  ) RETURNING id INTO v_import_id;
+  IF v_import_id IS NULL THEN
+    -- 4. Create bank statement import ledger record
+    INSERT INTO public.bank_statement_imports (
+      company_id,
+      bank_name,
+      account_no,
+      file_name,
+      file_hash_sha256,
+      opening_balance,
+      closing_balance,
+      row_count,
+      total_credit,
+      total_debit,
+      status,
+      parser_metadata,
+      created_by
+    ) VALUES (
+      v_company_id,
+      v_bank_name,
+      v_account_no,
+      v_file_name,
+      v_file_hash,
+      v_opening_balance,
+      v_closing_balance,
+      v_row_count,
+      v_total_credit,
+      v_total_debit,
+      'imported',
+      COALESCE(p_import_info->'parser_metadata', '{}'::jsonb),
+      v_uid
+    ) RETURNING id INTO v_import_id;
+  END IF;
 
   -- 5. Atomically insert all transactions
   FOR v_t IN SELECT * FROM jsonb_array_elements(p_transactions)

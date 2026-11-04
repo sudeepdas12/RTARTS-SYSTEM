@@ -1373,7 +1373,8 @@ export const ReconciliationService = {
           (rpcErr.code === "PGRST202" ||
             rpcErr.message?.includes("does not exist") ||
             rpcErr.message?.includes("function")) &&
-          (process.env.NODE_ENV === "test" || !import.meta.env?.PROD);
+          process.env.NODE_ENV === "test" &&
+          !import.meta.env?.PROD;
         if (!isOfflineMock) {
           console.error("import_bank_statement_ledger_atomic failed:", rpcErr.message);
           throw new Error(`Bank statement import failed for ${file.name}: ${rpcErr.message}`);
@@ -1386,7 +1387,7 @@ export const ReconciliationService = {
       ) {
         throw e;
       }
-      if (import.meta.env?.PROD) {
+      if (import.meta.env?.PROD || process.env.NODE_ENV === "production") {
         throw new Error(
           `Bank statement import ledger creation failed for ${file.name}: ${e?.message || e}`,
         );
@@ -1394,7 +1395,14 @@ export const ReconciliationService = {
       // If RPC is unavailable in offline unit tests, continue to direct fallback
     }
 
-    // Fallback: Direct table insert
+    // Direct table insert fallback is strictly disabled in production
+    if (import.meta.env?.PROD || process.env.NODE_ENV === "production") {
+      throw new Error(
+        `Atomic bank statement import required in production, but was bypassed for ${file.name}.`,
+      );
+    }
+
+    // Fallback: Direct table insert (offline unit test mocks only)
     const { data: imp, error: impErr } = await (supabase as any)
       .from("bank_statement_imports")
       .insert({

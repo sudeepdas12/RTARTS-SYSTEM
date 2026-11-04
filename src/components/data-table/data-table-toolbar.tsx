@@ -62,6 +62,7 @@ export function DataTableToolbar({
       <div className="flex flex-1 flex-wrap items-center gap-2">
         <Input
           placeholder={searchPlaceholder}
+          aria-label={searchPlaceholder}
           value={searchValue}
           onChange={(e) => onSearchChange?.(e.target.value)}
           className="h-8 w-[160px] lg:w-[260px]"
@@ -70,8 +71,14 @@ export function DataTableToolbar({
         {statusOptions.length > 0 && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-8 border-dashed">
-                <Filter className="mr-2 h-4 w-4" />
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 border-dashed"
+                aria-label="Filter records by status"
+                title="Filter records by status"
+              >
+                <Filter className="mr-2 h-4 w-4" aria-hidden="true" />
                 Status
                 {selectedStatuses.length > 0 && (
                   <span className="ml-1.5 rounded bg-muted px-1.5 py-0.5 text-xs font-medium">
@@ -102,9 +109,11 @@ export function DataTableToolbar({
             size="sm"
             onClick={handleResetFilters}
             className="h-8 px-2 lg:px-3 text-muted-foreground hover:text-foreground"
+            aria-label="Reset active filters"
+            title="Reset filters"
           >
             Reset
-            <X className="ml-2 h-4 w-4" />
+            <X className="ml-2 h-4 w-4" aria-hidden="true" />
           </Button>
         )}
       </div>
@@ -118,11 +127,13 @@ export function DataTableToolbar({
             onClick={onExportExcel}
             disabled={isExporting}
             className="h-8"
+            aria-label="Export records to Excel spreadsheet"
+            title="Export records to Excel"
           >
             {isExporting ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
             ) : (
-              <FileSpreadsheet className="mr-2 h-4 w-4" />
+              <FileSpreadsheet className="mr-2 h-4 w-4" aria-hidden="true" />
             )}
             Export Excel
           </Button>
@@ -134,11 +145,13 @@ export function DataTableToolbar({
             onClick={onExportPdf}
             disabled={isExporting}
             className="h-8"
+            aria-label="Export records to PDF document"
+            title="Export records to PDF"
           >
             {isExporting ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
             ) : (
-              <Download className="mr-2 h-4 w-4" />
+              <Download className="mr-2 h-4 w-4" aria-hidden="true" />
             )}
             Export PDF
           </Button>
