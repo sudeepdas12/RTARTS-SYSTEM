@@ -28,7 +28,20 @@ export function ReconciliationDashboard({ report }: ReconciliationDashboardProps
   const [selectedCategory, setSelectedCategory] = useState<string>("ALL");
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>("ALL");
 
-  if (!report || !report.categories.length) return null;
+  if (!report || !report.categories.length) {
+    return (
+      <Card className="border-dashed p-8 text-center text-muted-foreground">
+        <CardContent className="space-y-2">
+          <FileSpreadsheet className="w-12 h-12 mx-auto text-muted-foreground/50" />
+          <h3 className="font-semibold text-lg text-foreground">No Reconciliation Report Loaded</h3>
+          <p className="text-sm">
+            Upload a dividend sheet, ConnectIPS report, or bank statement to view the reconciliation
+            breakdown.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   const filteredMatches = report.matches.filter((m) => {
     const catMatch = selectedCategory === "ALL" || m.category === selectedCategory;
@@ -101,8 +114,17 @@ export function ReconciliationDashboard({ report }: ReconciliationDashboardProps
       {/* Summary Cards by Status */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card
-          className="cursor-pointer hover:border-primary/50 transition-colors"
+          role="button"
+          tabIndex={0}
+          aria-pressed={selectedStatusFilter === "ALL"}
+          className="cursor-pointer hover:border-primary/50 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           onClick={() => setSelectedStatusFilter("ALL")}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setSelectedStatusFilter("ALL");
+            }
+          }}
         >
           <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
             <CardTitle className="text-xs text-muted-foreground uppercase">Total Records</CardTitle>
@@ -115,8 +137,17 @@ export function ReconciliationDashboard({ report }: ReconciliationDashboardProps
           </CardContent>
         </Card>
         <Card
-          className="cursor-pointer hover:border-emerald-500 transition-colors"
+          role="button"
+          tabIndex={0}
+          aria-pressed={selectedStatusFilter === "Matched"}
+          className="cursor-pointer hover:border-emerald-500 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           onClick={() => setSelectedStatusFilter("Matched")}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setSelectedStatusFilter("Matched");
+            }
+          }}
         >
           <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
             <CardTitle className="text-xs text-emerald-700 uppercase font-medium">
@@ -131,8 +162,17 @@ export function ReconciliationDashboard({ report }: ReconciliationDashboardProps
           </CardContent>
         </Card>
         <Card
-          className="cursor-pointer hover:border-amber-500 transition-colors"
+          role="button"
+          tabIndex={0}
+          aria-pressed={selectedStatusFilter === "Pledged"}
+          className="cursor-pointer hover:border-amber-500 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           onClick={() => setSelectedStatusFilter("Pledged")}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setSelectedStatusFilter("Pledged");
+            }
+          }}
         >
           <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
             <CardTitle className="text-xs text-amber-700 uppercase font-medium">
@@ -147,8 +187,17 @@ export function ReconciliationDashboard({ report }: ReconciliationDashboardProps
           </CardContent>
         </Card>
         <Card
-          className="cursor-pointer hover:border-red-500 transition-colors"
+          role="button"
+          tabIndex={0}
+          aria-pressed={selectedStatusFilter === "Rejected"}
+          className="cursor-pointer hover:border-red-500 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           onClick={() => setSelectedStatusFilter("Rejected")}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setSelectedStatusFilter("Rejected");
+            }
+          }}
         >
           <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
             <CardTitle className="text-xs text-destructive uppercase font-medium">

@@ -24,7 +24,8 @@ export async function computeSha256(data: string | ArrayBuffer | Blob): Promise<
 
   // Node.js crypto fallback
   try {
-    const nodeCrypto = await import("crypto");
+    const cryptoModule = "crypto";
+    const nodeCrypto = await import(/* @vite-ignore */ cryptoModule);
     const hash = nodeCrypto.createHash("sha256");
     hash.update(Buffer.from(buffer));
     return hash.digest("hex");

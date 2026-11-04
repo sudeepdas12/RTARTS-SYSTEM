@@ -360,12 +360,16 @@ export const ReconciliationEngine = {
       })(),
 
       // 4. Load bank statements
-      (db as any)
-        .from("bank_statements")
-        .select(
-          "id,bank_name,account_no,statement_date,file_name,total_transactions,total_credit,is_reconciled",
-        )
-        .eq("is_reconciled", false),
+      (() => {
+        let q = (db as any)
+          .from("bank_statements")
+          .select(
+            "id,company_id,bank_name,account_no,statement_date,file_name,total_transactions,total_credit,is_reconciled",
+          )
+          .eq("is_reconciled", false);
+        q = applyCompanyFilter(q);
+        return q;
+      })(),
     ]);
 
     const payments = (paymentsResult as any).data || [];
@@ -1402,6 +1406,7 @@ export const ReconciliationEngine = {
       let matchMethod: ReconciliationMatchMethod | undefined = undefined;
       let requiresManualApproval = false;
       let candidateCount = 0;
+      let rejectedCandidates: Array<{ id: string; reason: string }> | undefined = undefined;
 
       // PHASE 1: EXACT MATCHES (within RECONCILIATION_TOLERANCE_NPR)
       // 1a. Match against Payments by ConnectIPS Reference or Instruction ID (MUST match amount within tolerance)
@@ -1618,38 +1623,148 @@ export const ReconciliationEngine = {
       // PHASE 2: PARTIAL / DISCREPANCY MATCHES (Only if NO exact match was found anywhere)
       if (!bestPayment && !matchedPayable && !matchedBatch) {
         if (txnAcct) {
-          const acctPayments = paymentsByAcct.get(txnAcct) || [];
-          bestPayment =
-            acctPayments.find((p) => !usedPaymentIds.has(p.id) && isCompanyAllowed(p.company_id)) ||
-            null;
+          const acctPayments = (paymentsByAcct.get(txnAcct) || []).filter(
+            (p) => !usedPaymentIds.has(p.id) && isCompanyAllowed(p.company_id),
+          );
+          if (acctPayments.length === 1) {
+            const p = acctPayments[0];
+            const pNet = Number(p.net_amount || 0);
+            const pPaid = Number(p.paid_amount || 0);
+            const targetAmt = pPaid > 0 ? pPaid : pNet;
+            const isAmtCompatible =
+              amount > 0 &&
+              targetAmt > 0 &&
+              (amount <= targetAmt * 1.05 || amountEqualsPaisa(targetAmt, amount));
+            if (isAmtCompatible) {
+              bestPayment = p;
+              matchMethod = "bank_account_and_amount";
+              requiresManualApproval = true;
+              candidateCount = 1;
+            } else {
+              candidateCount = 1;
+              rejectedCandidates = [
+                {
+                  id: p.id,
+                  reason: `Amount incompatible: bank=${amount}, payment=${targetAmt}`,
+                },
+              ];
+            }
+          } else if (acctPayments.length > 1) {
+            candidateCount = acctPayments.length;
+            rejectedCandidates = acctPayments.slice(0, 5).map((p) => ({
+              id: p.id,
+              reason: `Ambiguous: multiple payments (${acctPayments.length}) found for account ${txnAcct}`,
+            }));
+          }
         }
-        if (!bestPayment && txnAcct) {
-          const acctPayables = payablesByAcct.get(txnAcct) || [];
-          const validPayables = acctPayables.filter(
+        if (!bestPayment && !matchedPayable && txnAcct) {
+          const acctPayables = (payablesByAcct.get(txnAcct) || []).filter(
             (p) =>
               canUsePayable(p, amount) &&
               isDateCompatible(txn.date, p.fiscal_year) &&
               isCompanyAllowed(p.company_id),
           );
-          matchedPayable =
-            validPayables.find((p) => p.payment_status !== "Paid") || validPayables[0] || null;
+          if (acctPayables.length === 1) {
+            const p = acctPayables[0];
+            const { full, prorated } = getPayableAmounts(p);
+            const payableAmt = prorated !== null ? prorated : full;
+            const isAmtCompatible =
+              amount > 0 &&
+              payableAmt > 0 &&
+              (amount <= payableAmt * 1.05 || amountEqualsPaisa(payableAmt, amount));
+            if (isAmtCompatible) {
+              matchedPayable = p;
+              matchMethod = "bank_account_and_amount";
+              requiresManualApproval = true;
+              candidateCount = 1;
+            } else {
+              candidateCount = 1;
+              rejectedCandidates = [
+                {
+                  id: p.id,
+                  reason: `Amount incompatible: bank=${amount}, payable=${payableAmt}`,
+                },
+              ];
+            }
+          } else if (acctPayables.length > 1) {
+            candidateCount = acctPayables.length;
+            rejectedCandidates = acctPayables.slice(0, 5).map((p) => ({
+              id: p.id,
+              reason: `Ambiguous: multiple payables (${acctPayables.length}) found for account ${txnAcct}`,
+            }));
+          }
         }
         if (!bestPayment && !matchedPayable && txnName) {
-          const namePayments = paymentsByName.get(txnName) || [];
-          bestPayment =
-            namePayments.find((p) => !usedPaymentIds.has(p.id) && isCompanyAllowed(p.company_id)) ||
-            null;
+          const namePayments = (paymentsByName.get(txnName) || []).filter(
+            (p) => !usedPaymentIds.has(p.id) && isCompanyAllowed(p.company_id),
+          );
+          if (namePayments.length === 1) {
+            const p = namePayments[0];
+            const pNet = Number(p.net_amount || 0);
+            const pPaid = Number(p.paid_amount || 0);
+            const targetAmt = pPaid > 0 ? pPaid : pNet;
+            const isAmtCompatible =
+              amount > 0 &&
+              targetAmt > 0 &&
+              (amount <= targetAmt * 1.05 || amountEqualsPaisa(targetAmt, amount));
+            if (isAmtCompatible) {
+              bestPayment = p;
+              matchMethod = "name_and_amount";
+              requiresManualApproval = true;
+              candidateCount = 1;
+            } else {
+              candidateCount = 1;
+              rejectedCandidates = [
+                {
+                  id: p.id,
+                  reason: `Amount incompatible: bank=${amount}, payment=${targetAmt}`,
+                },
+              ];
+            }
+          } else if (namePayments.length > 1) {
+            candidateCount = namePayments.length;
+            rejectedCandidates = namePayments.slice(0, 5).map((p) => ({
+              id: p.id,
+              reason: `Ambiguous: multiple payments (${namePayments.length}) found for name ${txnName}`,
+            }));
+          }
         }
         if (!bestPayment && !matchedPayable && txnName) {
-          const namePayables = payablesByName.get(txnName) || [];
-          const validPayables = namePayables.filter(
+          const namePayables = (payablesByName.get(txnName) || []).filter(
             (p) =>
               canUsePayable(p, amount) &&
               isDateCompatible(txn.date, p.fiscal_year) &&
               isCompanyAllowed(p.company_id),
           );
-          matchedPayable =
-            validPayables.find((p) => p.payment_status !== "Paid") || validPayables[0] || null;
+          if (namePayables.length === 1) {
+            const p = namePayables[0];
+            const { full, prorated } = getPayableAmounts(p);
+            const payableAmt = prorated !== null ? prorated : full;
+            const isAmtCompatible =
+              amount > 0 &&
+              payableAmt > 0 &&
+              (amount <= payableAmt * 1.05 || amountEqualsPaisa(payableAmt, amount));
+            if (isAmtCompatible) {
+              matchedPayable = p;
+              matchMethod = "name_and_amount";
+              requiresManualApproval = true;
+              candidateCount = 1;
+            } else {
+              candidateCount = 1;
+              rejectedCandidates = [
+                {
+                  id: p.id,
+                  reason: `Amount incompatible: bank=${amount}, payable=${payableAmt}`,
+                },
+              ];
+            }
+          } else if (namePayables.length > 1) {
+            candidateCount = namePayables.length;
+            rejectedCandidates = namePayables.slice(0, 5).map((p) => ({
+              id: p.id,
+              reason: `Ambiguous: multiple payables (${namePayables.length}) found for name ${txnName}`,
+            }));
+          }
         }
       }
 
@@ -1848,7 +1963,8 @@ export const ReconciliationEngine = {
         referenceId: txn.referenceId || undefined,
         confidenceScore,
         matchMethod,
-        candidateCount: matchMethod ? candidateCount || 1 : 0,
+        candidateCount: matchMethod ? candidateCount || 1 : candidateCount,
+        rejectedCandidates,
         ruleVersion: "2.0.0",
         requiresManualApproval,
       });

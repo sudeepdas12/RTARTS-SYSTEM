@@ -272,7 +272,9 @@ export const ReconciliationService = {
     return Array.from(map.values());
   },
 
-  async saveResults(results: Record<string, any>[]): Promise<{ savedCount: number }> {
+  async saveResults(
+    results: Record<string, any>[],
+  ): Promise<{ savedCount: number; runId?: string }> {
     if (!results.length) return { savedCount: 0 };
     const chunkSize = 200;
     let savedCount = 0;
@@ -280,12 +282,65 @@ export const ReconciliationService = {
     // Lot/file deduplication: if notes have [File: ...], remove previous identical lot logs to prevent accumulation across sessions
     const firstNote = results[0]?.notes || "";
     const fileMatch = firstNote.match(/\[File:\s*([^\]|]+)/i);
+    const fileName = fileMatch && fileMatch[1] ? fileMatch[1].trim() : "manual-reconciliation";
     if (fileMatch && fileMatch[1]) {
-      const fileName = fileMatch[1].trim();
       await (supabase as any)
         .from("reconciliation_results")
         .delete()
         .ilike("notes", `%[File: ${fileName}%`);
+    }
+
+    // Ensure results are linked to an auditable reconciliation run (status: 'draft') rather than being orphaned
+    let activeRunId = results[0]?.run_id || null;
+    if (!activeRunId) {
+      const companyId = results[0]?.company_id || null;
+      const matchedCount = results.filter(
+        (r) => r.result === "MATCHED" || r.result === "Matched",
+      ).length;
+      const partialCount = results.filter(
+        (r) =>
+          r.result === "PARTIAL" ||
+          r.result === "Partial" ||
+          r.result === "Under_Paid" ||
+          r.result === "Over_Paid",
+      ).length;
+      const rejectedCount = results.filter(
+        (r) => r.result === "EXCEPTION" || r.result === "Exception" || r.result === "Rejected",
+      ).length;
+      const unmatchedCount = results.filter(
+        (r) => r.result === "NOT_MATCHED" || r.result === "Missing",
+      ).length;
+      const totalAmount = results.reduce(
+        (acc, r) => acc + Number(r.actual_amount || r.expected_amount || 0),
+        0,
+      );
+      const fileHash = await computeSha256(`${companyId || ""}-${fileName}-${Date.now()}`);
+
+      try {
+        const { data: runRecord } = await (supabase as any)
+          .from("reconciliation_runs")
+          .insert({
+            company_id: companyId,
+            source_type: "manual",
+            file_name: fileName,
+            file_hash_sha256: fileHash,
+            row_count: results.length,
+            total_amount: totalAmount,
+            matched_count: matchedCount,
+            partial_count: partialCount,
+            rejected_count: rejectedCount,
+            unmatched_count: unmatchedCount,
+            status: "draft",
+          })
+          .select("id")
+          .maybeSingle();
+
+        if (runRecord?.id) {
+          activeRunId = runRecord.id;
+        }
+      } catch (runErr) {
+        console.warn("Could not create reconciliation_runs draft entry:", runErr);
+      }
     }
 
     const ALLOWED_COLUMNS = new Set([
@@ -326,6 +381,9 @@ export const ReconciliationService = {
             sanitized[k] = v;
           }
         }
+        if (!sanitized.run_id && activeRunId) {
+          sanitized.run_id = activeRunId;
+        }
         return sanitized;
       });
       const { error } = await (supabase as any).from("reconciliation_results").insert(chunk);
@@ -335,7 +393,7 @@ export const ReconciliationService = {
       }
       savedCount += chunk.length;
     }
-    return { savedCount };
+    return { savedCount, runId: activeRunId ?? undefined };
   },
 
   async deleteRecords(ids: string[]): Promise<boolean> {
@@ -1228,7 +1286,85 @@ export const ReconciliationService = {
       };
     }
 
-    // 2. Create bank_statement_imports record
+    // 2. Transactional Ledger Persistence via Atomic RPC
+    try {
+      const payloadTransactions = await Promise.all(
+        transactions.map(async (t) => {
+          const resolvedRef = t.reference || t.instructionId || t.referenceId || null;
+          const rawFingerprintStr = `${resolvedCompanyId}|${t.date || ""}|${t.accountNo || ""}|${t.description || ""}|${resolvedRef || ""}|${t.category || ""}|${t.status || ""}|${t.batchId || ""}|${t.debit || 0}|${t.credit || 0}|${t.balance ?? ""}`;
+          const fingerprint = await computeSha256(rawFingerprintStr);
+          return {
+            transaction_date: t.date || new Date().toISOString().slice(0, 10),
+            description: t.description || null,
+            reference: resolvedRef,
+            instruction_id: t.instructionId || null,
+            reference_id: t.referenceId || null,
+            debit_amount: Number(t.debit || 0),
+            credit_amount: Number(t.credit || 0),
+            balance: t.balance != null ? Number(t.balance) : null,
+            transaction_fingerprint: fingerprint,
+            raw_data: {
+              accountNo: t.accountNo || null,
+              category: t.category || null,
+              status: t.status || null,
+              batchId: t.batchId || null,
+              beneficiaryName: t.beneficiaryName || null,
+              instructionId: t.instructionId || null,
+              referenceId: t.referenceId || null,
+            },
+          };
+        }),
+      );
+
+      const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc(
+        "import_bank_statement_ledger_atomic",
+        {
+          p_import_info: {
+            company_id: resolvedCompanyId,
+            bank_name: bankName,
+            account_no: accountNo,
+            file_name: file.name,
+            file_hash_sha256: fileHash,
+            opening_balance: metadata?.openingBalance ?? 0,
+            closing_balance: metadata?.closingBalance ?? 0,
+            total_debit: totalDebit,
+            total_credit: totalCredit,
+            row_count: transactions.length,
+            parser_metadata: {
+              fileSize: file.size,
+              lastModified: file.lastModified,
+              type: file.type,
+            },
+          },
+          p_transactions: payloadTransactions,
+        },
+      );
+
+      if (!rpcErr && rpcRes && typeof rpcRes === "object") {
+        return {
+          importId: rpcRes.import_id,
+          fileHash: rpcRes.file_hash || fileHash,
+          insertedCount: Number(rpcRes.inserted_count ?? 0),
+          isDuplicate: Boolean(rpcRes.is_duplicate),
+        };
+      }
+      if (
+        rpcErr &&
+        rpcErr.code !== "PGRST202" &&
+        !rpcErr.message?.includes("function") &&
+        !rpcErr.message?.includes("not exist")
+      ) {
+        console.error("import_bank_statement_ledger_atomic failed:", rpcErr.message);
+        throw new Error(`Bank statement import failed for ${file.name}: ${rpcErr.message}`);
+      }
+    } catch (e: any) {
+      if (e?.message?.includes("Bank statement import failed")) {
+        throw e;
+      }
+      // If RPC is unavailable (e.g. offline unit mocks), continue to fallback
+    }
+
+    // Fallback: Direct table insert
     const { data: imp, error: impErr } = await (supabase as any)
       .from("bank_statement_imports")
       .insert({

@@ -71,6 +71,17 @@ import {
 } from "@/components/account-remediation-dialog";
 import { ReconciliationPostingModal } from "@/components/reconciliation/reconciliation-posting-modal";
 import { ReconciliationDashboard } from "@/components/reconciliation/reconciliation-dashboard";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { useDebounce } from "@/hooks/use-debounce";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/reconciliation")({
@@ -106,6 +117,8 @@ export function ReconciliationRoute() {
   const [historyVisibleCount, setHistoryVisibleCount] = useState(15);
   const [expandedLotKey, setExpandedLotKey] = useState<string | null>(null);
   const [historySearchQuery, setHistorySearchQuery] = useState<string>("");
+  const debouncedHistorySearch = useDebounce(historySearchQuery, 300);
+  const [lotToDelete, setLotToDelete] = useState<ReconciliationGroupedLot | null>(null);
   const [historyCompanyFilter, setHistoryCompanyFilter] = useState<string>("all");
   const [historySourceFilter, setHistorySourceFilter] = useState<string>("all");
   const [reconciliationRuns, setReconciliationRuns] = useState<ReconciliationRunRow[]>([]);
@@ -233,17 +246,9 @@ export function ReconciliationRoute() {
     }
   };
 
-  const handleDeleteLot = async (lot: ReconciliationGroupedLot) => {
-    if (!isAdmin) {
-      toast.error("Only administrators are authorized to delete reconciliation records.");
-      return;
-    }
-    if (
-      !window.confirm(
-        `Are you sure you want to delete history for "${lot.lotName}" (${lot.totalRecords} records)?`,
-      )
-    )
-      return;
+  const confirmDeleteLot = async () => {
+    if (!lotToDelete) return;
+    const lot = lotToDelete;
     setIsLoadingHistory(true);
     try {
       const ids = lot.records.map((r) => r.id);
@@ -258,7 +263,16 @@ export function ReconciliationRoute() {
       }
     } finally {
       setIsLoadingHistory(false);
+      setLotToDelete(null);
     }
+  };
+
+  const handleDeleteLot = (lot: ReconciliationGroupedLot) => {
+    if (!isAdmin) {
+      toast.error("Only administrators are authorized to delete reconciliation records.");
+      return;
+    }
+    setLotToDelete(lot);
   };
 
   const handleExportLot = (lot: ReconciliationGroupedLot) => {
@@ -385,7 +399,7 @@ export function ReconciliationRoute() {
           ReconciliationService.getReconciliationRuns({
             companyId: historyCompanyFilter !== "all" ? historyCompanyFilter : null,
             sourceType: historySourceFilter !== "all" ? historySourceFilter : undefined,
-            search: historySearchQuery || undefined,
+            search: debouncedHistorySearch || undefined,
             limit: 100,
             offset: 0,
           }),
@@ -406,7 +420,7 @@ export function ReconciliationRoute() {
         setIsLoadingHistory(false);
       }
     },
-    [historyCompanyFilter, historySourceFilter, historySearchQuery],
+    [historyCompanyFilter, historySourceFilter, debouncedHistorySearch],
   );
 
   useEffect(() => {
@@ -415,6 +429,10 @@ export function ReconciliationRoute() {
 
   const processExcelFiles = async (files: File[]) => {
     if (!files.length) return;
+    if (!canApply) {
+      toast.error("Unauthorized: Read-only accounts cannot upload files for reconciliation.");
+      return;
+    }
 
     setIsProcessing(true);
     setProcessingProgress(
@@ -689,6 +707,11 @@ export function ReconciliationRoute() {
     e.preventDefault();
     e.stopPropagation();
     setIsDraggingOver(false);
+
+    if (!canApply) {
+      toast.error("Unauthorized: Read-only accounts cannot upload files for reconciliation.");
+      return;
+    }
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const files = Array.from(e.dataTransfer.files);
@@ -1141,7 +1164,7 @@ export function ReconciliationRoute() {
   };
 
   const handleConfirmPosting = async () => {
-    if (!report?.matches) return;
+    if (!report?.matches) return false;
     const targetMatches = postingIsAll
       ? report.matches
       : report.matches.filter((m) => selectedMatchIds.has(m.id));
@@ -1180,6 +1203,7 @@ export function ReconciliationRoute() {
         applyRes.errors?.length > 0
       ) {
         toast.error(`Reconciliation apply skipped: ${applyRes.errors[0]}`);
+        return false;
       } else if (applyRes.updated === 0 && applyRes.paymentsCreated === 0) {
         toast.warning(
           "Applied reconciliation: 0 payables updated. Check that records have matching pending payables in the system.",
@@ -1221,9 +1245,11 @@ export function ReconciliationRoute() {
         setSelectedMatchIds(new Set());
       }
       await loadHistory();
+      return true;
     } catch (err: any) {
       console.error("Reconciliation apply error:", err);
       toast.error(`Failed to apply reconciliation: ${err?.message || err}`);
+      return false;
     } finally {
       setIsApplying(false);
     }
@@ -3548,6 +3574,30 @@ export function ReconciliationRoute() {
         isAll={postingIsAll}
         variantAlerts={variantAlerts}
       />
+
+      <AlertDialog
+        open={Boolean(lotToDelete)}
+        onOpenChange={(open) => !open && setLotToDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Reconciliation Lot</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete history for &quot;{lotToDelete?.lotName}&quot; (
+              {lotToDelete?.totalRecords} records)? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={confirmDeleteLot}
+            >
+              Delete Records
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

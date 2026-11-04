@@ -56,7 +56,7 @@ CREATE POLICY bs_read ON public.bank_statements FOR SELECT TO authenticated USIN
     'auditor'::public.app_role,
     'report_viewer'::public.app_role
   ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 );
 
 CREATE POLICY bs_write ON public.bank_statements FOR INSERT TO authenticated WITH CHECK (
@@ -65,7 +65,7 @@ CREATE POLICY bs_write ON public.bank_statements FOR INSERT TO authenticated WIT
     'reconciliation_officer'::public.app_role,
     'finance_operator'::public.app_role
   ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 );
 
 CREATE POLICY bs_update ON public.bank_statements FOR UPDATE TO authenticated USING (
@@ -74,19 +74,19 @@ CREATE POLICY bs_update ON public.bank_statements FOR UPDATE TO authenticated US
     'reconciliation_officer'::public.app_role,
     'finance_operator'::public.app_role
   ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 ) WITH CHECK (
   (SELECT public.has_any_role((SELECT auth.uid()), ARRAY[
     'admin'::public.app_role,
     'reconciliation_officer'::public.app_role,
     'finance_operator'::public.app_role
   ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 );
 
 CREATE POLICY bs_delete ON public.bank_statements FOR DELETE TO authenticated USING (
   (SELECT public.has_role((SELECT auth.uid()), 'admin'::public.app_role))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN true ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 );
 
 -- bank_transactions RLS: scoped to authorized roles and assigned companies
@@ -99,7 +99,7 @@ CREATE POLICY bt_read ON public.bank_transactions FOR SELECT TO authenticated US
     'auditor'::public.app_role,
     'report_viewer'::public.app_role
   ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 );
 
 CREATE POLICY bt_write ON public.bank_transactions FOR INSERT TO authenticated WITH CHECK (
@@ -108,7 +108,7 @@ CREATE POLICY bt_write ON public.bank_transactions FOR INSERT TO authenticated W
     'reconciliation_officer'::public.app_role,
     'finance_operator'::public.app_role
   ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 );
 
 CREATE POLICY bt_update ON public.bank_transactions FOR UPDATE TO authenticated USING (
@@ -117,19 +117,19 @@ CREATE POLICY bt_update ON public.bank_transactions FOR UPDATE TO authenticated 
     'reconciliation_officer'::public.app_role,
     'finance_operator'::public.app_role
   ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 ) WITH CHECK (
   (SELECT public.has_any_role((SELECT auth.uid()), ARRAY[
     'admin'::public.app_role,
     'reconciliation_officer'::public.app_role,
     'finance_operator'::public.app_role
   ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 );
 
 CREATE POLICY bt_delete ON public.bank_transactions FOR DELETE TO authenticated USING (
   (SELECT public.has_role((SELECT auth.uid()), 'admin'::public.app_role))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN true ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 );
 
 -- ============================================================================
@@ -386,7 +386,7 @@ CREATE POLICY bst_read ON public.bank_statement_transactions FOR SELECT TO authe
     'auditor'::public.app_role,
     'report_viewer'::public.app_role
   ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 );
 
 CREATE POLICY bst_write ON public.bank_statement_transactions FOR INSERT TO authenticated WITH CHECK (
@@ -395,7 +395,7 @@ CREATE POLICY bst_write ON public.bank_statement_transactions FOR INSERT TO auth
     'reconciliation_officer'::public.app_role,
     'finance_operator'::public.app_role
   ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 );
 
 CREATE POLICY bst_update ON public.bank_statement_transactions FOR UPDATE TO authenticated USING (
@@ -404,14 +404,14 @@ CREATE POLICY bst_update ON public.bank_statement_transactions FOR UPDATE TO aut
     'reconciliation_officer'::public.app_role,
     'finance_operator'::public.app_role
   ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 ) WITH CHECK (
   (SELECT public.has_any_role((SELECT auth.uid()), ARRAY[
     'admin'::public.app_role,
     'reconciliation_officer'::public.app_role,
     'finance_operator'::public.app_role
   ]))
-  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
 );
 
 -- ============================================================================
@@ -548,6 +548,8 @@ DECLARE
   v_prior_snapshot jsonb;
   v_pre_run_snapshots jsonb := '{}'::jsonb;
   v_snap_key text;
+  v_authoritative_client_id uuid;
+  v_authoritative_net numeric(15,2);
   v_result_enum public.reconciliation_result;
 BEGIN
   -- 1. Authorization check
@@ -558,8 +560,12 @@ BEGIN
   v_company_id := NULLIF(p_run_info->>'company_id', '')::uuid;
   v_fiscal_year := NULLIF(p_run_info->>'fiscal_year', '');
 
+  IF v_company_id IS NULL THEN
+    RAISE EXCEPTION 'Target company_id is required for reconciliation execution' USING ERRCODE = '23502';
+  END IF;
+
   -- Tenant check
-  IF current_user != 'service_role' AND current_user != 'postgres' AND COALESCE((auth.jwt()->>'role'), current_setting('request.jwt.claim.role', true), '') != 'service_role' AND v_company_id IS NOT NULL THEN
+  IF current_user != 'service_role' AND current_user != 'postgres' AND COALESCE((auth.jwt()->>'role'), current_setting('request.jwt.claim.role', true), '') != 'service_role' THEN
     IF NOT public.has_company_access(v_uid, v_company_id) THEN
       RAISE EXCEPTION 'Unauthorized: caller lacks access to target company %', v_company_id USING ERRCODE = '42501';
     END IF;
@@ -775,6 +781,7 @@ BEGIN
     LIMIT 1;
 
     -- 2. If not found in earlier results of this run, query live payable table FOR UPDATE
+    -- STRICT TENANT VERIFICATION: Payable MUST belong to v_company_id
     IF v_old_payment_status IS NULL AND v_prior_snapshot IS NULL THEN
       IF (v_item->>'p_type') LIKE '%dividend%' THEN
         SELECT
@@ -782,15 +789,20 @@ BEGIN
           p.payment_status::text,
           p.payment_date,
           p.payment_reference,
+          p.client_id,
+          p.net_payable,
           to_jsonb(p)
         INTO
           v_old_paid_amount,
           v_old_payment_status,
           v_old_payment_date,
           v_old_payment_reference,
+          v_authoritative_client_id,
+          v_authoritative_net,
           v_prior_snapshot
         FROM public.dividend_payables p
         WHERE p.id = (v_item->>'p_id')::uuid
+          AND p.company_id = v_company_id
         FOR UPDATE;
 
       ELSIF (v_item->>'p_type') LIKE '%interest%' OR (v_item->>'p_type') LIKE '%debenture%' THEN
@@ -799,15 +811,20 @@ BEGIN
           p.payment_status::text,
           p.payment_date,
           p.payment_reference,
+          p.client_id,
+          p.net_payable,
           to_jsonb(p)
         INTO
           v_old_paid_amount,
           v_old_payment_status,
           v_old_payment_date,
           v_old_payment_reference,
+          v_authoritative_client_id,
+          v_authoritative_net,
           v_prior_snapshot
         FROM public.interest_payables p
         WHERE p.id = (v_item->>'p_id')::uuid
+          AND p.company_id = v_company_id
         FOR UPDATE;
 
       ELSIF (v_item->>'p_type') LIKE '%mutual%' THEN
@@ -816,15 +833,20 @@ BEGIN
           p.payment_status::text,
           p.payment_date,
           p.payment_reference,
+          p.client_id,
+          p.net_payable,
           to_jsonb(p)
         INTO
           v_old_paid_amount,
           v_old_payment_status,
           v_old_payment_date,
           v_old_payment_reference,
+          v_authoritative_client_id,
+          v_authoritative_net,
           v_prior_snapshot
         FROM public.mutual_fund_payables p
         WHERE p.id = (v_item->>'p_id')::uuid
+          AND p.company_id = v_company_id
         FOR UPDATE;
       END IF;
     END IF;
@@ -838,6 +860,8 @@ BEGIN
           'prior_payment_status', v_old_payment_status,
           'prior_payment_date', v_old_payment_date,
           'prior_payment_reference', v_old_payment_reference,
+          'client_id', v_authoritative_client_id,
+          'net_payable', v_authoritative_net,
           'full_snapshot', v_prior_snapshot
         ),
         true
@@ -877,6 +901,17 @@ BEGIN
           v_old_payment_date := (v_pre_run_snapshots->v_snap_key->>'prior_payment_date')::date;
           v_old_payment_reference := v_pre_run_snapshots->v_snap_key->>'prior_payment_reference';
           v_prior_snapshot := v_pre_run_snapshots->v_snap_key->'full_snapshot';
+          -- Authoritatively derive client_id from database row
+          v_client_id := COALESCE(NULLIF(v_pre_run_snapshots->v_snap_key->>'client_id', '')::uuid, v_client_id);
+          IF v_expected_amt <= 0 THEN
+            v_expected_amt := COALESCE((v_pre_run_snapshots->v_snap_key->>'net_payable')::numeric, 0);
+            v_diff := v_actual_amt - v_expected_amt;
+          END IF;
+        ELSE
+          -- Payable not found under target company: strictly reject settlement to prevent cross-company corruption
+          v_notes := COALESCE(v_notes || '; ', '') || 'Rejected: payable not found in target company ' || v_company_id::text;
+          v_result := 'EXCEPTION';
+          v_payable_id := NULL;
         END IF;
       END IF;
 
@@ -895,13 +930,20 @@ BEGIN
         ELSE 'Not_Matched'::public.reconciliation_result
       END;
 
-      v_paid_amt := CASE WHEN v_actual_amt > 0 THEN v_actual_amt ELSE v_expected_amt END;
-      v_total_amount := v_total_amount + v_paid_amt;
+      -- Strictly require positive actual amount for settlement (never fall back to expected_amount)
+      v_paid_amt := v_actual_amt;
+      v_total_amount := v_total_amount + GREATEST(0, v_paid_amt);
       v_payment_id := NULL;
 
       -- A. Settle payable if payable_id exists and status is MATCHED / PARTIAL
       IF v_payable_id IS NOT NULL AND v_result IN ('MATCHED', 'PARTIAL', 'OVER_PAID', 'UNDER_PAID') THEN
-        IF v_old_payment_status = 'Paid' THEN
+        IF v_paid_amt <= 0 THEN
+          -- Strictly reject zero or negative actual amounts: underpayments or malformed rows must never settle as paid
+          v_notes := COALESCE(v_notes || '; ', '') || 'Settlement rejected: actual payment amount must be strictly positive';
+          v_result := 'EXCEPTION';
+          v_result_enum := 'Exception'::public.reconciliation_result;
+          v_payment_id := NULL;
+        ELSIF v_old_payment_status = 'Paid' THEN
           -- SHORT-CIRCUIT: Payable is already Paid before this run; do NOT create duplicate payment record
           v_already_paid := v_already_paid + 1;
           v_notes := COALESCE(v_notes || '; ', '') || 'Payable already Paid prior to reconciliation run';
@@ -916,6 +958,7 @@ BEGIN
                 payment_reference = COALESCE(payment_reference, v_payment_ref),
                 updated_at = now()
             WHERE id = v_payable_id
+              AND company_id = v_company_id
               AND payment_status != 'Paid';
 
             IF FOUND THEN
@@ -933,6 +976,7 @@ BEGIN
                 payment_reference = COALESCE(payment_reference, v_payment_ref),
                 updated_at = now()
             WHERE id = v_payable_id
+              AND company_id = v_company_id
               AND payment_status != 'Paid';
 
             IF FOUND THEN
@@ -950,6 +994,7 @@ BEGIN
                 payment_reference = COALESCE(payment_reference, v_payment_ref),
                 updated_at = now()
             WHERE id = v_payable_id
+              AND company_id = v_company_id
               AND payment_status != 'Paid';
 
             IF FOUND THEN
@@ -1000,7 +1045,7 @@ BEGIN
               v_client_id,
               v_target_table,
               v_payable_id,
-              v_expected_amt,
+              v_applied_payable_amt,
               0,
               v_applied_payable_amt,
               v_applied_payable_amt,
@@ -1109,7 +1154,7 @@ BEGIN
       END IF;
 
       -- C. If exception/unmatched, record durable exception
-      IF v_result IN ('MISSING', 'REJECTED', 'EXCEPTION') OR v_diff != 0 THEN
+      IF v_result IN ('MISSING', 'REJECTED', 'EXCEPTION') OR (v_result NOT IN ('MATCHED', 'PARTIAL') AND abs(v_diff) > 0.05) THEN
         INSERT INTO public.reconciliation_exceptions (
           run_id,
           company_id,
@@ -1714,6 +1759,151 @@ END;
 $$;
 
 -- ============================================================================
+-- 8B. TRANSACTIONAL BANK STATEMENT LEDGER IMPORT (import_bank_statement_ledger_atomic)
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION public.import_bank_statement_ledger_atomic(
+    p_import_info jsonb,
+    p_transactions jsonb
+) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_company_id uuid;
+  v_file_hash text;
+  v_file_name text;
+  v_row_count int;
+  v_total_credit numeric(15,2);
+  v_total_debit numeric(15,2);
+  v_import_id uuid;
+  v_inserted_txns int := 0;
+  v_t jsonb;
+  v_fingerprint text;
+  v_resolved_ref text;
+  v_raw_fingerprint_str text;
+  v_diag_rows int := 0;
+BEGIN
+  -- 1. Role verification
+  IF current_user != 'service_role' AND current_user != 'postgres' AND COALESCE((auth.jwt()->>'role'), current_setting('request.jwt.claim.role', true), '') != 'service_role' THEN
+    PERFORM public.require_role('admin', 'supervisor', 'finance_operator', 'reconciliation_officer');
+  END IF;
+
+  v_company_id := NULLIF(p_import_info->>'company_id', '')::uuid;
+  IF v_company_id IS NULL THEN
+    RAISE EXCEPTION 'Target company_id is required for bank statement import' USING ERRCODE = '23502';
+  END IF;
+
+  -- 2. Tenant isolation check
+  IF current_user != 'service_role' AND current_user != 'postgres' AND COALESCE((auth.jwt()->>'role'), current_setting('request.jwt.claim.role', true), '') != 'service_role' THEN
+    IF NOT public.has_company_access(v_uid, v_company_id) THEN
+      RAISE EXCEPTION 'Unauthorized: caller lacks access to target company %', v_company_id USING ERRCODE = '42501';
+    END IF;
+  END IF;
+
+  v_file_hash := NULLIF(p_import_info->>'file_hash_sha256', '');
+  v_file_name := COALESCE(NULLIF(p_import_info->>'file_name', ''), 'unknown.xlsx');
+  v_row_count := COALESCE(NULLIF(p_import_info->>'row_count', '')::int, jsonb_array_length(p_transactions));
+  v_total_credit := COALESCE(NULLIF(p_import_info->>'total_credit', '')::numeric, 0);
+  v_total_debit := COALESCE(NULLIF(p_import_info->>'total_debit', '')::numeric, 0);
+
+  -- 3. Idempotency: check if identical file was already imported for this company
+  IF v_file_hash IS NOT NULL THEN
+    SELECT id INTO v_import_id
+    FROM public.bank_statement_imports
+    WHERE company_id = v_company_id
+      AND file_hash_sha256 = v_file_hash
+      AND status = 'applied'
+    LIMIT 1;
+
+    IF v_import_id IS NOT NULL THEN
+      RETURN jsonb_build_object(
+        'success', true,
+        'import_id', v_import_id,
+        'file_hash', v_file_hash,
+        'inserted_count', 0,
+        'is_duplicate', true,
+        'message', 'Bank statement file already imported for this company'
+      );
+    END IF;
+  END IF;
+
+  -- 4. Create bank statement import ledger record
+  INSERT INTO public.bank_statement_imports (
+    company_id,
+    file_name,
+    file_hash_sha256,
+    row_count,
+    total_credit,
+    total_debit,
+    status,
+    parser_metadata,
+    created_by
+  ) VALUES (
+    v_company_id,
+    v_file_name,
+    v_file_hash,
+    v_row_count,
+    v_total_credit,
+    v_total_debit,
+    'applied',
+    COALESCE(p_import_info->'parser_metadata', '{}'::jsonb),
+    v_uid
+  ) RETURNING id INTO v_import_id;
+
+  -- 5. Atomically insert all transactions
+  FOR v_t IN SELECT * FROM jsonb_array_elements(p_transactions)
+  LOOP
+    v_resolved_ref := COALESCE(NULLIF(v_t->>'reference', ''), NULLIF(v_t->>'instruction_id', ''), NULLIF(v_t->>'reference_id', ''));
+    v_fingerprint := NULLIF(v_t->>'transaction_fingerprint', '');
+    IF v_fingerprint IS NULL THEN
+      v_raw_fingerprint_str := v_company_id::text || '|' || COALESCE(v_t->>'transaction_date', '') || '|' || COALESCE(v_t->>'description', '') || '|' || COALESCE(v_resolved_ref, '') || '|' || COALESCE(v_t->>'debit_amount', '0') || '|' || COALESCE(v_t->>'credit_amount', '0');
+      v_fingerprint := encode(extensions.digest(v_raw_fingerprint_str::bytea, 'sha256'), 'hex');
+    END IF;
+
+    INSERT INTO public.bank_statement_transactions (
+      import_id,
+      company_id,
+      transaction_date,
+      description,
+      reference,
+      debit_amount,
+      credit_amount,
+      balance,
+      raw_data,
+      transaction_fingerprint,
+      reconciliation_status
+    ) VALUES (
+      v_import_id,
+      v_company_id,
+      COALESCE(NULLIF(v_t->>'transaction_date', '')::date, CURRENT_DATE),
+      NULLIF(v_t->>'description', ''),
+      v_resolved_ref,
+      COALESCE(NULLIF(v_t->>'debit_amount', '')::numeric, 0),
+      COALESCE(NULLIF(v_t->>'credit_amount', '')::numeric, 0),
+      NULLIF(v_t->>'balance', '')::numeric,
+      COALESCE(v_t->'raw_data', '{}'::jsonb),
+      v_fingerprint,
+      'unreconciled'
+    )
+    ON CONFLICT (company_id, transaction_fingerprint) DO NOTHING;
+
+    GET DIAGNOSTICS v_diag_rows = ROW_COUNT;
+    v_inserted_txns := v_inserted_txns + v_diag_rows;
+  END LOOP;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'import_id', v_import_id,
+    'file_hash', v_file_hash,
+    'inserted_count', v_inserted_txns,
+    'is_duplicate', false
+  );
+END;
+$$;
+
+-- ============================================================================
 -- 9. EXPLICIT RPC PRIVILEGE REVOCATION & LEAST-PRIVILEGE GRANTS
 -- ============================================================================
 
@@ -1729,6 +1919,9 @@ GRANT EXECUTE ON FUNCTION public.revert_reconciliation_lot_atomic(uuid[]) TO aut
 
 REVOKE EXECUTE ON FUNCTION public.get_reconciliation_runs_paginated(uuid, text, text, text, int, int, date, date) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.get_reconciliation_runs_paginated(uuid, text, text, text, int, int, date, date) TO authenticated, service_role;
+
+REVOKE EXECUTE ON FUNCTION public.import_bank_statement_ledger_atomic(jsonb, jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.import_bank_statement_ledger_atomic(jsonb, jsonb) TO authenticated, service_role;
 
 -- Grant table privileges on newly introduced tables to authenticated and service_role (access controlled by RLS)
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.reconciliation_runs TO authenticated, service_role;

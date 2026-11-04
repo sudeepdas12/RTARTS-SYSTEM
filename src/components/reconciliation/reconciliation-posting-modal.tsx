@@ -33,7 +33,7 @@ export interface ReconciliationPostingModalProps {
   report: ComprehensiveReconciliationReport | null;
   selectedMatchIds?: Set<string>;
   isApplying: boolean;
-  onConfirmApply: () => Promise<void>;
+  onConfirmApply: () => Promise<boolean | void>;
   operatorName?: string;
   operatorRole?: string;
   isAll?: boolean;
@@ -115,10 +115,16 @@ export function ReconciliationPostingModal({
 
   const handleConfirm = async () => {
     if (!canConfirm || isApplying) return;
-    await onConfirmApply();
-    setAcknowledged(false);
-    setVariantAcknowledged(false);
-    onOpenChange(false);
+    try {
+      const res = await onConfirmApply();
+      if (res !== false) {
+        setAcknowledged(false);
+        setVariantAcknowledged(false);
+        onOpenChange(false);
+      }
+    } catch (err) {
+      console.error("Posting execution failed in modal:", err);
+    }
   };
 
   return (
