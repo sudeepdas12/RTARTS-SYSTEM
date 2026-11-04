@@ -17,7 +17,7 @@ describe.skipIf(!isLiveDb)("UploadService.rollbackUpload integration test", () =
     // Authenticate as admin
     await supabase.auth.signInWithPassword({
       email: "admin@rbbmbl.com.np",
-      password: "Admin123!",
+      password: process.env.SUPABASE_TEST_ADMIN_PASSWORD || "Admin123!",
     });
 
     // Cleanup any lingering test uploads

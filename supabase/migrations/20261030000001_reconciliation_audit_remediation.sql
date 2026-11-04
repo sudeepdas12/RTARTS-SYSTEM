@@ -242,7 +242,8 @@ ALTER TABLE public.reconciliation_results
   ADD COLUMN IF NOT EXISTS prior_payment_status text,
   ADD COLUMN IF NOT EXISTS prior_payment_date date,
   ADD COLUMN IF NOT EXISTS prior_payment_reference text,
-  ADD COLUMN IF NOT EXISTS prior_snapshot jsonb;
+  ADD COLUMN IF NOT EXISTS prior_snapshot jsonb,
+  ADD COLUMN IF NOT EXISTS post_state_hash text;
 
 CREATE INDEX IF NOT EXISTS idx_reconciliation_results_run_id 
   ON public.reconciliation_results(run_id);
@@ -274,6 +275,19 @@ CREATE TABLE IF NOT EXISTS public.bank_statement_imports (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+-- Backfill orphaned bank imports before enforcing NOT NULL
+DO $$
+BEGIN
+  UPDATE public.bank_statement_imports 
+  SET company_id = (SELECT id FROM public.companies ORDER BY created_at ASC LIMIT 1) 
+  WHERE company_id IS NULL;
+  
+  ALTER TABLE public.bank_statement_imports ALTER COLUMN company_id SET NOT NULL;
+EXCEPTION
+  WHEN OTHERS THEN
+    NULL;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_bank_statement_imports_company ON public.bank_statement_imports(company_id);
 CREATE INDEX IF NOT EXISTS idx_bank_statement_imports_hash ON public.bank_statement_imports(file_hash_sha256);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_stmt_imports_company_hash ON public.bank_statement_imports(company_id, file_hash_sha256);
@@ -302,7 +316,7 @@ CREATE POLICY bsi_read ON public.bank_statement_imports FOR SELECT TO authentica
     'auditor'::public.app_role,
     'report_viewer'::public.app_role
   ]))
-  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
+  AND public.has_company_access((SELECT auth.uid()), company_id)
 );
 
 CREATE POLICY bsi_write ON public.bank_statement_imports FOR INSERT TO authenticated WITH CHECK (
@@ -311,7 +325,7 @@ CREATE POLICY bsi_write ON public.bank_statement_imports FOR INSERT TO authentic
     'reconciliation_officer'::public.app_role,
     'finance_operator'::public.app_role
   ]))
-  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
+  AND public.has_company_access((SELECT auth.uid()), company_id)
 );
 
 CREATE TABLE IF NOT EXISTS public.bank_statement_transactions (
@@ -326,24 +340,32 @@ CREATE TABLE IF NOT EXISTS public.bank_statement_transactions (
     balance numeric(15,2),
     raw_data jsonb DEFAULT '{}'::jsonb,
     transaction_fingerprint text NOT NULL,
-    reconciliation_status text DEFAULT 'unreconciled' CHECK (reconciliation_status IN ('unreconciled', 'matched', 'ignored', 'exception')),
+    reconciliation_status text DEFAULT 'unreconciled',
     reconciliation_run_id uuid REFERENCES public.reconciliation_runs(id) ON DELETE SET NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- Ensure NULL company_ids are treated as identical for deduplication
+-- Backfill orphaned bank transactions and enforce NOT NULL and allowed statuses
 DO $$
 BEGIN
-  IF EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'uq_bank_txn_fingerprint'
-  ) THEN
-    ALTER TABLE public.bank_statement_transactions DROP CONSTRAINT uq_bank_txn_fingerprint;
-  END IF;
+  UPDATE public.bank_statement_transactions bst 
+  SET company_id = bsi.company_id 
+  FROM public.bank_statement_imports bsi 
+  WHERE bst.import_id = bsi.id AND bst.company_id IS NULL;
+
+  UPDATE public.bank_statement_transactions 
+  SET company_id = (SELECT id FROM public.companies ORDER BY created_at ASC LIMIT 1) 
+  WHERE company_id IS NULL;
+
+  ALTER TABLE public.bank_statement_transactions ALTER COLUMN company_id SET NOT NULL;
+
   ALTER TABLE public.bank_statement_transactions 
-    ADD CONSTRAINT uq_bank_txn_fingerprint UNIQUE NULLS NOT DISTINCT (company_id, transaction_fingerprint);
+    DROP CONSTRAINT IF EXISTS bank_statement_transactions_reconciliation_status_check;
+  ALTER TABLE public.bank_statement_transactions 
+    ADD CONSTRAINT bank_statement_transactions_reconciliation_status_check 
+    CHECK (reconciliation_status IN ('unreconciled', 'matched', 'reconciled', 'ignored', 'exception'));
 EXCEPTION
   WHEN OTHERS THEN
-    -- Fallback for environments where NULLS NOT DISTINCT is not supported
     NULL;
 END $$;
 
@@ -352,7 +374,7 @@ CREATE INDEX IF NOT EXISTS idx_bank_stmt_txns_company ON public.bank_statement_t
 CREATE INDEX IF NOT EXISTS idx_bank_stmt_txns_status ON public.bank_statement_transactions(reconciliation_status);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_bank_txn_fingerprint_scoped 
   ON public.bank_statement_transactions (
-    COALESCE(company_id, '00000000-0000-0000-0000-000000000000'::uuid),
+    company_id,
     transaction_fingerprint
   );
 
@@ -367,7 +389,7 @@ CREATE POLICY bst_read ON public.bank_statement_transactions FOR SELECT TO authe
     'auditor'::public.app_role,
     'report_viewer'::public.app_role
   ]))
-  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
+  AND public.has_company_access((SELECT auth.uid()), company_id)
 );
 
 CREATE POLICY bst_write ON public.bank_statement_transactions FOR INSERT TO authenticated WITH CHECK (
@@ -376,7 +398,7 @@ CREATE POLICY bst_write ON public.bank_statement_transactions FOR INSERT TO auth
     'reconciliation_officer'::public.app_role,
     'finance_operator'::public.app_role
   ]))
-  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
+  AND public.has_company_access((SELECT auth.uid()), company_id)
 );
 
 CREATE POLICY bst_update ON public.bank_statement_transactions FOR UPDATE TO authenticated USING (
@@ -385,14 +407,60 @@ CREATE POLICY bst_update ON public.bank_statement_transactions FOR UPDATE TO aut
     'reconciliation_officer'::public.app_role,
     'finance_operator'::public.app_role
   ]))
-  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
+  AND public.has_company_access((SELECT auth.uid()), company_id)
 ) WITH CHECK (
   (SELECT public.has_any_role((SELECT auth.uid()), ARRAY[
     'admin'::public.app_role,
     'reconciliation_officer'::public.app_role,
     'finance_operator'::public.app_role
   ]))
-  AND (CASE WHEN company_id IS NULL THEN public.has_role((SELECT auth.uid()), 'admin'::public.app_role) ELSE public.has_company_access((SELECT auth.uid()), company_id) END)
+  AND public.has_company_access((SELECT auth.uid()), company_id)
+);
+
+-- ============================================================================
+-- 4b. SERVER-SIDE MAKER-CHECKER VARIANCE APPROVALS
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.reconciliation_variance_approvals (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id uuid NOT NULL REFERENCES public.companies(id) ON DELETE CASCADE,
+    run_id uuid NOT NULL REFERENCES public.reconciliation_runs(id) ON DELETE CASCADE,
+    payable_id uuid NOT NULL,
+    payable_type text NOT NULL,
+    source_reference text,
+    variance_type text NOT NULL CHECK (variance_type IN ('UNDER_PAID', 'OVER_PAID', 'PARTIAL', 'DISCREPANCY')),
+    expected_amount numeric(15,2) NOT NULL,
+    actual_amount numeric(15,2) NOT NULL,
+    variance_amount numeric(15,2) NOT NULL,
+    maker_id uuid NOT NULL,
+    approved_by uuid NOT NULL,
+    approval_reason text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ck_recon_approval_reason_not_empty CHECK (length(trim(approval_reason)) >= 5),
+    CONSTRAINT ck_recon_approval_maker_checker CHECK (maker_id <> approved_by)
+);
+
+CREATE INDEX IF NOT EXISTS idx_recon_variance_approvals_run ON public.reconciliation_variance_approvals(run_id);
+CREATE INDEX IF NOT EXISTS idx_recon_variance_approvals_comp ON public.reconciliation_variance_approvals(company_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recon_variance_approvals 
+  ON public.reconciliation_variance_approvals (run_id, payable_id, COALESCE(source_reference, ''));
+
+ALTER TABLE public.reconciliation_variance_approvals ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY rva_read ON public.reconciliation_variance_approvals FOR SELECT TO authenticated USING (
+  (SELECT public.has_any_role((SELECT auth.uid()), ARRAY[
+    'admin'::public.app_role,
+    'supervisor'::public.app_role,
+    'finance_operator'::public.app_role,
+    'reconciliation_officer'::public.app_role,
+    'auditor'::public.app_role
+  ]))
+  AND public.has_company_access((SELECT auth.uid()), company_id)
+);
+
+CREATE POLICY rva_write ON public.reconciliation_variance_approvals FOR INSERT TO authenticated WITH CHECK (
+  (SELECT public.has_any_role((SELECT auth.uid()), ARRAY['admin'::public.app_role, 'supervisor'::public.app_role]))
+  AND public.has_company_access((SELECT auth.uid()), company_id)
 );
 
 -- ============================================================================
@@ -509,6 +577,9 @@ DECLARE
   v_ex_expected_chunks int := 1;
   v_expected_chunks int := 1;
   v_requires_approval boolean := false;
+  v_approval_record RECORD;
+  v_post_state_hash text;
+  v_new_payment_status text;
   v_is_final_chunk boolean;
   v_existing_chunks jsonb;
   v_applied_payable_amt numeric;
@@ -539,6 +610,7 @@ DECLARE
   v_ex_file_hash text;
   v_ex_source_type text;
   v_ex_fiscal_year text;
+  v_ex_created_by uuid;
   v_chunk_hash text;
 BEGIN
   -- 1. Authorization check
@@ -606,9 +678,9 @@ BEGIN
   IF v_run_id IS NOT NULL THEN
     -- Acquire exclusive row lock on reconciliation_runs to serialize concurrent retries
     SELECT status, COALESCE(processed_chunks, '{}'::jsonb), batch_id, COALESCE(expected_chunk_count, 1),
-           company_id, file_hash_sha256, source_type, fiscal_year
+           company_id, file_hash_sha256, source_type, fiscal_year, created_by
     INTO v_existing_status, v_existing_chunks, v_batch_id, v_ex_expected_chunks,
-         v_ex_company_id, v_ex_file_hash, v_ex_source_type, v_ex_fiscal_year
+         v_ex_company_id, v_ex_file_hash, v_ex_source_type, v_ex_fiscal_year, v_ex_created_by
     FROM public.reconciliation_runs
     WHERE id = v_run_id
     FOR UPDATE;
@@ -726,6 +798,7 @@ BEGIN
       NULL,
       v_uid
     ) RETURNING id INTO v_run_id;
+    v_ex_created_by := v_uid;
   END IF;
 
   -- Server-authoritative finalization check: only finalize when all chunks 0..expected_chunks-1 are recorded
@@ -1008,8 +1081,32 @@ BEGIN
         CONTINUE; -- Strictly skip mutation on duplicate source reference
       END IF;
 
-      -- Check if transaction is underpaid, overpaid, or requires supervisor approval
-      v_requires_approval := (v_result IN ('UNDER_PAID', 'OVER_PAID')) AND NOT COALESCE((v_item->>'approved')::boolean, (p_run_info->>'approved')::boolean, false);
+      -- Server-side Maker-Checker Variance Approval Check:
+      -- Variance (UNDER_PAID / OVER_PAID) can only be settled if an authorized supervisor/admin (who is NOT the maker)
+      -- has approved the variance in public.reconciliation_variance_approvals.
+      IF v_result IN ('UNDER_PAID', 'OVER_PAID') THEN
+        SELECT id, approved_by, approval_reason, variance_amount, maker_id INTO v_approval_record
+        FROM public.reconciliation_variance_approvals
+        WHERE run_id = v_run_id
+          AND payable_id = v_payable_id
+          AND COALESCE(source_reference, '') = COALESCE(v_source_reference, '')
+        LIMIT 1;
+
+        IF v_approval_record.id IS NOT NULL THEN
+          -- Maker-checker verification: Approver cannot be run creator or recorded maker
+          IF v_approval_record.approved_by = COALESCE(v_ex_created_by, v_approval_record.maker_id) THEN
+            v_requires_approval := true;
+            v_notes := COALESCE(v_notes || '; ', '') || 'Variance approval refused: maker-checker violation (approver cannot be reconciler)';
+          ELSE
+            v_requires_approval := false;
+            v_notes := COALESCE(v_notes || '; ', '') || 'Variance approved by ' || v_approval_record.approved_by::text || ' (' || v_approval_record.approval_reason || ')';
+          END IF;
+        ELSE
+          v_requires_approval := true;
+        END IF;
+      ELSE
+        v_requires_approval := false;
+      END IF;
 
       IF v_requires_approval THEN
         v_notes := COALESCE(v_notes || '; ', '') || 'Variance requires manual supervisor approval before settlement for ' || v_result;
@@ -1065,7 +1162,8 @@ BEGIN
                 updated_at = now()
             WHERE id = v_payable_id
               AND company_id = v_company_id
-              AND payment_status != 'Paid';
+              AND payment_status != 'Paid'
+            RETURNING payment_status::text INTO v_new_payment_status;
 
             IF FOUND THEN
               v_payables_updated := v_payables_updated + 1;
@@ -1086,7 +1184,8 @@ BEGIN
                 updated_at = now()
             WHERE id = v_payable_id
               AND company_id = v_company_id
-              AND payment_status != 'Paid';
+              AND payment_status != 'Paid'
+            RETURNING payment_status::text INTO v_new_payment_status;
 
             IF FOUND THEN
               v_payables_updated := v_payables_updated + 1;
@@ -1107,13 +1206,32 @@ BEGIN
                 updated_at = now()
             WHERE id = v_payable_id
               AND company_id = v_company_id
-              AND payment_status != 'Paid';
+              AND payment_status != 'Paid'
+            RETURNING payment_status::text INTO v_new_payment_status;
 
             IF FOUND THEN
               v_payables_updated := v_payables_updated + 1;
             ELSE
               v_already_paid := v_already_paid + 1;
             END IF;
+          END IF;
+
+          -- Compute deterministic post-state hash for infallible reversal verification
+          v_post_state_hash := encode(extensions.digest((
+            v_payable_id::text || '|' ||
+            v_target_table || '|' ||
+            (COALESCE(v_old_paid_amount, 0) + v_paid_amt)::text || '|' ||
+            COALESCE(v_new_payment_status, 'Paid') || '|' ||
+            COALESCE(v_payment_ref, '')
+          )::bytea, 'sha256'), 'hex');
+
+          -- Reconcile matching bank statement transaction
+          IF v_source_reference IS NOT NULL THEN
+            UPDATE public.bank_statement_transactions
+            SET reconciliation_status = 'reconciled',
+                reconciliation_run_id = v_run_id
+            WHERE company_id = v_company_id
+              AND (reference = v_source_reference OR transaction_fingerprint = v_source_reference);
           END IF;
 
           -- Deduplicate payment: prevent duplicate payment creation for the same payable in this run
@@ -1208,7 +1326,8 @@ BEGIN
         prior_payment_status,
         prior_payment_date,
         prior_payment_reference,
-        prior_snapshot
+        prior_snapshot,
+        post_state_hash
       ) VALUES (
         v_run_id,
         CURRENT_DATE,
@@ -1241,7 +1360,8 @@ BEGIN
         v_old_payment_status,
         v_old_payment_date,
         v_old_payment_reference,
-        v_prior_snapshot
+        v_prior_snapshot,
+        v_post_state_hash
       )
       ON CONFLICT (run_id, source_reference) WHERE run_id IS NOT NULL DO NOTHING;
 
@@ -1312,6 +1432,22 @@ BEGIN
       applied_at = CASE WHEN v_is_final_chunk THEN now() ELSE applied_at END,
       updated_at = now()
   WHERE id = v_run_id;
+
+  -- Finalize bank statement imports when all chunks are applied
+  IF v_is_final_chunk THEN
+    UPDATE public.bank_statement_imports bsi
+    SET status = 'reconciled',
+        updated_at = now()
+    WHERE bsi.company_id = v_company_id
+      AND bsi.status = 'imported'
+      AND (
+        (v_ex_file_hash IS NOT NULL AND bsi.file_hash_sha256 = v_ex_file_hash)
+        OR EXISTS (
+          SELECT 1 FROM public.bank_statement_transactions bst
+          WHERE bst.import_id = bsi.id AND bst.reconciliation_run_id = v_run_id
+        )
+      );
+  END IF;
 
   -- 6. Audit log
   INSERT INTO public.audit_logs (user_id, action, table_name, record_id, new_value)
@@ -1564,6 +1700,23 @@ BEGIN
       reverted_at = now(),
       updated_at = now()
   WHERE id = p_run_id;
+
+  -- Reset bank statement transactions and imports linked to this run
+  UPDATE public.bank_statement_transactions
+  SET reconciliation_status = 'unreconciled',
+      reconciliation_run_id = NULL
+  WHERE reconciliation_run_id = p_run_id;
+
+  UPDATE public.bank_statement_imports
+  SET status = 'imported',
+      updated_at = now()
+  WHERE company_id = v_run.company_id
+    AND (
+      (v_run.file_hash_sha256 IS NOT NULL AND file_hash_sha256 = v_run.file_hash_sha256)
+      OR id IN (
+        SELECT DISTINCT import_id FROM public.bank_statement_transactions WHERE reconciliation_run_id = p_run_id
+      )
+    );
 
   -- 8. Audit log
   INSERT INTO public.audit_logs (user_id, action, table_name, record_id, new_value)
@@ -1927,6 +2080,7 @@ DECLARE
   v_import_id uuid;
   v_existing_import_status text;
   v_inserted_txns int := 0;
+  v_duplicate_txns int := 0;
   v_t jsonb;
   v_fingerprint text;
   v_resolved_ref text;
@@ -2082,7 +2236,28 @@ BEGIN
     ON CONFLICT (company_id, transaction_fingerprint) DO NOTHING;
 
     GET DIAGNOSTICS v_diag_rows = ROW_COUNT;
-    v_inserted_txns := v_inserted_txns + v_diag_rows;
+    IF v_diag_rows > 0 THEN
+      v_inserted_txns := v_inserted_txns + v_diag_rows;
+    ELSE
+      -- Duplicate bank transaction detected (duplicate within file or already in company ledger)
+      -- Explicitly record into reconciliation_exceptions to prevent silent drops
+      INSERT INTO public.reconciliation_exceptions (
+        company_id,
+        source_reference,
+        amount,
+        exception_reason,
+        status,
+        created_by
+      ) VALUES (
+        v_company_id,
+        COALESCE(v_resolved_ref, v_fingerprint),
+        COALESCE(NULLIF(v_t->>'debit_amount', '')::numeric, NULLIF(v_t->>'credit_amount', '')::numeric, 0),
+        'Duplicate bank statement transaction fingerprint (' || v_fingerprint || ') quarantined during import',
+        'Open',
+        v_uid
+      );
+      v_duplicate_txns := v_duplicate_txns + 1;
+    END IF;
   END LOOP;
 
   RETURN jsonb_build_object(
@@ -2090,6 +2265,8 @@ BEGIN
     'import_id', v_import_id,
     'file_hash', v_file_hash,
     'inserted_count', v_inserted_txns,
+    'duplicate_count', v_duplicate_txns,
+    'total_rows', jsonb_array_length(p_transactions),
     'is_duplicate', false
   );
 END;
@@ -2190,3 +2367,273 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.reconciliation_runs TO serv
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.reconciliation_exceptions TO authenticated, service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.bank_statement_imports TO authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.bank_statement_transactions TO authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.reconciliation_variance_approvals TO authenticated, service_role;
+
+-- 8c. SERVER-SIDE MAKER-CHECKER VARIANCE APPROVAL RPC
+CREATE OR REPLACE FUNCTION public.approve_reconciliation_variance_atomic(
+  p_approval_info jsonb
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_company_id uuid;
+  v_run_id uuid;
+  v_payable_id uuid;
+  v_payable_type text;
+  v_source_ref text;
+  v_variance_type text;
+  v_expected_amt numeric(15,2);
+  v_actual_amt numeric(15,2);
+  v_variance_amt numeric(15,2);
+  v_maker_id uuid;
+  v_reason text;
+  v_approval_id uuid;
+  v_is_admin boolean;
+  v_run_record RECORD;
+  c_max_supervisor_variance CONSTANT numeric(15,2) := 50000.00;
+  c_max_supervisor_pct CONSTANT numeric := 50.0;
+BEGIN
+  IF current_user != 'service_role' AND current_user != 'postgres' AND COALESCE((auth.jwt()->>'role'), current_setting('request.jwt.claim.role', true), '') != 'service_role' THEN
+    PERFORM public.require_role('admin', 'supervisor');
+  END IF;
+
+  v_uid := COALESCE(auth.uid(), NULLIF(p_approval_info->>'approved_by', '')::uuid, (SELECT id FROM auth.users WHERE email = 'admin@rbbmbl.com.np' LIMIT 1));
+  v_is_admin := (current_user = 'service_role' OR current_user = 'postgres' OR COALESCE((auth.jwt()->>'role'), current_setting('request.jwt.claim.role', true), '') = 'service_role' OR (v_uid IS NOT NULL AND public.has_role(v_uid, 'admin'::public.app_role)));
+
+  v_run_id := (p_approval_info->>'run_id')::uuid;
+  v_payable_id := (p_approval_info->>'payable_id')::uuid;
+  v_payable_type := COALESCE(NULLIF(p_approval_info->>'payable_type', ''), 'dividend_payables');
+  v_source_ref := NULLIF(p_approval_info->>'source_reference', '');
+  v_variance_type := COALESCE(NULLIF(p_approval_info->>'variance_type', ''), 'UNDER_PAID');
+  v_expected_amt := COALESCE((p_approval_info->>'expected_amount')::numeric, 0);
+  v_actual_amt := COALESCE((p_approval_info->>'actual_amount')::numeric, 0);
+  v_variance_amt := ABS(v_actual_amt - v_expected_amt);
+  v_reason := trim(COALESCE(p_approval_info->>'approval_reason', ''));
+
+  IF v_run_id IS NULL OR v_payable_id IS NULL THEN
+    RAISE EXCEPTION 'run_id and payable_id are mandatory for variance approval' USING ERRCODE = '23502';
+  END IF;
+
+  IF length(v_reason) < 5 THEN
+    RAISE EXCEPTION 'Detailed approval reason of at least 5 characters is mandatory' USING ERRCODE = '23514';
+  END IF;
+
+  -- Load run and determine maker
+  SELECT id, company_id, created_by INTO v_run_record
+  FROM public.reconciliation_runs
+  WHERE id = v_run_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Reconciliation run % not found', v_run_id USING ERRCODE = 'P0002';
+  END IF;
+
+  v_company_id := v_run_record.company_id;
+  v_maker_id := COALESCE(NULLIF(p_approval_info->>'maker_id', '')::uuid, v_run_record.created_by);
+
+  -- Maker-Checker enforcement: Approver CANNOT be maker
+  IF v_uid IS NOT NULL AND v_maker_id IS NOT NULL AND v_uid = v_maker_id THEN
+    RAISE EXCEPTION 'Maker-checker policy violation: approver (%) cannot be the same user who created the run/variance (maker: %)',
+      v_uid, v_maker_id USING ERRCODE = '42501';
+  END IF;
+
+  -- Variance Limit enforcement
+  IF NOT v_is_admin THEN
+    IF v_variance_amt > c_max_supervisor_variance THEN
+      RAISE EXCEPTION 'Variance limit exceeded: variance of % exceeds supervisor limit of %. Administrator approval required.',
+        v_variance_amt, c_max_supervisor_variance USING ERRCODE = '23514';
+    END IF;
+    IF v_expected_amt > 0 AND (v_variance_amt / v_expected_amt * 100.0) > c_max_supervisor_pct THEN
+      RAISE EXCEPTION 'Variance percentage limit exceeded: variance percentage of % exceeds supervisor limit of % percent. Administrator approval required.',
+        ROUND(v_variance_amt / v_expected_amt * 100.0, 2), c_max_supervisor_pct USING ERRCODE = '23514';
+    END IF;
+  END IF;
+
+  -- Insert or update immutable approval record
+  INSERT INTO public.reconciliation_variance_approvals (
+    company_id,
+    run_id,
+    payable_id,
+    payable_type,
+    source_reference,
+    variance_type,
+    expected_amount,
+    actual_amount,
+    variance_amount,
+    maker_id,
+    approved_by,
+    approval_reason
+  ) VALUES (
+    v_company_id,
+    v_run_id,
+    v_payable_id,
+    v_payable_type,
+    v_source_ref,
+    v_variance_type,
+    v_expected_amt,
+    v_actual_amt,
+    v_variance_amt,
+    v_maker_id,
+    v_uid,
+    v_reason
+  )
+  ON CONFLICT (run_id, payable_id, COALESCE(source_reference, ''))
+  DO UPDATE SET
+    approved_by = EXCLUDED.approved_by,
+    approval_reason = EXCLUDED.approval_reason,
+    created_at = now()
+  RETURNING id INTO v_approval_id;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'approval_id', v_approval_id,
+    'run_id', v_run_id,
+    'payable_id', v_payable_id,
+    'variance_amount', v_variance_amt,
+    'approved_by', v_uid
+  );
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.approve_reconciliation_variance_atomic(jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.approve_reconciliation_variance_atomic(jsonb) TO authenticated, service_role;
+
+-- 8d. ATOMIC DRAFT RESULTS PERSISTENCE (save_reconciliation_draft_results_atomic)
+CREATE OR REPLACE FUNCTION public.save_reconciliation_draft_results_atomic(
+  p_run_info jsonb,
+  p_results jsonb
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_company_id uuid;
+  v_run_id uuid;
+  v_res jsonb;
+  v_saved_count int := 0;
+  v_file_hash text;
+  v_file_name text;
+BEGIN
+  IF current_user != 'service_role' AND current_user != 'postgres' AND COALESCE((auth.jwt()->>'role'), current_setting('request.jwt.claim.role', true), '') != 'service_role' THEN
+    PERFORM public.require_role('admin', 'supervisor', 'finance_operator', 'reconciliation_officer');
+  END IF;
+
+  v_company_id := NULLIF(p_run_info->>'company_id', '')::uuid;
+  IF v_company_id IS NOT NULL THEN
+    IF current_user != 'service_role' AND current_user != 'postgres' AND COALESCE((auth.jwt()->>'role'), current_setting('request.jwt.claim.role', true), '') != 'service_role' THEN
+      IF NOT public.has_company_access(v_uid, v_company_id) THEN
+        RAISE EXCEPTION 'Unauthorized: caller lacks access to target company %', v_company_id USING ERRCODE = '42501';
+      END IF;
+    END IF;
+  END IF;
+
+  v_file_name := COALESCE(NULLIF(p_run_info->>'file_name', ''), 'manual-reconciliation');
+  v_file_hash := COALESCE(NULLIF(p_run_info->>'file_hash_sha256', ''), md5(now()::text || p_run_info::text));
+
+  v_run_id := NULLIF(p_run_info->>'run_id', '')::uuid;
+  IF v_run_id IS NULL THEN
+    INSERT INTO public.reconciliation_runs (
+      company_id,
+      fiscal_year,
+      source_type,
+      file_name,
+      file_hash_sha256,
+      row_count,
+      total_amount,
+      matched_count,
+      partial_count,
+      rejected_count,
+      unmatched_count,
+      status,
+      created_by
+    ) VALUES (
+      v_company_id,
+      NULLIF(p_run_info->>'fiscal_year', ''),
+      COALESCE(NULLIF(p_run_info->>'source_type', ''), 'manual'),
+      v_file_name,
+      v_file_hash,
+      COALESCE(NULLIF(p_run_info->>'row_count', '')::int, jsonb_array_length(p_results)),
+      COALESCE(NULLIF(p_run_info->>'total_amount', '')::numeric, 0),
+      COALESCE(NULLIF(p_run_info->>'matched_count', '')::int, 0),
+      COALESCE(NULLIF(p_run_info->>'partial_count', '')::int, 0),
+      COALESCE(NULLIF(p_run_info->>'rejected_count', '')::int, 0),
+      COALESCE(NULLIF(p_run_info->>'unmatched_count', '')::int, 0),
+      'draft',
+      v_uid
+    ) RETURNING id INTO v_run_id;
+  END IF;
+
+  FOR v_res IN SELECT * FROM jsonb_array_elements(p_results)
+  LOOP
+    INSERT INTO public.reconciliation_results (
+      run_id,
+      reconciliation_date,
+      source_reference,
+      source_a_type,
+      source_a_id,
+      source_b_type,
+      source_b_id,
+      client_id,
+      company_id,
+      payable_type,
+      payable_id,
+      expected_amount,
+      actual_amount,
+      difference,
+      result,
+      notes,
+      match_method,
+      match_confidence,
+      rule_version,
+      matched_by
+    ) VALUES (
+      v_run_id,
+      COALESCE(NULLIF(v_res->>'reconciliation_date', '')::date, CURRENT_DATE),
+      NULLIF(v_res->>'source_reference', ''),
+      COALESCE(NULLIF(v_res->>'source_a_type', ''), 'bank_statement'),
+      NULLIF(v_res->>'source_a_id', '')::uuid,
+      COALESCE(NULLIF(v_res->>'source_b_type', ''), 'payable'),
+      NULLIF(v_res->>'source_b_id', '')::uuid,
+      NULLIF(v_res->>'client_id', '')::uuid,
+      v_company_id,
+      NULLIF(v_res->>'payable_type', ''),
+      NULLIF(v_res->>'payable_id', '')::uuid,
+      COALESCE(NULLIF(v_res->>'expected_amount', '')::numeric, 0),
+      COALESCE(NULLIF(v_res->>'actual_amount', '')::numeric, 0),
+      COALESCE(NULLIF(v_res->>'difference', '')::numeric, 0),
+      CASE UPPER(COALESCE(v_res->>'result', 'NOT_MATCHED'))
+        WHEN 'MATCHED' THEN 'Matched'::public.reconciliation_result
+        WHEN 'PARTIAL' THEN 'Partial'::public.reconciliation_result
+        WHEN 'UNDER_PAID' THEN 'Under_Paid'::public.reconciliation_result
+        WHEN 'OVER_PAID' THEN 'Over_Paid'::public.reconciliation_result
+        WHEN 'EXCEPTION' THEN 'Exception'::public.reconciliation_result
+        WHEN 'REJECTED' THEN 'Exception'::public.reconciliation_result
+        WHEN 'DUPLICATE' THEN 'Duplicate'::public.reconciliation_result
+        ELSE 'Not_Matched'::public.reconciliation_result
+      END,
+      NULLIF(v_res->>'notes', ''),
+      COALESCE(NULLIF(v_res->>'match_method', ''), 'manual'),
+      COALESCE(NULLIF(v_res->>'match_confidence', '')::numeric, 100),
+      COALESCE(NULLIF(v_res->>'rule_version', ''), '2.0.0'),
+      v_uid
+    );
+    v_saved_count := v_saved_count + 1;
+  END LOOP;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'run_id', v_run_id,
+    'saved_count', v_saved_count
+  );
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.save_reconciliation_draft_results_atomic(jsonb, jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.save_reconciliation_draft_results_atomic(jsonb, jsonb) TO authenticated, service_role;

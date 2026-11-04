@@ -40,8 +40,28 @@ jobs:
       - name: TypeScript Strict Type Check
         run: npm run typecheck
 
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start Supabase Local Containers
+        run: npx supabase start
+
+      - name: Verify Database Migrations & Lint
+        run: npx supabase db lint --local
+
       - name: Run Financial Test Suite (Vitest)
+        env:
+          VITE_SUPABASE_URL: http://127.0.0.1:54321
+          VITE_SUPABASE_PUBLISHABLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJpYXQiOjE2NDAwMDAwMDAsImV4cCI6MTk1NTU2MDAwMH0.placeholder
+          SUPABASE_URL: http://127.0.0.1:54321
+          SUPABASE_SERVICE_ROLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTY0MDAwMDAwMCwiZXhwIjoxOTU1NTYwMDAwfQ.placeholder
+          SUPABASE_TEST_ADMIN_PASSWORD: ${{ secrets.SUPABASE_TEST_ADMIN_PASSWORD || 'Admin123!' }}
         run: npm run test:run -- --reporter=verbose
+
+      - name: Verify Release Gate Invariants
+        run: npm run verify:release-gate
 
       - name: Verify Production Build
         run: npm run build

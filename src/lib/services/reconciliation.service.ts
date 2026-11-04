@@ -84,7 +84,7 @@ export interface ReconciliationRunRow {
   rejected_count: number;
   parser_version: string;
   matching_rule_version: string;
-  status: "draft" | "review" | "approved" | "applied" | "reverted" | "failed";
+  status: "draft" | "review" | "approved" | "applied" | "reverted" | "failed" | "processing";
   batch_id?: string | null;
   notes?: string | null;
   applied_by?: string | null;
@@ -290,59 +290,87 @@ export const ReconciliationService = {
         .ilike("notes", `%[File: ${fileName}%`);
     }
 
-    // Ensure results are linked to an auditable reconciliation run (status: 'draft') rather than being orphaned
-    let activeRunId = results[0]?.run_id || null;
-    if (!activeRunId) {
-      const companyId = results[0]?.company_id || null;
-      const matchedCount = results.filter(
-        (r) => r.result === "MATCHED" || r.result === "Matched",
-      ).length;
-      const partialCount = results.filter(
-        (r) =>
-          r.result === "PARTIAL" ||
-          r.result === "Partial" ||
-          r.result === "Under_Paid" ||
-          r.result === "Over_Paid",
-      ).length;
-      const rejectedCount = results.filter(
-        (r) => r.result === "EXCEPTION" || r.result === "Exception" || r.result === "Rejected",
-      ).length;
-      const unmatchedCount = results.filter(
-        (r) => r.result === "NOT_MATCHED" || r.result === "Missing",
-      ).length;
-      const totalAmount = results.reduce(
-        (acc, r) => acc + Number(r.actual_amount || r.expected_amount || 0),
-        0,
-      );
-      const fileHash = await computeSha256(`${companyId || ""}-${fileName}-${Date.now()}`);
+    const activeRunId = results[0]?.run_id || null;
+    const companyId = results[0]?.company_id || null;
+    const matchedCount = results.filter(
+      (r) => r.result === "MATCHED" || r.result === "Matched",
+    ).length;
+    const partialCount = results.filter(
+      (r) =>
+        r.result === "PARTIAL" ||
+        r.result === "Partial" ||
+        r.result === "Under_Paid" ||
+        r.result === "Over_Paid",
+    ).length;
+    const rejectedCount = results.filter(
+      (r) => r.result === "EXCEPTION" || r.result === "Exception" || r.result === "Rejected",
+    ).length;
+    const unmatchedCount = results.filter(
+      (r) => r.result === "NOT_MATCHED" || r.result === "Missing",
+    ).length;
+    const totalAmount = results.reduce(
+      (acc, r) => acc + Number(r.actual_amount || r.expected_amount || 0),
+      0,
+    );
+    const fileHash = await computeSha256(`${companyId || ""}-${fileName}-${Date.now()}`);
 
-      try {
-        const { data: runRes, error: runRpcErr } = await (supabase as any).rpc(
-          "create_reconciliation_draft_run_atomic",
-          {
-            p_run_info: {
-              company_id: companyId,
-              source_type: "manual",
-              file_name: fileName,
-              file_hash_sha256: fileHash,
-              row_count: results.length,
-              total_amount: totalAmount,
-              matched_count: matchedCount,
-              partial_count: partialCount,
-              rejected_count: rejectedCount,
-              unmatched_count: unmatchedCount,
-            },
+    // Server-authoritative atomic draft persistence RPC
+    try {
+      const { data: rpcData, error: rpcErr } = await (supabase as any).rpc(
+        "save_reconciliation_draft_results_atomic",
+        {
+          p_run_info: {
+            run_id: activeRunId,
+            company_id: companyId,
+            source_type: "manual",
+            file_name: fileName,
+            file_hash_sha256: fileHash,
+            row_count: results.length,
+            total_amount: totalAmount,
+            matched_count: matchedCount,
+            partial_count: partialCount,
+            rejected_count: rejectedCount,
+            unmatched_count: unmatchedCount,
           },
-        );
+          p_results: results,
+        },
+      );
 
-        if (!runRpcErr && runRes?.run_id) {
-          activeRunId = runRes.run_id;
+      if (!rpcErr && rpcData?.success) {
+        return {
+          savedCount: Number(rpcData.saved_count ?? results.length),
+          runId: rpcData.run_id ?? activeRunId ?? undefined,
+        };
+      }
+      if (rpcErr) {
+        const isOfflineMock =
+          (rpcErr.code === "PGRST202" ||
+            rpcErr.message?.includes("does not exist") ||
+            rpcErr.message?.includes("function")) &&
+          process.env.NODE_ENV === "test" &&
+          !import.meta.env?.PROD;
+        if (!isOfflineMock) {
+          throw new Error(`Failed to save reconciliation results atomically: ${rpcErr.message}`);
         }
-      } catch (runErr) {
-        console.warn("Could not create reconciliation_runs draft entry via RPC:", runErr);
+      }
+    } catch (e: any) {
+      if (e?.message?.includes("Failed to save reconciliation results atomically")) {
+        throw e;
+      }
+      if (import.meta.env?.PROD || process.env.NODE_ENV === "production") {
+        throw new Error(
+          `Atomic draft persistence required in production, but was bypassed: ${e?.message || e}`,
+        );
       }
     }
 
+    if (import.meta.env?.PROD || process.env.NODE_ENV === "production") {
+      throw new Error(
+        "Direct reconciliation results table insert is strictly prohibited in production.",
+      );
+    }
+
+    // Offline mock fallback for unit tests without database RPC
     const ALLOWED_COLUMNS = new Set([
       "id",
       "run_id",
@@ -1260,7 +1288,14 @@ export const ReconciliationService = {
       openingBalance?: number;
       closingBalance?: number;
     },
-  ): Promise<{ importId: string; fileHash: string; insertedCount: number; isDuplicate?: boolean }> {
+  ): Promise<{
+    importId: string;
+    fileHash: string;
+    insertedCount: number;
+    duplicateCount?: number;
+    totalRows?: number;
+    isDuplicate?: boolean;
+  }> {
     if (!companyId) {
       throw new Error(
         `Target company must be selected before ingesting bank statements into the immutable ledger for file ${file.name}.`,
@@ -1365,6 +1400,8 @@ export const ReconciliationService = {
           importId: rpcRes.import_id,
           fileHash: rpcRes.file_hash || fileHash,
           insertedCount: Number(rpcRes.inserted_count ?? 0),
+          duplicateCount: Number(rpcRes.duplicate_count ?? 0),
+          totalRows: Number(rpcRes.total_rows ?? transactions.length),
           isDuplicate: Boolean(rpcRes.is_duplicate),
         };
       }
@@ -1539,6 +1576,43 @@ export const ReconciliationService = {
     }
 
     return { importId, fileHash, insertedCount, isDuplicate: false };
+  },
+
+  /**
+   * Approves an underpaid or overpaid reconciliation variance with server-side maker-checker enforcement.
+   */
+  async approveVariance(approvalInfo: {
+    runId: string;
+    payableId: string;
+    payableType?: string;
+    sourceReference?: string | null;
+    varianceType: "UNDER_PAID" | "OVER_PAID" | "PARTIAL" | "DISCREPANCY";
+    expectedAmount: number;
+    actualAmount: number;
+    approvalReason: string;
+    makerId?: string;
+  }): Promise<{ success: boolean; approvalId: string }> {
+    const { data, error } = await (supabase as any).rpc("approve_reconciliation_variance_atomic", {
+      p_approval_info: {
+        run_id: approvalInfo.runId,
+        payable_id: approvalInfo.payableId,
+        payable_type: approvalInfo.payableType || "dividend_payables",
+        source_reference: approvalInfo.sourceReference || null,
+        variance_type: approvalInfo.varianceType,
+        expected_amount: approvalInfo.expectedAmount,
+        actual_amount: approvalInfo.actualAmount,
+        approval_reason: approvalInfo.approvalReason,
+        maker_id: approvalInfo.makerId || null,
+      },
+    });
+
+    if (error) {
+      throw new Error(`Variance approval failed: ${error.message}`);
+    }
+    return {
+      success: true,
+      approvalId: data?.approval_id,
+    };
   },
 
   async acknowledgeException(

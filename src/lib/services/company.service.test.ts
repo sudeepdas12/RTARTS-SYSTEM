@@ -51,7 +51,7 @@ describe.skipIf(!isLiveDb)("CompanyService.autoRegisterCompany and findMatchingC
     const { supabase } = await import("./database");
     await supabase.auth.signInWithPassword({
       email: "admin@rbbmbl.com.np",
-      password: "Admin123!",
+      password: process.env.SUPABASE_TEST_ADMIN_PASSWORD || "Admin123!",
     });
     await (supabase as any)
       .from("companies")

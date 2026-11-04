@@ -120,7 +120,7 @@ describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => 
         // Authenticate service client for RPCs requiring authenticated / admin role
         await supabase.auth.signInWithPassword({
           email: "admin@rbbmbl.com.np",
-          password: "Admin123!",
+          password: process.env.SUPABASE_TEST_ADMIN_PASSWORD || "Admin123!",
         });
 
         // Create test company
@@ -1211,11 +1211,38 @@ describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => 
         expect(payableUnchanged!.payment_status).toBe("Pending");
         expect(Number(payableUnchanged!.paid_amount)).toBe(0.0);
 
-        // 2. Approved UNDER_PAID: when supervisor approves, must settle as 'Partial' (NEVER 'Paid')
+        // 2. Approved UNDER_PAID: when supervisor approves via maker-checker RPC, must settle as 'Partial' (NEVER 'Paid')
+        const { data: dftRun } = await db.rpc("create_reconciliation_draft_run_atomic", {
+          p_run_info: {
+            company_id: testCompanyId,
+            source_type: "bank_statement",
+            file_name: `underpay_app_${underTag}.xlsx`,
+            file_hash_sha256: `hash_under_app_${underTag}`,
+            row_count: 1,
+            total_amount: 200.0,
+          },
+        });
+
+        const { error: appErr } = await db.rpc("approve_reconciliation_variance_atomic", {
+          p_approval_info: {
+            run_id: dftRun.run_id,
+            payable_id: undPayable!.id,
+            payable_type: "mutual_fund_payables",
+            source_reference: `SRC-UND-2-${underTag}`,
+            variance_type: "UNDER_PAID",
+            expected_amount: 500.0,
+            actual_amount: 200.0,
+            maker_id: "00000000-0000-0000-0000-000000000001",
+            approval_reason: "Supervisor approved underpayment for partial settlement",
+          },
+        });
+        expect(appErr).toBeNull();
+
         const { data: approvedRes, error: approvedErr } = await db.rpc(
           "apply_and_record_reconciliation_batch",
           {
             p_run_info: {
+              run_id: dftRun.run_id,
               company_id: testCompanyId,
               fiscal_year: "2082/83",
               source_type: "bank_statement",
@@ -1240,7 +1267,6 @@ describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => 
                 difference: -300.0,
                 payment_reference: `UND-REF-2-${underTag.slice(-6)}`,
                 source_reference: `SRC-UND-2-${underTag}`,
-                approved: true, // Supervisor approved
               },
             ],
             p_batch_info: null,
@@ -1645,6 +1671,489 @@ describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => 
         await db.from("reconciliation_runs").delete().eq("id", postRunId);
         await db.from("mutual_fund_payables").delete().eq("id", postPayable!.id);
         await db.from("clients").delete().eq("id", postClient!.id);
+      });
+
+      it("enforces server-side maker-checker policy and variance limits for reconciliation approvals", async () => {
+        const mcTag = `MC_${Date.now()}`;
+        const { data: mcClient } = await db
+          .from("clients")
+          .insert({
+            client_code: `CLI_MC_${mcTag.slice(-6)}`,
+            full_name: `Maker Checker Investor ${mcTag}`,
+            boid: `130123000${mcTag.slice(-7)}`,
+          })
+          .select("id")
+          .single();
+
+        const { data: mcPayable } = await db
+          .from("dividend_payables")
+          .insert({
+            company_id: testCompanyId,
+            client_id: mcClient!.id,
+            fiscal_year: "2082/83",
+            gross_dividend: 100000.0,
+            tax_amount: 5000.0,
+            net_payable: 95000.0,
+            paid_amount: 0.0,
+            payment_status: "Pending",
+          })
+          .select("id")
+          .single();
+
+        // 1. Create a draft run by Maker (admin user)
+        const { data: draftRun } = await db.rpc("create_reconciliation_draft_run_atomic", {
+          p_run_info: {
+            company_id: testCompanyId,
+            source_type: "excel",
+            file_name: `mc_recon_${mcTag}.xlsx`,
+            file_hash_sha256: `hash_mc_${mcTag}`,
+            row_count: 1,
+            total_amount: 30000.0,
+          },
+        });
+
+        const runId = draftRun.run_id;
+
+        // Fetch current user ID (maker)
+        const { data: authData } = await supabase.auth.getUser();
+        const currentUid = authData.user!.id;
+
+        // 2. Maker attempts to approve their own variance -> MUST FAIL (Maker-Checker violation)
+        const { error: selfApproveErr } = await db.rpc("approve_reconciliation_variance_atomic", {
+          p_approval_info: {
+            run_id: runId,
+            payable_id: mcPayable!.id,
+            payable_type: "dividend_payables",
+            source_reference: `REF-MC-${mcTag}`,
+            variance_type: "UNDER_PAID",
+            expected_amount: 95000.0,
+            actual_amount: 30000.0,
+            maker_id: currentUid, // Same as approver
+            approval_reason: "Self approval attempt by maker",
+          },
+        });
+
+        expect(selfApproveErr).not.toBeNull();
+        expect(selfApproveErr!.message).toContain("Maker-checker policy violation");
+
+        // 3. Approval with reason < 5 characters -> MUST FAIL
+        const { error: reasonErr } = await db.rpc("approve_reconciliation_variance_atomic", {
+          p_approval_info: {
+            run_id: runId,
+            payable_id: mcPayable!.id,
+            source_reference: `REF-MC-${mcTag}`,
+            variance_type: "UNDER_PAID",
+            expected_amount: 95000.0,
+            actual_amount: 30000.0,
+            maker_id: "00000000-0000-0000-0000-000000000001",
+            approval_reason: "ok",
+          },
+        });
+
+        expect(reasonErr).not.toBeNull();
+        expect(reasonErr!.message).toContain(
+          "Detailed approval reason of at least 5 characters is mandatory",
+        );
+
+        // 4. Legitimate maker-checker approval with distinct supervisor/admin -> SUCCEEDS
+        const { data: validApproval, error: validApproveErr } = await db.rpc(
+          "approve_reconciliation_variance_atomic",
+          {
+            p_approval_info: {
+              run_id: runId,
+              payable_id: mcPayable!.id,
+              payable_type: "dividend_payables",
+              source_reference: `REF-MC-${mcTag}`,
+              variance_type: "UNDER_PAID",
+              expected_amount: 95000.0,
+              actual_amount: 30000.0,
+              maker_id: "00000000-0000-0000-0000-000000000001", // Different maker
+              approval_reason: "Authorized partial payout under special resolution 4B",
+            },
+          },
+        );
+
+        expect(validApproveErr).toBeNull();
+        expect(validApproval.success).toBe(true);
+
+        // 5. Apply batch with verified server approval -> settles as Partial
+        const { data: applyRes, error: applyErr } = await db.rpc(
+          "apply_and_record_reconciliation_batch",
+          {
+            p_run_info: {
+              run_id: runId,
+              company_id: testCompanyId,
+              fiscal_year: "2082/83",
+              source_type: "excel",
+              file_name: `mc_recon_${mcTag}.xlsx`,
+              file_hash_sha256: `hash_mc_${mcTag}`,
+              idempotency_key: `key_mc_${mcTag}`,
+              row_count: 1,
+              total_amount: 30000.0,
+              chunk_index: 0,
+              total_chunks: 1,
+              is_final_chunk: true,
+            },
+            p_items: [
+              {
+                payable_id: mcPayable!.id,
+                client_id: mcClient!.id,
+                target_table: "dividend",
+                payable_type: "dividend",
+                result: "UNDER_PAID",
+                actual_amount: 30000.0,
+                expected_amount: 95000.0,
+                difference: -65000.0,
+                payment_reference: `PAY-MC-${mcTag}`,
+                source_reference: `REF-MC-${mcTag}`,
+              },
+            ],
+            p_batch_info: null,
+          },
+        );
+
+        expect(applyErr).toBeNull();
+        expect(applyRes.payables_updated).toBe(1);
+
+        // Verify payable is marked Partial
+        const { data: updatedPayable } = await db
+          .from("dividend_payables")
+          .select("payment_status, paid_amount, remaining_amount")
+          .eq("id", mcPayable!.id)
+          .single();
+
+        expect(updatedPayable!.payment_status).toBe("Partial");
+        expect(Number(updatedPayable!.paid_amount)).toBe(30000.0);
+        expect(Number(updatedPayable!.remaining_amount)).toBe(70000.0);
+
+        // Clean up
+        await db.from("reconciliation_variance_approvals").delete().eq("run_id", applyRes.run_id);
+        await db.from("payments").delete().eq("reconciliation_run_id", applyRes.run_id);
+        await db.from("reconciliation_results").delete().eq("run_id", applyRes.run_id);
+        await db.from("reconciliation_runs").delete().eq("id", applyRes.run_id);
+        await db.from("reconciliation_runs").delete().eq("id", runId);
+        await db.from("dividend_payables").delete().eq("id", mcPayable!.id);
+        await db.from("clients").delete().eq("id", mcClient!.id);
+      });
+
+      it("quarantines duplicate bank statement transactions as explicit exceptions without silent drops", async () => {
+        const dupTag = `DUP_${Date.now()}`;
+        const dupHash = `hash_dup_bank_${dupTag}`;
+
+        // 1. Submit bank import containing 3 items where 2 have identical transaction fingerprints
+        const { data: impRes, error: impErr } = await db.rpc(
+          "import_bank_statement_ledger_atomic",
+          {
+            p_import_info: {
+              company_id: testCompanyId,
+              bank_name: "Nepal Bank Ltd",
+              account_no: `NBL-${dupTag.slice(-6)}`,
+              file_name: `bank_stmt_${dupTag}.xlsx`,
+              file_hash_sha256: dupHash,
+              opening_balance: 0,
+              closing_balance: 0,
+              total_debit: 0,
+              total_credit: 300.0,
+              row_count: 3,
+            },
+            p_transactions: [
+              {
+                transaction_date: "2026-10-05",
+                description: "Dividend payout 1",
+                reference: `TXN-DUP-${dupTag}-01`,
+                credit_amount: 100.0,
+                debit_amount: 0,
+                transaction_fingerprint: `fp_dup_1_${dupTag}`,
+              },
+              {
+                transaction_date: "2026-10-05",
+                description: "Dividend payout 2",
+                reference: `TXN-DUP-${dupTag}-02`,
+                credit_amount: 100.0,
+                debit_amount: 0,
+                transaction_fingerprint: `fp_dup_2_${dupTag}`,
+              },
+              {
+                // Duplicate fingerprint matching transaction 1
+                transaction_date: "2026-10-05",
+                description: "Dividend payout 1 Duplicate",
+                reference: `TXN-DUP-${dupTag}-01-RETRY`,
+                credit_amount: 100.0,
+                debit_amount: 0,
+                transaction_fingerprint: `fp_dup_1_${dupTag}`,
+              },
+            ],
+          },
+        );
+
+        expect(impErr).toBeNull();
+        expect(impRes.success).toBe(true);
+        expect(impRes.inserted_count).toBe(2);
+        expect(impRes.duplicate_count).toBe(1);
+        expect(impRes.total_rows).toBe(3);
+
+        // Verify explicit exception was logged in reconciliation_exceptions
+        const { data: exceptions } = await db
+          .from("reconciliation_exceptions")
+          .select("exception_reason, source_reference, amount")
+          .eq("company_id", testCompanyId)
+          .ilike(
+            "exception_reason",
+            `%Duplicate bank statement transaction fingerprint (fp_dup_1_${dupTag})%`,
+          );
+
+        expect(exceptions).not.toBeNull();
+        expect(exceptions!.length).toBeGreaterThanOrEqual(1);
+
+        // Clean up
+        await db
+          .from("reconciliation_exceptions")
+          .delete()
+          .eq("company_id", testCompanyId)
+          .ilike("exception_reason", `%${dupTag}%`);
+        await db.from("bank_statement_transactions").delete().eq("import_id", impRes.import_id);
+        await db.from("bank_statement_imports").delete().eq("id", impRes.import_id);
+      });
+
+      it("transitions bank statement transactions and imports to reconciled and resets them on reversal", async () => {
+        const lcTag = `LC_${Date.now()}`;
+        const lcHash = `hash_lc_${lcTag}`;
+        const lcRef = `TXN-LC-${lcTag}`;
+
+        // 1. Ingest bank statement import
+        const { data: impData } = await db.rpc("import_bank_statement_ledger_atomic", {
+          p_import_info: {
+            company_id: testCompanyId,
+            bank_name: "Rastriya Banijya Bank",
+            account_no: `RBB-${lcTag.slice(-6)}`,
+            file_name: `lifecycle_${lcTag}.xlsx`,
+            file_hash_sha256: lcHash,
+            opening_balance: 0,
+            closing_balance: 0,
+            total_debit: 0,
+            total_credit: 500.0,
+            row_count: 1,
+          },
+          p_transactions: [
+            {
+              transaction_date: "2026-10-05",
+              description: "Dividend direct settlement",
+              reference: lcRef,
+              credit_amount: 500.0,
+              debit_amount: 0,
+              transaction_fingerprint: `fp_lc_${lcTag}`,
+            },
+          ],
+        });
+
+        const importId = impData.import_id;
+
+        // Check import initial status
+        const { data: impInitial } = await db
+          .from("bank_statement_imports")
+          .select("status")
+          .eq("id", importId)
+          .single();
+        expect(impInitial!.status).toBe("imported");
+
+        // Create client and payable
+        const { data: lcClient } = await db
+          .from("clients")
+          .insert({
+            client_code: `CLI_LC_${lcTag.slice(-6)}`,
+            full_name: `Lifecycle Investor ${lcTag}`,
+            boid: `130123000${lcTag.slice(-7)}`,
+          })
+          .select("id")
+          .single();
+
+        const { data: lcPayable } = await db
+          .from("dividend_payables")
+          .insert({
+            company_id: testCompanyId,
+            client_id: lcClient!.id,
+            fiscal_year: "2082/83",
+            gross_dividend: 500.0,
+            tax_amount: 0,
+            net_payable: 500.0,
+            paid_amount: 0,
+            payment_status: "Pending",
+          })
+          .select("id")
+          .single();
+
+        // 2. Apply reconciliation run referencing this transaction
+        const { data: lcApply } = await db.rpc("apply_and_record_reconciliation_batch", {
+          p_run_info: {
+            company_id: testCompanyId,
+            fiscal_year: "2082/83",
+            source_type: "bank_statement",
+            file_name: `lifecycle_${lcTag}.xlsx`,
+            file_hash_sha256: lcHash,
+            idempotency_key: `key_lc_${lcTag}`,
+            row_count: 1,
+            total_amount: 500.0,
+            chunk_index: 0,
+            total_chunks: 1,
+            is_final_chunk: true,
+          },
+          p_items: [
+            {
+              payable_id: lcPayable!.id,
+              client_id: lcClient!.id,
+              target_table: "dividend",
+              payable_type: "dividend",
+              result: "MATCHED",
+              actual_amount: 500.0,
+              expected_amount: 500.0,
+              difference: 0,
+              payment_reference: `PAY-LC-${lcTag}`,
+              source_reference: lcRef,
+            },
+          ],
+          p_batch_info: null,
+        });
+
+        const reconRunId = lcApply.run_id;
+
+        // 3. Verify bank transaction is reconciled and linked to run_id
+        const { data: bstReconciled } = await db
+          .from("bank_statement_transactions")
+          .select("reconciliation_status, reconciliation_run_id")
+          .eq("import_id", importId)
+          .single();
+
+        expect(bstReconciled!.reconciliation_status).toBe("reconciled");
+        expect(bstReconciled!.reconciliation_run_id).toBe(reconRunId);
+
+        // 4. Verify bank statement import status transitioned to reconciled
+        const { data: impReconciled } = await db
+          .from("bank_statement_imports")
+          .select("status")
+          .eq("id", importId)
+          .single();
+
+        expect(impReconciled!.status).toBe("reconciled");
+
+        // 5. Revert the reconciliation run
+        const { data: revertRes, error: revErr } = await db.rpc(
+          "revert_reconciliation_run_atomic",
+          {
+            p_run_id: reconRunId,
+            p_force: false,
+          },
+        );
+
+        expect(revErr).toBeNull();
+        expect(revertRes.success).toBe(true);
+
+        // 6. Verify bank transaction reset to unreconciled and unlinked
+        const { data: bstReverted } = await db
+          .from("bank_statement_transactions")
+          .select("reconciliation_status, reconciliation_run_id")
+          .eq("import_id", importId)
+          .single();
+
+        expect(bstReverted!.reconciliation_status).toBe("unreconciled");
+        expect(bstReverted!.reconciliation_run_id).toBeNull();
+
+        // 7. Verify import reset back to imported
+        const { data: impReverted } = await db
+          .from("bank_statement_imports")
+          .select("status")
+          .eq("id", importId)
+          .single();
+
+        expect(impReverted!.status).toBe("imported");
+
+        // Clean up
+        await db.from("reconciliation_results").delete().eq("run_id", reconRunId);
+        await db.from("reconciliation_runs").delete().eq("id", reconRunId);
+        await db.from("dividend_payables").delete().eq("id", lcPayable!.id);
+        await db.from("clients").delete().eq("id", lcClient!.id);
+        await db.from("bank_statement_transactions").delete().eq("import_id", importId);
+        await db.from("bank_statement_imports").delete().eq("id", importId);
+      });
+
+      it("persists draft reconciliation batches atomically via save_reconciliation_draft_results_atomic", async () => {
+        const draftTag = `DFT_${Date.now()}`;
+
+        const { data: dftRes, error: dftErr } = await db.rpc(
+          "save_reconciliation_draft_results_atomic",
+          {
+            p_run_info: {
+              company_id: testCompanyId,
+              fiscal_year: "2082/83",
+              source_type: "manual",
+              file_name: `draft_${draftTag}.xlsx`,
+              file_hash_sha256: `hash_draft_${draftTag}`,
+              row_count: 2,
+              total_amount: 1200.0,
+            },
+            p_results: [
+              {
+                reconciliation_date: "2026-10-05",
+                source_reference: `REF-DFT-${draftTag}-1`,
+                expected_amount: 600.0,
+                actual_amount: 600.0,
+                result: "MATCHED",
+                notes: "Draft item 1",
+              },
+              {
+                reconciliation_date: "2026-10-05",
+                source_reference: `REF-DFT-${draftTag}-2`,
+                expected_amount: 600.0,
+                actual_amount: 600.0,
+                result: "MATCHED",
+                notes: "Draft item 2",
+              },
+            ],
+          },
+        );
+
+        expect(dftErr).toBeNull();
+        expect(dftRes.success).toBe(true);
+        expect(dftRes.saved_count).toBe(2);
+
+        // Verify draft run exists in draft status
+        const { data: dftRun } = await db
+          .from("reconciliation_runs")
+          .select("status, row_count, total_amount")
+          .eq("id", dftRes.run_id)
+          .single();
+
+        expect(dftRun!.status).toBe("draft");
+        expect(dftRun!.row_count).toBe(2);
+
+        // Clean up
+        await db.from("reconciliation_results").delete().eq("run_id", dftRes.run_id);
+        await db.from("reconciliation_runs").delete().eq("id", dftRes.run_id);
+      });
+
+      it("strictly rejects null company_id during bank statement ingestion at database level", async () => {
+        const nullTag = `NULL_${Date.now()}`;
+        const { error: nullCompErr } = await db.rpc("import_bank_statement_ledger_atomic", {
+          p_import_info: {
+            company_id: null,
+            bank_name: "Null Bank",
+            account_no: "NULL_ACCT",
+            file_name: `null_stmt_${nullTag}.xlsx`,
+            file_hash_sha256: `hash_null_${nullTag}`,
+            row_count: 1,
+          },
+          p_transactions: [
+            {
+              transaction_date: "2026-10-05",
+              description: "Null company item",
+              reference: `TXN-NULL-${nullTag}`,
+              credit_amount: 100.0,
+              debit_amount: 0,
+            },
+          ],
+        });
+
+        expect(nullCompErr).not.toBeNull();
+        expect(nullCompErr!.code).toBe("23502"); // NOT NULL violation
       });
     },
   );

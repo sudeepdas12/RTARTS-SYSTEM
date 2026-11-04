@@ -40,7 +40,7 @@ describe.skipIf(!isLiveDb)("Comprehensive End-to-End Pipeline Verification", () 
     const { supabase: defaultClient } = await import("@/integrations/supabase/client");
     await defaultClient.auth.signInWithPassword({
       email: "admin@rbbmbl.com.np",
-      password: "Admin123!",
+      password: process.env.SUPABASE_TEST_ADMIN_PASSWORD || "Admin123!",
     });
 
     // 1. Company Registration

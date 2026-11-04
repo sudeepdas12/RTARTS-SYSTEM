@@ -26,6 +26,8 @@ export interface DataTableToolbarProps {
   onExportExcel?: () => void | Promise<void>;
   onExportPdf?: () => void | Promise<void>;
   isExporting?: boolean;
+  isLoading?: boolean;
+  isError?: boolean;
   extraActions?: React.ReactNode;
 }
 
@@ -39,12 +41,15 @@ export function DataTableToolbar({
   onExportExcel,
   onExportPdf,
   isExporting = false,
+  isLoading = false,
+  isError = false,
   extraActions,
 }: DataTableToolbarProps) {
   const isFiltered = searchValue.length > 0 || selectedStatuses.length > 0;
+  const isDisabled = isLoading || isError;
 
   const handleStatusToggle = (value: string) => {
-    if (!onStatusChange) return;
+    if (isDisabled || !onStatusChange) return;
     if (selectedStatuses.includes(value)) {
       onStatusChange(selectedStatuses.filter((s) => s !== value));
     } else {
@@ -53,17 +58,30 @@ export function DataTableToolbar({
   };
 
   const handleResetFilters = () => {
+    if (isDisabled) return;
     if (onSearchChange) onSearchChange("");
     if (onStatusChange) onStatusChange([]);
   };
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 py-4">
+      {/* Screen-reader live region for export and loading announcements */}
+      <div className="sr-only" role="status" aria-live="polite">
+        {isExporting
+          ? "Export in progress. Please wait."
+          : isLoading
+            ? "Loading records..."
+            : isError
+              ? "Failed to load records."
+              : ""}
+      </div>
+
       <div className="flex flex-1 flex-wrap items-center gap-2">
         <Input
           placeholder={searchPlaceholder}
           aria-label={searchPlaceholder}
           value={searchValue}
+          disabled={isDisabled}
           onChange={(e) => onSearchChange?.(e.target.value)}
           className="h-8 w-[160px] lg:w-[260px]"
         />
@@ -75,6 +93,7 @@ export function DataTableToolbar({
                 variant="outline"
                 size="sm"
                 className="h-8 border-dashed"
+                disabled={isDisabled}
                 aria-label="Filter records by status"
                 title="Filter records by status"
               >
@@ -108,6 +127,7 @@ export function DataTableToolbar({
             variant="ghost"
             size="sm"
             onClick={handleResetFilters}
+            disabled={isDisabled}
             className="h-8 px-2 lg:px-3 text-muted-foreground hover:text-foreground"
             aria-label="Reset active filters"
             title="Reset filters"
@@ -125,7 +145,7 @@ export function DataTableToolbar({
             variant="outline"
             size="sm"
             onClick={onExportExcel}
-            disabled={isExporting}
+            disabled={isExporting || isDisabled}
             className="h-8"
             aria-label="Export records to Excel spreadsheet"
             title="Export records to Excel"
@@ -143,7 +163,7 @@ export function DataTableToolbar({
             variant="default"
             size="sm"
             onClick={onExportPdf}
-            disabled={isExporting}
+            disabled={isExporting || isDisabled}
             className="h-8"
             aria-label="Export records to PDF document"
             title="Export records to PDF"

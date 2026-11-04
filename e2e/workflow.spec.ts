@@ -1,5 +1,7 @@
 import { test, expect } from "@playwright/test";
 
+const TEST_ADMIN_PASSWORD = process.env.SUPABASE_TEST_ADMIN_PASSWORD || "Admin123!";
+
 test.describe("Authentication and System Navigation Workflows", () => {
   test.beforeEach(async ({ page }) => {
     await page.context().clearCookies();
@@ -62,7 +64,7 @@ test.describe("Authentication and System Navigation Workflows", () => {
     const submitBtn = page.locator('button[type="submit"]');
 
     await emailInput.fill("admin@rbbmbl.com.np");
-    await passwordInput.fill("Admin123!");
+    await passwordInput.fill(TEST_ADMIN_PASSWORD);
     await submitBtn.click();
 
     await page.waitForURL(/.*\/dashboard/, { timeout: 15000 });
@@ -84,7 +86,7 @@ test.describe("Authentication and System Navigation Workflows", () => {
     const submitBtn = page.locator('button[type="submit"]');
 
     await emailInput.fill("admin@rbbmbl.com.np");
-    await passwordInput.fill("Admin123!");
+    await passwordInput.fill(TEST_ADMIN_PASSWORD);
     await submitBtn.click();
 
     await page.waitForURL(/.*\/dashboard/, { timeout: 15000 });
@@ -111,7 +113,7 @@ test.describe("Authentication and System Navigation Workflows", () => {
     await page.goto("/auth");
 
     await page.locator('input[type="email"]').fill("admin@rbbmbl.com.np");
-    await page.locator('input[type="password"]').fill("Admin123!");
+    await page.locator('input[type="password"]').fill(TEST_ADMIN_PASSWORD);
     await page.locator('button[type="submit"]').click();
     await page.waitForURL(/.*\/dashboard/, { timeout: 15000 });
 
@@ -128,7 +130,7 @@ test.describe("Authentication and System Navigation Workflows", () => {
     await page.goto("/auth");
 
     await page.locator('input[type="email"]').fill("admin@rbbmbl.com.np");
-    await page.locator('input[type="password"]').fill("Admin123!");
+    await page.locator('input[type="password"]').fill(TEST_ADMIN_PASSWORD);
     await page.locator('button[type="submit"]').click();
     await page.waitForURL(/.*\/dashboard/, { timeout: 15000 });
 
@@ -154,7 +156,7 @@ test.describe("Authentication and System Navigation Workflows", () => {
     await page.goto("/auth");
 
     await page.locator('input[type="email"]').fill("admin@rbbmbl.com.np");
-    await page.locator('input[type="password"]').fill("Admin123!");
+    await page.locator('input[type="password"]').fill(TEST_ADMIN_PASSWORD);
     await page.locator('button[type="submit"]').click();
     await page.waitForURL(/.*\/dashboard/, { timeout: 15000 });
 
