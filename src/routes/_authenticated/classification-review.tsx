@@ -162,7 +162,13 @@ function ReviewRow({
   onExplain,
 }: {
   client: any;
-  onConfirmed: (id: string, classification: PayeeClassification, segment?: string) => void;
+  onConfirmed: (
+    id: string,
+    classification: PayeeClassification,
+    segment?: string,
+    ruleVersion?: string,
+    evidence?: Record<string, unknown>,
+  ) => void;
   isPending: boolean;
   isSelected?: boolean;
   onToggleSelect?: (id: string) => void;
@@ -293,13 +299,23 @@ function ClassificationReviewPage() {
       clientId,
       classification,
       segment,
+      ruleVersion,
+      evidence,
     }: {
       clientId: string;
       classification: PayeeClassification;
       segment?: string;
+      ruleVersion?: string;
+      evidence?: Record<string, unknown>;
     }) =>
       adminConfirmClientClassification({
-        data: { clientId, classification, segment: (segment as any) ?? null },
+        data: {
+          clientId,
+          classification,
+          segment: (segment as any) ?? null,
+          ruleVersion,
+          evidence,
+        },
       }),
     onSuccess: (res) => {
       toast.success(`Classification confirmed — ${res.recomputed} related payable(s) recomputed.`);
@@ -340,8 +356,13 @@ function ClassificationReviewPage() {
     onError: (err: any) => toast.error(err?.message ?? "Failed to auto-correct shareholders"),
   });
 
-  const onConfirmed = (clientId: string, classification: PayeeClassification, segment?: string) =>
-    confirmMutation.mutate({ clientId, classification, segment });
+  const onConfirmed = (
+    clientId: string,
+    classification: PayeeClassification,
+    segment?: string,
+    ruleVersion?: string,
+    evidence?: Record<string, unknown>,
+  ) => confirmMutation.mutate({ clientId, classification, segment, ruleVersion, evidence });
 
   // Filter distinct companies in the client list
   const companyOptions = useMemo(() => {

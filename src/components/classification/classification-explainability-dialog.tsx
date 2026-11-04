@@ -37,8 +37,10 @@ import {
   History,
   Lock,
 } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { PayeeClassification } from "@/lib/classification-review.functions";
+import { smartClassify } from "@/lib/services/smart-classifier";
 import {
   loadTaxRules,
   getTaxRateFromRules,
@@ -46,19 +48,89 @@ import {
   TaxClassification,
   TAX_CLASSIFICATION_LABEL,
 } from "@/lib/services/tax-rules.service";
-import { smartClassify } from "@/lib/services/smart-classifier";
+
+export interface ClassificationEvidence {
+  matched_rules?: string[];
+  extraction_signals?: Record<string, string | number | boolean>;
+  boid?: string | null;
+  pan_or_citizenship?: string | null;
+  father_name?: string | null;
+  grandfather_name?: string | null;
+  holder_type?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ExplainabilityClient {
+  id: string;
+  company_id?: string | null;
+  full_name: string;
+  boid?: string | null;
+  pan_or_citizenship?: string | null;
+  pan_no?: string | null;
+  citizenship_no?: string | null;
+  father_name?: string | null;
+  grandfather_name?: string | null;
+  holder_type?: string | null;
+  payee_classification?: PayeeClassification | "UNCLASSIFIED" | null;
+  persisted_payee_classification?: PayeeClassification | "UNCLASSIFIED" | null;
+  payee_segment?: string | null;
+  classification_source?: string | null;
+  classification_rule_version?: string | null;
+  classified_at?: string | null;
+  classification_evidence?: ClassificationEvidence | null;
+  updated_at?: string | null;
+}
 
 export interface ClassificationExplainabilityDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  client: any | null;
+  client: ExplainabilityClient | null;
   taxRules?: TaxRule[];
   onConfirmClassification?: (
     id: string,
     classification: PayeeClassification,
     segment?: string,
+    ruleVersion?: string,
+    evidence?: Record<string, unknown>,
   ) => void;
   isPending?: boolean;
+}
+
+const SENSITIVE_EVIDENCE_KEYS = new Set([
+  "pan",
+  "pan_no",
+  "citizenship",
+  "citizenship_no",
+  "pan_or_citizenship",
+  "boid",
+  "father_name",
+  "grandfather_name",
+  "lineage",
+  "bank_account_no",
+  "account_no",
+  "phone",
+  "mobile",
+  "address",
+  "dob",
+  "date_of_birth",
+]);
+
+function maskSensitiveEvidence(key: string, val: unknown): string {
+  if (val == null) return "—";
+  const str = String(val).trim();
+  const lowerKey = key.toLowerCase();
+  const isSensitive =
+    SENSITIVE_EVIDENCE_KEYS.has(lowerKey) ||
+    lowerKey.includes("boid") ||
+    lowerKey.includes("pan") ||
+    lowerKey.includes("citizenship") ||
+    lowerKey.includes("father") ||
+    lowerKey.includes("lineage") ||
+    lowerKey.includes("account");
+
+  if (!isSensitive) return str;
+  if (str.length <= 4) return "••••";
+  return `${str.slice(0, 2)}••••••${str.slice(-2)}`;
 }
 
 function fmtCurrency(val: number): string {
@@ -108,17 +180,21 @@ export function ClassificationExplainabilityDialog({
     setRevealSensitive(false);
   }, [client?.id, open]);
 
-  const handleToggleReveal = () => {
-    if (!canRevealSensitive) return;
-    setRevealSensitive((prev) => {
-      const next = !prev;
-      if (next) {
-        console.info(
-          `[Audit] Sensitive shareholder identifiers revealed for client=${client?.id || "unknown"} by user=${user?.id || "authenticated"}`,
-        );
+  const handleToggleReveal = async () => {
+    if (!canRevealSensitive || !client) return;
+    const next = !revealSensitive;
+    if (next) {
+      try {
+        await (supabase as any).rpc("record_sensitive_reveal_audit", {
+          p_client_id: client.id,
+          p_company_id: client.company_id || null,
+          p_purpose: "classification_explainability_inspection",
+        });
+      } catch (auditErr) {
+        console.warn("Durable audit event logging failed:", auditErr);
       }
-      return next;
-    });
+    }
+    setRevealSensitive(next);
   };
 
   const handleGrossChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -170,84 +246,80 @@ export function ClassificationExplainabilityDialog({
         reasonsList: [] as string[],
         ruleTitle: "",
         taxRatePct: 0,
-        beforeRatePct: 15,
-        targetClassification: "NATURAL_PERSON" as PayeeClassification,
+        beforeRatePct: 0,
+        targetClassification: "UNCLASSIFIED" as PayeeClassification,
         confidence: 0,
         sourceMatchedCategory: "PUBLIC",
         ruleSource: "Database Default",
         hasAuthoritativeRule: false,
-        classificationSource: "unspecified",
-        ruleVersion: "2083.1",
-        classifiedAt: "—",
-        effectiveFrom: "—",
-        serverEvidence: null as any,
+        isSettledServerDecision: false,
+        classificationSource: "Not recorded",
+        ruleVersion: "Not recorded",
+        classifiedAt: "Not recorded",
+        effectiveFrom: "Not recorded",
+        serverEvidence: null as ClassificationEvidence | null,
       };
     }
 
-    // Persisted decision takes priority if already settled on the server
+    // Server-authoritative check: verify if a valid classification is persisted
     const persistedClass = client.payee_classification || client.persisted_payee_classification;
+    const isSettledServerDecision = Boolean(persistedClass && persistedClass !== "UNCLASSIFIED");
 
-    // Run authoritative smart classifier
-    const classified = smartClassify({
-      full_name: client.full_name,
-      boid: client.boid,
-      pan_or_citizenship: client.pan_or_citizenship || client.pan_no || client.citizenship_no,
-      father_name: client.father_name,
-      grandfather_name: client.grandfather_name,
-      holder_type: client.holder_type,
-    });
-
-    const targetClass = (persistedClass ||
-      classified.payee_classification ||
-      "NATURAL_PERSON") as TaxClassification;
+    const targetClass = isSettledServerDecision
+      ? (persistedClass as TaxClassification)
+      : ("UNCLASSIFIED" as unknown as TaxClassification);
 
     // Resolve rate exclusively from database active rules - fail closed without silent hardcoded fallback
-    const matchingRule = dbTaxRules.find(
-      (r) =>
-        r.payable_category === "DIVIDEND" && r.payee_classification === targetClass && r.is_active,
-    );
+    const matchingRule = isSettledServerDecision
+      ? dbTaxRules.find(
+          (r) =>
+            r.payable_category === "DIVIDEND" &&
+            r.payee_classification === targetClass &&
+            r.is_active,
+        )
+      : null;
 
     const hasAuthoritativeRule = matchingRule != null;
     const resolvedRate = matchingRule != null ? Number(matchingRule.tax_rate) : null;
     const taxRatePct = resolvedRate != null ? Math.round(resolvedRate * 10000) / 100 : 0;
 
-    // Comparison rate derived from database active rule metadata, or authoritative statutory default
+    // Comparison rate derived from database active rule metadata, or zero if unclassified
     const beforeRate =
       matchingRule?.comparison_rate != null
         ? Math.round(Number(matchingRule.comparison_rate) * 10000) / 100
-        : targetClass === "NATURAL_PERSON"
+        : isSettledServerDecision && targetClass === "NATURAL_PERSON"
           ? 15
-          : 5;
+          : 0;
 
     // Statutory rule title derived directly from database tax-rules record
-    const ruleTitle =
-      matchingRule?.statutory_citation ||
-      (targetClass === "TAX_EXEMPT"
-        ? "Section 10 Statutory Tax Exemption (0% Withholding)"
-        : targetClass === "COMPANY_INSTITUTION"
-          ? "Section 88 Corporate Dividend Withholding (15% Legal Person Rate)"
-          : targetClass === "NATURAL_PERSON"
-            ? "Section 88 Resident Individual Dividend Final Withholding (5% Rate)"
-            : `Nepal Income Tax Act 2058 - ${TAX_CLASSIFICATION_LABEL[targetClass] || targetClass}`);
+    const ruleTitle = isSettledServerDecision
+      ? matchingRule?.statutory_citation ||
+        (targetClass === "TAX_EXEMPT"
+          ? "Section 10 Statutory Tax Exemption (0% Withholding)"
+          : targetClass === "COMPANY_INSTITUTION"
+            ? "Section 88 Corporate Dividend Withholding (15% Legal Person Rate)"
+            : targetClass === "NATURAL_PERSON"
+              ? "Section 88 Resident Individual Dividend Final Withholding (5% Rate)"
+              : `Nepal Income Tax Act 2058 - ${TAX_CLASSIFICATION_LABEL[targetClass] || targetClass}`)
+      : "Pending Authoritative Server Classification Decision";
 
-    const effectiveFrom = matchingRule?.effective_from || "2024-07-16";
+    const effectiveFrom = matchingRule?.effective_from || "Not recorded";
     const classificationSource =
       client.classification_source ||
-      (persistedClass ? "persisted_core_ledger" : "server_smart_classifier_v1");
-    const ruleVersion = client.classification_rule_version || "2083.1";
+      (isSettledServerDecision ? "persisted_core_ledger" : "Not recorded");
+    const ruleVersion = client.classification_rule_version || "Not recorded";
     const classifiedAt = client.classified_at
       ? new Date(client.classified_at).toLocaleString()
-      : client.updated_at
-        ? new Date(client.updated_at).toLocaleString()
-        : "Audited & Verified";
+      : "Not recorded";
     const serverEvidence = client.classification_evidence || null;
 
     const reasonsList: string[] = [];
-    if (persistedClass) {
+    if (isSettledServerDecision) {
       reasonsList.push(`Persisted Server Classification: ${persistedClass}`);
-    }
-    if (classified.rule_matched) {
-      reasonsList.push(`Classifier Rule: ${classified.rule_matched}`);
+    } else {
+      reasonsList.push(
+        "Awaiting authoritative server classification. Record is currently UNCLASSIFIED.",
+      );
     }
     if (client.pan_or_citizenship || client.pan_no || client.citizenship_no) {
       const rawId = client.pan_or_citizenship || client.pan_no || client.citizenship_no;
@@ -264,16 +336,16 @@ export function ClassificationExplainabilityDialog({
     }
     if (serverEvidence && typeof serverEvidence === "object") {
       Object.entries(serverEvidence).forEach(([k, v]) => {
-        reasonsList.push(`Server Signal (${k}): ${String(v)}`);
+        const masked = revealSensitive ? String(v) : maskSensitiveEvidence(k, v);
+        reasonsList.push(`Server Signal (${k}): ${masked}`);
       });
-    }
-    if (reasonsList.length === 0) {
-      reasonsList.push(`Classified as ${targetClass} via smart classifier hierarchy.`);
     }
 
     const ruleSource = hasAuthoritativeRule
       ? `Active Database Rule: ${matchingRule?.id || "payable_tax_rules"} (${matchingRule ? `${matchingRule.payable_category} / ${matchingRule.payee_classification}` : ""}) [Effective: ${effectiveFrom}]`
-      : `Missing Database Rule for Category DIVIDEND and ${targetClass}`;
+      : isSettledServerDecision
+        ? `Missing Database Rule for Category DIVIDEND and ${targetClass}`
+        : "No authoritative rule resolved (pending server decision)";
 
     return {
       reason: reasonsList.join(" • "),
@@ -282,10 +354,11 @@ export function ClassificationExplainabilityDialog({
       taxRatePct,
       beforeRatePct: beforeRate,
       targetClassification: targetClass as PayeeClassification,
-      confidence: Math.round((classified.confidence || 0.95) * 100),
-      sourceMatchedCategory: classified.payee_category || "PUBLIC",
+      confidence: isSettledServerDecision ? 100 : 0,
+      sourceMatchedCategory: client.payee_segment || "PUBLIC",
       ruleSource,
       hasAuthoritativeRule,
+      isSettledServerDecision,
       classificationSource,
       ruleVersion,
       classifiedAt,
@@ -557,16 +630,24 @@ export function ClassificationExplainabilityDialog({
                   client.id,
                   explanation.targetClassification,
                   explanation.sourceMatchedCategory,
+                  explanation.ruleVersion !== "Not recorded" ? explanation.ruleVersion : undefined,
+                  explanation.serverEvidence || undefined,
                 );
                 onOpenChange(false);
               }}
               disabled={
-                isPending || isLoadingRules || !explanation.hasAuthoritativeRule || !!rulesError
+                isPending ||
+                isLoadingRules ||
+                !explanation.isSettledServerDecision ||
+                !explanation.hasAuthoritativeRule ||
+                !!rulesError
               }
               className="gap-1.5"
             >
               <CheckCircle2 className="h-4 w-4" />
-              Apply {explanation.targetClassification} ({explanation.taxRatePct}%)
+              {explanation.isSettledServerDecision
+                ? `Apply ${explanation.targetClassification} (${explanation.taxRatePct}%)`
+                : "Pending Server Decision"}
             </Button>
           )}
         </DialogFooter>

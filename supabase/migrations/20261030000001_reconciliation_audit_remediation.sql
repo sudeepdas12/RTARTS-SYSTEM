@@ -287,6 +287,44 @@ ALTER TABLE public.clients
   ADD COLUMN IF NOT EXISTS classified_at timestamp with time zone,
   ADD COLUMN IF NOT EXISTS classification_evidence jsonb DEFAULT '{}'::jsonb;
 
+-- Append-only immutable classification decision history
+CREATE TABLE IF NOT EXISTS public.classification_decision_history (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    client_id uuid NOT NULL REFERENCES public.clients(id) ON DELETE CASCADE,
+    company_id uuid REFERENCES public.companies(id) ON DELETE CASCADE,
+    previous_classification text,
+    new_classification text NOT NULL,
+    previous_segment text,
+    new_segment text,
+    classification_source text NOT NULL,
+    rule_version text NOT NULL,
+    evidence_hash text,
+    evidence jsonb DEFAULT '{}'::jsonb,
+    confirmed_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_class_dec_hist_client ON public.classification_decision_history(client_id);
+CREATE INDEX IF NOT EXISTS idx_class_dec_hist_comp ON public.classification_decision_history(company_id);
+CREATE INDEX IF NOT EXISTS idx_class_dec_hist_time ON public.classification_decision_history(created_at DESC);
+
+ALTER TABLE public.classification_decision_history ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY cdh_read ON public.classification_decision_history FOR SELECT TO authenticated USING (
+  public.has_any_role((SELECT auth.uid()), ARRAY[
+    'admin'::public.app_role,
+    'supervisor'::public.app_role,
+    'finance_operator'::public.app_role,
+    'reconciliation_officer'::public.app_role,
+    'auditor'::public.app_role
+  ])
+  AND (company_id IS NULL OR public.has_company_access((SELECT auth.uid()), company_id))
+);
+
+REVOKE INSERT, UPDATE, DELETE ON TABLE public.classification_decision_history FROM PUBLIC, authenticated;
+GRANT SELECT ON TABLE public.classification_decision_history TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.classification_decision_history TO service_role;
+
 -- ============================================================================
 -- 4. IMMUTABLE BANK STATEMENT INGESTION LEDGER & FINGERPRINTING
 -- ============================================================================
@@ -2799,3 +2837,52 @@ $$;
 
 REVOKE EXECUTE ON FUNCTION public.save_reconciliation_draft_results_atomic(jsonb, jsonb) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.save_reconciliation_draft_results_atomic(jsonb, jsonb) TO authenticated, service_role;
+
+-- 8d. DURABLE SENSITIVE IDENTIFIER REVEAL AUDIT RPC
+CREATE OR REPLACE FUNCTION public.record_sensitive_reveal_audit(
+  p_client_id uuid,
+  p_company_id uuid DEFAULT NULL,
+  p_purpose text DEFAULT 'classification_explainability_inspection'
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+BEGIN
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'Authentication required for sensitive data inspection' USING ERRCODE = '42501';
+  END IF;
+
+  PERFORM public.require_role('admin', 'supervisor', 'approver', 'auditor');
+
+  INSERT INTO public.audit_logs (
+    user_id,
+    action,
+    table_name,
+    record_id,
+    old_value,
+    new_value,
+    action_time
+  ) VALUES (
+    v_uid,
+    'SENSITIVE_IDENTIFIER_REVEAL',
+    'clients',
+    p_client_id::text,
+    null,
+    jsonb_build_object(
+      'company_id', p_company_id,
+      'purpose', p_purpose,
+      'revealed_at', now()
+    ),
+    now()
+  );
+
+  RETURN jsonb_build_object('success', true);
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.record_sensitive_reveal_audit(uuid, uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.record_sensitive_reveal_audit(uuid, uuid, text) TO authenticated, service_role;

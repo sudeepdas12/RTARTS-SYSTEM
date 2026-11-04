@@ -155,6 +155,8 @@ export const adminConfirmClientClassification = createServerFn({ method: "POST" 
       classification: PayeeClassification | "UNCLASSIFIED";
       segment?: PayeeSegment;
       holderType?: string;
+      ruleVersion?: string;
+      evidence?: Record<string, unknown>;
     }) => d,
   )
   .middleware([requireSupabaseAuth])
@@ -173,23 +175,25 @@ export const adminConfirmClientClassification = createServerFn({ method: "POST" 
     }
 
     const { supabaseAdmin }: any = await import("@/integrations/supabase/client.server");
+    const crypto = await import("node:crypto");
+
+    // Fetch existing client state for audit trail & company access check
+    const { data: clientRec } = await supabaseAdmin
+      .from("clients")
+      .select("id, company_id, payee_classification, payee_segment")
+      .eq("id", data.clientId)
+      .maybeSingle();
+
+    if (!clientRec) {
+      throw new Error("Client record not found.");
+    }
 
     // Company scoping check for non-global users
     if (!isGlobal) {
       if (!allowedCompanyIds || allowedCompanyIds.length === 0) {
         throw new Error("Forbidden: You do not have access to any companies.");
       }
-      const { data: clientRec } = await supabaseAdmin
-        .from("clients")
-        .select("company_id")
-        .eq("id", data.clientId)
-        .maybeSingle();
-
-      if (
-        !clientRec ||
-        !clientRec.company_id ||
-        !allowedCompanyIds.includes(clientRec.company_id)
-      ) {
+      if (!clientRec.company_id || !allowedCompanyIds.includes(clientRec.company_id)) {
         throw new Error("Forbidden: You do not have access to this client's company.");
       }
     }
@@ -204,12 +208,21 @@ export const adminConfirmClientClassification = createServerFn({ method: "POST" 
       ruleMap.set(`${row.payable_category}|${row.payee_classification}`, Number(row.tax_rate));
     }
 
-    // 1) Mark the client CONFIRMED first so the payable triggers read it too.
+    const decisionTime = new Date().toISOString();
+    const ruleVersion = data.ruleVersion || "2083.1";
+    const evidencePayload = data.evidence || {};
+    const evidenceStr = JSON.stringify(evidencePayload);
+    const evidenceHash = crypto.createHash("sha256").update(evidenceStr).digest("hex");
+
+    // 1) Mark the client CONFIRMED first with full audit metadata so the payable triggers read it too.
     const clientPatch: Record<string, unknown> = {
       payee_classification: data.classification,
       payee_segment: data.segment ?? null,
       classification_status: "CONFIRMED",
       classification_source: "manual_review",
+      classification_rule_version: ruleVersion,
+      classified_at: decisionTime,
+      classification_evidence: evidencePayload,
     };
     if (data.holderType) clientPatch.holder_type = data.holderType;
     const { error: clientErr } = await supabaseAdmin
@@ -217,6 +230,25 @@ export const adminConfirmClientClassification = createServerFn({ method: "POST" 
       .update(clientPatch)
       .eq("id", data.clientId);
     if (clientErr) throw new Error(clientErr.message);
+
+    // 1b) Append to immutable decision history
+    const { error: histErr } = await supabaseAdmin.from("classification_decision_history").insert({
+      client_id: data.clientId,
+      company_id: clientRec.company_id || null,
+      previous_classification: clientRec.payee_classification || null,
+      new_classification: data.classification,
+      previous_segment: clientRec.payee_segment || null,
+      new_segment: data.segment ?? null,
+      classification_source: "manual_review",
+      rule_version: ruleVersion,
+      evidence_hash: evidenceHash,
+      evidence: evidencePayload,
+      confirmed_by: context.userId || "00000000-0000-0000-0000-000000000001",
+      created_at: decisionTime,
+    });
+    if (histErr) {
+      console.warn("Failed to append to classification_decision_history:", histErr.message);
+    }
 
     // 2) Recompute + rewrite pending payables for this client with the confirmed
     //    classification and the authoritative rule rate. Settled or paid payables are locked.
