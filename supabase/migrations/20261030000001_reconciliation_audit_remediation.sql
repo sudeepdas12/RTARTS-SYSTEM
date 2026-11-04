@@ -425,6 +425,7 @@ CREATE TABLE IF NOT EXISTS public.reconciliation_variance_approvals (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id uuid NOT NULL REFERENCES public.companies(id) ON DELETE CASCADE,
     run_id uuid NOT NULL REFERENCES public.reconciliation_runs(id) ON DELETE CASCADE,
+    result_id uuid REFERENCES public.reconciliation_results(id) ON DELETE CASCADE,
     payable_id uuid NOT NULL,
     payable_type text NOT NULL,
     source_reference text,
@@ -442,11 +443,17 @@ CREATE TABLE IF NOT EXISTS public.reconciliation_variance_approvals (
 
 CREATE INDEX IF NOT EXISTS idx_recon_variance_approvals_run ON public.reconciliation_variance_approvals(run_id);
 CREATE INDEX IF NOT EXISTS idx_recon_variance_approvals_comp ON public.reconciliation_variance_approvals(company_id);
+CREATE INDEX IF NOT EXISTS idx_recon_variance_approvals_result ON public.reconciliation_variance_approvals(result_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_recon_variance_approvals 
   ON public.reconciliation_variance_approvals (run_id, payable_id, COALESCE(source_reference, ''));
 
+-- Append auxiliary columns if table pre-existed
+ALTER TABLE public.reconciliation_variance_approvals
+  ADD COLUMN IF NOT EXISTS result_id uuid REFERENCES public.reconciliation_results(id) ON DELETE CASCADE;
+
 ALTER TABLE public.reconciliation_variance_approvals ENABLE ROW LEVEL SECURITY;
 
+-- Read-only policy for authenticated users: approvals can only be queried, NEVER directly inserted or updated
 CREATE POLICY rva_read ON public.reconciliation_variance_approvals FOR SELECT TO authenticated USING (
   (SELECT public.has_any_role((SELECT auth.uid()), ARRAY[
     'admin'::public.app_role,
@@ -455,11 +462,6 @@ CREATE POLICY rva_read ON public.reconciliation_variance_approvals FOR SELECT TO
     'reconciliation_officer'::public.app_role,
     'auditor'::public.app_role
   ]))
-  AND public.has_company_access((SELECT auth.uid()), company_id)
-);
-
-CREATE POLICY rva_write ON public.reconciliation_variance_approvals FOR INSERT TO authenticated WITH CHECK (
-  (SELECT public.has_any_role((SELECT auth.uid()), ARRAY['admin'::public.app_role, 'supervisor'::public.app_role]))
   AND public.has_company_access((SELECT auth.uid()), company_id)
 );
 
@@ -1051,10 +1053,11 @@ BEGIN
         'ITEM-' || md5(v_item::text)
       );
 
-      -- Check duplicate source reference BEFORE any financial mutation
+      -- Check duplicate source reference BEFORE any financial mutation (skip if already committed in this run)
       IF EXISTS (
         SELECT 1 FROM public.reconciliation_results
         WHERE run_id = v_run_id AND source_reference = v_source_reference
+          AND post_state_hash IS NOT NULL
       ) THEN
         INSERT INTO public.reconciliation_exceptions (
           run_id,
@@ -1085,16 +1088,26 @@ BEGIN
       -- Variance (UNDER_PAID / OVER_PAID) can only be settled if an authorized supervisor/admin (who is NOT the maker)
       -- has approved the variance in public.reconciliation_variance_approvals.
       IF v_result IN ('UNDER_PAID', 'OVER_PAID') THEN
-        SELECT id, approved_by, approval_reason, variance_amount, maker_id INTO v_approval_record
+        SELECT id, company_id, variance_type, expected_amount, actual_amount, variance_amount, maker_id, approved_by, approval_reason
+        INTO v_approval_record
         FROM public.reconciliation_variance_approvals
         WHERE run_id = v_run_id
           AND payable_id = v_payable_id
           AND COALESCE(source_reference, '') = COALESCE(v_source_reference, '')
+        ORDER BY created_at DESC
         LIMIT 1;
 
         IF v_approval_record.id IS NOT NULL THEN
+          -- Amount and metadata parity check: verify approved variance matches item exactly
+          IF v_approval_record.company_id != v_company_id OR
+             v_approval_record.variance_type != v_result OR
+             ABS(COALESCE(v_approval_record.expected_amount, 0) - v_expected_amt) > 0.005 OR
+             ABS(COALESCE(v_approval_record.actual_amount, 0) - v_actual_amt) > 0.005 OR
+             ABS(COALESCE(v_approval_record.variance_amount, 0) - ABS(v_actual_amt - v_expected_amt)) > 0.005 THEN
+            v_requires_approval := true;
+            v_notes := COALESCE(v_notes || '; ', '') || 'Variance approval invalid: approval amounts or metadata do not match current transaction';
           -- Maker-checker verification: Approver cannot be run creator or recorded maker
-          IF v_approval_record.approved_by = COALESCE(v_ex_created_by, v_approval_record.maker_id) THEN
+          ELSIF v_approval_record.approved_by = COALESCE(v_ex_created_by, v_approval_record.maker_id) THEN
             v_requires_approval := true;
             v_notes := COALESCE(v_notes || '; ', '') || 'Variance approval refused: maker-checker violation (approver cannot be reconciler)';
           ELSE
@@ -1363,7 +1376,32 @@ BEGIN
         v_prior_snapshot,
         v_post_state_hash
       )
-      ON CONFLICT (run_id, source_reference) WHERE run_id IS NOT NULL DO NOTHING;
+      ON CONFLICT (run_id, source_reference) WHERE run_id IS NOT NULL DO UPDATE SET
+        payment_id = EXCLUDED.payment_id,
+        reconciliation_date = EXCLUDED.reconciliation_date,
+        source_a_type = EXCLUDED.source_a_type,
+        source_a_id = EXCLUDED.source_a_id,
+        source_b_type = EXCLUDED.source_b_type,
+        source_b_id = EXCLUDED.source_b_id,
+        payable_type = EXCLUDED.payable_type,
+        payable_id = EXCLUDED.payable_id,
+        expected_amount = EXCLUDED.expected_amount,
+        actual_amount = EXCLUDED.actual_amount,
+        difference = EXCLUDED.difference,
+        result = EXCLUDED.result,
+        notes = EXCLUDED.notes,
+        match_method = EXCLUDED.match_method,
+        match_confidence = EXCLUDED.match_confidence,
+        rule_version = EXCLUDED.rule_version,
+        requires_manual_approval = EXCLUDED.requires_manual_approval,
+        matched_by = EXCLUDED.matched_by,
+        matched_at = EXCLUDED.matched_at,
+        prior_paid_amount = EXCLUDED.prior_paid_amount,
+        prior_payment_status = EXCLUDED.prior_payment_status,
+        prior_payment_date = EXCLUDED.prior_payment_date,
+        prior_payment_reference = EXCLUDED.prior_payment_reference,
+        prior_snapshot = EXCLUDED.prior_snapshot,
+        post_state_hash = EXCLUDED.post_state_hash;
 
       -- Increment results_inserted only when a row was actually inserted
       GET DIAGNOSTICS v_rows_affected = ROW_COUNT;
@@ -2368,7 +2406,9 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.reconciliation_runs TO serv
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.reconciliation_exceptions TO authenticated, service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.bank_statement_imports TO authenticated, service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.bank_statement_transactions TO authenticated, service_role;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.reconciliation_variance_approvals TO authenticated, service_role;
+GRANT SELECT ON TABLE public.reconciliation_variance_approvals TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.reconciliation_variance_approvals TO service_role;
+REVOKE INSERT, UPDATE, DELETE ON TABLE public.reconciliation_variance_approvals FROM PUBLIC, authenticated;
 
 -- 8c. SERVER-SIDE MAKER-CHECKER VARIANCE APPROVAL RPC
 CREATE OR REPLACE FUNCTION public.approve_reconciliation_variance_atomic(
@@ -2380,7 +2420,8 @@ SECURITY DEFINER
 SET search_path TO 'public', 'extensions'
 AS $$
 DECLARE
-  v_uid uuid := auth.uid();
+  v_uid uuid;
+  v_result_id uuid;
   v_company_id uuid;
   v_run_id uuid;
   v_payable_id uuid;
@@ -2394,33 +2435,100 @@ DECLARE
   v_reason text;
   v_approval_id uuid;
   v_is_admin boolean;
+  v_is_service_role boolean;
   v_run_record RECORD;
+  v_result_record RECORD;
   c_max_supervisor_variance CONSTANT numeric(15,2) := 50000.00;
   c_max_supervisor_pct CONSTANT numeric := 50.0;
 BEGIN
-  IF current_user != 'service_role' AND current_user != 'postgres' AND COALESCE((auth.jwt()->>'role'), current_setting('request.jwt.claim.role', true), '') != 'service_role' THEN
+  v_is_service_role := (
+    current_user = 'service_role' OR 
+    current_user = 'postgres' OR 
+    COALESCE((auth.jwt()->>'role'), current_setting('request.jwt.claim.role', true), '') = 'service_role'
+  );
+
+  IF NOT v_is_service_role THEN
     PERFORM public.require_role('admin', 'supervisor');
+    v_uid := auth.uid();
+  ELSE
+    v_uid := COALESCE(auth.uid(), NULLIF(p_approval_info->>'approved_by', '')::uuid, '00000000-0000-0000-0000-000000000002'::uuid);
   END IF;
 
-  v_uid := COALESCE(auth.uid(), NULLIF(p_approval_info->>'approved_by', '')::uuid, (SELECT id FROM auth.users WHERE email = 'admin@rbbmbl.com.np' LIMIT 1));
-  v_is_admin := (current_user = 'service_role' OR current_user = 'postgres' OR COALESCE((auth.jwt()->>'role'), current_setting('request.jwt.claim.role', true), '') = 'service_role' OR (v_uid IS NOT NULL AND public.has_role(v_uid, 'admin'::public.app_role)));
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'Approver identity must be authenticated via valid session or service role' USING ERRCODE = '42501';
+  END IF;
 
-  v_run_id := (p_approval_info->>'run_id')::uuid;
-  v_payable_id := (p_approval_info->>'payable_id')::uuid;
-  v_payable_type := COALESCE(NULLIF(p_approval_info->>'payable_type', ''), 'dividend_payables');
-  v_source_ref := NULLIF(p_approval_info->>'source_reference', '');
-  v_variance_type := COALESCE(NULLIF(p_approval_info->>'variance_type', ''), 'UNDER_PAID');
-  v_expected_amt := COALESCE((p_approval_info->>'expected_amount')::numeric, 0);
-  v_actual_amt := COALESCE((p_approval_info->>'actual_amount')::numeric, 0);
-  v_variance_amt := ABS(v_actual_amt - v_expected_amt);
+  v_is_admin := (
+    v_is_service_role OR 
+    (v_uid IS NOT NULL AND public.has_role(v_uid, 'admin'::public.app_role))
+  );
+
   v_reason := trim(COALESCE(p_approval_info->>'approval_reason', ''));
-
-  IF v_run_id IS NULL OR v_payable_id IS NULL THEN
-    RAISE EXCEPTION 'run_id and payable_id are mandatory for variance approval' USING ERRCODE = '23502';
-  END IF;
-
   IF length(v_reason) < 5 THEN
     RAISE EXCEPTION 'Detailed approval reason of at least 5 characters is mandatory' USING ERRCODE = '23514';
+  END IF;
+
+  v_result_id := NULLIF(p_approval_info->>'result_id', '')::uuid;
+  v_run_id := NULLIF(p_approval_info->>'run_id', '')::uuid;
+  v_payable_id := NULLIF(p_approval_info->>'payable_id', '')::uuid;
+  v_source_ref := NULLIF(p_approval_info->>'source_reference', '');
+
+  -- Load authoritative stored reconciliation result
+  IF v_result_id IS NOT NULL THEN
+    SELECT * INTO v_result_record
+    FROM public.reconciliation_results
+    WHERE id = v_result_id;
+  ELSIF v_run_id IS NOT NULL AND v_payable_id IS NOT NULL THEN
+    SELECT * INTO v_result_record
+    FROM public.reconciliation_results
+    WHERE run_id = v_run_id
+      AND payable_id = v_payable_id
+      AND (v_source_ref IS NULL OR COALESCE(source_reference, '') = v_source_ref)
+    ORDER BY created_at DESC
+    LIMIT 1;
+  ELSE
+    RAISE EXCEPTION 'A valid result_id or (run_id, payable_id) referencing a persisted reconciliation result is mandatory' USING ERRCODE = '23502';
+  END IF;
+
+  IF v_result_record.id IS NULL THEN
+    RAISE EXCEPTION 'Persisted reconciliation result not found for approval' USING ERRCODE = 'P0002';
+  END IF;
+
+  -- Validate against tampering if caller sent payload values
+  IF (p_approval_info->>'payable_id') IS NOT NULL AND (p_approval_info->>'payable_id')::uuid != v_result_record.payable_id THEN
+    RAISE EXCEPTION 'Tampering detected: caller payable_id does not match persisted result payable_id' USING ERRCODE = '23514';
+  END IF;
+
+  IF (p_approval_info->>'actual_amount') IS NOT NULL AND ABS((p_approval_info->>'actual_amount')::numeric - COALESCE(v_result_record.actual_amount, 0)) > 0.005 THEN
+    RAISE EXCEPTION 'Tampering detected: caller actual_amount does not match persisted result actual_amount' USING ERRCODE = '23514';
+  END IF;
+
+  IF (p_approval_info->>'expected_amount') IS NOT NULL AND ABS((p_approval_info->>'expected_amount')::numeric - COALESCE(v_result_record.expected_amount, 0)) > 0.005 THEN
+    RAISE EXCEPTION 'Tampering detected: caller expected_amount does not match persisted result expected_amount' USING ERRCODE = '23514';
+  END IF;
+
+  -- Derive all financial, payable, and run attributes exclusively from persisted record
+  v_result_id := v_result_record.id;
+  v_run_id := v_result_record.run_id;
+  v_company_id := v_result_record.company_id;
+  v_payable_id := v_result_record.payable_id;
+  v_payable_type := COALESCE(v_result_record.payable_type, 'dividend_payables');
+  v_source_ref := v_result_record.source_reference;
+  v_variance_type := UPPER(v_result_record.result::text);
+  v_expected_amt := COALESCE(v_result_record.expected_amount, 0);
+  v_actual_amt := COALESCE(v_result_record.actual_amount, 0);
+  v_variance_amt := ABS(v_actual_amt - v_expected_amt);
+
+  IF v_variance_type NOT IN ('UNDER_PAID', 'OVER_PAID', 'PARTIAL', 'DISCREPANCY') THEN
+    RAISE EXCEPTION 'Reconciliation result % does not require variance approval (result: %)',
+      v_result_id, v_variance_type USING ERRCODE = '23514';
+  END IF;
+
+  -- Enforce tenant access for non-service-role callers
+  IF NOT v_is_service_role THEN
+    IF NOT public.has_company_access(v_uid, v_company_id) THEN
+      RAISE EXCEPTION 'Unauthorized: caller lacks access to target company %', v_company_id USING ERRCODE = '42501';
+    END IF;
   END IF;
 
   -- Load run and determine maker
@@ -2432,13 +2540,26 @@ BEGIN
     RAISE EXCEPTION 'Reconciliation run % not found', v_run_id USING ERRCODE = 'P0002';
   END IF;
 
-  v_company_id := v_run_record.company_id;
-  v_maker_id := COALESCE(NULLIF(p_approval_info->>'maker_id', '')::uuid, v_run_record.created_by);
+  v_maker_id := COALESCE(v_result_record.matched_by, v_run_record.created_by);
+  IF v_maker_id IS NULL AND v_is_service_role THEN
+    v_maker_id := NULLIF(p_approval_info->>'maker_id', '')::uuid;
+  END IF;
 
   -- Maker-Checker enforcement: Approver CANNOT be maker
   IF v_uid IS NOT NULL AND v_maker_id IS NOT NULL AND v_uid = v_maker_id THEN
     RAISE EXCEPTION 'Maker-checker policy violation: approver (%) cannot be the same user who created the run/variance (maker: %)',
       v_uid, v_maker_id USING ERRCODE = '42501';
+  END IF;
+
+  -- Immutable Append-Only Enforcement: Reject duplicate approval attempts
+  IF EXISTS (
+    SELECT 1 FROM public.reconciliation_variance_approvals
+    WHERE run_id = v_run_id
+      AND payable_id = v_payable_id
+      AND COALESCE(source_reference, '') = COALESCE(v_source_ref, '')
+  ) THEN
+    RAISE EXCEPTION 'Variance has already been approved for run %, payable %, reference %. Approvals are immutable.',
+      v_run_id, v_payable_id, COALESCE(v_source_ref, '') USING ERRCODE = '23505';
   END IF;
 
   -- Variance Limit enforcement
@@ -2453,10 +2574,11 @@ BEGIN
     END IF;
   END IF;
 
-  -- Insert or update immutable approval record
+  -- Insert immutable approval record
   INSERT INTO public.reconciliation_variance_approvals (
     company_id,
     run_id,
+    result_id,
     payable_id,
     payable_type,
     source_reference,
@@ -2470,6 +2592,7 @@ BEGIN
   ) VALUES (
     v_company_id,
     v_run_id,
+    v_result_id,
     v_payable_id,
     v_payable_type,
     v_source_ref,
@@ -2481,16 +2604,18 @@ BEGIN
     v_uid,
     v_reason
   )
-  ON CONFLICT (run_id, payable_id, COALESCE(source_reference, ''))
-  DO UPDATE SET
-    approved_by = EXCLUDED.approved_by,
-    approval_reason = EXCLUDED.approval_reason,
-    created_at = now()
   RETURNING id INTO v_approval_id;
+
+  -- Update persisted reconciliation_results status
+  UPDATE public.reconciliation_results
+  SET requires_manual_approval = false,
+      notes = COALESCE(notes || '; ', '') || 'Variance approved by ' || v_uid::text || ' (' || v_reason || ')'
+  WHERE id = v_result_id;
 
   RETURN jsonb_build_object(
     'success', true,
     'approval_id', v_approval_id,
+    'result_id', v_result_id,
     'run_id', v_run_id,
     'payable_id', v_payable_id,
     'variance_amount', v_variance_amt,
@@ -2589,6 +2714,7 @@ BEGIN
       difference,
       result,
       notes,
+      requires_manual_approval,
       match_method,
       match_confidence,
       rule_version,
@@ -2619,6 +2745,7 @@ BEGIN
         ELSE 'Not_Matched'::public.reconciliation_result
       END,
       NULLIF(v_res->>'notes', ''),
+      CASE WHEN UPPER(COALESCE(v_res->>'result', '')) IN ('UNDER_PAID', 'OVER_PAID', 'PARTIAL') THEN true ELSE false END,
       COALESCE(NULLIF(v_res->>'match_method', ''), 'manual'),
       COALESCE(NULLIF(v_res->>'match_confidence', '')::numeric, 100),
       COALESCE(NULLIF(v_res->>'rule_version', ''), '2.0.0'),

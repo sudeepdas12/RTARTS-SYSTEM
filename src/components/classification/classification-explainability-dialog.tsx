@@ -31,6 +31,9 @@ import {
   Info,
   Scale,
   Database,
+  Eye,
+  EyeOff,
+  Loader2,
 } from "lucide-react";
 import { PayeeClassification } from "@/lib/classification-review.functions";
 import {
@@ -65,6 +68,20 @@ function fmtCurrency(val: number): string {
   );
 }
 
+function maskBoid(boid?: string | null): string {
+  if (!boid) return "—";
+  const str = String(boid).trim();
+  if (str.length <= 8) return str;
+  return `${str.slice(0, 5)}••••••${str.slice(-3)}`;
+}
+
+function maskPanOrCitizenship(val?: string | null): string {
+  if (!val) return "—";
+  const str = String(val).trim();
+  if (str.length <= 4) return "••••";
+  return `${str.slice(0, 2)}••••••${str.slice(-2)}`;
+}
+
 export function ClassificationExplainabilityDialog({
   open,
   onOpenChange,
@@ -75,14 +92,29 @@ export function ClassificationExplainabilityDialog({
 }: ClassificationExplainabilityDialogProps) {
   const [sampleGross, setSampleGross] = useState<number>(10000);
   const [dbTaxRules, setDbTaxRules] = useState<TaxRule[]>(initialTaxRules || []);
+  const [revealSensitive, setRevealSensitive] = useState<boolean>(false);
+  const [isLoadingRules, setIsLoadingRules] = useState<boolean>(!initialTaxRules?.length);
+  const [rulesError, setRulesError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!initialTaxRules || initialTaxRules.length === 0) {
+      setIsLoadingRules(true);
+      setRulesError(null);
       loadTaxRules()
-        .then((rules) => setDbTaxRules(rules))
-        .catch((err) => console.warn("Could not load tax rules for explainability:", err));
+        .then((rules) => {
+          setDbTaxRules(rules);
+          setIsLoadingRules(false);
+        })
+        .catch((err) => {
+          console.warn("Could not load tax rules for explainability:", err);
+          setRulesError(
+            "Could not load authoritative database tax rules. Please verify database connectivity.",
+          );
+          setIsLoadingRules(false);
+        });
     } else {
       setDbTaxRules(initialTaxRules);
+      setIsLoadingRules(false);
     }
   }, [initialTaxRules]);
 
@@ -92,14 +124,18 @@ export function ClassificationExplainabilityDialog({
         reason: "",
         reasonsList: [] as string[],
         ruleTitle: "",
-        taxRatePct: 5,
+        taxRatePct: 0,
         beforeRatePct: 15,
         targetClassification: "NATURAL_PERSON" as PayeeClassification,
         confidence: 0,
         sourceMatchedCategory: "PUBLIC",
         ruleSource: "Database Default",
+        hasAuthoritativeRule: false,
       };
     }
+
+    // Persisted decision takes priority if already settled on the server
+    const persistedClass = client.payee_classification || client.persisted_payee_classification;
 
     // Run authoritative smart classifier
     const classified = smartClassify({
@@ -111,23 +147,21 @@ export function ClassificationExplainabilityDialog({
       holder_type: client.holder_type,
     });
 
-    const targetClass = (classified.payee_classification ||
-      client.payee_classification ||
+    const targetClass = (persistedClass ||
+      classified.payee_classification ||
       "NATURAL_PERSON") as TaxClassification;
 
-    // Resolve rate from database active rules
-    const activeRate = getTaxRateFromRules(dbTaxRules, "DIVIDEND", targetClass);
-    const resolvedRate =
-      activeRate != null
-        ? activeRate
-        : targetClass === "COMPANY_INSTITUTION"
-          ? 0.15
-          : targetClass === "TAX_EXEMPT"
-            ? 0.0
-            : 0.05;
-    const taxRatePct = Math.round(resolvedRate * 10000) / 100;
+    // Resolve rate exclusively from database active rules - fail closed without silent hardcoded fallback
+    const matchingRule = dbTaxRules.find(
+      (r) =>
+        r.payable_category === "DIVIDEND" && r.payee_classification === targetClass && r.is_active,
+    );
 
-    // Default pre-review comparison rate (e.g. if previously treated as generic corporate 15% vs individual 5%)
+    const hasAuthoritativeRule = matchingRule != null;
+    const resolvedRate = matchingRule != null ? Number(matchingRule.tax_rate) : null;
+    const taxRatePct = resolvedRate != null ? Math.round(resolvedRate * 10000) / 100 : 0;
+
+    // Default pre-review comparison rate
     const beforeRate = targetClass === "NATURAL_PERSON" ? 15 : 5;
 
     let ruleTitle = `Nepal Income Tax Act 2058 - ${TAX_CLASSIFICATION_LABEL[targetClass] || targetClass}`;
@@ -140,22 +174,32 @@ export function ClassificationExplainabilityDialog({
     }
 
     const reasonsList: string[] = [];
+    if (persistedClass) {
+      reasonsList.push(`Persisted Server Decision: ${persistedClass}`);
+    }
     if (classified.rule_matched) {
       reasonsList.push(`Rule: ${classified.rule_matched}`);
     }
     if (client.pan_or_citizenship || client.pan_no || client.citizenship_no) {
+      const rawId = client.pan_or_citizenship || client.pan_no || client.citizenship_no;
       reasonsList.push(
-        `Identifier Verified: ${client.pan_or_citizenship || client.pan_no || client.citizenship_no}`,
+        `Identifier Verified: ${revealSensitive ? rawId : maskPanOrCitizenship(rawId)}`,
       );
     }
     if (client.father_name || client.grandfather_name) {
       reasonsList.push(
-        `Family Lineage Confirmed: Father (${client.father_name || "—"}), Grandfather (${client.grandfather_name || "—"})`,
+        revealSensitive
+          ? `Family Lineage Confirmed: Father (${client.father_name || "—"}), Grandfather (${client.grandfather_name || "—"})`
+          : "Family Lineage Verified (Multi-generational registry records confirmed)",
       );
     }
     if (reasonsList.length === 0) {
       reasonsList.push(`Classified as ${targetClass} via smart classifier hierarchy.`);
     }
+
+    const ruleSource = hasAuthoritativeRule
+      ? `Active Database Rule: ${matchingRule?.id || "payable_tax_rules"}${matchingRule ? ` (${matchingRule.payable_category} / ${matchingRule.payee_classification})` : ""}`
+      : `Missing Database Rule for Category DIVIDEND and ${targetClass}`;
 
     return {
       reason: reasonsList.join(" • "),
@@ -166,12 +210,10 @@ export function ClassificationExplainabilityDialog({
       targetClassification: targetClass as PayeeClassification,
       confidence: Math.round((classified.confidence || 0.95) * 100),
       sourceMatchedCategory: classified.payee_category || "PUBLIC",
-      ruleSource:
-        activeRate != null
-          ? "Active Database Rule (payable_tax_rules)"
-          : "Statutory Baseline Fallback",
+      ruleSource,
+      hasAuthoritativeRule,
     };
-  }, [client, dbTaxRules]);
+  }, [client, dbTaxRules, revealSensitive]);
 
   if (!client) return null;
 
@@ -202,23 +244,85 @@ export function ClassificationExplainabilityDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-2 text-sm">
-          {/* Client Identity & Extracted Tokens */}
-          <div className="grid grid-cols-2 gap-3 bg-muted/40 p-3 rounded-lg border text-xs">
-            <div>
-              <span className="text-muted-foreground block">Shareholder Name:</span>
-              <span className="font-semibold text-sm">{client.full_name || "—"}</span>
+          {rulesError && (
+            <div className="p-3 bg-destructive/10 border border-destructive/20 text-destructive rounded-lg flex items-center gap-2 text-xs">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              <span>{rulesError}</span>
             </div>
-            <div>
-              <span className="text-muted-foreground block">BOID:</span>
-              <span className="font-mono font-medium">{client.boid || "—"}</span>
+          )}
+
+          {!explanation.hasAuthoritativeRule && !isLoadingRules && !rulesError && (
+            <div className="p-3 bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-300 rounded-lg flex items-center gap-2 text-xs">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+              <span>
+                No active tax rule found in database for classification{" "}
+                {explanation.targetClassification}. Classification cannot be applied until an active
+                tax rule is configured.
+              </span>
             </div>
-            <div>
-              <span className="text-muted-foreground block">PAN / Citizenship:</span>
-              <span className="font-mono">{client.pan_or_citizenship || client.pan_no || "—"}</span>
+          )}
+
+          {isLoadingRules && (
+            <div className="p-3 bg-muted/50 rounded-lg flex items-center gap-2 text-xs text-muted-foreground animate-pulse">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              <span>Loading authoritative database tax rules...</span>
             </div>
-            <div>
-              <span className="text-muted-foreground block">Holder / Demat Type:</span>
-              <span>{client.holder_type || "Public"}</span>
+          )}
+
+          {/* Client Identity & Extracted Tokens with Privacy Masking */}
+          <div className="bg-muted/40 p-3 rounded-lg border text-xs space-y-2">
+            <div className="flex items-center justify-between pb-1 border-b border-muted">
+              <span className="font-semibold text-muted-foreground uppercase text-[11px]">
+                Shareholder Identity & Verification Signals
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-[11px] gap-1 text-muted-foreground hover:text-foreground"
+                onClick={() => setRevealSensitive((prev) => !prev)}
+              >
+                {revealSensitive ? (
+                  <>
+                    <EyeOff className="h-3 w-3" />
+                    <span>Hide Identifiers</span>
+                  </>
+                ) : (
+                  <>
+                    <Eye className="h-3 w-3" />
+                    <span>Reveal Identifiers</span>
+                  </>
+                )}
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-1">
+              <div>
+                <span className="text-muted-foreground block text-[11px]">Shareholder Name:</span>
+                <span className="font-semibold text-sm">{client.full_name || "—"}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground block text-[11px]">BOID:</span>
+                <span className="font-mono font-medium">
+                  {revealSensitive ? client.boid || "—" : maskBoid(client.boid)}
+                </span>
+              </div>
+              <div>
+                <span className="text-muted-foreground block text-[11px]">PAN / Citizenship:</span>
+                <span className="font-mono">
+                  {revealSensitive
+                    ? client.pan_or_citizenship || client.pan_no || client.citizenship_no || "—"
+                    : maskPanOrCitizenship(
+                        client.pan_or_citizenship || client.pan_no || client.citizenship_no,
+                      )}
+                </span>
+              </div>
+              <div>
+                <span className="text-muted-foreground block text-[11px]">
+                  Holder / Demat Type:
+                </span>
+                <span>{client.holder_type || "Public"}</span>
+              </div>
             </div>
           </div>
 
@@ -231,7 +335,9 @@ export function ClassificationExplainabilityDialog({
                   Statutory Rule Rationale
                 </span>
                 <Badge variant={explanation.taxRatePct === 0 ? "secondary" : "default"}>
-                  {explanation.taxRatePct}% TDS
+                  {explanation.hasAuthoritativeRule
+                    ? `${explanation.taxRatePct}% TDS`
+                    : "Unresolved"}
                 </Badge>
               </div>
 
@@ -341,7 +447,9 @@ export function ClassificationExplainabilityDialog({
                 );
                 onOpenChange(false);
               }}
-              disabled={isPending}
+              disabled={
+                isPending || isLoadingRules || !explanation.hasAuthoritativeRule || !!rulesError
+              }
               className="gap-1.5"
             >
               <CheckCircle2 className="h-4 w-4" />

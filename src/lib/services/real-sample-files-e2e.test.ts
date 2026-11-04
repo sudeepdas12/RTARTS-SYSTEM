@@ -1223,15 +1223,36 @@ describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => 
           },
         });
 
+        // Persist draft reconciliation result row so approval derives values server-side
+        await db.rpc("save_reconciliation_draft_results_atomic", {
+          p_run_info: {
+            run_id: dftRun.run_id,
+            company_id: testCompanyId,
+            source_type: "bank_statement",
+            file_name: `underpay_app_${underTag}.xlsx`,
+            file_hash_sha256: `hash_under_app_${underTag}`,
+            row_count: 1,
+            total_amount: 200.0,
+          },
+          p_results: [
+            {
+              payable_id: undPayable!.id,
+              client_id: undClient!.id,
+              payable_type: "mutual_fund_payables",
+              result: "UNDER_PAID",
+              actual_amount: 200.0,
+              expected_amount: 500.0,
+              difference: -300.0,
+              source_reference: `SRC-UND-2-${underTag}`,
+            },
+          ],
+        });
+
         const { error: appErr } = await db.rpc("approve_reconciliation_variance_atomic", {
           p_approval_info: {
             run_id: dftRun.run_id,
             payable_id: undPayable!.id,
-            payable_type: "mutual_fund_payables",
             source_reference: `SRC-UND-2-${underTag}`,
-            variance_type: "UNDER_PAID",
-            expected_amount: 500.0,
-            actual_amount: 200.0,
             maker_id: "00000000-0000-0000-0000-000000000001",
             approval_reason: "Supervisor approved underpayment for partial settlement",
           },
@@ -1718,17 +1739,39 @@ describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => 
         const { data: authData } = await supabase.auth.getUser();
         const currentUid = authData.user!.id;
 
+        // Persist draft result row so variance approval is anchored to stored server results
+        await db.rpc("save_reconciliation_draft_results_atomic", {
+          p_run_info: {
+            run_id: runId,
+            company_id: testCompanyId,
+            source_type: "excel",
+            file_name: `mc_recon_${mcTag}.xlsx`,
+            file_hash_sha256: `hash_mc_${mcTag}`,
+            row_count: 1,
+            total_amount: 30000.0,
+          },
+          p_results: [
+            {
+              payable_id: mcPayable!.id,
+              client_id: mcClient!.id,
+              payable_type: "dividend_payables",
+              result: "UNDER_PAID",
+              actual_amount: 30000.0,
+              expected_amount: 95000.0,
+              difference: -65000.0,
+              source_reference: `REF-MC-${mcTag}`,
+            },
+          ],
+        });
+
         // 2. Maker attempts to approve their own variance -> MUST FAIL (Maker-Checker violation)
         const { error: selfApproveErr } = await db.rpc("approve_reconciliation_variance_atomic", {
           p_approval_info: {
             run_id: runId,
             payable_id: mcPayable!.id,
-            payable_type: "dividend_payables",
             source_reference: `REF-MC-${mcTag}`,
-            variance_type: "UNDER_PAID",
-            expected_amount: 95000.0,
-            actual_amount: 30000.0,
             maker_id: currentUid, // Same as approver
+            approved_by: currentUid,
             approval_reason: "Self approval attempt by maker",
           },
         });
@@ -2154,6 +2197,279 @@ describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => 
 
         expect(nullCompErr).not.toBeNull();
         expect(nullCompErr!.code).toBe("23502"); // NOT NULL violation
+      });
+
+      it("rejects forged approval amounts or payable identity when attempting to approve reconciliation variance", async () => {
+        const forgeTag = `FORGE_${Date.now()}`;
+        const { data: forgeClient } = await db
+          .from("clients")
+          .insert({
+            client_code: `CLI_FG_${forgeTag.slice(-6)}`,
+            full_name: `Forge Investor ${forgeTag}`,
+            boid: `130123000${forgeTag.slice(-7)}`,
+          })
+          .select("id")
+          .single();
+
+        const { data: forgePayable } = await db
+          .from("mutual_fund_payables")
+          .insert({
+            company_id: testCompanyId,
+            client_id: forgeClient!.id,
+            fiscal_year: "2082/83",
+            gross_dividend: 500.0,
+            tax_amount: 0.0,
+            net_payable: 500.0,
+            paid_amount: 0.0,
+            payment_status: "Pending",
+          })
+          .select("id")
+          .single();
+
+        const { data: dftRun } = await db.rpc("create_reconciliation_draft_run_atomic", {
+          p_run_info: {
+            company_id: testCompanyId,
+            source_type: "excel",
+            file_name: `forge_${forgeTag}.xlsx`,
+            file_hash_sha256: `hash_forge_${forgeTag}`,
+            row_count: 1,
+            total_amount: 200.0,
+          },
+        });
+
+        // Save legitimate draft result row: expected 500, actual 200
+        await db.rpc("save_reconciliation_draft_results_atomic", {
+          p_run_info: {
+            run_id: dftRun.run_id,
+            company_id: testCompanyId,
+            source_type: "excel",
+            file_name: `forge_${forgeTag}.xlsx`,
+            file_hash_sha256: `hash_forge_${forgeTag}`,
+            row_count: 1,
+            total_amount: 200.0,
+          },
+          p_results: [
+            {
+              payable_id: forgePayable!.id,
+              client_id: forgeClient!.id,
+              payable_type: "mutual_fund_payables",
+              result: "UNDER_PAID",
+              actual_amount: 200.0,
+              expected_amount: 500.0,
+              difference: -300.0,
+              source_reference: `SRC-FG-${forgeTag}`,
+            },
+          ],
+        });
+
+        // Attack 1: Attacker attempts to forge actual_amount (claiming 450.0 instead of persisted 200.0) -> MUST FAIL
+        const { error: forgeAmtErr } = await db.rpc("approve_reconciliation_variance_atomic", {
+          p_approval_info: {
+            run_id: dftRun.run_id,
+            payable_id: forgePayable!.id,
+            source_reference: `SRC-FG-${forgeTag}`,
+            actual_amount: 450.0, // Forged amount
+            maker_id: "00000000-0000-0000-0000-000000000001",
+            approval_reason: "Forged approval amount attempt",
+          },
+        });
+
+        expect(forgeAmtErr).not.toBeNull();
+        expect(forgeAmtErr!.message).toContain(
+          "Tampering detected: caller actual_amount does not match persisted result",
+        );
+
+        // Attack 2: Attacker attempts to approve without referencing a persisted result -> MUST FAIL
+        const { error: nonExistentErr } = await db.rpc("approve_reconciliation_variance_atomic", {
+          p_approval_info: {
+            run_id: dftRun.run_id,
+            payable_id: "00000000-0000-0000-0000-999999999999",
+            source_reference: "NON-EXISTENT",
+            maker_id: "00000000-0000-0000-0000-000000000001",
+            approval_reason: "Attempt with non-existent result",
+          },
+        });
+
+        expect(nonExistentErr).not.toBeNull();
+        expect(nonExistentErr!.message).toContain(
+          "Persisted reconciliation result not found for approval",
+        );
+
+        // Clean up
+        await db.from("reconciliation_results").delete().eq("run_id", dftRun.run_id);
+        await db.from("reconciliation_runs").delete().eq("id", dftRun.run_id);
+        await db.from("mutual_fund_payables").delete().eq("id", forgePayable!.id);
+        await db.from("clients").delete().eq("id", forgeClient!.id);
+      });
+
+      it("blocks direct table insert and update on reconciliation_variance_approvals by authenticated users", async () => {
+        // Direct insert via authenticated role (NOT service_role) must be rejected by RLS / revoked privileges
+        const { error: insertErr } = await (supabase as any)
+          .from("reconciliation_variance_approvals")
+          .insert({
+            company_id: testCompanyId,
+            run_id: "00000000-0000-0000-0000-000000000001",
+            payable_id: "00000000-0000-0000-0000-000000000002",
+            payable_type: "dividend_payables",
+            variance_type: "UNDER_PAID",
+            expected_amount: 1000.0,
+            actual_amount: 500.0,
+            variance_amount: 500.0,
+            maker_id: "00000000-0000-0000-0000-000000000001",
+            approved_by: "00000000-0000-0000-0000-000000000002",
+            approval_reason: "Unauthorized direct table insertion attempt",
+          });
+
+        expect(insertErr).not.toBeNull();
+        // PostgREST / Postgres returns 42501 (permission denied) or RLS policy violation
+        expect(["42501", "PGRST301", "PGRST204", "42501"]).toContain(insertErr!.code);
+      });
+
+      it("rejects batch apply when current batch amounts do not match previously approved variance amounts", async () => {
+        const misTag = `MIS_${Date.now()}`;
+        const { data: misClient } = await db
+          .from("clients")
+          .insert({
+            client_code: `CLI_MS_${misTag.slice(-6)}`,
+            full_name: `Mismatch Investor ${misTag}`,
+            boid: `130123000${misTag.slice(-7)}`,
+          })
+          .select("id")
+          .single();
+
+        const { data: misPayable } = await db
+          .from("mutual_fund_payables")
+          .insert({
+            company_id: testCompanyId,
+            client_id: misClient!.id,
+            fiscal_year: "2082/83",
+            gross_dividend: 500.0,
+            tax_amount: 0.0,
+            net_payable: 500.0,
+            paid_amount: 0.0,
+            payment_status: "Pending",
+          })
+          .select("id")
+          .single();
+
+        const { data: misRun } = await db.rpc("create_reconciliation_draft_run_atomic", {
+          p_run_info: {
+            company_id: testCompanyId,
+            source_type: "bank_statement",
+            file_name: `mismatch_${misTag}.xlsx`,
+            file_hash_sha256: `hash_mis_${misTag}`,
+            row_count: 1,
+            total_amount: 200.0,
+          },
+        });
+
+        // Persist draft result row with actual 200.0, expected 500.0
+        await db.rpc("save_reconciliation_draft_results_atomic", {
+          p_run_info: {
+            run_id: misRun.run_id,
+            company_id: testCompanyId,
+            source_type: "bank_statement",
+            file_name: `mismatch_${misTag}.xlsx`,
+            file_hash_sha256: `hash_mis_${misTag}`,
+            row_count: 1,
+            total_amount: 200.0,
+          },
+          p_results: [
+            {
+              payable_id: misPayable!.id,
+              client_id: misClient!.id,
+              payable_type: "mutual_fund_payables",
+              result: "UNDER_PAID",
+              actual_amount: 200.0,
+              expected_amount: 500.0,
+              difference: -300.0,
+              source_reference: `SRC-MIS-${misTag}`,
+            },
+          ],
+        });
+
+        // Legitimate approval of variance 300.0 (actual 200.0, expected 500.0)
+        const { error: misAppErr } = await db.rpc("approve_reconciliation_variance_atomic", {
+          p_approval_info: {
+            run_id: misRun.run_id,
+            payable_id: misPayable!.id,
+            source_reference: `SRC-MIS-${misTag}`,
+            maker_id: "00000000-0000-0000-0000-000000000001",
+            approval_reason: "Approved 200.0 actual payment",
+          },
+        });
+        expect(misAppErr).toBeNull();
+
+        // Duplicate approval attempt on same result must fail (immutable append-only policy)
+        const { error: dupAppErr } = await db.rpc("approve_reconciliation_variance_atomic", {
+          p_approval_info: {
+            run_id: misRun.run_id,
+            payable_id: misPayable!.id,
+            source_reference: `SRC-MIS-${misTag}`,
+            maker_id: "00000000-0000-0000-0000-000000000001",
+            approval_reason: "Second approval attempt should be rejected",
+          },
+        });
+        expect(dupAppErr).not.toBeNull();
+        expect(dupAppErr!.message).toContain("Approvals are immutable");
+
+        // Now attempt to apply batch with altered actual amount (350.0 instead of approved 200.0)
+        const { data: applyMismatchRes, error: applyMismatchErr } = await db.rpc(
+          "apply_and_record_reconciliation_batch",
+          {
+            p_run_info: {
+              run_id: misRun.run_id,
+              company_id: testCompanyId,
+              fiscal_year: "2082/83",
+              source_type: "bank_statement",
+              file_name: `mismatch_${misTag}.xlsx`,
+              file_hash_sha256: `hash_mis_${misTag}`,
+              idempotency_key: `key_mis_${misTag}`,
+              row_count: 1,
+              total_amount: 350.0,
+              chunk_index: 0,
+              total_chunks: 1,
+              is_final_chunk: true,
+            },
+            p_items: [
+              {
+                payable_id: misPayable!.id,
+                client_id: misClient!.id,
+                target_table: "mutual_fund",
+                payable_type: "mutual_fund",
+                result: "UNDER_PAID",
+                actual_amount: 350.0, // Altered from approved 200.0
+                expected_amount: 500.0,
+                difference: -150.0,
+                payment_reference: `MIS-REF-${misTag.slice(-6)}`,
+                source_reference: `SRC-MIS-${misTag}`,
+              },
+            ],
+            p_batch_info: null,
+          },
+        );
+
+        expect(applyMismatchErr).toBeNull();
+        // The altered transaction must NOT be applied to payables: payables_updated must be 0 and exception created!
+        expect(applyMismatchRes.payables_updated).toBe(0);
+        expect(applyMismatchRes.exceptions_created).toBe(1);
+
+        // Verify payable remained Pending / 0 paid
+        const { data: unmutatedPayable } = await db
+          .from("mutual_fund_payables")
+          .select("payment_status, paid_amount")
+          .eq("id", misPayable!.id)
+          .single();
+        expect(unmutatedPayable!.payment_status).toBe("Pending");
+        expect(Number(unmutatedPayable!.paid_amount)).toBe(0.0);
+
+        // Clean up
+        await db.from("reconciliation_exceptions").delete().eq("run_id", misRun.run_id);
+        await db.from("reconciliation_variance_approvals").delete().eq("run_id", misRun.run_id);
+        await db.from("reconciliation_results").delete().eq("run_id", misRun.run_id);
+        await db.from("reconciliation_runs").delete().eq("id", misRun.run_id);
+        await db.from("mutual_fund_payables").delete().eq("id", misPayable!.id);
+        await db.from("clients").delete().eq("id", misClient!.id);
       });
     },
   );

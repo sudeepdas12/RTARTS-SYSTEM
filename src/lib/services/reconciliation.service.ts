@@ -1580,29 +1580,26 @@ export const ReconciliationService = {
 
   /**
    * Approves an underpaid or overpaid reconciliation variance with server-side maker-checker enforcement.
+   * Derives run, payable, amounts, and variance attributes exclusively from persisted result records.
    */
   async approveVariance(approvalInfo: {
-    runId: string;
-    payableId: string;
-    payableType?: string;
+    resultId?: string;
+    runId?: string;
+    payableId?: string;
     sourceReference?: string | null;
-    varianceType: "UNDER_PAID" | "OVER_PAID" | "PARTIAL" | "DISCREPANCY";
-    expectedAmount: number;
-    actualAmount: number;
     approvalReason: string;
     makerId?: string;
-  }): Promise<{ success: boolean; approvalId: string }> {
+    approvedBy?: string;
+  }): Promise<{ success: boolean; approvalId: string; resultId?: string }> {
     const { data, error } = await (supabase as any).rpc("approve_reconciliation_variance_atomic", {
       p_approval_info: {
-        run_id: approvalInfo.runId,
-        payable_id: approvalInfo.payableId,
-        payable_type: approvalInfo.payableType || "dividend_payables",
+        result_id: approvalInfo.resultId || null,
+        run_id: approvalInfo.runId || null,
+        payable_id: approvalInfo.payableId || null,
         source_reference: approvalInfo.sourceReference || null,
-        variance_type: approvalInfo.varianceType,
-        expected_amount: approvalInfo.expectedAmount,
-        actual_amount: approvalInfo.actualAmount,
         approval_reason: approvalInfo.approvalReason,
         maker_id: approvalInfo.makerId || null,
+        approved_by: approvalInfo.approvedBy || null,
       },
     });
 
@@ -1612,6 +1609,7 @@ export const ReconciliationService = {
     return {
       success: true,
       approvalId: data?.approval_id,
+      resultId: data?.result_id,
     };
   },
 
