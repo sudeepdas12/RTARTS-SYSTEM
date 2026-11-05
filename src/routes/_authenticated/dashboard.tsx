@@ -378,20 +378,20 @@ function Dashboard() {
 
           if (mfRes.data) {
             mutualFundPaid = Number(mfRes.data.disbursed || 0);
-            mutualFundPending = Number(mfRes.data.pendingCount > 0 ? mfRes.data.remaining || 0 : 0);
-            mutualFundPartial = Number(mfRes.data.partialCount > 0 ? mfRes.data.remaining || 0 : 0);
+            mutualFundPending = Number(mfRes.data.remaining || 0);
+            mutualFundPartial = 0;
             totalMutualFund = Number(mfRes.data.net || 0);
           }
           if (divRes.data) {
             dividendPaid = Number(divRes.data.disbursed || 0);
-            dividendPending = Number(divRes.data.pendingCount > 0 ? divRes.data.remaining || 0 : 0);
-            dividendPartial = Number(divRes.data.partialCount > 0 ? divRes.data.remaining || 0 : 0);
+            dividendPending = Number(divRes.data.remaining || 0);
+            dividendPartial = 0;
             totalDividend = Number(divRes.data.net || 0);
           }
           if (intRes.data) {
             interestPaid = Number(intRes.data.disbursed || 0);
-            interestPending = Number(intRes.data.pendingCount > 0 ? intRes.data.remaining || 0 : 0);
-            interestPartial = Number(intRes.data.partialCount > 0 ? intRes.data.remaining || 0 : 0);
+            interestPending = Number(intRes.data.remaining || 0);
+            interestPartial = 0;
             totalInterest = Number(intRes.data.net || 0);
           }
           totalDisbursed = mutualFundPaid + dividendPaid + interestPaid;
@@ -619,16 +619,11 @@ function Dashboard() {
     },
   ];
 
+  const pendingUnstarted = Math.max(0, totalAll - totalPaid - totalPartial);
   const pieData = [
     { name: "Paid", value: totalPaid },
-    { name: "Pending", value: totalPending },
-    {
-      name: "Partial",
-      value:
-        (data?.interestPartial ?? 0) +
-        (data?.dividendPartial ?? 0) +
-        (data?.mutualFundPartial ?? 0),
-    },
+    { name: "Pending", value: pendingUnstarted },
+    { name: "Partial", value: totalPartial },
   ].filter((d) => d.value > 0);
 
   const getStatusBadge = (status: string) => {
@@ -810,7 +805,9 @@ function Dashboard() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="text-xl font-bold tabular-nums">{isLoading ? "—" : k.value}</div>
+                <div className="text-xl font-bold font-mono tabular-nums">
+                  {isLoading ? "—" : k.value}
+                </div>
                 <div
                   className={`flex items-center gap-1 mt-1 text-[11px] ${k.trendUp ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}
                 >
@@ -959,41 +956,45 @@ function Dashboard() {
                     ? `${selectedCompany.company_code} Funds Disbursed`
                     : "Funds Disbursed"}
                 </span>
-                <span className="font-semibold text-emerald-600">{disbursementProgress}%</span>
+                <span className="font-semibold font-mono tabular-nums text-emerald-600">
+                  {disbursementProgress}%
+                </span>
               </div>
               <Progress value={disbursementProgress} className="h-2" />
             </div>
             <div>
               <div className="flex justify-between text-sm mb-1.5">
                 <span className="text-muted-foreground">Bank Reconciliation</span>
-                <span className="font-medium">{bankReconciledPct}%</span>
+                <span className="font-medium font-mono tabular-nums">{bankReconciledPct}%</span>
               </div>
               <Progress value={bankReconciledPct} className="h-2" />
             </div>
             <div className="pt-2 border-t space-y-1.5">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Total Disbursed</span>
-                <span className="font-semibold text-emerald-600">
+                <span className="font-semibold font-mono tabular-nums text-emerald-600">
                   ₨ {fmtCurrency(totalDisbursed)}
                 </span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Fully Settled</span>
-                <span className="font-medium text-emerald-700 dark:text-emerald-400">
+                <span className="font-medium font-mono tabular-nums text-emerald-700 dark:text-emerald-400">
                   ₨ {fmtCurrency(totalPaid)}
                 </span>
               </div>
               {totalPartial > 0 && (
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">In Installments (Partial)</span>
-                  <span className="font-semibold text-blue-600 dark:text-blue-400">
+                  <span className="font-semibold font-mono tabular-nums text-blue-600 dark:text-blue-400">
                     ₨ {fmtCurrency(totalPartial)}
                   </span>
                 </div>
               )}
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Total Pending</span>
-                <span className="font-semibold text-amber-600">₨ {fmtCurrency(totalPending)}</span>
+                <span className="font-semibold font-mono tabular-nums text-amber-600">
+                  ₨ {fmtCurrency(totalPending)}
+                </span>
               </div>
             </div>
           </CardContent>
@@ -1032,7 +1033,7 @@ function Dashboard() {
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="text-sm font-semibold">
+                      <p className="text-sm font-semibold font-mono tabular-nums">
                         ₨ {fmtCurrency(Number(p.net_amount ?? 0))}
                       </p>
                       {getStatusBadge(p.status)}
@@ -1089,7 +1090,7 @@ function Dashboard() {
                         </div>
                         <div className="min-w-0">
                           <p className="text-sm font-medium truncate">{b.batch_name}</p>
-                          <p className="text-xs text-muted-foreground">
+                          <p className="text-xs text-muted-foreground font-mono tabular-nums">
                             ₨ {fmtCurrency(Number(b.total_amount ?? 0))}
                           </p>
                         </div>

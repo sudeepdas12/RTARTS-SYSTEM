@@ -1419,7 +1419,7 @@ function UploadRoute() {
     <div className="flex flex-col gap-6 p-6">
       <PageHeader
         title="Upload Data"
-        description="Import Excel files for Dividends, Debentures, and Mutual Funds. Reconciliation bank reports go to the Reconciliation section."
+        description="Import and validate Excel registers for stock dividends, debentures, and mutual funds with multi-sheet validation and pre-import review."
         actions={
           <Link to="/upload-history">
             <Button variant="outline" size="sm" className="gap-1.5 text-xs">
@@ -1438,7 +1438,7 @@ function UploadRoute() {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
                 <Info className="h-4 w-4 text-muted-foreground" />
-                What can I upload here?
+                Supported Data Import Formats
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -1452,7 +1452,7 @@ function UploadRoute() {
                     INSTITUTION sheets are fully supported.
                   </p>
                   <Badge variant="outline" className="text-[10px]">
-                    → dividend_payables
+                    → Stock Dividend Payables
                   </Badge>
                 </div>
                 <div className="rounded-lg border bg-muted/30 p-3 space-y-1">
@@ -1464,7 +1464,7 @@ function UploadRoute() {
                     payment data.
                   </p>
                   <Badge variant="outline" className="text-[10px]">
-                    → interest_payables
+                    → Debenture Interest Payables
                   </Badge>
                 </div>
                 <div className="rounded-lg border bg-muted/30 p-3 space-y-1">
@@ -1476,7 +1476,7 @@ function UploadRoute() {
                     investor rules.
                   </p>
                   <Badge variant="outline" className="text-[10px]">
-                    → mutual_fund_payables
+                    → Mutual Fund Distribution Payables
                   </Badge>
                 </div>
               </div>

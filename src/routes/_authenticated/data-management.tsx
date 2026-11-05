@@ -805,13 +805,13 @@ function DataManagementPage() {
                                     : row.payable_type}
                                 </Badge>
                               </TableCell>
-                              <TableCell className="text-right tabular-nums text-sm">
+                              <TableCell className="text-right font-mono tabular-nums text-sm">
                                 {fmt(row.gross_amount)}
                               </TableCell>
-                              <TableCell className="text-right tabular-nums text-sm text-amber-600 font-mono">
+                              <TableCell className="text-right font-mono tabular-nums text-sm text-amber-600">
                                 {fmt(row.tax_amount)}
                               </TableCell>
-                              <TableCell className="text-right tabular-nums text-sm font-bold text-emerald-600">
+                              <TableCell className="text-right font-mono tabular-nums text-sm font-bold text-emerald-600">
                                 {fmt(row.net_amount)}
                               </TableCell>
                               <TableCell className="pr-6">
@@ -1047,19 +1047,19 @@ function DataManagementPage() {
                               {row.fiscal_year}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">
+                          <TableCell className="text-right font-mono tabular-nums text-sm">
                             {fmtCount(row.dividend_count)}
                           </TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">
+                          <TableCell className="text-right font-mono tabular-nums text-sm">
                             {fmtCount(row.interest_count)}
                           </TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">
+                          <TableCell className="text-right font-mono tabular-nums text-sm">
                             {fmtCount(row.mutual_fund_count)}
                           </TableCell>
-                          <TableCell className="text-right tabular-nums text-sm font-semibold text-emerald-600">
+                          <TableCell className="text-right font-mono tabular-nums text-sm font-semibold text-emerald-600">
                             {fmt(row.total_paid)}
                           </TableCell>
-                          <TableCell className="text-right tabular-nums text-sm font-semibold text-amber-600">
+                          <TableCell className="text-right font-mono tabular-nums text-sm font-semibold text-amber-600">
                             {fmt(row.total_pending)}
                           </TableCell>
                           <TableCell className="pr-6 text-right">

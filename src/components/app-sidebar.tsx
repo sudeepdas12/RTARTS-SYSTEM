@@ -111,7 +111,7 @@ const sections: NavSection[] = [
         roles: ["admin", "supervisor", "checker", "approver", "operator", "auditor"] as AppRole[],
       },
       {
-        title: "Audit Log",
+        title: "Audit Logs",
         url: "/audit-logs",
         icon: ShieldCheck,
         roles: ["admin", "auditor", "supervisor"] as AppRole[],

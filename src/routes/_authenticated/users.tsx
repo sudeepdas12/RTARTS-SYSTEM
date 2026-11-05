@@ -63,6 +63,9 @@ import {
   ExternalLink,
   Mail,
   UserCheck2,
+  ShieldCheck,
+  CheckCircle2,
+  Minus,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
@@ -108,6 +111,147 @@ const roleColor: Record<string, string> = {
   report_viewer: "bg-muted text-muted-foreground",
   read_only: "bg-muted text-muted-foreground",
 };
+
+const PERMISSION_GROUPS: {
+  category: string;
+  items: { key: string; label: string; description: string }[];
+}[] = [
+  {
+    category: "Administration & Security",
+    items: [
+      {
+        key: "manage_users",
+        label: "User Provisioning & Credentials",
+        description: "Create, edit, reset passwords, and manage accounts",
+      },
+      {
+        key: "manage_settings",
+        label: "System Configuration & TDS Rates",
+        description: "Update system settings, TDS rules, and banking credentials",
+      },
+      {
+        key: "view_audit_logs",
+        label: "Forensic Audit Trail & Logs",
+        description: "Inspect tamper-evident modification history and security telemetry",
+      },
+    ],
+  },
+  {
+    category: "Maker-Checker & Approvals",
+    items: [
+      {
+        key: "view_approvals",
+        label: "View Approval Queue",
+        description: "Review pending maker actions and approval logs",
+      },
+      {
+        key: "manage_approvals",
+        label: "Authorize / Reject Requests",
+        description: "Four-eyes authorization for high-consequence operations",
+      },
+    ],
+  },
+  {
+    category: "Master Data Management",
+    items: [
+      {
+        key: "manage_companies",
+        label: "Manage Companies / Issuers",
+        description: "Create, configure, and edit corporate issuer profiles",
+      },
+      {
+        key: "manage_clients",
+        label: "Manage Shareholders",
+        description: "Update client KYC, Demat BOID, and banking records",
+      },
+      {
+        key: "view_companies",
+        label: "View Companies",
+        description: "Read-only access to issuer registers and configurations",
+      },
+      {
+        key: "view_clients",
+        label: "View Shareholders",
+        description: "Read-only access to shareholder registry",
+      },
+    ],
+  },
+  {
+    category: "Ingestion & Data Processing",
+    items: [
+      {
+        key: "upload_data",
+        label: "Upload Excel & Datasets",
+        description: "Ingest payables, bank statements, and master data files",
+      },
+      {
+        key: "validate_data",
+        label: "Run Validation Rules",
+        description: "Flag arithmetic mismatches, invalid BOIDs, and missing accounts",
+      },
+      {
+        key: "import_data",
+        label: "Commit Staged Imports",
+        description: "Persist validated records into live system ledgers",
+      },
+      {
+        key: "rollback_upload",
+        label: "Atomic Upload Rollback",
+        description: "Cleanly reverse an erroneous ingestion batch",
+      },
+    ],
+  },
+  {
+    category: "Payments & Disbursements",
+    items: [
+      {
+        key: "create_payment_batch",
+        label: "Create Payment Batches",
+        description: "Assemble payable records into disbursement batches",
+      },
+      {
+        key: "approve_payment_batch",
+        label: "Approve Payment Batches",
+        description: "Checker review of prepared payment batches",
+      },
+      {
+        key: "process_payment_batch",
+        label: "Disburse & Settle",
+        description: "Execute ConnectIPS / bank payment instructions",
+      },
+    ],
+  },
+  {
+    category: "Bank Reconciliation",
+    items: [
+      {
+        key: "run_reconciliation",
+        label: "Run Matching Engine",
+        description: "Execute 5-way reconciliation algorithm against statements",
+      },
+      {
+        key: "apply_reconciliation",
+        label: "Commit Reconciliation Matches",
+        description: "Mark matched transactions as cleared in ledger",
+      },
+    ],
+  },
+  {
+    category: "Reporting & Statutory Filings",
+    items: [
+      {
+        key: "export_reports",
+        label: "Export XLSX, PDF, IRD JSON",
+        description: "Download statutory registers, Annex-10, and IPF schedules",
+      },
+      {
+        key: "view_reports",
+        label: "View Statutory Registers",
+        description: "Inspect AGM summaries, Pumori debenture schedules, and payout registers",
+      },
+    ],
+  },
+];
 
 function generatePassword(): string {
   const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -159,6 +303,7 @@ function UsersRoute() {
   const [userToReset, setUserToReset] = useState<AdminUser | null>(null);
   const [newPassword, setNewPassword] = useState("");
   const [showResetPassword, setShowResetPassword] = useState(false);
+  const [selectedMatrixRole, setSelectedMatrixRole] = useState<AppRole>("maker");
 
   const { data: users = [], isLoading } = useQuery({
     queryKey: ["admin-users"],
@@ -588,242 +733,366 @@ function UsersRoute() {
         </Card>
       </div>
 
-      {/* Search & Filter Bar */}
-      <div className="flex flex-wrap gap-2 items-center">
-        <div className="relative flex-1 min-w-[220px]">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-          <Input
-            placeholder="Search user name or email…"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-8 h-8 text-xs"
-          />
-          {searchTerm && (
-            <button
-              onClick={() => setSearchTerm("")}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
-        <Select value={roleFilter} onValueChange={setRoleFilter}>
-          <SelectTrigger className="w-44 h-8 text-xs">
-            <SelectValue placeholder="All Roles" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Roles</SelectItem>
-            {ROLES.map((r) => (
-              <SelectItem key={r} value={r} className="text-xs">
-                <span className="capitalize">{r.replace(/_/g, " ")}</span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      <Tabs defaultValue="directory" className="space-y-4">
+        <TabsList className="h-10 bg-muted/60 p-1">
+          <TabsTrigger value="directory" className="gap-2 text-xs md:text-sm">
+            <Users className="h-4 w-4" /> User Directory ({kpis.total})
+          </TabsTrigger>
+          <TabsTrigger value="matrix" className="gap-2 text-xs md:text-sm">
+            <ShieldCheck className="h-4 w-4" /> Role Permissions Matrix
+          </TabsTrigger>
+        </TabsList>
 
-      {/* Users Table */}
-      <div className="border rounded-lg bg-card overflow-x-auto shadow-sm">
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-muted/40 text-xs hover:bg-transparent">
-              <TableHead className="pl-6 w-[280px]">User & Identity</TableHead>
-              <TableHead className="w-[180px]">Assigned Role</TableHead>
-              <TableHead className="w-[120px]">Status</TableHead>
-              <TableHead className="w-[180px]">Last Sign-In</TableHead>
-              <TableHead className="pr-6 text-right w-[140px]">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              Array.from({ length: 4 }).map((_, i) => (
-                <TableRow key={i}>
-                  {Array.from({ length: 5 }).map((_, j) => (
-                    <TableCell key={j}>
-                      <div className="h-4 rounded bg-muted animate-pulse" />
-                    </TableCell>
-                  ))}
+        <TabsContent value="directory" className="space-y-4">
+          {/* Search & Filter Bar */}
+          <div className="flex flex-wrap gap-2 items-center">
+            <div className="relative flex-1 min-w-[220px]">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Search user name or email…"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-8 h-8 text-xs"
+              />
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            <Select value={roleFilter} onValueChange={setRoleFilter}>
+              <SelectTrigger className="w-44 h-8 text-xs">
+                <SelectValue placeholder="All Roles" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Roles</SelectItem>
+                {ROLES.map((r) => (
+                  <SelectItem key={r} value={r} className="text-xs">
+                    <span className="capitalize">{r.replace(/_/g, " ")}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Users Table */}
+          <div className="border rounded-lg bg-card overflow-x-auto shadow-sm">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/40 text-xs hover:bg-transparent">
+                  <TableHead className="pl-6 w-[280px]">User & Identity</TableHead>
+                  <TableHead className="w-[180px]">Assigned Role</TableHead>
+                  <TableHead className="w-[120px]">Status</TableHead>
+                  <TableHead className="w-[180px]">Last Sign-In</TableHead>
+                  <TableHead className="pr-6 text-right w-[140px]">Actions</TableHead>
                 </TableRow>
-              ))
-            ) : filteredUsers.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={5} className="text-center py-12 text-muted-foreground">
-                  <Users className="h-8 w-8 mx-auto mb-2 opacity-30 text-muted-foreground" />
-                  <p className="text-sm font-medium">No users match your criteria.</p>
-                </TableCell>
-              </TableRow>
-            ) : (
-              filteredUsers.map((user) => {
-                const isSelf = user.id === currentUser?.id;
-                return (
-                  <TableRow key={user.id} className="hover:bg-muted/40 transition-colors">
-                    {/* User Identity */}
-                    <TableCell className="pl-6 text-xs">
-                      <div className="flex items-center gap-3">
-                        <Avatar className="h-8 w-8">
-                          <AvatarFallback className="text-[11px] font-semibold bg-primary/10 text-primary">
-                            {initials(user.full_name, user.email)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="flex flex-col truncate">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-semibold text-xs text-foreground truncate">
-                              {user.full_name || "Unassigned Name"}
-                            </span>
-                            {isSelf && (
-                              <Badge
-                                variant="secondary"
-                                className="text-[9px] px-1 py-0 font-normal"
-                              >
-                                You
-                              </Badge>
-                            )}
-                          </div>
-                          <span className="text-[11px] text-muted-foreground font-mono truncate">
-                            {user.email}
-                          </span>
-                        </div>
-                      </div>
+              </TableHeader>
+              <TableBody>
+                {isLoading ? (
+                  Array.from({ length: 4 }).map((_, i) => (
+                    <TableRow key={i}>
+                      {Array.from({ length: 5 }).map((_, j) => (
+                        <TableCell key={j}>
+                          <div className="h-4 rounded bg-muted animate-pulse" />
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))
+                ) : filteredUsers.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center py-12 text-muted-foreground">
+                      <Users className="h-8 w-8 mx-auto mb-2 opacity-30 text-muted-foreground" />
+                      <p className="text-sm font-medium">No users match your criteria.</p>
                     </TableCell>
-
-                    {/* Role Selection */}
-                    <TableCell>
-                      <Select
-                        value={user.role || ""}
-                        onValueChange={(val) =>
-                          updateRole({ userId: user.id, role: val as AppRole })
-                        }
-                        disabled={updating || isSelf}
-                      >
-                        <SelectTrigger className="w-40 h-7 text-xs border border-border/60">
-                          <div className="flex items-center gap-1.5">
-                            <Shield className="w-3 h-3 text-muted-foreground" />
-                            <SelectValue placeholder="No role" />
+                  </TableRow>
+                ) : (
+                  filteredUsers.map((user) => {
+                    const isSelf = user.id === currentUser?.id;
+                    return (
+                      <TableRow key={user.id} className="hover:bg-muted/40 transition-colors">
+                        {/* User Identity */}
+                        <TableCell className="pl-6 text-xs">
+                          <div className="flex items-center gap-3">
+                            <Avatar className="h-8 w-8">
+                              <AvatarFallback className="text-[11px] font-semibold bg-primary/10 text-primary">
+                                {initials(user.full_name, user.email)}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="flex flex-col truncate">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-semibold text-xs text-foreground truncate">
+                                  {user.full_name || "Unassigned Name"}
+                                </span>
+                                {isSelf && (
+                                  <Badge
+                                    variant="secondary"
+                                    className="text-[9px] px-1 py-0 font-normal"
+                                  >
+                                    You
+                                  </Badge>
+                                )}
+                              </div>
+                              <span className="text-[11px] text-muted-foreground font-mono truncate">
+                                {user.email}
+                              </span>
+                            </div>
                           </div>
-                        </SelectTrigger>
-                        <SelectContent>
-                          {ROLES.map((role) => (
-                            <SelectItem key={role} value={role} className="text-xs">
-                              <span className="capitalize">{role.replace(/_/g, " ")}</span>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </TableCell>
+                        </TableCell>
 
-                    {/* Status Badge */}
-                    <TableCell>
-                      {user.last_sign_in_at ? (
-                        <Badge
-                          variant="outline"
-                          className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800 text-[10px]"
-                        >
-                          Active
-                        </Badge>
-                      ) : user.invited_at ? (
-                        <Badge
-                          variant="outline"
-                          className="bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border-amber-200 dark:border-amber-800 text-[10px]"
-                        >
-                          Invited
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-[10px]">
-                          Pending
-                        </Badge>
-                      )}
-                    </TableCell>
+                        {/* Role Selection */}
+                        <TableCell>
+                          <Select
+                            value={user.role || ""}
+                            onValueChange={(val) =>
+                              updateRole({ userId: user.id, role: val as AppRole })
+                            }
+                            disabled={updating || isSelf}
+                          >
+                            <SelectTrigger className="w-40 h-7 text-xs border border-border/60">
+                              <div className="flex items-center gap-1.5">
+                                <Shield className="w-3 h-3 text-muted-foreground" />
+                                <SelectValue placeholder="No role" />
+                              </div>
+                            </SelectTrigger>
+                            <SelectContent>
+                              {ROLES.map((role) => (
+                                <SelectItem key={role} value={role} className="text-xs">
+                                  <span className="capitalize">{role.replace(/_/g, " ")}</span>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </TableCell>
 
-                    {/* Last Sign-In */}
-                    <TableCell className="text-xs text-muted-foreground font-mono whitespace-nowrap">
-                      {user.last_sign_in_at ? (
-                        <div>
-                          <div className="font-medium text-foreground">
-                            {format(new Date(user.last_sign_in_at), "dd MMM yyyy")}
-                          </div>
-                          <div className="text-[10px] opacity-70">
-                            {format(new Date(user.last_sign_in_at), "HH:mm")}
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="italic text-[11px] opacity-60">Never</span>
-                      )}
-                    </TableCell>
+                        {/* Status Badge */}
+                        <TableCell>
+                          {user.last_sign_in_at ? (
+                            <Badge
+                              variant="outline"
+                              className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800 text-[10px]"
+                            >
+                              Active
+                            </Badge>
+                          ) : user.invited_at ? (
+                            <Badge
+                              variant="outline"
+                              className="bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border-amber-200 dark:border-amber-800 text-[10px]"
+                            >
+                              Invited
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[10px]">
+                              Pending
+                            </Badge>
+                          )}
+                        </TableCell>
 
-                    {/* Actions */}
-                    <TableCell className="pr-6 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        {/* Audit Logs Link */}
-                        <Button
-                          asChild
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 w-7 p-0"
-                          title="View user activity in Audit Logs"
-                        >
-                          <Link to="/audit-logs">
-                            <ExternalLink className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground" />
-                          </Link>
-                        </Button>
+                        {/* Last Sign-In */}
+                        <TableCell className="text-xs text-muted-foreground font-mono whitespace-nowrap">
+                          {user.last_sign_in_at ? (
+                            <div>
+                              <div className="font-medium text-foreground">
+                                {format(new Date(user.last_sign_in_at), "dd MMM yyyy")}
+                              </div>
+                              <div className="text-[10px] opacity-70">
+                                {format(new Date(user.last_sign_in_at), "HH:mm")}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="italic text-[11px] opacity-60">Never</span>
+                          )}
+                        </TableCell>
 
-                        {/* Reset Password */}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 w-7 p-0 cursor-pointer"
-                          title="Reset Password"
-                          onClick={() => {
-                            setUserToReset(user);
-                            setNewPassword("");
-                            setShowResetPassword(false);
-                            setResetOpen(true);
-                          }}
-                        >
-                          <Key className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground" />
-                        </Button>
+                        {/* Actions */}
+                        <TableCell className="pr-6 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            {/* Audit Logs Link */}
+                            <Button
+                              asChild
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              title="View user activity in Audit Logs"
+                            >
+                              <Link to="/audit-logs">
+                                <ExternalLink className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground" />
+                              </Link>
+                            </Button>
 
-                        {/* Delete User */}
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
+                            {/* Reset Password */}
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-7 w-7 p-0 cursor-pointer text-muted-foreground hover:text-rose-600"
-                              disabled={isSelf}
-                              title={isSelf ? "You cannot delete your own account" : "Delete user"}
+                              className="h-7 w-7 p-0 cursor-pointer"
+                              title="Reset Password"
+                              onClick={() => {
+                                setUserToReset(user);
+                                setNewPassword("");
+                                setShowResetPassword(false);
+                                setResetOpen(true);
+                              }}
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <Key className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground" />
                             </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>Delete User Account?</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                This will permanently remove <strong>{user.email}</strong> and all
-                                associated credentials, profile attributes, and role assignments.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                              <AlertDialogAction
-                                onClick={() => deleteUser(user.id)}
-                                disabled={deleting}
-                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                              >
-                                {deleting ? "Deleting..." : "Delete Account"}
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
+
+                            {/* Delete User */}
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 w-7 p-0 cursor-pointer text-muted-foreground hover:text-rose-600"
+                                  disabled={isSelf}
+                                  title={
+                                    isSelf ? "You cannot delete your own account" : "Delete user"
+                                  }
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Delete User Account?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    This will permanently remove <strong>{user.email}</strong> and
+                                    all associated credentials, profile attributes, and role
+                                    assignments.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    onClick={() => deleteUser(user.id)}
+                                    disabled={deleting}
+                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                  >
+                                    {deleting ? "Deleting..." : "Delete Account"}
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </TabsContent>
+
+        {/* TAB 2: ROLE PERMISSIONS MATRIX */}
+        <TabsContent value="matrix" className="space-y-4">
+          <Card className="border border-border/80 shadow-sm">
+            <CardContent className="p-4 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b">
+                <div>
+                  <h3 className="text-sm font-semibold flex items-center gap-2">
+                    <ShieldCheck className="h-4 w-4 text-primary" />
+                    Role-Based Access Control (RBAC) Architecture
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Strict least-privilege matrix and four-eyes maker-checker authorization enforced
+                    across the platform.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">
+                    Inspect Role:
+                  </span>
+                  <Select
+                    value={selectedMatrixRole}
+                    onValueChange={(v) => setSelectedMatrixRole(v as AppRole)}
+                  >
+                    <SelectTrigger className="w-48 h-8 text-xs font-medium">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ROLES.map((r) => (
+                        <SelectItem key={r} value={r} className="text-xs">
+                          <span className="capitalize">{r.replace(/_/g, " ")}</span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Role Scope & Member Count Pill */}
+              <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-muted/40 rounded-lg text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold capitalize text-foreground">
+                    {selectedMatrixRole.replace(/_/g, " ")} Role
+                  </span>
+                  <Badge variant="outline" className={roleColor[selectedMatrixRole] || ""}>
+                    {RBACService.getRolePermissions(selectedMatrixRole).length} Permissions Enabled
+                  </Badge>
+                </div>
+                <div className="text-muted-foreground font-mono">
+                  Assigned Users:{" "}
+                  <span className="font-semibold text-foreground">
+                    {users.filter((u: AdminUser) => u.role === selectedMatrixRole).length}
+                  </span>
+                </div>
+              </div>
+
+              {/* Categorized Permissions Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                {PERMISSION_GROUPS.map((group) => {
+                  const rolePerms = RBACService.getRolePermissions(selectedMatrixRole);
+                  return (
+                    <Card key={group.category} className="border border-border/70 shadow-none">
+                      <div className="px-3 py-2 bg-muted/30 border-b font-medium text-xs text-foreground">
+                        {group.category}
                       </div>
-                    </TableCell>
-                  </TableRow>
-                );
-              })
-            )}
-          </TableBody>
-        </Table>
-      </div>
+                      <div className="divide-y divide-border/60">
+                        {group.items.map((item) => {
+                          const isAllowed =
+                            selectedMatrixRole === "admin" || rolePerms.includes(item.key as any);
+                          return (
+                            <div
+                              key={item.key}
+                              className="p-2.5 flex items-start justify-between gap-3 text-xs"
+                            >
+                              <div className="space-y-0.5 flex-1 min-w-0">
+                                <div className="font-medium text-foreground">{item.label}</div>
+                                <div className="text-[11px] text-muted-foreground line-clamp-1">
+                                  {item.description}
+                                </div>
+                              </div>
+                              <div className="shrink-0 pt-0.5">
+                                {isAllowed ? (
+                                  <Badge
+                                    variant="outline"
+                                    className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800 text-[10px] gap-1"
+                                  >
+                                    <CheckCircle2 className="h-3 w-3" /> Authorized
+                                  </Badge>
+                                ) : (
+                                  <Badge
+                                    variant="outline"
+                                    className="bg-muted text-muted-foreground border-transparent text-[10px] gap-1"
+                                  >
+                                    <Minus className="h-3 w-3 opacity-60" /> Restricted
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </Card>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
 
       {/* Password Reset Dialog */}
       <Dialog open={resetOpen} onOpenChange={setResetOpen}>

@@ -893,16 +893,16 @@ function ClassificationReviewPage() {
                           <TableCell className="text-xs capitalize font-mono">
                             {row.table.replace("_payables", "")}
                           </TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">
+                          <TableCell className="text-right font-mono tabular-nums text-sm">
                             {Number(row.gross ?? 0).toFixed(2)}
                           </TableCell>
-                          <TableCell className="text-right tabular-nums text-sm text-amber-600 font-mono">
+                          <TableCell className="text-right font-mono tabular-nums text-sm text-amber-600">
                             {Number(row.tax ?? 0).toFixed(2)}
                           </TableCell>
-                          <TableCell className="text-right tabular-nums text-sm font-bold text-emerald-600">
+                          <TableCell className="text-right font-mono tabular-nums text-sm font-bold text-emerald-600">
                             {Number(row.net ?? 0).toFixed(2)}
                           </TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">
+                          <TableCell className="text-right font-mono tabular-nums text-sm">
                             {row.tds_rate != null
                               ? `${(Number(row.tds_rate) * 100).toFixed(0)}%`
                               : "—"}

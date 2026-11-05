@@ -507,7 +507,7 @@ export const PaymentService = {
 
       let revertedPayables = 0;
 
-      // 2. Reset dividend payables back to Pending
+      // 2. Reset dividend payables back to Pending with zeroed paid_amount
       if (divIds.length > 0) {
         const { error: divErr } = await (supabase as any)
           .from("dividend_payables")
@@ -515,6 +515,7 @@ export const PaymentService = {
             payment_status: "Pending",
             payment_date: null,
             payment_reference: null,
+            paid_amount: 0,
             updated_at: new Date().toISOString(),
           })
           .in("id", divIds);
@@ -522,7 +523,7 @@ export const PaymentService = {
         else revertedPayables += divIds.length;
       }
 
-      // 3. Reset interest payables back to Pending
+      // 3. Reset interest payables back to Pending with zeroed paid_amount
       if (intIds.length > 0) {
         const { error: intErr } = await (supabase as any)
           .from("interest_payables")
@@ -530,6 +531,7 @@ export const PaymentService = {
             payment_status: "Pending",
             payment_date: null,
             payment_reference: null,
+            paid_amount: 0,
             updated_at: new Date().toISOString(),
           })
           .in("id", intIds);
@@ -537,7 +539,7 @@ export const PaymentService = {
         else revertedPayables += intIds.length;
       }
 
-      // 4. Reset mutual fund payables back to Pending
+      // 4. Reset mutual fund payables back to Pending with zeroed paid_amount
       if (mfIds.length > 0) {
         const { error: mfErr } = await (supabase as any)
           .from("mutual_fund_payables")
@@ -545,6 +547,7 @@ export const PaymentService = {
             payment_status: "Pending",
             payment_date: null,
             payment_reference: null,
+            paid_amount: 0,
             updated_at: new Date().toISOString(),
           })
           .in("id", mfIds);
@@ -871,7 +874,13 @@ export const PaymentService = {
       if (tableName) {
         const { error: restoreErr } = await (supabase as any)
           .from(tableName)
-          .update({ payment_status: "Pending" })
+          .update({
+            payment_status: "Pending",
+            payment_date: null,
+            payment_reference: null,
+            paid_amount: 0,
+            updated_at: new Date().toISOString(),
+          })
           .eq("id", payment.payable_id);
 
         if (restoreErr) {

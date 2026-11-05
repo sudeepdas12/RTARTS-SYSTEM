@@ -75,6 +75,7 @@ function ApprovalsPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [viewing, setViewing] = useState<Row | null>(null);
   const [notes, setNotes] = useState("");
+  const [showRawPayload, setShowRawPayload] = useState(false);
 
   const currentUser: UserContext | null = user
     ? { id: user.id, roles: (roles as any) || ["read_only"] }
@@ -273,7 +274,7 @@ function ApprovalsPage() {
       <div className="flex items-start justify-between flex-wrap gap-3">
         <PageHeader
           title="Pending Approvals"
-          description="Maker/checker workflow — authorized roles review changes and batches requested by operators."
+          description="Maker-checker authorization workflow — dual-control review and approval for payment batches and operational ledger updates."
         />
         {!canApprove && (
           <Badge
@@ -290,7 +291,9 @@ function ApprovalsPage() {
         <Card className="glass-card hover-lift border border-border/80">
           <CardContent className="p-4 flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium uppercase text-muted-foreground">Pending Review</p>
+              <p className="text-xs font-medium uppercase text-muted-foreground">
+                Pending Review & Authorization
+              </p>
               <p className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1 tabular-nums">
                 {counts.Pending}
               </p>
@@ -305,7 +308,9 @@ function ApprovalsPage() {
         <Card className="glass-card hover-lift border border-border/80">
           <CardContent className="p-4 flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium uppercase text-muted-foreground">Approved</p>
+              <p className="text-xs font-medium uppercase text-muted-foreground">
+                Approved Requests
+              </p>
               <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1 tabular-nums">
                 {counts.Approved}
               </p>
@@ -320,7 +325,9 @@ function ApprovalsPage() {
         <Card className="glass-card hover-lift border border-border/80">
           <CardContent className="p-4 flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium uppercase text-muted-foreground">Rejected</p>
+              <p className="text-xs font-medium uppercase text-muted-foreground">
+                Rejected Requests
+              </p>
               <p className="text-2xl font-bold text-destructive mt-1 tabular-nums">
                 {counts.Rejected}
               </p>
@@ -495,13 +502,110 @@ function ApprovalsPage() {
                 </div>
               </div>
 
-              <div>
-                <div className="mb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                  Payload Details
+              {typeof viewing.payload === "object" && viewing.payload !== null && (
+                <div className="rounded-lg border bg-card p-3.5 shadow-sm space-y-3">
+                  <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Operational Details
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
+                    {(viewing.payload as any).batch_name && (
+                      <div className="col-span-full p-2.5 rounded bg-muted/30 border">
+                        <span className="text-muted-foreground block text-[10px] uppercase font-medium">
+                          Batch Name
+                        </span>
+                        <span className="font-semibold text-foreground text-sm">
+                          {(viewing.payload as any).batch_name}
+                        </span>
+                      </div>
+                    )}
+                    {(viewing.payload as any).total_amount !== undefined && (
+                      <div className="p-2.5 rounded bg-muted/30 border">
+                        <span className="text-muted-foreground block text-[10px] uppercase font-medium">
+                          Total Amount
+                        </span>
+                        <span className="font-bold font-mono text-emerald-600 dark:text-emerald-400 text-sm tabular-nums">
+                          NPR{" "}
+                          {Number((viewing.payload as any).total_amount || 0).toLocaleString(
+                            "en-IN",
+                            { minimumFractionDigits: 2, maximumFractionDigits: 2 },
+                          )}
+                        </span>
+                      </div>
+                    )}
+                    {(viewing.payload as any).total_payments !== undefined && (
+                      <div className="p-2.5 rounded bg-muted/30 border">
+                        <span className="text-muted-foreground block text-[10px] uppercase font-medium">
+                          Transactions
+                        </span>
+                        <span className="font-bold font-mono text-foreground text-sm tabular-nums">
+                          {Number((viewing.payload as any).total_payments || 0).toLocaleString()}
+                        </span>
+                      </div>
+                    )}
+                    {(viewing.payload as any).payment_method && (
+                      <div className="p-2.5 rounded bg-muted/30 border">
+                        <span className="text-muted-foreground block text-[10px] uppercase font-medium">
+                          Method
+                        </span>
+                        <span className="font-semibold capitalize text-foreground text-sm">
+                          {(viewing.payload as any).payment_method}
+                        </span>
+                      </div>
+                    )}
+                    {(viewing.payload as any).file_name && (
+                      <div className="col-span-full p-2.5 rounded bg-muted/30 border">
+                        <span className="text-muted-foreground block text-[10px] uppercase font-medium">
+                          File Name
+                        </span>
+                        <span className="font-mono text-xs text-foreground">
+                          {(viewing.payload as any).file_name}
+                        </span>
+                      </div>
+                    )}
+                    {(viewing.payload as any).sheet_name && (
+                      <div className="p-2.5 rounded bg-muted/30 border">
+                        <span className="text-muted-foreground block text-[10px] uppercase font-medium">
+                          Sheet
+                        </span>
+                        <span className="font-mono text-xs">
+                          {(viewing.payload as any).sheet_name}
+                        </span>
+                      </div>
+                    )}
+                    {(viewing.payload as any).staged_rows !== undefined && (
+                      <div className="p-2.5 rounded bg-muted/30 border">
+                        <span className="text-muted-foreground block text-[10px] uppercase font-medium">
+                          Staged Records
+                        </span>
+                        <span className="font-bold font-mono text-foreground tabular-nums">
+                          {Number((viewing.payload as any).staged_rows || 0).toLocaleString()}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <pre className="max-h-60 overflow-auto rounded-lg border bg-muted/30 p-3 text-xs font-mono">
-                  {JSON.stringify(viewing.payload, null, 2)}
-                </pre>
+              )}
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Payload Details
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-[11px] px-2 text-muted-foreground"
+                    onClick={() => setShowRawPayload((v) => !v)}
+                  >
+                    {showRawPayload ? "Hide Raw JSON" : "View Raw JSON"}
+                  </Button>
+                </div>
+                {showRawPayload && (
+                  <pre className="max-h-60 overflow-auto rounded-lg border bg-muted/30 p-3 text-xs font-mono">
+                    {JSON.stringify(viewing.payload, null, 2)}
+                  </pre>
+                )}
               </div>
 
               <div>

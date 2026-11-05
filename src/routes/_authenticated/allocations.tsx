@@ -1390,22 +1390,22 @@ function AllocationsPage() {
                                 Code {row.lockInCode}
                               </Badge>
                             </TableCell>
-                            <TableCell className="text-right font-mono text-xs">
+                            <TableCell className="text-right font-mono tabular-nums text-xs">
                               {row.existingKitta.toLocaleString()}
                             </TableCell>
-                            <TableCell className="text-right font-mono text-xs font-bold text-primary">
+                            <TableCell className="text-right font-mono tabular-nums text-xs font-bold text-primary">
                               {row.creditedBonusKitta.toLocaleString()}
                             </TableCell>
-                            <TableCell className="text-right font-mono text-xs text-rose-600">
+                            <TableCell className="text-right font-mono tabular-nums text-xs text-rose-600">
                               {row.bonusShareTaxPayable.toFixed(2)}
                             </TableCell>
-                            <TableCell className="text-right font-mono text-xs">
+                            <TableCell className="text-right font-mono tabular-nums text-xs">
                               {row.fractionalKitta.toFixed(4)}
                             </TableCell>
-                            <TableCell className="text-right font-mono text-xs font-semibold text-emerald-600">
+                            <TableCell className="text-right font-mono tabular-nums text-xs font-semibold text-emerald-600">
                               {row.fractionalNetPayable.toFixed(2)}
                             </TableCell>
-                            <TableCell className="text-right font-mono text-xs text-amber-600 font-medium">
+                            <TableCell className="text-right font-mono tabular-nums text-xs text-amber-600 font-medium">
                               {row.taxPayableByInvestor > 0
                                 ? `NPR ${row.taxPayableByInvestor.toFixed(2)}`
                                 : "—"}
@@ -1731,19 +1731,19 @@ function AllocationsPage() {
                                 {row.oldHolderType} ➔ {row.newHolderType}
                               </Badge>
                             </TableCell>
-                            <TableCell className="text-right font-mono text-xs">
+                            <TableCell className="text-right font-mono tabular-nums text-xs">
                               {row.initialBalance.toLocaleString()}
                             </TableCell>
-                            <TableCell className="text-right font-mono text-xs font-bold text-primary">
+                            <TableCell className="text-right font-mono tabular-nums text-xs font-bold text-primary">
                               {row.convertedKitta.toLocaleString()}
                             </TableCell>
-                            <TableCell className="text-right font-mono text-xs font-bold text-cyan-600">
+                            <TableCell className="text-right font-mono tabular-nums text-xs font-bold text-cyan-600">
                               {row.finalBalance.toLocaleString()}
                             </TableCell>
-                            <TableCell className="text-right font-mono text-xs">
+                            <TableCell className="text-right font-mono tabular-nums text-xs">
                               {row.fractionalKitta.toFixed(4)}
                             </TableCell>
-                            <TableCell className="text-right font-mono text-xs font-semibold text-emerald-600">
+                            <TableCell className="text-right font-mono tabular-nums text-xs font-semibold text-emerald-600">
                               {row.fractionalNetPayable > 0
                                 ? `NPR ${row.fractionalNetPayable.toFixed(2)}`
                                 : "—"}

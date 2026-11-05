@@ -10,6 +10,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -194,8 +195,11 @@ function AnalyticsPage() {
       (s, r) => s + r.dividend_count + r.interest_count + (r.mutual_fund_count || 0),
       0,
     );
+    const dividendCount = filteredSummary.reduce((s, r) => s + r.dividend_count, 0);
     const dividendGross = filteredSummary.reduce((s, r) => s + r.dividend_gross, 0);
+    const interestCount = filteredSummary.reduce((s, r) => s + r.interest_count, 0);
     const interestGross = filteredSummary.reduce((s, r) => s + r.interest_gross, 0);
+    const mutualFundCount = filteredSummary.reduce((s, r) => s + (r.mutual_fund_count || 0), 0);
     const mutualFundGross = filteredSummary.reduce((s, r) => s + (r.mutual_fund_gross || 0), 0);
     const totalPaid = filteredSummary.reduce((s, r) => s + (r.total_disbursed ?? r.total_paid), 0);
     const totalPending = filteredSummary.reduce((s, r) => s + r.total_pending, 0);
@@ -203,8 +207,11 @@ function AnalyticsPage() {
     return {
       totalCompanies,
       totalRecords,
+      dividendCount,
       dividendGross,
+      interestCount,
       interestGross,
+      mutualFundCount,
       mutualFundGross,
       totalGross,
       totalPaid,
@@ -227,7 +234,7 @@ function AnalyticsPage() {
         />
         <StatCard title="Total Records" value={fmtCount(summaryStats.totalRecords)} icon={Layers} />
         <StatCard
-          title="Equity Dividend"
+          title="Equity Dividends"
           value={fmt(summaryStats.dividendGross)}
           icon={BarChart3}
         />
@@ -236,7 +243,7 @@ function AnalyticsPage() {
           value={fmt(summaryStats.interestGross)}
           icon={TrendingUp}
         />
-        <StatCard title="Mutual Fund" value={fmt(summaryStats.mutualFundGross)} icon={Layers} />
+        <StatCard title="Mutual Funds" value={fmt(summaryStats.mutualFundGross)} icon={Layers} />
         <StatCard
           title="Total Disbursed"
           value={fmt(summaryStats.totalPaid)}
@@ -407,28 +414,28 @@ function AnalyticsPage() {
                           {row.fiscal_year}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-right tabular-nums text-sm">
+                      <TableCell className="text-right font-mono tabular-nums text-sm">
                         {fmtCount(row.dividend_count)}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums text-sm font-medium">
+                      <TableCell className="text-right font-mono tabular-nums text-sm font-medium">
                         {fmt(row.dividend_gross)}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums text-sm">
+                      <TableCell className="text-right font-mono tabular-nums text-sm">
                         {fmtCount(row.interest_count)}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums text-sm font-medium">
+                      <TableCell className="text-right font-mono tabular-nums text-sm font-medium">
                         {fmt(row.interest_gross)}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums text-sm">
+                      <TableCell className="text-right font-mono tabular-nums text-sm">
                         {fmtCount(row.mutual_fund_count)}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums text-sm font-medium">
+                      <TableCell className="text-right font-mono tabular-nums text-sm font-medium">
                         {fmt(row.mutual_fund_gross)}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums text-sm font-bold text-emerald-600">
+                      <TableCell className="text-right font-mono tabular-nums text-sm font-bold text-emerald-600 dark:text-emerald-400">
                         {fmt(row.total_disbursed ?? row.total_paid)}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums text-sm font-bold text-amber-600">
+                      <TableCell className="text-right font-mono tabular-nums text-sm font-bold text-amber-600 dark:text-amber-400">
                         {fmt(row.total_pending)}
                       </TableCell>
                       <TableCell className="pr-6 text-right">
@@ -449,6 +456,41 @@ function AnalyticsPage() {
                   ))
                 )}
               </TableBody>
+              {filteredSummary.length > 0 && (
+                <TableFooter>
+                  <TableRow className="bg-muted/80 font-bold border-t-2 border-foreground/30 font-mono">
+                    <TableCell className="pl-6 font-sans uppercase">
+                      Total ({summaryStats.totalCompanies} Co)
+                    </TableCell>
+                    <TableCell className="font-sans">—</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {fmtCount(summaryStats.dividendCount)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {fmt(summaryStats.dividendGross)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {fmtCount(summaryStats.interestCount)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {fmt(summaryStats.interestGross)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {fmtCount(summaryStats.mutualFundCount)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {fmt(summaryStats.mutualFundGross)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">
+                      {fmt(summaryStats.totalPaid)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-amber-600 dark:text-amber-400">
+                      {fmt(summaryStats.totalPending)}
+                    </TableCell>
+                    <TableCell className="pr-6 text-right font-sans">—</TableCell>
+                  </TableRow>
+                </TableFooter>
+              )}
             </Table>
           </div>
 

@@ -1199,10 +1199,10 @@ function ReportsRoute() {
             Mutual Funds (CDS)
           </TabsTrigger>
           <TabsTrigger value="ird_etds" className="py-2 text-xs md:text-sm">
-            🏛️ IRD Annex-10
+            IRD Annex-10
           </TabsTrigger>
           <TabsTrigger value="ipf_aging" className="py-2 text-xs md:text-sm">
-            📊 SEBON IPF
+            SEBON IPF
           </TabsTrigger>
           <TabsTrigger value="registers" className="py-2 text-xs md:text-sm">
             Registers & Exports
@@ -1744,20 +1744,28 @@ function ReportsRoute() {
                       <TableRow key={row.particular}>
                         <TableCell>{row.sn}</TableCell>
                         <TableCell className="font-medium">{row.particular}</TableCell>
-                        <TableCell className="text-right">{fmtNr(row.shareholderCount)}</TableCell>
-                        <TableCell className="text-right">{fmtNr(row.kitta)}</TableCell>
-                        <TableCell className="text-right">{fmtNr(row.issuedBonus)}</TableCell>
-                        <TableCell className="text-right font-medium text-emerald-600">
+                        <TableCell className="text-right font-mono tabular-nums">
+                          {fmtNr(row.shareholderCount)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono tabular-nums">
+                          {fmtNr(row.kitta)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono tabular-nums">
+                          {fmtNr(row.issuedBonus)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono tabular-nums font-medium text-emerald-600">
                           {fmtNr(row.afterBonusKitta)}
                         </TableCell>
-                        <TableCell className="text-right">{format(row.grossDividend)}</TableCell>
-                        <TableCell className="text-right text-amber-600">
+                        <TableCell className="text-right font-mono tabular-nums">
+                          {format(row.grossDividend)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono tabular-nums text-amber-600">
                           {format(row.divTax + row.bonTax)}
                         </TableCell>
-                        <TableCell className="text-right font-bold text-emerald-600">
+                        <TableCell className="text-right font-mono tabular-nums font-bold text-emerald-600">
                           {format(row.netDividend)}
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right font-mono tabular-nums">
                           {(row.composition ?? 0).toFixed(2)}%
                         </TableCell>
                       </TableRow>
@@ -1881,15 +1889,25 @@ function ReportsRoute() {
                     {debentureSummary.rows.map((row) => (
                       <TableRow key={row.name}>
                         <TableCell className="font-medium">{row.name}</TableCell>
-                        <TableCell className="text-right">{fmtNr(row.kitta)}</TableCell>
-                        <TableCell className="text-right">{format(row.principalAmount)}</TableCell>
-                        <TableCell className="text-right">{format(row.annualInterest)}</TableCell>
-                        <TableCell className="text-right">{format(row.interestPerDay)}</TableCell>
-                        <TableCell className="text-right">{format(row.grossInterest)}</TableCell>
-                        <TableCell className="text-right text-amber-600">
+                        <TableCell className="text-right font-mono tabular-nums">
+                          {fmtNr(row.kitta)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono tabular-nums">
+                          {format(row.principalAmount)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono tabular-nums">
+                          {format(row.annualInterest)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono tabular-nums">
+                          {format(row.interestPerDay)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono tabular-nums">
+                          {format(row.grossInterest)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono tabular-nums text-amber-600">
                           {format(row.taxAmount)}
                         </TableCell>
-                        <TableCell className="text-right font-bold text-emerald-600">
+                        <TableCell className="text-right font-mono tabular-nums font-bold text-emerald-600">
                           {format(row.netInterestPayable)}
                         </TableCell>
                       </TableRow>
@@ -1990,16 +2008,22 @@ function ReportsRoute() {
                       <TableRow key={row.type}>
                         <TableCell>{row.sn}</TableCell>
                         <TableCell className="font-medium">{row.type}</TableCell>
-                        <TableCell className="text-right">{fmtNr(row.transaction_count)}</TableCell>
-                        <TableCell className="text-right">{fmtNr(row.kitta)}</TableCell>
-                        <TableCell className="text-right">{format(row.gross)}</TableCell>
-                        <TableCell className="text-right text-amber-600">
+                        <TableCell className="text-right font-mono tabular-nums">
+                          {fmtNr(row.transaction_count)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono tabular-nums">
+                          {fmtNr(row.kitta)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono tabular-nums">
+                          {format(row.gross)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono tabular-nums text-amber-600">
                           {format(row.tax)}
                         </TableCell>
-                        <TableCell className="text-right font-bold text-emerald-600">
+                        <TableCell className="text-right font-mono tabular-nums font-bold text-emerald-600">
                           {format(row.net)}
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right font-mono tabular-nums">
                           {(row.composition ?? 0).toFixed(2)}%
                         </TableCell>
                       </TableRow>
@@ -2301,16 +2325,16 @@ function ReportsRoute() {
                                 {row.paymentType}
                               </Badge>
                             </TableCell>
-                            <TableCell className="text-right font-mono text-xs">
+                            <TableCell className="text-right font-mono tabular-nums text-xs">
                               {fmtNr(row.grossAmount)}
                             </TableCell>
-                            <TableCell className="text-right font-mono text-xs font-semibold">
+                            <TableCell className="text-right font-mono tabular-nums text-xs font-semibold">
                               {row.tdsRate.toFixed(1)}%
                             </TableCell>
-                            <TableCell className="text-right font-mono text-xs text-rose-600 font-semibold">
+                            <TableCell className="text-right font-mono tabular-nums text-xs text-rose-600 font-semibold">
                               {fmtNr(row.tdsAmount)}
                             </TableCell>
-                            <TableCell className="text-right font-mono text-xs text-emerald-600 font-semibold">
+                            <TableCell className="text-right font-mono tabular-nums text-xs text-emerald-600 font-semibold">
                               {fmtNr(row.netPayable)}
                             </TableCell>
                           </TableRow>

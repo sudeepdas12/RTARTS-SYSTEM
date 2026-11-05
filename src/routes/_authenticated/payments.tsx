@@ -1170,7 +1170,7 @@ function PaymentsRoute() {
       <div className="flex items-start justify-between flex-wrap gap-3">
         <PageHeader
           title="Payments Module"
-          description="Create payment batches, add payables, generate NEFT/RTGS/ConnectIPS/Cheque files, and manage payment workflows."
+          description="Create payment batches, manage installment tranches, generate clearing manifests (ConnectIPS, NCHL, RTGS), and authorize disbursements."
         />
         <div className="flex items-center gap-2">
           <Button
@@ -1564,33 +1564,47 @@ function PaymentsRoute() {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card>
+        <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
           <CardContent className="pt-4 pb-3">
-            <p className="text-xs text-muted-foreground">Total Batches</p>
-            <p className="text-2xl font-bold">{totalBatchCount}</p>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Total Payment Batches
+            </p>
+            <p className="text-2xl font-bold font-mono tracking-tight mt-1">{totalBatchCount}</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Across all payable types</p>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
           <CardContent className="pt-4 pb-3">
-            <p className="text-xs text-muted-foreground">Total Amount</p>
-            <p className="text-2xl font-bold">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Total Batch Value
+            </p>
+            <p className="text-2xl font-bold font-mono tracking-tight mt-1">
               NPR {totalBatchAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Disbursement gross sum</p>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
           <CardContent className="pt-4 pb-3">
-            <p className="text-xs text-muted-foreground">Drafts</p>
-            <p className="text-2xl font-bold">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Draft Batches
+            </p>
+            <p className="text-2xl font-bold font-mono tracking-tight mt-1">
               {filteredBatches.filter((p: any) => p.status === "Draft").length}
             </p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Staged for verification</p>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
           <CardContent className="pt-4 pb-3">
-            <p className="text-xs text-muted-foreground">Approved / Ready</p>
-            <p className="text-2xl font-bold">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Approved Batches
+            </p>
+            <p className="text-2xl font-bold font-mono tracking-tight mt-1">
               {filteredBatches.filter((p: any) => p.status === "Approved").length}
+            </p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              Ready for clearing transmission
             </p>
           </CardContent>
         </Card>
@@ -1741,7 +1755,7 @@ function PaymentsRoute() {
                 <TableRow>
                   <TableHead>Batch Name</TableHead>
                   <TableHead>Method</TableHead>
-                  <TableHead>Payments</TableHead>
+                  <TableHead className="text-right">Payments</TableHead>
                   <TableHead className="text-right">Total Amount</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Created</TableHead>
@@ -1782,8 +1796,10 @@ function PaymentsRoute() {
                           {batch.payment_method}
                         </Badge>
                       </TableCell>
-                      <TableCell>{batch.total_payments || 0}</TableCell>
-                      <TableCell className="text-right font-semibold">
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {Number(batch.total_payments || 0).toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums font-semibold">
                         NPR{" "}
                         {(batch.total_amount || 0).toLocaleString("en-IN", {
                           minimumFractionDigits: 2,
@@ -2597,7 +2613,7 @@ function PaymentsRoute() {
                           <TableCell className="font-mono text-xs">
                             {item.bank_account_no || item.clients?.bank_account_no || "N/A"}
                           </TableCell>
-                          <TableCell className="text-right font-medium">
+                          <TableCell className="text-right font-mono tabular-nums font-semibold">
                             NPR{" "}
                             {(item.net_amount || 0).toLocaleString("en-IN", {
                               minimumFractionDigits: 2,

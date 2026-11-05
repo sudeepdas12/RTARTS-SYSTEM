@@ -222,7 +222,9 @@ export function OperationalWorkflowHub({
         >
           <div>
             <div className="text-muted-foreground uppercase font-medium">Pending Approvals</div>
-            <div className="text-xl font-bold mt-0.5">{metrics.pendingApprovals}</div>
+            <div className="text-xl font-bold font-mono tabular-nums mt-0.5">
+              {metrics.pendingApprovals}
+            </div>
             <div className="text-[10px] text-muted-foreground">Maker/Checker queue</div>
           </div>
           <ClipboardCheck className="h-6 w-6 text-rose-500/60" />
@@ -234,7 +236,9 @@ export function OperationalWorkflowHub({
         >
           <div>
             <div className="text-muted-foreground uppercase font-medium">Active Batches</div>
-            <div className="text-xl font-bold mt-0.5">{metrics.batchesPending}</div>
+            <div className="text-xl font-bold font-mono tabular-nums mt-0.5">
+              {metrics.batchesPending}
+            </div>
             <div className="text-[10px] text-muted-foreground">Draft or In-Process</div>
           </div>
           <Layers className="h-6 w-6 text-amber-500/60" />
@@ -246,7 +250,9 @@ export function OperationalWorkflowHub({
         >
           <div>
             <div className="text-muted-foreground uppercase font-medium">Data Quality Issues</div>
-            <div className="text-xl font-bold mt-0.5">{metrics.dataQualityIssues}</div>
+            <div className="text-xl font-bold font-mono tabular-nums mt-0.5">
+              {metrics.dataQualityIssues}
+            </div>
             <div className="text-[10px] text-muted-foreground">Missing bank/BOID</div>
           </div>
           <AlertTriangle className="h-6 w-6 text-orange-500/60" />
@@ -258,7 +264,9 @@ export function OperationalWorkflowHub({
         >
           <div>
             <div className="text-muted-foreground uppercase font-medium">Unreconciled Queue</div>
-            <div className="text-xl font-bold mt-0.5">{metrics.unreconciledPending}</div>
+            <div className="text-xl font-bold font-mono tabular-nums mt-0.5">
+              {metrics.unreconciledPending}
+            </div>
             <div className="text-[10px] text-muted-foreground">Bank clearing pending</div>
           </div>
           <ArrowLeftRight className="h-6 w-6 text-blue-500/60" />

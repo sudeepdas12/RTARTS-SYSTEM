@@ -33,6 +33,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Pencil,
   Plus,
@@ -207,6 +208,12 @@ function DividendPage() {
   const [editing, setEditing] = useState<Payable | null>(null);
   const [form, setForm] = useState(emptyForm);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Multi-select and bulk operations
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkPayOpen, setBulkPayOpen] = useState(false);
+  const [bulkPayRef, setBulkPayRef] = useState("");
+  const [bulkPayDate, setBulkPayDate] = useState(() => new Date().toISOString().slice(0, 10));
 
   // ─── Dividend Calculator state ───────────────────────────────────────────────
   const [calcOpen, setCalcOpen] = useState(false);
@@ -422,9 +429,10 @@ function DividendPage() {
   // Debounced search — 300ms before firing the server query
   const debouncedSearch = useDebounce(search, 300);
 
-  // Reset to page 1 whenever filters change
+  // Reset to page 1 whenever filters change, and clear selection
   useEffect(() => {
     setPage(1);
+    setSelectedIds(new Set());
   }, [
     debouncedSearch,
     statusFilter,
@@ -435,6 +443,10 @@ function DividendPage() {
     fromDateFilter,
     toDateFilter,
   ]);
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [page, pageSize]);
 
   // Fetch fiscal years for filter dropdown (lightweight)
   const { data: fiscalYears = [] } = useQuery({
@@ -598,7 +610,7 @@ function DividendPage() {
           .or(
             `full_name.ilike.%${cleanTerm}%,boid.ilike.%${cleanTerm}%,client_code.ilike.%${cleanTerm}%`,
           )
-          .limit(100);
+          .limit(1000);
 
         const matchedIds = (matchedClients || []).map((c) => c.id);
         const searchFilters = [
@@ -625,6 +637,19 @@ function DividendPage() {
 
   // For summary report & export: fetch all matching filtered rows
   const fetchAllFiltered = useCallback(async (): Promise<Payable[]> => {
+    let matchedIds: string[] = [];
+    if (debouncedSearch) {
+      const cleanTerm = debouncedSearch.trim().replace(/[%_,]/g, "");
+      const { data: matchedClients } = await supabase
+        .from("clients")
+        .select("id")
+        .or(
+          `full_name.ilike.%${cleanTerm}%,boid.ilike.%${cleanTerm}%,client_code.ilike.%${cleanTerm}%`,
+        )
+        .limit(1000);
+      matchedIds = (matchedClients || []).map((c) => c.id);
+    }
+
     return fetchAllRows<Payable>((from, to) => {
       let q = (supabase as any)
         .from("dividend_payables")
@@ -661,9 +686,16 @@ function DividendPage() {
         }
       }
       if (debouncedSearch) {
-        q = q.or(
-          `lot_name.ilike.%${debouncedSearch}%,payment_reference.ilike.%${debouncedSearch}%,dividend_type.ilike.%${debouncedSearch}%`,
-        );
+        const cleanTerm = debouncedSearch.trim().replace(/[%_,]/g, "");
+        const searchFilters = [
+          `lot_name.ilike.%${cleanTerm}%`,
+          `payment_reference.ilike.%${cleanTerm}%`,
+          `dividend_type.ilike.%${cleanTerm}%`,
+        ];
+        if (matchedIds.length > 0) {
+          searchFilters.push(`client_id.in.(${matchedIds.join(",")})`);
+        }
+        q = q.or(searchFilters.join(","));
       }
       return q;
     });
@@ -1005,6 +1037,140 @@ function DividendPage() {
     );
   };
 
+  // Selected payables helpers
+  const selectedPayables = useMemo(() => {
+    return pageItems.filter((p) => selectedIds.has(p.id));
+  }, [pageItems, selectedIds]);
+
+  const selectedTotalNet = useMemo(() => {
+    return selectedPayables.reduce((acc, p) => acc + (p.net_payable ?? 0), 0);
+  }, [selectedPayables]);
+
+  const selectedPendingCount = useMemo(() => {
+    return selectedPayables.filter((p) => p.payment_status !== "Paid").length;
+  }, [selectedPayables]);
+
+  const handleExportSelected = () => {
+    if (selectedPayables.length === 0) {
+      toast.error("No payables selected");
+      return;
+    }
+    exportToExcel(
+      selectedPayables.map((p) => {
+        const cl = p.client ?? null;
+        const c = p.company ?? null;
+        return {
+          company_code: c?.company_code ?? "",
+          company_name: c?.company_name ?? "",
+          client_code: cl?.client_code ?? "",
+          client_name: cl?.full_name ?? "",
+          boid: cl?.boid ?? "",
+          holder_type: cl?.holder_type ?? "",
+          classification: p.payee_classification || cl?.payee_classification || "",
+          pan_or_citizenship: cl?.pan_or_citizenship ?? "",
+          bank_name: p.bank_name || cl?.bank_name || "",
+          bank_account_no: p.bank_account_no || cl?.bank_account_no || "",
+          shares_held: p.shares_held,
+          dividend_rate: p.dividend_rate,
+          dividend_type: p.dividend_type ?? "Cash",
+          gross_dividend: p.gross_dividend,
+          tax_amount: p.tax_amount,
+          bonus_actual: p.bonus_actual,
+          bonus_issued: p.bonus_issued,
+          bonus_fraction: p.bonus_fraction,
+          after_bonus_kitta: p.after_bonus_kitta,
+          bonus_tax: p.bonus_tax,
+          net_payable: p.net_payable,
+          paid_amount:
+            p.paid_amount != null ? p.paid_amount : p.payment_status === "Paid" ? p.net_payable : 0,
+          remaining_amount:
+            p.remaining_amount != null
+              ? p.remaining_amount
+              : p.payment_status === "Paid"
+                ? 0
+                : p.net_payable,
+          payment_status: p.payment_status,
+          payment_date: p.payment_date,
+          payment_reference: p.payment_reference,
+          lot_name: p.lot_name,
+          fiscal_year: p.fiscal_year,
+        };
+      }),
+      `selected_dividend_payables_${selectedPayables.length}`,
+    );
+  };
+
+  const bulkMarkPaid = useMutation({
+    mutationFn: async () => {
+      if (!canWrite)
+        throw new Error("Unauthorized: You do not have permission to update payment status.");
+      if (selectedIds.size === 0) return;
+      const ids = Array.from(selectedIds);
+      const { data: rows, error: fetchErr } = await (supabase as any)
+        .from("dividend_payables")
+        .select("id, net_payable")
+        .in("id", ids);
+      if (fetchErr) throw fetchErr;
+
+      for (const item of rows || []) {
+        const { error: updErr } = await (supabase as any)
+          .from("dividend_payables")
+          .update({
+            payment_status: "Paid",
+            payment_date: bulkPayDate || new Date().toISOString().slice(0, 10),
+            payment_reference: bulkPayRef || null,
+            paid_amount: item.net_payable ?? 0,
+            remaining_amount: 0,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", item.id);
+        if (updErr) throw updErr;
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["dividend_payables"] });
+      qc.invalidateQueries({ queryKey: ["dividend_payables_totals"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+      toast.success(`Marked ${selectedIds.size} payables as paid`);
+      setBulkPayOpen(false);
+      setSelectedIds(new Set());
+      setBulkPayRef("");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const autoCalculateFormValues = (sharesVal?: string, rateVal?: string) => {
+    const s = Number(sharesVal !== undefined ? sharesVal : form.shares_held) || 0;
+    const r = Number(rateVal !== undefined ? rateVal : form.dividend_rate) || 0;
+    if (s <= 0 || r <= 0) return;
+
+    const cl = clients.find((c) => c.id === form.client_id);
+    let taxRate = 0.05; // 5% Nepal Natural Person
+    if (cl && (cl as any).payee_classification === "INSTITUTION") {
+      taxRate = 0.15;
+    } else if (
+      cl &&
+      ((cl as any).payee_classification === "TAX_EXEMPT" ||
+        (cl as any).payee_classification === "MUTUAL_FUND")
+    ) {
+      taxRate = 0.0;
+    }
+
+    const gross = Math.round(s * r * 100) / 100;
+    const tax = Math.round(gross * taxRate * 100) / 100;
+    const bonusTax = Number(form.bonus_tax) || 0;
+    const net = Math.max(0, Math.round((gross - tax - bonusTax) * 100) / 100);
+
+    setForm((prev) => ({
+      ...prev,
+      shares_held: sharesVal !== undefined ? sharesVal : prev.shares_held,
+      dividend_rate: rateVal !== undefined ? rateVal : prev.dividend_rate,
+      gross_dividend: String(gross),
+      tax_amount: String(tax),
+      net_payable: String(net),
+    }));
+  };
+
   const handleImport = async (file: File) => {
     try {
       type Row = {
@@ -1101,7 +1267,7 @@ function DividendPage() {
     <div>
       <PageHeader
         title="Stock Dividend Payables"
-        description="Manage stock dividends with shares × rate calculation, grouped by fiscal year."
+        description="Manage equity cash dividends, bonus share allotments, and statutory tax withholding across fiscal years."
         actions={
           <>
             <Button variant="outline" size="sm" onClick={handleExport}>
@@ -1368,20 +1534,40 @@ function DividendPage() {
                             type="number"
                             step="0.01"
                             value={form.shares_held}
-                            onChange={(e) => setForm({ ...form, shares_held: e.target.value })}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setForm((f) => ({ ...f, shares_held: v }));
+                              autoCalculateFormValues(v, form.dividend_rate);
+                            }}
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <Label>Dividend Rate</Label>
+                          <Label>Dividend Rate (%)</Label>
                           <Input
                             type="number"
                             step="0.0001"
                             value={form.dividend_rate}
-                            onChange={(e) => setForm({ ...form, dividend_rate: e.target.value })}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setForm((f) => ({ ...f, dividend_rate: v }));
+                              autoCalculateFormValues(form.shares_held, v);
+                            }}
                           />
                         </div>
+                        <div className="col-span-full flex items-center justify-between text-xs text-muted-foreground pt-1 pb-1">
+                          <span>Financial Breakdown (Auto-calculated, or override below)</span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 text-[11px] text-primary hover:underline px-2"
+                            onClick={() => autoCalculateFormValues()}
+                          >
+                            <Calculator className="h-3 w-3 mr-1" /> Recompute 5%/15% TDS
+                          </Button>
+                        </div>
                         <div className="space-y-1.5">
-                          <Label>Gross Dividend (override)</Label>
+                          <Label>Gross Dividend</Label>
                           <Input
                             type="number"
                             step="0.01"
@@ -1391,7 +1577,7 @@ function DividendPage() {
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <Label>Tax Amount</Label>
+                          <Label>Tax Amount (TDS)</Label>
                           <Input
                             type="number"
                             step="0.01"
@@ -1557,9 +1743,9 @@ function DividendPage() {
       {calcOpen && (
         <Card className="mb-4 bg-muted/20 border-primary/20">
           <CardHeader className="pb-3 border-b bg-muted/40">
-            <CardTitle className="flex items-center text-sm font-medium">
-              <Calculator className="mr-2 h-4 w-4" />
-              Dividend Calculator
+            <CardTitle className="flex items-center text-sm font-semibold tracking-tight">
+              <Calculator className="mr-2 h-4 w-4 text-primary" />
+              Dividend Calculation Simulator
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-4 grid gap-4 lg:grid-cols-2">
@@ -1784,7 +1970,9 @@ function DividendPage() {
               </div>
               <div className="text-[11px] text-muted-foreground mt-0.5 flex flex-wrap items-center gap-1">
                 <span>{(totals.count ?? 0).toLocaleString()} records ·</span>
-                <span className="text-emerald-600 font-medium">{totals.paidCount ?? 0} Paid</span>
+                <span className="text-emerald-600 font-medium">
+                  {totals.paidCount ?? 0} Settled
+                </span>
                 {Boolean(totals.partialCount) && (
                   <>
                     <span>·</span>
@@ -1807,12 +1995,14 @@ function DividendPage() {
           <CardContent className="p-4 flex items-center justify-between">
             <div>
               <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Gross Dividend
+                Gross Dividend Pool
               </div>
               <div className="text-xl font-bold font-mono tracking-tight mt-1">
                 NPR {fmt(totals.gross)}
               </div>
-              <div className="text-[11px] text-muted-foreground mt-0.5">Pre-tax gross pool</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">
+                Gross pre-tax dividend entitlement
+              </div>
             </div>
             <div className="h-10 w-10 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-600 shrink-0">
               <Coins className="h-5 w-5" />
@@ -1824,12 +2014,14 @@ function DividendPage() {
           <CardContent className="p-4 flex items-center justify-between">
             <div>
               <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Total TDS Tax
+                TDS Tax Withheld
               </div>
               <div className="text-xl font-bold font-mono tracking-tight mt-1 text-rose-600 dark:text-rose-400">
                 NPR {fmt((totals.tax ?? 0) + (totals.bonusTax ?? 0))}
               </div>
-              <div className="text-[11px] text-muted-foreground mt-0.5">Cash + Bonus TDS</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">
+                Cash & bonus tax withholding
+              </div>
             </div>
             <div className="h-10 w-10 rounded-full bg-rose-500/10 flex items-center justify-center text-rose-600 shrink-0">
               <Receipt className="h-5 w-5" />
@@ -1841,13 +2033,15 @@ function DividendPage() {
           <CardContent className="p-4 flex items-center justify-between">
             <div>
               <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Bonus Shares
+                Bonus Shares Allotted
               </div>
               <div className="text-xl font-bold font-mono tracking-tight mt-1 text-amber-600">
                 {(totals.bonusIssued ?? 0).toLocaleString()}{" "}
                 <span className="text-xs font-normal">Kitta</span>
               </div>
-              <div className="text-[11px] text-muted-foreground mt-0.5">Bonus share pool</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">
+                Capitalized bonus share pool
+              </div>
             </div>
             <div className="h-10 w-10 rounded-full bg-amber-500/10 flex items-center justify-center text-amber-600 shrink-0">
               <Gift className="h-5 w-5" />
@@ -1859,7 +2053,7 @@ function DividendPage() {
           <CardContent className="p-4 flex items-center justify-between">
             <div>
               <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Net Cash Payable
+                Net Dividend Payable
               </div>
               <div className="text-xl font-bold font-mono tracking-tight mt-1 text-foreground">
                 NPR {fmt(totals.net)}
@@ -1870,7 +2064,7 @@ function DividendPage() {
                 </span>
                 <span className="text-muted-foreground font-sans">·</span>
                 <span className="text-rose-600 font-medium">
-                  Due: NPR {fmt(totals.remaining ?? 0)}
+                  Remaining: NPR {fmt(totals.remaining ?? 0)}
                 </span>
               </div>
             </div>
@@ -1891,7 +2085,7 @@ function DividendPage() {
             <div className="space-y-1">
               <div className="flex flex-wrap items-center gap-2">
                 <CardTitle className="text-base font-semibold tracking-tight text-foreground">
-                  AGM Cash &amp; Bonus Dividend Distribution Summary
+                  AGM Dividend &amp; Bonus Distribution Summary
                 </CardTitle>
                 <Badge
                   variant="outline"
@@ -1901,12 +2095,12 @@ function DividendPage() {
                   {agmSummaryReport?.fiscalYear ? `• FY ${agmSummaryReport.fiscalYear}` : ""}
                 </Badge>
                 <Badge variant="secondary" className="text-[10px] uppercase font-semibold">
-                  AGM Summary
+                  CDS &amp; AGM Format
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground leading-normal">
-                Company-wise capital &amp; payable breakdown by shareholder category (Promoter,
-                Public, Local, Employee, etc.)
+                Capital entitlement and payable breakdown categorized by shareholder class
+                (Promoter, Public, Local, Mutual Fund)
               </p>
             </div>
           </div>
@@ -2145,48 +2339,48 @@ function DividendPage() {
               <table className="w-full text-xs text-left border-collapse whitespace-nowrap">
                 <thead>
                   <tr className="bg-muted/80 text-foreground font-semibold border-b border-border divide-x divide-border">
-                    <th className="py-2.5 px-3 text-center w-12 uppercase text-[11px] whitespace-nowrap">
+                    <th className="py-2.5 px-3 text-center w-12 text-[11px] whitespace-nowrap">
                       S.N.
                     </th>
-                    <th className="py-2.5 px-3 uppercase text-[11px] whitespace-nowrap min-w-[140px]">
-                      CATEGORY
+                    <th className="py-2.5 px-3 text-[11px] whitespace-nowrap min-w-[140px]">
+                      Shareholder Category
                     </th>
-                    <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
-                      NO. OF SHAREHOLDER
+                    <th className="py-2.5 px-3 text-right text-[11px] whitespace-nowrap">
+                      Shareholders
                     </th>
-                    <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
-                      KITTA
+                    <th className="py-2.5 px-3 text-right text-[11px] whitespace-nowrap">
+                      Kitta (Shares)
                     </th>
-                    <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
+                    <th className="py-2.5 px-3 text-right text-[11px] whitespace-nowrap">
                       {agmSummaryReport.detectedBonusRate
-                        ? `ACTUAL_BONUS ${agmSummaryReport.detectedBonusRate}%`
-                        : "ACTUAL_BONUS"}
+                        ? `Actual Bonus (${agmSummaryReport.detectedBonusRate}%)`
+                        : "Actual Bonus"}
                     </th>
-                    <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
-                      ISSUED BONUS
+                    <th className="py-2.5 px-3 text-right text-[11px] whitespace-nowrap">
+                      Issued Bonus
                     </th>
-                    <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
-                      REM FRACTION
+                    <th className="py-2.5 px-3 text-right text-[11px] whitespace-nowrap">
+                      Fraction Remainder
                     </th>
-                    <th className="py-2.5 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200 whitespace-nowrap">
-                      AFTER BONUS KITTA
+                    <th className="py-2.5 px-3 text-right text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200 whitespace-nowrap">
+                      After-Bonus Kitta
                     </th>
-                    <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
+                    <th className="py-2.5 px-3 text-right text-[11px] whitespace-nowrap">
                       {agmSummaryReport.detectedDividendRate
-                        ? `DIVIDEND ${agmSummaryReport.detectedDividendRate}`
-                        : "DIVIDEND"}
+                        ? `Gross Dividend (${agmSummaryReport.detectedDividendRate}%)`
+                        : "Gross Dividend"}
                     </th>
-                    <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
-                      BON_TAX
+                    <th className="py-2.5 px-3 text-right text-[11px] whitespace-nowrap">
+                      Bonus Tax
                     </th>
-                    <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
-                      DIV_TAX
+                    <th className="py-2.5 px-3 text-right text-[11px] whitespace-nowrap">
+                      Dividend Tax
                     </th>
-                    <th className="py-2.5 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200 whitespace-nowrap">
-                      NET_DIV.
+                    <th className="py-2.5 px-3 text-right text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200 whitespace-nowrap">
+                      Net Dividend
                     </th>
-                    <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
-                      COMPOSITION
+                    <th className="py-2.5 px-3 text-right text-[11px] whitespace-nowrap">
+                      Composition %
                     </th>
                   </tr>
                 </thead>
@@ -2301,7 +2495,7 @@ function DividendPage() {
           <div className="flex items-center gap-2">
             <Receipt className="h-4 w-4 text-primary" />
             <CardTitle className="text-sm font-semibold tracking-tight">
-              Dividend Payables &amp; Disbursements
+              Dividend Payables Register &amp; Disbursements
             </CardTitle>
             <Badge variant="outline" className="font-mono text-[11px] bg-background">
               {pageResult.count.toLocaleString()} Records
@@ -2312,7 +2506,7 @@ function DividendPage() {
             <span className="font-semibold text-foreground">
               {pageResult.count.toLocaleString()}
             </span>{" "}
-            payables
+            payable records
           </div>
         </CardHeader>
         <CardContent className="p-4">
@@ -2463,35 +2657,102 @@ function DividendPage() {
             </div>
           </div>
 
+          {/* Bulk Actions Bar */}
+          {selectedIds.size > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-primary/10 border border-primary/25 rounded-lg text-sm transition-all duration-200 mb-3 shadow-xs">
+              <div className="flex items-center gap-2.5">
+                <Badge
+                  variant="default"
+                  className="bg-primary text-primary-foreground font-semibold px-2 py-0.5 text-xs"
+                >
+                  {selectedIds.size} selected
+                </Badge>
+                <span className="text-xs text-muted-foreground font-medium">
+                  Total Net:{" "}
+                  <span className="font-mono font-bold text-foreground">
+                    NPR {fmt(selectedTotalNet)}
+                  </span>
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {canWrite && selectedPendingCount > 0 && (
+                  <Button
+                    size="sm"
+                    variant="default"
+                    className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+                    onClick={() => setBulkPayOpen(true)}
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                    Mark Selected as Paid ({selectedPendingCount})
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs bg-background"
+                  onClick={handleExportSelected}
+                >
+                  <Download className="h-3.5 w-3.5 mr-1" />
+                  Export Selected
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-8 text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => setSelectedIds(new Set())}
+                >
+                  Clear Selection
+                </Button>
+              </div>
+            </div>
+          )}
+
           <div className="rounded-md border bg-card overflow-hidden">
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/50 hover:bg-muted/50">
+                  <TableHead className="w-10 px-3 text-center">
+                    <Checkbox
+                      checked={
+                        pageItems.length > 0 && pageItems.every((p) => selectedIds.has(p.id))
+                      }
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          setSelectedIds(new Set([...selectedIds, ...pageItems.map((p) => p.id)]));
+                        } else {
+                          const next = new Set(selectedIds);
+                          pageItems.forEach((p) => next.delete(p.id));
+                          setSelectedIds(next);
+                        }
+                      }}
+                      aria-label="Select all on this page"
+                    />
+                  </TableHead>
                   <TableHead className="font-semibold whitespace-nowrap w-[11%] min-w-[105px]">
                     Company &amp; Type
                   </TableHead>
                   <TableHead className="font-semibold whitespace-nowrap w-[18%] min-w-[155px]">
                     Shareholder &amp; BOID
                   </TableHead>
-                  <TableHead className="text-center font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
+                  <TableHead className="text-right font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
                     Holding (Progression)
                   </TableHead>
-                  <TableHead className="text-center font-semibold whitespace-nowrap w-[5%] min-w-[50px]">
+                  <TableHead className="text-right font-semibold whitespace-nowrap w-[5%] min-w-[50px]">
                     Rate %
                   </TableHead>
-                  <TableHead className="text-center font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
+                  <TableHead className="text-right font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
                     Gross (NPR)
                   </TableHead>
-                  <TableHead className="text-center font-semibold whitespace-nowrap w-[7%] min-w-[65px]">
+                  <TableHead className="text-right font-semibold whitespace-nowrap w-[7%] min-w-[65px]">
                     TDS Tax
                   </TableHead>
-                  <TableHead className="text-center font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
+                  <TableHead className="text-right font-semibold whitespace-nowrap w-[8%] min-w-[75px]">
                     Net Payable
                   </TableHead>
-                  <TableHead className="text-center font-semibold whitespace-nowrap w-[7%] min-w-[70px]">
+                  <TableHead className="text-right font-semibold whitespace-nowrap w-[7%] min-w-[70px]">
                     Paid
                   </TableHead>
-                  <TableHead className="text-center font-semibold whitespace-nowrap w-[7%] min-w-[70px]">
+                  <TableHead className="text-right font-semibold whitespace-nowrap w-[7%] min-w-[70px]">
                     Remaining
                   </TableHead>
                   <TableHead className="font-semibold whitespace-nowrap w-[12%] min-w-[125px]">
@@ -2508,13 +2769,13 @@ function DividendPage() {
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="py-12 text-center text-muted-foreground">
+                    <TableCell colSpan={13} className="py-12 text-center text-muted-foreground">
                       Loading…
                     </TableCell>
                   </TableRow>
                 ) : pageItems.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="py-12 text-center text-muted-foreground">
+                    <TableCell colSpan={13} className="py-12 text-center text-muted-foreground">
                       No dividend payables.
                     </TableCell>
                   </TableRow>
@@ -2537,6 +2798,20 @@ function DividendPage() {
                           : Math.max(0, netVal - paidVal);
                     return (
                       <TableRow key={p.id} className="hover:bg-muted/30 transition-colors">
+                        {/* 0. Selection Checkbox */}
+                        <TableCell className="w-10 px-3 text-center py-2">
+                          <Checkbox
+                            checked={selectedIds.has(p.id)}
+                            onCheckedChange={(checked) => {
+                              const next = new Set(selectedIds);
+                              if (checked) next.add(p.id);
+                              else next.delete(p.id);
+                              setSelectedIds(next);
+                            }}
+                            aria-label={`Select ${cl?.full_name || p.id}`}
+                          />
+                        </TableCell>
+
                         {/* 1. Company & Type */}
                         <TableCell className="py-2 px-2 whitespace-nowrap">
                           <div className="flex items-center gap-1.5">
@@ -2590,12 +2865,12 @@ function DividendPage() {
                         </TableCell>
 
                         {/* 3. Holding Progression (Kitta) */}
-                        <TableCell className="text-center font-mono whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-right font-mono tabular-nums whitespace-nowrap text-xs py-2 px-2">
                           {(p.bonus_issued && Number(p.bonus_issued) > 0) ||
                           (p.after_bonus_kitta &&
                             p.shares_held &&
                             Number(p.after_bonus_kitta) !== Number(p.shares_held)) ? (
-                            <div className="flex flex-col items-center justify-center text-center">
+                            <div className="flex flex-col items-end justify-center text-right">
                               <span
                                 className="font-bold text-foreground font-mono"
                                 title="Total Post-Bonus Holding"
@@ -2633,21 +2908,21 @@ function DividendPage() {
                         </TableCell>
 
                         {/* 4. Rate % */}
-                        <TableCell className="text-center font-mono whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-right font-mono tabular-nums whitespace-nowrap text-xs py-2 px-2">
                           {p.dividend_rate ? `${p.dividend_rate}%` : "—"}
                         </TableCell>
 
                         {/* 5. Gross Dividend */}
-                        <TableCell className="text-center font-mono whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-right font-mono tabular-nums whitespace-nowrap text-xs py-2 px-2">
                           {fmt(p.gross_dividend)}
                         </TableCell>
 
                         {/* 6. TDS Tax Amount */}
-                        <TableCell className="text-center font-mono text-amber-600 dark:text-amber-400 whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-right font-mono tabular-nums text-amber-600 dark:text-amber-400 whitespace-nowrap text-xs py-2 px-2">
                           <div>{fmt(p.tax_amount)}</div>
                           {p.bonus_tax && Number(p.bonus_tax) > 0 ? (
                             <div
-                              className="text-[10px] text-muted-foreground font-normal text-center"
+                              className="text-[10px] text-muted-foreground font-normal text-right"
                               title="5% Bonus Share TDS"
                             >
                               Bonus: {fmt(p.bonus_tax)}
@@ -2656,18 +2931,18 @@ function DividendPage() {
                         </TableCell>
 
                         {/* 7. Net Payable */}
-                        <TableCell className="text-center font-mono font-bold text-foreground whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-right font-mono tabular-nums font-bold text-foreground whitespace-nowrap text-xs py-2 px-2">
                           {fmt(p.net_payable)}
                         </TableCell>
 
                         {/* 8. Paid Amount */}
-                        <TableCell className="text-center font-mono font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap text-xs py-2 px-2">
+                        <TableCell className="text-right font-mono tabular-nums font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap text-xs py-2 px-2">
                           {fmt(paidVal)}
                         </TableCell>
 
                         {/* 9. Remaining Amount */}
                         <TableCell
-                          className={`text-center font-mono font-semibold whitespace-nowrap text-xs py-2 px-2 ${
+                          className={`text-right font-mono tabular-nums font-semibold whitespace-nowrap text-xs py-2 px-2 ${
                             remVal > 0
                               ? "text-rose-600 dark:text-rose-400"
                               : "text-muted-foreground"
@@ -2911,6 +3186,57 @@ function DividendPage() {
             </Button>
             <Button disabled={markPaid.isPending} onClick={() => markPaid.mutate()}>
               Confirm Payment
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Mark as Paid Dialog */}
+      <Dialog open={bulkPayOpen} onOpenChange={setBulkPayOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Mark Selected Payables as Paid</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2 text-sm">
+            <div className="rounded-md border bg-muted/30 p-3 space-y-1">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Selected items:</span>
+                <span className="font-semibold">{selectedPendingCount} pending payables</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Total Net Payout:</span>
+                <span className="font-mono font-bold text-foreground">
+                  NPR {fmt(selectedTotalNet)}
+                </span>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Payment Reference / Bank Trx ID</Label>
+              <Input
+                placeholder="e.g., CIPS-BULK-2081-01"
+                value={bulkPayRef}
+                onChange={(e) => setBulkPayRef(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Payment Date</Label>
+              <Input
+                type="date"
+                value={bulkPayDate}
+                onChange={(e) => setBulkPayDate(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkPayOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={bulkMarkPaid.isPending}
+              onClick={() => bulkMarkPaid.mutate()}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+            >
+              {bulkMarkPaid.isPending ? "Updating..." : `Mark ${selectedPendingCount} as Paid`}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1073,8 +1073,8 @@ function MutualFundPage() {
   return (
     <div>
       <PageHeader
-        title="Mutual Fund Payables"
-        description="View and manage mutual fund payables that are uploaded through the dedicated mutual fund import path."
+        title="Mutual Fund Distribution Payables"
+        description="Manage mutual fund scheme distributions, unitholder categories, and automated tax withholding."
         actions={
           <>
             <Button
@@ -1314,7 +1314,7 @@ function MutualFundPage() {
                           </Select>
                         </div>
                         <div className="space-y-1.5">
-                          <Label>Shares Held</Label>
+                          <Label>Units Held</Label>
                           <Input
                             type="number"
                             step="0.01"
@@ -1323,7 +1323,7 @@ function MutualFundPage() {
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <Label>Dividend Rate</Label>
+                          <Label>Distribution Rate (%)</Label>
                           <Input
                             type="number"
                             step="0.0001"
@@ -1331,8 +1331,33 @@ function MutualFundPage() {
                             onChange={(e) => setForm({ ...form, dividend_rate: e.target.value })}
                           />
                         </div>
+                        <div className="col-span-full flex items-center justify-between text-xs text-muted-foreground pt-1 pb-1">
+                          <span>Financial Breakdown (Auto-calculated, or override below)</span>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              const units = Number(form.shares_held) || 0;
+                              const rate = Number(form.dividend_rate) || 0;
+                              const gross = units * rate;
+                              const taxRate = 0.05;
+                              const tax = Math.round(gross * taxRate * 100) / 100;
+                              const net = Math.round((gross - tax) * 100) / 100;
+                              setForm((f) => ({
+                                ...f,
+                                gross_dividend: gross > 0 ? String(gross) : f.gross_dividend,
+                                tax_amount: String(tax),
+                                net_payable: String(net),
+                              }));
+                            }}
+                            className="text-xs"
+                          >
+                            Recompute 5%/15% TDS
+                          </Button>
+                        </div>
                         <div className="space-y-1.5">
-                          <Label>Gross Dividend</Label>
+                          <Label>Gross Distribution</Label>
                           <Input
                             type="number"
                             step="0.01"
@@ -1459,9 +1484,9 @@ function MutualFundPage() {
       {calcOpen && (
         <Card className="mb-4 bg-muted/20 border-primary/20">
           <CardHeader className="pb-3 border-b bg-muted/40">
-            <CardTitle className="flex items-center text-sm font-medium">
-              <Calculator className="mr-2 h-4 w-4" />
-              Mutual Fund Distribution Calculator
+            <CardTitle className="flex items-center text-sm font-semibold tracking-tight">
+              <Calculator className="mr-2 h-4 w-4 text-primary" />
+              Scheme Distribution Calculation Engine
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-4 grid gap-4 lg:grid-cols-2">
@@ -1590,9 +1615,10 @@ function MutualFundPage() {
                 {(totals.units ?? 0).toLocaleString()}
               </div>
               <div className="text-[11px] text-muted-foreground mt-0.5 flex flex-wrap items-center gap-1">
-                <span>{(totals.count ?? 0).toLocaleString()} records</span>
-                <span>·</span>
-                <span className="text-emerald-600 font-medium">{totals.paidCount ?? 0} Paid</span>
+                <span>{(totals.count ?? 0).toLocaleString()} records ·</span>
+                <span className="text-emerald-600 font-medium">
+                  {totals.paidCount ?? 0} Settled
+                </span>
                 {(totals.partialCount ?? 0) > 0 && (
                   <>
                     <span>·</span>
@@ -1615,12 +1641,14 @@ function MutualFundPage() {
           <CardContent className="p-4 flex items-center justify-between">
             <div>
               <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Gross Distribution
+                Gross Distribution Pool
               </div>
               <div className="text-xl font-bold font-mono tracking-tight mt-1">
                 NPR {fmt(totals.gross)}
               </div>
-              <div className="text-[11px] text-muted-foreground mt-0.5">Pre-tax gross pool</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">
+                Gross pre-tax distribution entitlement
+              </div>
             </div>
             <div className="h-10 w-10 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-600 shrink-0">
               <Coins className="h-5 w-5" />
@@ -1637,7 +1665,9 @@ function MutualFundPage() {
               <div className="text-xl font-bold font-mono tracking-tight mt-1 text-rose-600 dark:text-rose-400">
                 NPR {fmt(totals.tax)}
               </div>
-              <div className="text-[11px] text-muted-foreground mt-0.5">Auto-calculated TDS</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">
+                Statutory distribution tax withholding
+              </div>
             </div>
             <div className="h-10 w-10 rounded-full bg-rose-500/10 flex items-center justify-center text-rose-600 shrink-0">
               <Receipt className="h-5 w-5" />
@@ -1649,7 +1679,7 @@ function MutualFundPage() {
           <CardContent className="p-4 flex items-center justify-between">
             <div>
               <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Net Payable
+                Net Distribution Payable
               </div>
               <div className="text-xl font-bold font-mono tracking-tight mt-1 text-foreground">
                 NPR {fmt(totals.net)}
@@ -1660,7 +1690,7 @@ function MutualFundPage() {
                 </span>
                 <span className="text-muted-foreground font-sans">·</span>
                 <span className="text-rose-600 font-medium">
-                  Due: NPR {fmt(totals.remaining ?? 0)}
+                  Remaining: NPR {fmt(totals.remaining ?? 0)}
                 </span>
               </div>
             </div>
@@ -1681,7 +1711,7 @@ function MutualFundPage() {
             <div className="space-y-1">
               <div className="flex flex-wrap items-center gap-2">
                 <CardTitle className="text-base font-semibold tracking-tight text-foreground">
-                  Mutual Fund Distribution Summary
+                  Mutual Fund Scheme Distribution Summary
                 </CardTitle>
                 <Badge
                   variant="outline"
@@ -1694,12 +1724,12 @@ function MutualFundPage() {
                   {fyFilter !== "all" ? `• FY ${fyFilter}` : ""}
                 </Badge>
                 <Badge variant="secondary" className="text-[10px] uppercase font-semibold">
-                  CDS Format
+                  CDS &amp; Regulatory Format
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground leading-normal">
-                Scheme-wise unitholder category breakdown (Public 5%, Institution 15%, Tax Exempt
-                0%)
+                Scheme capital and distribution breakdown categorized by unitholder tax class
+                (Natural Persons, Institutions, Tax-Exempt Funds)
               </p>
             </div>
           </div>
@@ -1876,16 +1906,16 @@ function MutualFundPage() {
           <table className="w-full text-xs text-left border-collapse">
             <thead>
               <tr className="bg-muted/80 text-foreground font-semibold border-b border-border divide-x divide-border">
-                <th className="py-2.5 px-3 text-center w-12 uppercase text-[11px]">S.N.</th>
-                <th className="py-2.5 px-3 uppercase text-[11px]">TYPE / PARTICULAR</th>
-                <th className="py-2.5 px-3 text-right uppercase text-[11px]">NO. OF UNITHOLDERS</th>
-                <th className="py-2.5 px-3 text-right uppercase text-[11px]">KITTA / UNITS HELD</th>
-                <th className="py-2.5 px-3 text-right uppercase text-[11px]">AMOUNT / GROSS</th>
-                <th className="py-2.5 px-3 text-right uppercase text-[11px]">TDS TAX</th>
-                <th className="py-2.5 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200">
-                  NET DISTRIBUTION
+                <th className="py-2.5 px-3 text-center w-12 text-[11px]">S.N.</th>
+                <th className="py-2.5 px-3 text-[11px]">Unitholder Category</th>
+                <th className="py-2.5 px-3 text-right text-[11px]">Unitholders</th>
+                <th className="py-2.5 px-3 text-right text-[11px]">Units Held (Kitta)</th>
+                <th className="py-2.5 px-3 text-right text-[11px]">Gross Distribution</th>
+                <th className="py-2.5 px-3 text-right text-[11px]">TDS Tax Withheld</th>
+                <th className="py-2.5 px-3 text-right text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200">
+                  Net Distribution Payable
                 </th>
-                <th className="py-2.5 px-3 text-right uppercase text-[11px]">COMPOSITION</th>
+                <th className="py-2.5 px-3 text-right text-[11px]">Composition %</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border font-mono">
@@ -1956,7 +1986,7 @@ function MutualFundPage() {
           <div className="flex items-center gap-2">
             <Receipt className="h-4 w-4 text-primary" />
             <CardTitle className="text-sm font-semibold tracking-tight">
-              Mutual Fund Payables &amp; Distribution
+              Mutual Fund Distribution Payables Register &amp; Disbursements
             </CardTitle>
             <Badge variant="outline" className="font-mono text-[11px] bg-background">
               {pageResult.count.toLocaleString()} Records
@@ -1967,7 +1997,7 @@ function MutualFundPage() {
             <span className="font-semibold text-foreground">
               {pageResult.count.toLocaleString()}
             </span>{" "}
-            payables
+            payable records
           </div>
         </CardHeader>
         <CardContent className="p-4">
@@ -2467,7 +2497,7 @@ function MutualFundPage() {
       <Dialog open={Boolean(payOpen)} onOpenChange={(open) => !open && setPayOpen(null)}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Mark as paid</DialogTitle>
+            <DialogTitle>Mark as Paid</DialogTitle>
           </DialogHeader>
           <div className="grid gap-3">
             <div className="space-y-1.5">
