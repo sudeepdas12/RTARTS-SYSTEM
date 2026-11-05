@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo } from "react";
 import { useDebounce } from "@/hooks/use-debounce";
 import { PageHeader } from "@/components/page-header";
+import { AdministrationSubNav } from "@/components/administration-subnav";
 import {
   Table,
   TableBody,
@@ -668,6 +669,8 @@ function UsersRoute() {
           </DialogContent>
         </Dialog>
       </div>
+
+      <AdministrationSubNav />
 
       {/* KPI Overview */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { PageHeader } from "@/components/page-header";
+import { AdministrationSubNav } from "@/components/administration-subnav";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -149,6 +150,8 @@ function BackupPage() {
           </Button>
         </div>
       </div>
+
+      <AdministrationSubNav />
 
       {/* Database Overview Banner */}
       <Card className="border-primary/20 bg-gradient-to-br from-primary/5 via-background to-background">

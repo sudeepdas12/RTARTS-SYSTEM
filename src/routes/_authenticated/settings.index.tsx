@@ -1,9 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/page-header";
+import { AdministrationSubNav } from "@/components/administration-subnav";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -37,6 +40,9 @@ import {
   Eye,
   EyeOff,
   CheckCircle2,
+  Calendar,
+  UserCog,
+  ShieldCheck,
 } from "lucide-react";
 
 function TaxRulesEditor() {
@@ -173,6 +179,19 @@ function SettingsRoute() {
     enabled: !!isAdmin,
   });
 
+  const { data: activeFyData } = useQuery({
+    queryKey: ["active_fiscal_year_settings"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("fiscal_years")
+        .select("fiscal_year, start_date, end_date")
+        .eq("is_active", true)
+        .maybeSingle();
+      return data;
+    },
+    enabled: !!isAdmin,
+  });
+
   const [form, setForm] = useState<Partial<SystemSettings>>({});
   const [testEmail, setTestEmail] = useState("");
   const [testPhone, setTestPhone] = useState("");
@@ -267,6 +286,8 @@ function SettingsRoute() {
         </Button>
       </div>
 
+      <AdministrationSubNav />
+
       {/* KPI Overview Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="glass-card hover-lift border border-border/80">
@@ -325,7 +346,7 @@ function SettingsRoute() {
           <TabsTrigger value="sms">SMS</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="general" className="mt-6">
+        <TabsContent value="general" className="mt-6 space-y-6">
           <Card>
             <CardHeader>
               <CardTitle>Regional Formatting & Calendar</CardTitle>
@@ -348,6 +369,69 @@ function SettingsRoute() {
               </div>
             </CardContent>
           </Card>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <Card className="border-border/80">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                    <Calendar className="h-4 w-4 text-primary" />
+                    Accounting Periods & Fiscal Windows
+                  </CardTitle>
+                  {activeFyData ? (
+                    <Badge
+                      variant="outline"
+                      className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-300 font-mono text-[10px]"
+                    >
+                      Active: {activeFyData.fiscal_year}
+                    </Badge>
+                  ) : null}
+                </div>
+                <CardDescription className="text-xs">
+                  Active window governs default reporting periods and CDS distribution filters.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <Button asChild size="sm" variant="outline" className="w-full text-xs gap-1.5">
+                  <Link to="/settings/fiscal-years">
+                    <Calendar className="h-3.5 w-3.5" />
+                    Manage Fiscal Year Windows
+                    <ArrowRight className="h-3.5 w-3.5 ml-auto" />
+                  </Link>
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card className="border-border/80">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                    <UserCog className="h-4 w-4 text-primary" />
+                    Access Governance & RBAC
+                  </CardTitle>
+                  <Badge
+                    variant="outline"
+                    className="bg-primary/10 text-primary border-primary/20 text-[10px]"
+                  >
+                    Least-Privilege Enforced
+                  </Badge>
+                </div>
+                <CardDescription className="text-xs">
+                  Manage user accounts, offline direct provisioning, and maker-checker privilege
+                  matrix.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <Button asChild size="sm" variant="outline" className="w-full text-xs gap-1.5">
+                  <Link to="/users">
+                    <UserCog className="h-3.5 w-3.5" />
+                    Manage Platform Users & Roles
+                    <ArrowRight className="h-3.5 w-3.5 ml-auto" />
+                  </Link>
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
 
           <Card className="mt-6 border-primary/20 bg-muted/20">
             <CardHeader className="pb-3">
@@ -766,10 +850,7 @@ function SettingsRoute() {
                     value={merged.sms_provider || "sparrow"}
                     onChange={(e) => {
                       const provider = e.target.value as
-                        | "sparrow"
-                        | "aakash"
-                        | "smstonepal"
-                        | "custom";
+                        "sparrow" | "aakash" | "smstonepal" | "custom";
                       update("sms_provider", provider);
                       if (provider === "sparrow") {
                         update("sms_gateway_url", "https://api.sparrowsms.com/v2/sms/");
