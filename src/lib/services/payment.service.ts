@@ -278,16 +278,10 @@ export const PaymentService = {
         intCount: Number(data?.intCount || 0),
       };
     } catch (err: any) {
-      console.warn("get_available_payables_preview error:", err?.message || err);
-      return {
-        count: 0,
-        totalAmount: 0,
-        totalGross: 0,
-        totalTax: 0,
-        mfCount: 0,
-        divCount: 0,
-        intCount: 0,
-      };
+      console.error("get_available_payables_preview error:", err?.message || err);
+      throw new Error(
+        `Unable to calculate available payables preview: ${err?.message || "Unknown error"}`,
+      );
     }
   },
 
@@ -356,8 +350,12 @@ export const PaymentService = {
 
       if (chunkErr) {
         console.error("Chunk population error:", chunkErr);
-        if (totalInserted === 0) {
-          await (supabase as any).from("payment_batches").delete().eq("id", batch.id);
+        const { error: cleanupErr } = await (supabase as any)
+          .from("payment_batches")
+          .delete()
+          .eq("id", batch.id);
+        if (cleanupErr) {
+          console.error("Failed to clean up incomplete payment batch:", cleanupErr.message);
         }
         throw new Error(`Failed to populate batch items: ${chunkErr.message}`);
       }
@@ -593,34 +591,38 @@ export const PaymentService = {
 
       // 2. Database duplicate protection checks
       if (payableIds.length > 0) {
-        const { data: existingPayments, error: dupCheckErr } = await (supabase as any)
-          .from("payments")
-          .select("payable_id, status")
-          .in("payable_id", payableIds.slice(0, 1000))
-          .not("status", "in", '("Failed","Reversed","Cancelled")')
-          .limit(10);
+        for (const ids of chunkArray(payableIds, 1000)) {
+          const { data: existingPayments, error: dupCheckErr } = await (supabase as any)
+            .from("payments")
+            .select("payable_id, status")
+            .in("payable_id", ids)
+            .not("status", "in", '("Failed","Reversed","Cancelled")')
+            .limit(10);
 
-        if (!dupCheckErr && existingPayments && existingPayments.length > 0) {
-          const dupId = existingPayments[0].payable_id;
-          throw new Error(
-            `Duplicate payout attempt detected: payable ${dupId} already has an active or completed payment record (status: ${existingPayments[0].status}).`,
-          );
+          if (!dupCheckErr && existingPayments && existingPayments.length > 0) {
+            const dupId = existingPayments[0].payable_id;
+            throw new Error(
+              `Duplicate payout attempt detected: payable ${dupId} already has an active or completed payment record (status: ${existingPayments[0].status}).`,
+            );
+          }
         }
       }
 
       if (paymentRefs.length > 0) {
-        const { data: existingRefs, error: refCheckErr } = await (supabase as any)
-          .from("payments")
-          .select("payment_reference, status")
-          .in("payment_reference", paymentRefs.slice(0, 1000))
-          .not("status", "in", '("Failed","Reversed","Cancelled")')
-          .limit(10);
+        for (const refs of chunkArray(paymentRefs, 1000)) {
+          const { data: existingRefs, error: refCheckErr } = await (supabase as any)
+            .from("payments")
+            .select("payment_reference, status")
+            .in("payment_reference", refs)
+            .not("status", "in", '("Failed","Reversed","Cancelled")')
+            .limit(10);
 
-        if (!refCheckErr && existingRefs && existingRefs.length > 0) {
-          const dupRef = existingRefs[0].payment_reference;
-          throw new Error(
-            `Duplicate payment reference detected: reference "${dupRef}" is already in use by an active payment.`,
-          );
+          if (!refCheckErr && existingRefs && existingRefs.length > 0) {
+            const dupRef = existingRefs[0].payment_reference;
+            throw new Error(
+              `Duplicate payment reference detected: reference "${dupRef}" is already in use by an active payment.`,
+            );
+          }
         }
       }
 
@@ -660,14 +662,16 @@ export const PaymentService = {
           .range(from, to);
       });
 
-      const totalAmount = (payments || []).reduce(
-        (sum: number, p: any) => sum + (p.net_amount || 0),
-        0,
-      );
-      const totalTax = (payments || []).reduce(
-        (sum: number, p: any) => sum + (p.tax_amount || 0),
-        0,
-      );
+      // Supabase can return NUMERIC columns as strings. Coerce before summing;
+      // otherwise a string value turns the whole reduction into concatenation.
+      const totalAmount = (payments || []).reduce((sum: number, p: any) => {
+        const value = Number(p.net_amount);
+        return sum + (Number.isFinite(value) ? value : 0);
+      }, 0);
+      const totalTax = (payments || []).reduce((sum: number, p: any) => {
+        const value = Number(p.tax_amount);
+        return sum + (Number.isFinite(value) ? value : 0);
+      }, 0);
       const totalPayments = (payments || []).length;
 
       // Update batch
@@ -688,6 +692,7 @@ export const PaymentService = {
     batchId: string,
     status: PaymentBatch["status"],
     userId?: string,
+    expectedStatus?: PaymentBatch["status"] | PaymentBatch["status"][],
   ): Promise<boolean> {
     // When completing a batch, require atomic database-level transaction:
     if (status === "Completed") {
@@ -722,7 +727,7 @@ export const PaymentService = {
       throw new Error(`Cannot modify batch ${batchId}: batch is Completed and permanently locked.`);
     }
 
-    const updateData: any = { status };
+    const updateData: any = { status, updated_at: new Date().toISOString() };
 
     if (status === "Approved" && userId) {
       updateData.approved_by = userId;
@@ -731,14 +736,34 @@ export const PaymentService = {
       updateData.processed_at = new Date().toISOString();
     }
 
-    const { error } = await (supabase as any)
+    let query = (supabase as any)
       .from("payment_batches")
       .update(updateData)
-      .eq("id", batchId);
+      .eq("id", batchId)
+      .neq("status", "Completed");
+
+    if (expectedStatus) {
+      if (Array.isArray(expectedStatus)) {
+        query = query.in("status", expectedStatus);
+      } else {
+        query = query.eq("status", expectedStatus);
+      }
+    } else if (currentBatch?.status) {
+      // Optimistic concurrency: guard against in-flight transition collisions
+      query = query.eq("status", currentBatch.status);
+    }
+
+    const { data: updatedRows, error } = await query.select("id");
 
     if (error) {
       console.error("Failed to update batch status:", error.message);
       throw new Error(`Failed to update batch status: ${error.message}`);
+    }
+
+    if (!updatedRows || updatedRows.length === 0) {
+      throw new Error(
+        `Concurrency conflict: Batch ${batchId} was updated by another operator or session. Please refresh and review current status.`,
+      );
     }
 
     return true;
@@ -979,8 +1004,11 @@ export const PaymentService = {
             existingPayments.map((p: any) => p.payable_id).filter(Boolean),
           );
         }
-      } catch (checkErr) {
-        console.warn("Could not check existing batched payments:", checkErr);
+      } catch (checkErr: any) {
+        console.error("Could not check existing batched payments:", checkErr);
+        throw new Error(
+          `Unable to verify existing payment locks: ${checkErr?.message || "Unknown error"}`,
+        );
       }
 
       const payables: any[] = [];
@@ -1013,13 +1041,20 @@ export const PaymentService = {
               if (options?.fiscalYear && options.fiscalYear !== "all") {
                 query = query.eq("fiscal_year", options.fiscalYear);
               }
+              if (options?.fromDate) {
+                query = query.gte("created_at", options.fromDate);
+              }
+              if (options?.toDate) {
+                query = query.lte("created_at", `${options.toDate}T23:59:59.999Z`);
+              }
               return query;
             },
             1000,
             payablesLimit,
           );
         } catch (dividendError: any) {
-          console.warn("Failed to fetch dividend payables:", dividendError.message);
+          console.error("Failed to fetch dividend payables:", dividendError.message);
+          throw new Error(`Failed to fetch dividend payables: ${dividendError.message}`);
         }
         if (dividendData) {
           payables.push(
@@ -1073,11 +1108,14 @@ export const PaymentService = {
               if (options?.fiscalYear && options.fiscalYear !== "all") {
                 interestQuery = interestQuery.eq("fiscal_year", options.fiscalYear);
               }
+              // The preview RPC applies the period to created_at for every
+              // payable type; use the same field here so the preview and
+              // selectable line items cannot disagree.
               if (options?.fromDate) {
-                interestQuery = interestQuery.gte("due_date", options.fromDate);
+                interestQuery = interestQuery.gte("created_at", options.fromDate);
               }
               if (options?.toDate) {
-                interestQuery = interestQuery.lte("due_date", options.toDate);
+                interestQuery = interestQuery.lte("created_at", `${options.toDate}T23:59:59.999Z`);
               }
               return interestQuery;
             },
@@ -1085,7 +1123,8 @@ export const PaymentService = {
             payablesLimit,
           );
         } catch (interestError: any) {
-          console.warn("Failed to fetch interest payables:", interestError.message);
+          console.error("Failed to fetch interest payables:", interestError.message);
+          throw new Error(`Failed to fetch interest payables: ${interestError.message}`);
         }
         if (interestData) {
           const days =
@@ -1247,13 +1286,20 @@ export const PaymentService = {
               if (options?.fiscalYear && options.fiscalYear !== "all") {
                 mfQuery = mfQuery.eq("fiscal_year", options.fiscalYear);
               }
+              if (options?.fromDate) {
+                mfQuery = mfQuery.gte("created_at", options.fromDate);
+              }
+              if (options?.toDate) {
+                mfQuery = mfQuery.lte("created_at", `${options.toDate}T23:59:59.999Z`);
+              }
               return mfQuery;
             },
             1000,
             payablesLimit,
           );
         } catch (mfError: any) {
-          console.warn("Failed to fetch mutual fund payables:", mfError.message);
+          console.error("Failed to fetch mutual fund payables:", mfError.message);
+          throw new Error(`Failed to fetch mutual fund payables: ${mfError.message}`);
         }
         if (mfData) {
           payables.push(

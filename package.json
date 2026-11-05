@@ -19,6 +19,7 @@
     "test:run": "vitest run",
     "test:ui": "vitest --ui",
     "test:e2e": "playwright test",
+    "test:e2e:upload": "playwright test e2e/uploads-all-sections.spec.ts",
     "db:backup": "node ./scripts/ops/backup-db.mjs",
     "db:restore": "node ./scripts/ops/restore-db.mjs",
     "db:backup:ps": "powershell -ExecutionPolicy Bypass -File ./scripts/ops/backup-db.ps1",
@@ -29,6 +30,8 @@
     "verify:production-live": "node ./scripts/ops/release-gate-verify.mjs --live",
     "audit:classifications": "node ./scripts/audit/audit-classifications.mjs",
     "audit:summaries": "node ./scripts/audit/audit-all-summaries.mjs",
+    "fixtures:generate": "node ./scripts/generate_all_test_fixtures.mjs",
+    "test:fixtures": "npx tsx ./scripts/verify_upload_fixtures.ts",
     "prepare": "husky"
   },
   "dependencies": {

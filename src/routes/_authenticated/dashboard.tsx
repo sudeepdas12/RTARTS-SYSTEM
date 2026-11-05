@@ -214,7 +214,7 @@ function Dashboard() {
       let batchQ = (supabase as any)
         .from("payment_batches")
         .select("id", { count: "exact", head: true })
-        .in("status", ["Draft", "Pending_Approval"]);
+        .in("status", ["Draft", "Pending"]);
       if (selectedCompanyId !== "all") batchQ = batchQ.eq("company_id", selectedCompanyId);
       const { count: batchesPending = 0 } = await batchQ;
 

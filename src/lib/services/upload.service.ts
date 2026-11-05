@@ -187,7 +187,13 @@ export const UploadService = {
       }
       q = q.or(`file_hash.eq.${fileHash},file_hash.ilike.${fileHash}-%`);
 
-      const { data } = await q.order("created_at", { ascending: false }).limit(1).maybeSingle();
+      const { data, error } = await q
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) {
+        throw new Error(`Failed to check existing upload: ${error.message}`);
+      }
       if (!data) return null;
 
       // Self-healing check: verify if this record actually has active payables.
@@ -195,7 +201,7 @@ export const UploadService = {
       const linkedRows = await countRowsByUploadId(data.id, data.target_table || null);
       if (linkedRows === 0) {
         // Auto-heal by marking as RolledBack so the file is unblocked
-        await (supabase as any)
+        const { error: clearError } = await (supabase as any)
           .from("upload_history")
           .update({
             status: "RolledBack",
@@ -203,12 +209,18 @@ export const UploadService = {
             error_message: "Auto-cleared: Underlying payable records were removed.",
           })
           .eq("id", data.id);
+        if (clearError) {
+          throw new Error(`Failed to clear orphaned upload: ${clearError.message}`);
+        }
         return null;
       }
 
       return data as UploadHistoryRow;
-    } catch {
-      return null;
+    } catch (error: any) {
+      console.error("Could not verify an existing upload before allowing re-upload:", error);
+      throw new Error(
+        error?.message || "Could not verify whether this file has already been uploaded.",
+      );
     }
   },
 
@@ -423,10 +435,12 @@ export const UploadService = {
     }
 
     // Delete errors logged for this upload
-    try {
-      await (supabase as any).from("upload_errors").delete().eq("upload_id", uploadId);
-    } catch {
-      // non-blocking
+    const { error: uploadErrorsDeleteError } = await (supabase as any)
+      .from("upload_errors")
+      .delete()
+      .eq("upload_id", uploadId);
+    if (uploadErrorsDeleteError) {
+      throw new Error(`Failed to delete upload errors: ${uploadErrorsDeleteError.message}`);
     }
 
     // Mark upload record as RolledBack

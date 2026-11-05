@@ -308,7 +308,13 @@ export function PreImportReviewDialog({
         : isMutualFund
           ? "mutual_fund_payables"
           : "dividend_payables";
-      const stagedRows = targetSheets.flatMap((s) => s.rows || []);
+      const stagedRows = targetSheets.flatMap((s) =>
+        (s.rows || []).map((row: Record<string, unknown>) => ({
+          ...row,
+          sheet_type: row.sheet_type || s.sheetType,
+          sheet_name: row.sheet_name || s.sheetName,
+        })),
+      );
 
       const { error: stageErr } = await (supabase as any).from("import_staging").insert({
         approval_id: paData.id,
@@ -337,7 +343,8 @@ export function PreImportReviewDialog({
       });
 
       if (stageErr) {
-        console.warn("Could not write to import_staging table (continuing):", stageErr);
+        await (supabase as any).from("pending_approvals").delete().eq("id", paData.id);
+        throw new Error(`Could not persist staged import data: ${stageErr.message}`);
       }
 
       // 3. Insert into approval_logs

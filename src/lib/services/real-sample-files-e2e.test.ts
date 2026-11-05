@@ -7,22 +7,25 @@ import { ReconciliationService } from "./reconciliation.service";
 import { supabase } from "./database";
 
 const SUPABASE_URL = process.env.SUPABASE_URL || "http://127.0.0.1:54321";
-const SERVICE_ROLE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY || "injected-via-env-only", {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-const isLiveDb =
-  !process.env.CI ||
-  Boolean(
-    process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.SUPABASE_URL !== "http://127.0.0.1:54321",
-  );
+const sampleFileCheck = path.resolve(
+  process.cwd(),
+  "samples/MUTUAL FUND REPORTS 82.83/ERROR REPORT 2026.10.05.xls",
+);
+const hasSamples = fs.existsSync(sampleFileCheck);
+
+const isLiveDb = Boolean(SERVICE_ROLE_KEY && hasSamples);
 
 function loadSampleFile(relativePath: string): File {
   const fullPath = path.resolve(process.cwd(), relativePath);
+  if (!fs.existsSync(fullPath)) {
+    throw new Error(`Sample file not found on disk: ${relativePath}`);
+  }
   const buffer = fs.readFileSync(fullPath);
   const fileName = path.basename(fullPath);
   return new File([buffer], fileName, {
@@ -35,77 +38,84 @@ function loadSampleFile(relativePath: string): File {
 }
 
 describe("Real Sample Files & Database-Backed Reconciliation Invariants", () => {
-  describe("1. Real File Parsing & Classification from samples/MUTUAL FUND REPORTS 82.83", () => {
-    it("correctly classifies real settlement reports and fails closed on ambiguous files", async () => {
-      const errorReportFile = loadSampleFile(
-        "samples/MUTUAL FUND REPORTS 82.83/ERROR REPORT 2026.10.05.xls",
-      );
-      const mer4File = loadSampleFile("samples/MUTUAL FUND REPORTS 82.83/MER 4.xls");
-      const bishalFile = loadSampleFile("samples/MUTUAL FUND REPORTS 82.83/BISHAL SIR.xlsx");
+  describe.skipIf(!hasSamples)(
+    "1. Real File Parsing & Classification from samples/MUTUAL FUND REPORTS 82.83",
+    () => {
+      it("correctly classifies real settlement reports and fails closed on ambiguous files", async () => {
+        const errorReportFile = loadSampleFile(
+          "samples/MUTUAL FUND REPORTS 82.83/ERROR REPORT 2026.10.05.xls",
+        );
+        const mer4File = loadSampleFile("samples/MUTUAL FUND REPORTS 82.83/MER 4.xls");
+        const bishalFile = loadSampleFile("samples/MUTUAL FUND REPORTS 82.83/BISHAL SIR.xlsx");
 
-      expect(await classifyReconciliationFile(errorReportFile)).toBe("bank_statement");
-      expect(await classifyReconciliationFile(mer4File)).toBe("bank_statement");
-      expect(await classifyReconciliationFile(bishalFile)).toBe("bank_statement");
+        expect(await classifyReconciliationFile(errorReportFile)).toBe("bank_statement");
+        expect(await classifyReconciliationFile(mer4File)).toBe("bank_statement");
+        expect(await classifyReconciliationFile(bishalFile)).toBe("bank_statement");
 
-      // Debenture registry file should NOT be misclassified as bank_statement
-      const debentureRegistry = new File(
-        ["boid,shareholder_name,kitta,interest_amount\n1301230000000001,RAM SHRESTHA,100,8500.00"],
-        "Debenture_Holder_Registry_2080.xlsx",
-        { type: "text/csv" },
-      );
-      expect(await classifyReconciliationFile(debentureRegistry)).toBe("shareholder_registry");
+        // Debenture registry file should NOT be misclassified as bank_statement
+        const debentureRegistry = new File(
+          [
+            "boid,shareholder_name,kitta,interest_amount\n1301230000000001,RAM SHRESTHA,100,8500.00",
+          ],
+          "Debenture_Holder_Registry_2080.xlsx",
+          { type: "text/csv" },
+        );
+        expect(await classifyReconciliationFile(debentureRegistry)).toBe("shareholder_registry");
 
-      // Ambiguous dummy file fails closed
-      const ambiguousFile = new File(["random,notes,data\n1,foo,bar"], "notes_report.xlsx", {
-        type: "text/csv",
+        // Ambiguous dummy file fails closed
+        const ambiguousFile = new File(["random,notes,data\n1,foo,bar"], "notes_report.xlsx", {
+          type: "text/csv",
+        });
+        expect(await classifyReconciliationFile(ambiguousFile)).toBe("ambiguous");
+
+        // Corrupt or unreadable spreadsheet fails closed as ambiguous even with bank filename keywords
+        const corruptFile = new File(
+          [new Uint8Array([0x50, 0x4b, 0x00, 0x00, 0x99, 0x88, 0x77])],
+          "ips_settlement_corrupt.xlsx",
+          {
+            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          },
+        );
+        expect(await classifyReconciliationFile(corruptFile)).toBe("ambiguous");
       });
-      expect(await classifyReconciliationFile(ambiguousFile)).toBe("ambiguous");
 
-      // Corrupt or unreadable spreadsheet fails closed as ambiguous even with bank filename keywords
-      const corruptFile = new File(
-        [new Uint8Array([0x50, 0x4b, 0x00, 0x00, 0x99, 0x88, 0x77])],
-        "ips_settlement_corrupt.xlsx",
-        {
-          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        },
-      );
-      expect(await classifyReconciliationFile(corruptFile)).toBe("ambiguous");
-    });
+      it("parses ERROR REPORT 2026.10.05.xls into 24 rejected transactions totaling NPR 1,593.53", async () => {
+        const file = loadSampleFile(
+          "samples/MUTUAL FUND REPORTS 82.83/ERROR REPORT 2026.10.05.xls",
+        );
+        const txns = await BankParser.parseBankStatement(file);
 
-    it("parses ERROR REPORT 2026.10.05.xls into 24 rejected transactions totaling NPR 1,593.53", async () => {
-      const file = loadSampleFile("samples/MUTUAL FUND REPORTS 82.83/ERROR REPORT 2026.10.05.xls");
-      const txns = await BankParser.parseBankStatement(file);
+        expect(txns.length).toBe(24);
 
-      expect(txns.length).toBe(24);
+        const totalAmt = txns.reduce((sum, t) => sum + (t.debit || t.credit || 0), 0);
+        expect(Math.round(totalAmt * 100) / 100).toBe(1593.53);
 
-      const totalAmt = txns.reduce((sum, t) => sum + (t.debit || t.credit || 0), 0);
-      expect(Math.round(totalAmt * 100) / 100).toBe(1593.53);
+        for (const t of txns) {
+          expect(t.status === "Rejected" || t.status === "RJCT").toBe(true);
+          expect(t.debit || t.credit).toBeGreaterThan(0);
+        }
+      });
 
-      for (const t of txns) {
-        expect(t.status === "Rejected" || t.status === "RJCT").toBe(true);
-        expect(t.debit || t.credit).toBeGreaterThan(0);
-      }
-    });
+      it("parses MER 4.xls into 58 settlement transactions", async () => {
+        const file = loadSampleFile("samples/MUTUAL FUND REPORTS 82.83/MER 4.xls");
+        const txns = await BankParser.parseBankStatement(file);
 
-    it("parses MER 4.xls into 58 settlement transactions", async () => {
-      const file = loadSampleFile("samples/MUTUAL FUND REPORTS 82.83/MER 4.xls");
-      const txns = await BankParser.parseBankStatement(file);
+        expect(txns.length).toBe(58);
 
-      expect(txns.length).toBe(58);
+        const accepted = txns.filter((t) => t.status !== "Rejected" && t.status !== "RJCT");
+        const rejected = txns.filter((t) => t.status === "Rejected" || t.status === "RJCT");
 
-      const accepted = txns.filter((t) => t.status !== "Rejected" && t.status !== "RJCT");
-      const rejected = txns.filter((t) => t.status === "Rejected" || t.status === "RJCT");
+        expect(accepted.length).toBe(56);
+        expect(rejected.length).toBe(2);
 
-      expect(accepted.length).toBe(56);
-      expect(rejected.length).toBe(2);
+        const acceptedSum = accepted.reduce((s, t) => s + (t.debit || t.credit || 0), 0);
+        const rejectedSum = rejected.reduce((s, t) => s + (t.debit || t.credit || 0), 0);
 
-      const acceptedSum = accepted.reduce((s, t) => s + (t.debit || t.credit || 0), 0);
-      const rejectedSum = rejected.reduce((s, t) => s + (t.debit || t.credit || 0), 0);
-
-      expect(Math.round(acceptedSum * 100) / 100).toBe(14756304.11);
-      expect(Math.round(rejectedSum * 100) / 100).toBe(48409.62);
-    });
-  });
+        expect(Math.round(acceptedSum * 100) / 100).toBe(14756304.11);
+        expect(Math.round(rejectedSum * 100) / 100).toBe(48409.62);
+      });
+    },
+  );
 
   describe.skipIf(!isLiveDb)(
     "2. Real Database Apply, Snapshot Preservation & Safe Reversal",

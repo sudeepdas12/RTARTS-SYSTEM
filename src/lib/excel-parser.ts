@@ -735,36 +735,55 @@ export const ExcelParser = {
     if (!json || json.length === 0) return null;
 
     const sheetNameUpper = sheetName.toUpperCase();
+    const normalizedSheetName = sheetNameUpper.replace(/[-_]/g, " ");
     let sheetType: DetectedSheetType = "UNKNOWN";
 
-    if (sheetNameUpper.includes("PUBLIC")) {
+    if (
+      normalizedSheetName.includes("PUBLIC") ||
+      normalizedSheetName.includes("ORDINARY") ||
+      normalizedSheetName.includes("EQUITY")
+    ) {
       sheetType = "PUBLIC";
-    } else if (sheetNameUpper.includes("PROMOTER")) {
+    } else if (
+      normalizedSheetName.includes("PROMOTER") ||
+      normalizedSheetName.includes("FOUNDER")
+    ) {
       sheetType = "PROMOTER";
-    } else if (sheetNameUpper.includes("PHYSICAL") || sheetNameUpper.includes("FOLIO")) {
+    } else if (normalizedSheetName.includes("PHYSICAL") || normalizedSheetName.includes("FOLIO")) {
       sheetType = "PHYSICAL";
-    } else if (sheetNameUpper.includes("INSTITUTION")) {
+    } else if (
+      normalizedSheetName.includes("INSTITUTION") ||
+      normalizedSheetName.includes("CORPORATE")
+    ) {
       sheetType = "INSTITUTION";
     } else if (
-      sheetNameUpper.includes("TAX EXEMPT") ||
-      sheetNameUpper.includes("EXEMPTED") ||
-      sheetNameUpper.includes("MUTUAL FUND")
+      normalizedSheetName.includes("TAX EXEMPT") ||
+      normalizedSheetName.includes("EXEMPTED") ||
+      normalizedSheetName.includes("MUTUAL FUND") ||
+      normalizedSheetName.includes("RETIREMENT")
     ) {
       sheetType = "TAX_EXEMPTED";
-    } else if (sheetNameUpper.includes("LOCAL")) {
+    } else if (normalizedSheetName.includes("LOCAL")) {
       sheetType = "LOCAL_UNVERIFIED";
-    } else if (sheetNameUpper.includes("PRIVATE")) {
+    } else if (normalizedSheetName.includes("PRIVATE")) {
       sheetType = "PRIVATE";
     } else if (
-      sheetNameUpper.includes("REJECT") ||
-      sheetNameUpper.includes("PENDING") ||
-      sheetNameUpper.includes("REMAINING")
+      normalizedSheetName.includes("REJECT") ||
+      normalizedSheetName.includes("PENDING") ||
+      normalizedSheetName.includes("REMAINING")
     ) {
       sheetType = "REJECT_PENDING";
-    } else if (sheetNameUpper.includes("ORIGINAL")) {
+    } else if (normalizedSheetName.includes("ORIGINAL")) {
       sheetType = "ORIGINAL";
-    } else if (sheetNameUpper.includes("SUMMARY")) {
+    } else if (normalizedSheetName.includes("SUMMARY")) {
       sheetType = "SUMMARY";
+    } else if (
+      normalizedSheetName.includes("PAYABLE") ||
+      normalizedSheetName.includes("DIVIDEND") ||
+      normalizedSheetName.includes("INTEREST") ||
+      normalizedSheetName.includes("DISTRIBUTION")
+    ) {
+      sheetType = "PUBLIC";
     }
 
     if (!allowSummary && (sheetType === "SUMMARY" || sheetType === "ORIGINAL")) {

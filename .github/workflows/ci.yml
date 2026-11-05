@@ -48,21 +48,108 @@ jobs:
       - name: Start Supabase Local Containers
         run: npx supabase start
 
+      - name: Export Live Supabase Credentials
+        run: |
+          echo "VITE_SUPABASE_PUBLISHABLE_KEY=$(npx supabase status -o env | grep '^ANON_KEY=' | cut -d= -f2-)" >> "$GITHUB_ENV"
+          echo "SUPABASE_SERVICE_ROLE_KEY=$(npx supabase status -o env | grep '^SERVICE_ROLE_KEY=' | cut -d= -f2-)" >> "$GITHUB_ENV"
+
       - name: Verify Database Migrations & Lint
         run: npx supabase db lint --local
 
+      - name: Generate & Verify Upload Section Fixtures
+        run: |
+          npm run fixtures:generate
+          npm run test:fixtures
+
       - name: Run Financial Test Suite (Vitest)
         env:
-          VITE_SUPABASE_URL: http://127.0.0.1:54321
-          VITE_SUPABASE_PUBLISHABLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJpYXQiOjE2NDAwMDAwMDAsImV4cCI6MTk1NTU2MDAwMH0.placeholder
           SUPABASE_URL: http://127.0.0.1:54321
-          SUPABASE_SERVICE_ROLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTY0MDAwMDAwMCwiZXhwIjoxOTU1NTYwMDAwfQ.placeholder
           SUPABASE_TEST_ADMIN_PASSWORD: ${{ secrets.SUPABASE_TEST_ADMIN_PASSWORD || 'Admin123!' }}
         run: npm run test:run -- --reporter=verbose
+
+      - name: Audit Source Release & Ledger Summaries
+        run: |
+          npm run audit:source-release
+          npm run audit:summaries
 
       - name: Verify Release Gate Invariants
         run: npm run verify:release-gate
 
       - name: Verify Production Build
         run: npm run build
+
+  e2e-upload-checks:
+    name: Upload End-to-End Coverage (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    env:
+      CI: true
+      BASE_URL: http://127.0.0.1:8080
+      VITE_SUPABASE_URL: http://127.0.0.1:54321
+      SUPABASE_URL: http://127.0.0.1:54321
+      SUPABASE_TEST_ADMIN_PASSWORD: ${{ secrets.SUPABASE_TEST_ADMIN_PASSWORD || 'Admin123!' }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start Supabase Local Containers (migrations + seed)
+        run: npx supabase start
+
+      - name: Export Live Supabase Credentials
+        # The browser bundle and server client must use the anon/service keys that
+        # `supabase start` actually generated, not placeholders.
+        run: |
+          echo "VITE_SUPABASE_PUBLISHABLE_KEY=$(npx supabase status -o env | grep '^ANON_KEY=' | cut -d= -f2-)" >> "$GITHUB_ENV"
+          echo "SUPABASE_SERVICE_ROLE_KEY=$(npx supabase status -o env | grep '^SERVICE_ROLE_KEY=' | cut -d= -f2-)" >> "$GITHUB_ENV"
+
+      - name: Generate & Verify Upload Section Fixtures
+        run: |
+          npm run fixtures:generate
+          npm run test:fixtures
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium
+
+      - name: Start Dev Server
+        run: |
+          nohup npm run dev > /tmp/dev-server.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8080/auth > /dev/null 2>&1; then
+              echo "Dev server is up on :8080"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Dev server failed to start" >&2
+          cat /tmp/dev-server.log >&2 || true
+          exit 1
+
+      - name: Run Full Playwright E2E Test Suite
+        run: npx playwright test
+
+      - name: Upload Playwright Artifacts on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
 

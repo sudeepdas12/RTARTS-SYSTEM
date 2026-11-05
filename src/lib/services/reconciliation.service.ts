@@ -346,7 +346,8 @@ export const ReconciliationService = {
         const isOfflineMock =
           (rpcErr.code === "PGRST202" ||
             rpcErr.message?.includes("does not exist") ||
-            rpcErr.message?.includes("function")) &&
+            rpcErr.message?.includes("function") ||
+            (rpcErr instanceof TypeError && rpcErr.message === "fetch failed")) &&
           process.env.NODE_ENV === "test" &&
           !import.meta.env?.PROD;
         if (!isOfflineMock) {
@@ -703,7 +704,8 @@ export const ReconciliationService = {
           processed_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
-        .eq("id", batchId);
+        .eq("id", batchId)
+        .neq("status", "Completed");
 
       if (updateErr) {
         errors.push(`Failed to complete payment batch ${batchId}: ${updateErr.message}`);

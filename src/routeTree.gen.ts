@@ -31,6 +31,7 @@ import { Route as AuthenticatedMutualFundRouteImport } from './routes/_authentic
 import { Route as AuthenticatedPaymentsRouteImport } from './routes/_authenticated/payments'
 import { Route as AuthenticatedReconciliationRouteImport } from './routes/_authenticated/reconciliation'
 import { Route as AuthenticatedReportsRouteImport } from './routes/_authenticated/reports'
+import { Route as AuthenticatedTaxReportsRouteImport } from './routes/_authenticated/tax-reports'
 import { Route as AuthenticatedUploadRouteImport } from './routes/_authenticated/upload'
 import { Route as AuthenticatedUploadHistoryRouteImport } from './routes/_authenticated/upload-history'
 import { Route as AuthenticatedUploadsRouteImport } from './routes/_authenticated/uploads'
@@ -152,6 +153,11 @@ const AuthenticatedReportsRoute = AuthenticatedReportsRouteImport.update({
   path: '/reports',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedTaxReportsRoute = AuthenticatedTaxReportsRouteImport.update({
+  id: '/tax-reports',
+  path: '/tax-reports',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedUploadRoute = AuthenticatedUploadRouteImport.update({
   id: '/upload',
   path: '/upload',
@@ -213,6 +219,7 @@ export interface FileRoutesByFullPath {
   '/payments': typeof AuthenticatedPaymentsRoute
   '/reconciliation': typeof AuthenticatedReconciliationRoute
   '/reports': typeof AuthenticatedReportsRoute
+  '/tax-reports': typeof AuthenticatedTaxReportsRoute
   '/upload': typeof AuthenticatedUploadRoute
   '/upload-history': typeof AuthenticatedUploadHistoryRoute
   '/uploads': typeof AuthenticatedUploadsRoute
@@ -243,6 +250,7 @@ export interface FileRoutesByTo {
   '/payments': typeof AuthenticatedPaymentsRoute
   '/reconciliation': typeof AuthenticatedReconciliationRoute
   '/reports': typeof AuthenticatedReportsRoute
+  '/tax-reports': typeof AuthenticatedTaxReportsRoute
   '/upload': typeof AuthenticatedUploadRoute
   '/upload-history': typeof AuthenticatedUploadHistoryRoute
   '/uploads': typeof AuthenticatedUploadsRoute
@@ -275,6 +283,7 @@ export interface FileRoutesById {
   '/_authenticated/payments': typeof AuthenticatedPaymentsRoute
   '/_authenticated/reconciliation': typeof AuthenticatedReconciliationRoute
   '/_authenticated/reports': typeof AuthenticatedReportsRoute
+  '/_authenticated/tax-reports': typeof AuthenticatedTaxReportsRoute
   '/_authenticated/upload': typeof AuthenticatedUploadRoute
   '/_authenticated/upload-history': typeof AuthenticatedUploadHistoryRoute
   '/_authenticated/uploads': typeof AuthenticatedUploadsRoute
@@ -307,6 +316,7 @@ export interface FileRouteTypes {
     | '/payments'
     | '/reconciliation'
     | '/reports'
+    | '/tax-reports'
     | '/upload'
     | '/upload-history'
     | '/uploads'
@@ -337,6 +347,7 @@ export interface FileRouteTypes {
     | '/payments'
     | '/reconciliation'
     | '/reports'
+    | '/tax-reports'
     | '/upload'
     | '/upload-history'
     | '/uploads'
@@ -368,6 +379,7 @@ export interface FileRouteTypes {
     | '/_authenticated/payments'
     | '/_authenticated/reconciliation'
     | '/_authenticated/reports'
+    | '/_authenticated/tax-reports'
     | '/_authenticated/upload'
     | '/_authenticated/upload-history'
     | '/_authenticated/uploads'
@@ -541,6 +553,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedReportsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/tax-reports': {
+      id: '/_authenticated/tax-reports'
+      path: '/tax-reports'
+      fullPath: '/tax-reports'
+      preLoaderRoute: typeof AuthenticatedTaxReportsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/upload': {
       id: '/_authenticated/upload'
       path: '/upload'
@@ -612,6 +631,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedPaymentsRoute: typeof AuthenticatedPaymentsRoute
   AuthenticatedReconciliationRoute: typeof AuthenticatedReconciliationRoute
   AuthenticatedReportsRoute: typeof AuthenticatedReportsRoute
+  AuthenticatedTaxReportsRoute: typeof AuthenticatedTaxReportsRoute
   AuthenticatedUploadRoute: typeof AuthenticatedUploadRoute
   AuthenticatedUploadHistoryRoute: typeof AuthenticatedUploadHistoryRoute
   AuthenticatedUploadsRoute: typeof AuthenticatedUploadsRoute
@@ -640,6 +660,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedPaymentsRoute: AuthenticatedPaymentsRoute,
   AuthenticatedReconciliationRoute: AuthenticatedReconciliationRoute,
   AuthenticatedReportsRoute: AuthenticatedReportsRoute,
+  AuthenticatedTaxReportsRoute: AuthenticatedTaxReportsRoute,
   AuthenticatedUploadRoute: AuthenticatedUploadRoute,
   AuthenticatedUploadHistoryRoute: AuthenticatedUploadHistoryRoute,
   AuthenticatedUploadsRoute: AuthenticatedUploadsRoute,
