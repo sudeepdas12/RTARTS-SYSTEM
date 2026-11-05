@@ -90,12 +90,14 @@ test.describe("Comprehensive Upload & Ingestion Across All Sections", () => {
         .delete()
         .ilike("company_name", "Test Commercial Corporation%");
 
-      // 6. Verification probe: verify test companies are purged
-      const { data: remainingComps } = await adminClient
-        .from("companies")
-        .select("id")
-        .or("company_code.eq.TESTCO,company_name.ilike.section1 payables%");
-      if (remainingComps && remainingComps.length > 0) {
+      // 6. Verification probe: verify test companies are purged.
+      // Two separate filters (instead of `.or(...)`) to avoid `.or()` value-space parsing quirks.
+      const [probeCode, probeName] = await Promise.all([
+        adminClient.from("companies").select("id").eq("company_code", "TESTCO"),
+        adminClient.from("companies").select("id").ilike("company_name", "section1 payables%"),
+      ]);
+      const remainingComps = [...(probeCode.data || []), ...(probeName.data || [])];
+      if (remainingComps.length > 0) {
         console.warn(
           `[uploads-all-sections] Cleanup probe: ${remainingComps.length} company row(s) still remain.`,
         );

@@ -9,9 +9,15 @@ import { supabase } from "./database";
 const SUPABASE_URL = process.env.SUPABASE_URL || "http://127.0.0.1:54321";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY || "injected-via-env-only", {
-  auth: { persistSession: false, autoRefreshToken: false },
-});
+// Construct a real service client only when the key is actually injected (CI exports it via
+// `supabase status -o env`). Never fabricate a dummy credential. The DB-backed block below is
+// gated on `isLiveDb` (which requires SERVICE_ROLE_KEY), so `db` is never exercised at runtime
+// when null — the contained cast keeps the rest of the suite type-safe without a fake key.
+const db = SERVICE_ROLE_KEY
+  ? createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+  : (null as unknown as ReturnType<typeof createClient>);
 
 const sampleFileCheck = path.resolve(
   process.cwd(),

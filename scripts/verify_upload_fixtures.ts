@@ -150,6 +150,60 @@ async function run() {
   console.log(`Validation errors on Invalid BOID fixture: ${boidErrors.length}`);
   boidErrors.forEach((e) => console.log(`  Row ${e.row}: ${e.message} (${e.type})`));
 
+  // 9. Sheet-Type Precedence & Normalization (locks excel-parser detection ordering)
+  console.log("\n--- 9. Testing Sheet-Type Precedence & Normalization ---");
+  const precedenceWb = XLSX.utils.book_new();
+  const precedenceDataRow = [
+    {
+      BOID: "1301020000000101",
+      "Shareholder Name": "Precedence Test Holder",
+      Kitta: 100,
+      "Gross Dividend": 1000,
+      "Tax Amount": 50,
+      "Net Dividend": 950,
+    },
+  ];
+  // [sheetName, expected sheet type] — must match excel-parser parseSingleSheet precedence.
+  const precedenceCases: Array<[string, string]> = [
+    ["Dividend_Payables", "PUBLIC"], // statutory default via DIVIDEND/PAYABLE
+    ["Mutual_Fund_Distribution", "TAX_EXEMPTED"], // mutual fund signal
+    ["DIVIDEND_INSTITUTION", "INSTITUTION"], // INSTITUTION beats the DIVIDEND default
+    ["LOCAL_INSTITUTION", "INSTITUTION"], // INSTITUTION beats LOCAL (precedence fix)
+    ["Ordinary_Shares", "PUBLIC"], // ORDINARY / EQUITY → PUBLIC
+    ["Promoter_Holdings", "PROMOTER"],
+    ["Debenture_Tax_Exempted", "TAX_EXEMPTED"],
+    ["Private_Placement_Notes", "PRIVATE"],
+  ];
+  for (const [sheetName] of precedenceCases) {
+    XLSX.utils.book_append_sheet(
+      precedenceWb,
+      XLSX.utils.json_to_sheet(precedenceDataRow),
+      sheetName,
+    );
+  }
+  const precedenceBuf = XLSX.write(precedenceWb, { type: "buffer", bookType: "xlsx" });
+  const precParsed = await ExcelParser.parseBuffer(precedenceBuf, "precedence_dividend.xlsx");
+  const typeBySheet: Record<string, string> = {};
+  for (const s of precParsed.sheets) typeBySheet[s.sheetName] = s.sheetType;
+
+  let precedenceFailures = 0;
+  for (const [sheetName, expected] of precedenceCases) {
+    const actual = typeBySheet[sheetName];
+    const ok = actual === expected;
+    console.log(
+      `  Sheet "${sheetName}" -> ${actual} (expected ${expected}) ${ok ? "PASS" : "FAIL"}`,
+    );
+    if (!ok) {
+      precedenceFailures++;
+      console.error(`    MISMATCH: expected ${expected}, got ${actual}`);
+    }
+  }
+  if (precedenceFailures > 0) {
+    throw new Error(
+      `Sheet-type precedence verification: ${precedenceFailures} assertion(s) failed`,
+    );
+  }
+
   console.log("\n=== VERIFICATION FINISHED SUCCESSFULLY ===");
 }
 
