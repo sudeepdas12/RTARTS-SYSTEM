@@ -1349,7 +1349,9 @@ function InterestPage() {
                             className="h-6 text-[11px] text-primary hover:underline px-2"
                             onClick={() => {
                               const gross = Number(form.gross_interest) || 0;
-                              const selectedClient = clients.find((c) => c.id === form.client_id);
+                              const selectedClient = clients.find(
+                                (c) => c.id === form.client_id,
+                              ) as any;
                               const isInst =
                                 selectedClient?.holder_type === "Institution" ||
                                 selectedClient?.payee_classification === "COMPANY_INSTITUTION";
@@ -1677,7 +1679,9 @@ function InterestPage() {
               <div className="text-xl font-bold font-mono tracking-tight mt-1">
                 NPR {fmt(totals.gross)}
               </div>
-              <div className="text-[11px] text-muted-foreground mt-0.5">Pre-tax interest pool</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">
+                Gross pre-tax coupon entitlement
+              </div>
             </div>
             <div className="h-10 w-10 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-600 shrink-0">
               <Coins className="h-5 w-5" />
@@ -1695,8 +1699,7 @@ function InterestPage() {
                 NPR {fmt(totals.tax)}
               </div>
               <div className="text-[11px] text-muted-foreground mt-0.5">
-                {debentureDisplayRates.publicRatePct}% / {debentureDisplayRates.institutionRatePct}%
-                TDS rate
+                Statutory coupon tax withholding
               </div>
             </div>
             <div className="h-10 w-10 rounded-full bg-rose-500/10 flex items-center justify-center text-rose-600 shrink-0">
@@ -1720,7 +1723,7 @@ function InterestPage() {
                 </span>
                 <span className="text-muted-foreground font-sans">·</span>
                 <span className="text-rose-600 font-medium">
-                  Due: NPR {fmt(totals.remaining ?? 0)}
+                  Remaining: NPR {fmt(totals.remaining ?? 0)}
                 </span>
               </div>
             </div>
@@ -1757,19 +1760,8 @@ function InterestPage() {
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground leading-normal">
-                Holder-wise debenture capital &amp; coupon breakdown: Natural Persons (
-                <span className="font-medium text-foreground">
-                  {debentureDisplayRates.publicRatePct}% TDS
-                </span>
-                ), Institutions (
-                <span className="font-medium text-foreground">
-                  {debentureDisplayRates.institutionRatePct}% TDS
-                </span>
-                ), Tax-Exempt Funds (
-                <span className="font-medium text-foreground">
-                  {debentureDisplayRates.exemptRatePct}% TDS
-                </span>
-                )
+                Debenture principal and coupon interest breakdown categorized by investor tax class
+                (Natural Persons, Institutions, Tax-Exempt Funds).
               </p>
             </div>
           </div>
@@ -1950,31 +1942,31 @@ function InterestPage() {
               <table className="w-full text-xs text-left border-collapse whitespace-nowrap">
                 <thead>
                   <tr className="bg-muted/80 text-foreground font-semibold border-b border-border divide-x border-border">
-                    <th className="py-2.5 px-3 uppercase text-[11px] whitespace-nowrap min-w-[140px]">
-                      CATEGORY
+                    <th className="py-2.5 px-3 text-[11px] whitespace-nowrap min-w-[140px]">
+                      Holder Category
                     </th>
-                    <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
-                      KITTA
+                    <th className="py-2.5 px-3 text-right text-[11px] whitespace-nowrap">
+                      Debentures (Units)
                     </th>
-                    <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
-                      AMOUNT
+                    <th className="py-2.5 px-3 text-right text-[11px] whitespace-nowrap">
+                      Principal Amount
                     </th>
-                    <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
+                    <th className="py-2.5 px-3 text-right text-[11px] whitespace-nowrap">
                       {debentureSummaryReport.couponRate > 0
-                        ? `INT. @ ${debentureSummaryReport.couponRate}%`
-                        : "ANNUAL INT."}
+                        ? `Annual Coupon (${debentureSummaryReport.couponRate}%)`
+                        : "Annual Coupon"}
                     </th>
-                    <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
-                      INT. PER DAY
+                    <th className="py-2.5 px-3 text-right text-[11px] whitespace-nowrap">
+                      Interest Per Day
                     </th>
-                    <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
-                      INTEREST PUMORI
+                    <th className="py-2.5 px-3 text-right text-[11px] whitespace-nowrap">
+                      Interest (Pumori)
                     </th>
-                    <th className="py-2.5 px-3 text-right uppercase text-[11px] whitespace-nowrap">
-                      TAX
+                    <th className="py-2.5 px-3 text-right text-[11px] whitespace-nowrap">
+                      TDS Tax
                     </th>
-                    <th className="py-2.5 px-3 text-right uppercase text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200 whitespace-nowrap">
-                      NET INTEREST PAYABLE
+                    <th className="py-2.5 px-3 text-right text-[11px] bg-emerald-100/70 text-emerald-950 dark:bg-emerald-950/60 dark:text-emerald-200 whitespace-nowrap">
+                      Net Interest Payable
                     </th>
                   </tr>
                 </thead>
@@ -2070,7 +2062,7 @@ function InterestPage() {
             <span className="font-semibold text-foreground">
               {pageResult.count.toLocaleString()}
             </span>{" "}
-            payables
+            payable records
           </div>
         </CardHeader>
         <CardContent className="p-4">
