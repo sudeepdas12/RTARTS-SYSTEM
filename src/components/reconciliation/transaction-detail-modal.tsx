@@ -21,6 +21,7 @@ import {
   XCircle,
   HelpCircle,
   ShieldAlert,
+  FileText,
 } from "lucide-react";
 
 interface TransactionDetailModalProps {
@@ -28,6 +29,7 @@ interface TransactionDetailModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onRemediate?: (match: ReconciliationMatch) => void;
+  onViewStatement?: (boid: string) => void;
 }
 
 export function TransactionDetailModal({
@@ -35,6 +37,7 @@ export function TransactionDetailModal({
   open,
   onOpenChange,
   onRemediate,
+  onViewStatement,
 }: TransactionDetailModalProps) {
   if (!match) return null;
 
@@ -265,8 +268,8 @@ export function TransactionDetailModal({
           </div>
         </div>
 
-        <DialogFooter className="border-t pt-3 flex items-center justify-between">
-          <div>
+        <DialogFooter className="border-t pt-3 flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
             {isRejected && onRemediate && (
               <Button
                 variant="outline"
@@ -279,6 +282,19 @@ export function TransactionDetailModal({
               >
                 <CreditCard className="w-3.5 h-3.5 mr-1" />
                 Remediate Bank Account
+              </Button>
+            )}
+            {match.boid && onViewStatement && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs text-primary border-primary/30 hover:bg-primary/5 cursor-pointer flex items-center gap-1.5"
+                onClick={() => {
+                  onViewStatement(match.boid);
+                }}
+              >
+                <FileText className="w-3.5 h-3.5" />
+                View Full Shareholder Statement
               </Button>
             )}
           </div>

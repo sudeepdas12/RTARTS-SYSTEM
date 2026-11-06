@@ -85,6 +85,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { TransactionDetailModal } from "@/components/reconciliation/transaction-detail-modal";
+import { ShareholderStatementDialog } from "@/components/shareholder-statement-dialog";
 import { ReconciliationGroupedLot } from "@/lib/services/reconciliation.service";
 import {
   AccountRemediationDialog,
@@ -161,6 +162,7 @@ export function ReconciliationRoute() {
   const [variantAlerts, setVariantAlerts] = useState<FileVariantWarning[]>([]);
   const [viewMode, setViewMode] = useState<"table" | "cards">("table");
   const [inspectingMatch, setInspectingMatch] = useState<ReconciliationMatch | null>(null);
+  const [selectedStatementBoid, setSelectedStatementBoid] = useState<string | null>(null);
   const [companySelectModalOpen, setCompanySelectModalOpen] = useState<boolean>(false);
   const [pendingFilesToProcess, setPendingFilesToProcess] = useState<{
     files: File[];
@@ -3943,6 +3945,16 @@ export function ReconciliationRoute() {
         onRemediate={(m) => {
           setInspectingMatch(null);
           openRemediationForMatches();
+        }}
+        onViewStatement={(boid) => setSelectedStatementBoid(boid)}
+      />
+
+      {/* Shareholder Multi-Year Distribution & Payout Statement */}
+      <ShareholderStatementDialog
+        boid={selectedStatementBoid}
+        open={Boolean(selectedStatementBoid)}
+        onOpenChange={(open) => {
+          if (!open) setSelectedStatementBoid(null);
         }}
       />
 

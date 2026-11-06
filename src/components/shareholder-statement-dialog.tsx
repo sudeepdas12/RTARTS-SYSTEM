@@ -27,7 +27,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Download, User, Building2, Printer } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Download, User, Building2, Printer, Search, Filter, RotateCcw } from "lucide-react";
 import { ExcelExporter } from "@/lib/excel-exporter";
 import { format } from "date-fns";
 import { toast } from "sonner";
@@ -58,6 +59,8 @@ export function ShareholderStatementDialog({
   onOpenChange,
 }: ShareholderStatementDialogProps) {
   const [selectedCompany, setSelectedCompany] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState<string>("");
 
   const isUuid = (val?: string | null) =>
     Boolean(
@@ -163,34 +166,48 @@ export function ShareholderStatementDialog({
 
       if (clientIds.length === 0) return [];
 
-      // 1. Fetch Payments to link actual payment references and dates
-      const { data: paymentRows } = await (supabase as any)
+      // 1. Fetch Payables across all modules in parallel for maximum speed
+      const [{ data: interestRows }, { data: dividendRows }, { data: mutualFundRows }] =
+        await Promise.all([
+          (supabase as any)
+            .from("interest_payables")
+            .select("*, company:companies(company_name, company_code)")
+            .in("client_id", clientIds),
+          (supabase as any)
+            .from("dividend_payables")
+            .select("*, company:companies(company_name, company_code)")
+            .in("client_id", clientIds),
+          (supabase as any)
+            .from("mutual_fund_payables")
+            .select("*, company:companies(company_name, company_code)")
+            .in("client_id", clientIds),
+        ]);
+
+      // 2. Collect all payable IDs to ensure 100% of payments (by client OR by payable) are linked
+      const allPayableIds = [
+        ...(interestRows || []),
+        ...(dividendRows || []),
+        ...(mutualFundRows || []),
+      ].map((r: any) => r.id);
+
+      const paymentMap = new Map<string, any>();
+      const { data: paymentRowsByClient } = await (supabase as any)
         .from("payments")
         .select("*")
         .in("client_id", clientIds);
-
-      const paymentMap = new Map<string, any>();
-      for (const p of paymentRows || []) {
+      for (const p of paymentRowsByClient || []) {
         if (p.payable_id) paymentMap.set(p.payable_id, p);
       }
 
-      // 2. Fetch Interest Payables across all companies
-      const { data: interestRows } = await (supabase as any)
-        .from("interest_payables")
-        .select("*, company:companies(company_name, company_code)")
-        .in("client_id", clientIds);
-
-      // 3. Fetch Dividend Payables across all companies
-      const { data: dividendRows } = await (supabase as any)
-        .from("dividend_payables")
-        .select("*, company:companies(company_name, company_code)")
-        .in("client_id", clientIds);
-
-      // 4. Fetch Mutual Fund Payables across all schemes
-      const { data: mutualFundRows } = await (supabase as any)
-        .from("mutual_fund_payables")
-        .select("*, company:companies(company_name, company_code)")
-        .in("client_id", clientIds);
+      if (allPayableIds.length > 0) {
+        const { data: paymentRowsByPayable } = await (supabase as any)
+          .from("payments")
+          .select("*")
+          .in("payable_id", allPayableIds);
+        for (const p of paymentRowsByPayable || []) {
+          if (p.payable_id) paymentMap.set(p.payable_id, p);
+        }
+      }
 
       const records: Array<{
         id: string;
@@ -383,19 +400,49 @@ export function ShareholderStatementDialog({
       for (const r of mutualFundRows || []) {
         const linkedPay = paymentMap.get(r.id);
         const netAmt = Number(r.net_payable || 0);
-        const isPaid =
-          r.payment_status === "Paid" || (!r.payment_status && linkedPay?.status === "Completed");
-        const paidAmt = isPaid ? netAmt : 0;
-        const remAmt = isPaid ? 0 : netAmt;
+        let displayStatus =
+          r.payment_status || (linkedPay?.status === "Completed" ? "Paid" : "Pending");
+        if (displayStatus === "Pending" && linkedPay?.status === "Reversed") {
+          displayStatus = "RTS Payable (Reversed)";
+        } else if (displayStatus === "Pending" && linkedPay?.status === "Failed") {
+          displayStatus = "Failed";
+        }
+
+        let paidAmt = Number(
+          r.paid_amount != null
+            ? r.paid_amount
+            : displayStatus === "Paid"
+              ? netAmt
+              : linkedPay?.status === "Completed"
+                ? Number(linkedPay.amount) || netAmt
+                : 0,
+        );
+        let remAmt = Number(
+          r.remaining_amount != null
+            ? r.remaining_amount
+            : displayStatus === "Paid"
+              ? 0
+              : Math.max(0, netAmt - paidAmt),
+        );
+        if (displayStatus === "Paid") {
+          paidAmt = netAmt;
+          remAmt = 0;
+        } else if (displayStatus === "Pending" && paidAmt === 0) {
+          remAmt = netAmt;
+        }
+
         const baseKitta = Number(r.shares_held || 0);
+        const distType = r.dividend_type
+          ? `Mutual Fund (${r.dividend_type})`
+          : "Mutual Fund Dividend";
 
         records.push({
           id: r.id,
-          type: "Mutual Fund",
+          type: distType,
           companyId: r.company_id || null,
           companyCode: r.company?.company_code || "MF",
           companyName: r.company?.company_name || "Mutual Funds",
-          fiscalYear: r.fiscal_year || "2081/82",
+          fiscalYear: r.fiscal_year || "2082/83",
           kitta: baseKitta,
           baseKitta,
           bonusKitta: 0,
@@ -406,13 +453,13 @@ export function ShareholderStatementDialog({
           netAmount: netAmt,
           paidAmount: paidAmt,
           remainingAmount: remAmt,
-          status: r.payment_status || (linkedPay ? "Paid" : "Pending"),
+          status: displayStatus,
           paymentDate: r.payment_date || linkedPay?.payment_date || null,
           paymentRef:
             r.payment_reference ||
             linkedPay?.payment_reference ||
             linkedPay?.connectips_ref ||
-            null,
+            (displayStatus === "Paid" ? "RECON-AUTO" : null),
           bankDetails: r.bank_account_no ? `${r.bank_name || ""} (${r.bank_account_no})` : null,
           remarks: r.remarks || null,
         });
@@ -546,9 +593,27 @@ export function ShareholderStatementDialog({
   }, [statementRecords]);
 
   const filteredRecords = useMemo(() => {
-    if (selectedCompany === "all") return statementRecords;
-    return statementRecords.filter((r) => r.companyName === selectedCompany);
-  }, [statementRecords, selectedCompany]);
+    return statementRecords.filter((r) => {
+      const matchCompany = selectedCompany === "all" || r.companyName === selectedCompany;
+      const matchStatus =
+        statusFilter === "all" ||
+        (statusFilter === "Paid" && r.status === "Paid") ||
+        (statusFilter === "Pending" && (r.status === "Pending" || r.status.includes("Pending"))) ||
+        (statusFilter === "Partial" && r.status === "Partial") ||
+        (statusFilter === "Failed" &&
+          (r.status.toLowerCase().includes("failed") ||
+            r.status.toLowerCase().includes("reject") ||
+            r.status.toLowerCase().includes("reversed")));
+      const matchSearch =
+        !searchQuery ||
+        (r.fiscalYear && r.fiscalYear.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (r.type && r.type.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (r.paymentRef && r.paymentRef.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (r.companyName && r.companyName.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (r.remarks && r.remarks.toLowerCase().includes(searchQuery.toLowerCase()));
+      return matchCompany && matchStatus && matchSearch;
+    });
+  }, [statementRecords, selectedCompany, statusFilter, searchQuery]);
 
   const totals = useMemo(() => {
     let gross = 0,
@@ -560,16 +625,16 @@ export function ShareholderStatementDialog({
       gross += r.grossAmount;
       tax += r.taxAmount;
       net += r.netAmount;
-      paid += Number(r.paidAmount != null ? r.paidAmount : r.status === "Paid" ? r.netAmount : 0);
-      pending += Number(
-        r.remainingAmount != null
-          ? r.remainingAmount
-          : r.status === "Paid"
-            ? 0
-            : Math.max(0, r.netAmount - (r.paidAmount || 0)),
-      );
+      paid += Number(r.paidAmount || 0);
+      pending += Number(r.remainingAmount || 0);
     }
-    return { gross, tax, net, paid, pending };
+    return {
+      gross: Math.round(gross * 100) / 100,
+      tax: Math.round(tax * 100) / 100,
+      net: Math.round(net * 100) / 100,
+      paid: Math.round(paid * 100) / 100,
+      pending: Math.round(pending * 100) / 100,
+    };
   }, [filteredRecords]);
 
   const isMultiCompany = useMemo(() => {
@@ -1155,32 +1220,71 @@ export function ShareholderStatementDialog({
           </Card>
         </div>
 
-        {/* Multi-Company Selector (if shareholder has investments in multiple companies) */}
-        {distinctCompanies.length > 1 && (
-          <div className="flex items-center justify-between bg-muted/40 p-2.5 rounded-lg border text-xs no-print print:hidden">
-            <div className="flex items-center gap-2">
-              <Building2 className="h-4 w-4 text-primary" />
-              <span className="font-semibold text-foreground">Filter by Company / Scheme:</span>
-              <Badge variant="outline" className="font-mono text-[10px]">
-                {distinctCompanies.length} Companies in Portfolio
-              </Badge>
-            </div>
-            <Select value={selectedCompany} onValueChange={setSelectedCompany}>
-              <SelectTrigger className="h-8 w-60 text-xs bg-background">
-                <SelectValue placeholder="All Companies" />
+        {/* Interactive Filter & Search Toolbar */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5 bg-muted/30 p-2.5 rounded-lg border text-xs no-print print:hidden">
+          <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[280px]">
+            {distinctCompanies.length > 1 && (
+              <Select value={selectedCompany} onValueChange={setSelectedCompany}>
+                <SelectTrigger className="h-8 w-52 text-xs bg-background">
+                  <SelectValue placeholder="All Companies" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Companies / Schemes (360°)</SelectItem>
+                  {distinctCompanies.map((c) => (
+                    <SelectItem key={c.name} value={c.name}>
+                      {c.code ? `${c.code} — ` : ""}
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="h-8 w-36 text-xs bg-background">
+                <SelectValue placeholder="All Statuses" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Companies / Schemes (Unified 360°)</SelectItem>
-                {distinctCompanies.map((c) => (
-                  <SelectItem key={c.name} value={c.name}>
-                    {c.code ? `${c.code} — ` : ""}
-                    {c.name}
-                  </SelectItem>
-                ))}
+                <SelectItem value="all">All Statuses</SelectItem>
+                <SelectItem value="Paid">Paid / Settled</SelectItem>
+                <SelectItem value="Pending">Pending / Due</SelectItem>
+                <SelectItem value="Partial">Partial</SelectItem>
+                <SelectItem value="Failed">Failed / Reversed</SelectItem>
               </SelectContent>
             </Select>
+
+            <div className="relative flex-1 min-w-[160px] max-w-xs">
+              <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Search FY, Ref, Scheme..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="h-8 pl-8 text-xs bg-background"
+              />
+            </div>
+
+            {(statusFilter !== "all" || selectedCompany !== "all" || searchQuery) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+                onClick={() => {
+                  setStatusFilter("all");
+                  setSelectedCompany("all");
+                  setSearchQuery("");
+                }}
+              >
+                <RotateCcw className="w-3.5 h-3.5 mr-1" />
+                Reset
+              </Button>
+            )}
           </div>
-        )}
+
+          <div className="text-right text-[11px] text-muted-foreground font-medium shrink-0">
+            Showing <strong className="text-foreground">{filteredRecords.length}</strong> of{" "}
+            {statementRecords.length} record(s)
+          </div>
+        </div>
 
         {/* Historical Distribution Table */}
         <div className="border rounded-lg overflow-hidden bg-card">
