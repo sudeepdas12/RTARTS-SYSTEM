@@ -269,7 +269,11 @@ function CompaniesPage() {
       const statsMap: Record<string, CompanyLiveStats> = {};
       await Promise.all(
         companyIds.map(async (id) => {
-          const [cRes, dRes, iRes, mRes] = await Promise.all([
+          const [mapRes, cRes, dRes, iRes, mRes] = await Promise.all([
+            (supabase as any)
+              .from("company_client_map")
+              .select("client_id", { count: "exact", head: true })
+              .eq("company_id", id),
             (supabase.from("clients") as any)
               .select("id", { count: "exact", head: true })
               .eq("company_id", id),
@@ -284,7 +288,8 @@ function CompaniesPage() {
               .select("id", { count: "exact", head: true })
               .eq("company_id", id),
           ]);
-          const clients = cRes.count || 0;
+          // Prioritize accurate multi-scheme company_client_map count, fallback to primary client ownership count
+          const clients = mapRes.count != null && mapRes.count > 0 ? mapRes.count : cRes.count || 0;
           const dividends = dRes.count || 0;
           const interests = iRes.count || 0;
           const mutualFunds = mRes.count || 0;
@@ -390,7 +395,14 @@ function CompaniesPage() {
       debenture_rate: c.debenture_rate != null ? c.debenture_rate.toString() : "",
       coupon_rate: c.coupon_rate != null ? c.coupon_rate.toString() : "",
       maturity_date: c.maturity_date ?? "",
-      face_value: c.face_value != null ? c.face_value.toString() : "100",
+      face_value:
+        c.face_value != null
+          ? c.face_value.toString()
+          : c.company_type?.toLowerCase().includes("mutual")
+            ? "10"
+            : c.company_type?.toLowerCase().includes("debenture")
+              ? "1000"
+              : "100",
       issue_size: c.issue_size != null ? c.issue_size.toString() : "",
       interest_tax_status: (c.interest_tax_status ?? "") as TaxStatus | "",
       pan_no: c.pan_no ?? "",
@@ -420,24 +432,45 @@ function CompaniesPage() {
         company_code: form.company_code.trim().toUpperCase(),
         company_name: form.company_name.trim(),
         company_type: form.company_type.trim() || null,
-        isin: form.isin.trim() || null,
+        isin: form.isin.trim() || (editing ? editing.isin : null),
         sector_type: form.sector_type,
         registrar: form.registrar.trim() || "RBB Merchant Banking Limited",
-        fiscal_year: form.fiscal_year.trim() || null,
-        dividend_rate: num(form.dividend_rate),
-        debenture_rate: num(form.debenture_rate),
-        coupon_rate: num(form.coupon_rate),
-        maturity_date: form.maturity_date.trim() || null,
-        face_value: num(form.face_value) ?? defaultFace,
-        issue_size: num(form.issue_size),
-        interest_tax_status: (form.interest_tax_status || null) as TaxStatus | null,
-        pan_no: form.pan_no.trim() || null,
-        bank_name: form.bank_name.trim() || null,
-        bank_account_no: form.bank_account_no.trim() || null,
-        email: form.email.trim() || null,
-        phone: form.phone.trim() || null,
-        website: form.website.trim() || null,
-        address: form.address.trim() || null,
+        fiscal_year: form.fiscal_year.trim() || (editing ? editing.fiscal_year : null),
+        dividend_rate:
+          form.dividend_rate.trim() !== ""
+            ? num(form.dividend_rate)
+            : editing
+              ? editing.dividend_rate
+              : null,
+        debenture_rate:
+          form.debenture_rate.trim() !== ""
+            ? num(form.debenture_rate)
+            : editing
+              ? editing.debenture_rate
+              : null,
+        coupon_rate:
+          form.coupon_rate.trim() !== ""
+            ? num(form.coupon_rate)
+            : editing
+              ? editing.coupon_rate
+              : null,
+        maturity_date: form.maturity_date.trim() || (editing ? editing.maturity_date : null),
+        face_value: num(form.face_value) ?? editing?.face_value ?? defaultFace,
+        issue_size:
+          form.issue_size.trim() !== ""
+            ? num(form.issue_size)
+            : editing
+              ? editing.issue_size
+              : null,
+        interest_tax_status: (form.interest_tax_status ||
+          (editing ? editing.interest_tax_status : null)) as TaxStatus | null,
+        pan_no: form.pan_no.trim() || (editing ? editing.pan_no : null),
+        bank_name: form.bank_name.trim() || (editing ? editing.bank_name : null),
+        bank_account_no: form.bank_account_no.trim() || (editing ? editing.bank_account_no : null),
+        email: form.email.trim() || (editing ? editing.email : null),
+        phone: form.phone.trim() || (editing ? editing.phone : null),
+        website: form.website.trim() || (editing ? editing.website : null),
+        address: form.address.trim() || (editing ? editing.address : null),
         status: form.status,
       };
 

@@ -395,21 +395,35 @@ export const CompanyService = {
     const isDebenture =
       (params.fileType && params.fileType.toLowerCase().includes("debenture")) ||
       /debenture|bond|rinpatra/i.test(existing.company_name);
+    const isMutualFund =
+      (params.fileType &&
+        (params.fileType.toLowerCase().includes("mutual") ||
+          params.fileType.toLowerCase().includes("fund"))) ||
+      /mutual\s*fund|balanced\s*fund|equity\s*fund|growth\s*fund|rmf/i.test(existing.company_name);
 
     const updates: CompanyUpdate = {};
     if (!existing.isin && params.isin) updates.isin = params.isin;
+    if (isMutualFund && (!existing.face_value || existing.face_value === 100)) {
+      updates.face_value = 10;
+    }
     if ((!existing.issue_size || existing.issue_size <= 0) && params.issueSize) {
       updates.issue_size = params.issueSize;
     }
-    if (!existing.fiscal_year && params.fiscalYear) {
+    if (
+      params.fiscalYear &&
+      (!existing.fiscal_year || existing.fiscal_year !== params.fiscalYear)
+    ) {
       updates.fiscal_year = params.fiscalYear;
     }
-    if (!existing.debenture_rate && isDebenture && params.rate) {
-      updates.debenture_rate = params.rate;
-      updates.coupon_rate = params.rate;
-    }
-    if (!existing.dividend_rate && !isDebenture && params.rate) {
-      updates.dividend_rate = params.rate;
+    if (isDebenture && params.rate) {
+      if (!existing.debenture_rate || existing.debenture_rate !== params.rate) {
+        updates.debenture_rate = params.rate;
+        updates.coupon_rate = params.rate;
+      }
+    } else if (params.rate) {
+      if (!existing.dividend_rate || existing.dividend_rate !== params.rate) {
+        updates.dividend_rate = params.rate;
+      }
     }
 
     if (Object.keys(updates).length > 0) {

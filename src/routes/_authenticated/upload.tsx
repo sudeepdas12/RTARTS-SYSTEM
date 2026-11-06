@@ -989,6 +989,7 @@ function UploadRoute() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["companies"] }),
         queryClient.invalidateQueries({ queryKey: ["companies-lookup"] }),
+        queryClient.invalidateQueries({ queryKey: ["companies-live-stats"] }),
         queryClient.invalidateQueries({ queryKey: ["report-companies"] }),
         queryClient.invalidateQueries({ queryKey: ["clients"] }),
         queryClient.invalidateQueries({ queryKey: ["clients-stats"] }),
@@ -1012,6 +1013,9 @@ function UploadRoute() {
         queryClient.invalidateQueries({ queryKey: ["upload-history"] }),
         queryClient.invalidateQueries({ queryKey: ["classification-review-count"] }),
       ]);
+
+      // Refresh materialized multi-scheme company_client_map in background
+      (supabase as any).rpc("refresh_company_client_map").catch(() => {});
 
       if (result.successRows <= 0) {
         throw new Error("Import completed without inserting any rows.");
@@ -1354,6 +1358,7 @@ function UploadRoute() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["companies"] }),
         queryClient.invalidateQueries({ queryKey: ["companies-lookup"] }),
+        queryClient.invalidateQueries({ queryKey: ["companies-live-stats"] }),
         queryClient.invalidateQueries({ queryKey: ["report-companies"] }),
         queryClient.invalidateQueries({ queryKey: ["clients"] }),
         queryClient.invalidateQueries({ queryKey: ["clients-stats"] }),
@@ -1377,6 +1382,9 @@ function UploadRoute() {
         queryClient.invalidateQueries({ queryKey: ["upload-history"] }),
         queryClient.invalidateQueries({ queryKey: ["classification-review-count"] }),
       ]);
+
+      // Refresh materialized multi-scheme company_client_map in background
+      (supabase as any).rpc("refresh_company_client_map").catch(() => {});
 
       if (overallErrors === 0) {
         toast.success(
