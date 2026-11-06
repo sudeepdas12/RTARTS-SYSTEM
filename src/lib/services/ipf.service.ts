@@ -58,6 +58,7 @@ export const IpfService = {
   async getIpfAgingReport(params: {
     companyId?: string;
     asOfDate?: Date;
+    maxPreviewRows?: number;
   }): Promise<IpfSummaryReport> {
     const asOf = params.asOfDate || new Date();
     const asOfTime = asOf.getTime();
@@ -79,51 +80,68 @@ export const IpfService = {
 
     const items: IpfUnclaimedItem[] = [];
 
-    // 2. Fetch Unpaid Dividends (Pending, Failed, Discrepancy) paginated across entire dataset
-    const divData = await fetchAllRows<any>((from, to) => {
-      let q = (supabase as any)
-        .from("dividend_payables")
-        .select(
-          "*, company:companies(company_name, company_code), client:clients(id, full_name, boid, phone)",
-        )
-        .in("payment_status", ["Pending", "Partial"])
-        .order("created_at", { ascending: false })
-        .range(from, to);
+    const processRows = (rows: any[], paymentType: "MUTUAL_FUND" | "DIVIDEND" | "INTEREST") => {
+      for (const d of rows || []) {
+        const declaredDateStr = d.payment_date || d.created_at?.split("T")[0] || "2020-01-01";
+        const declaredTime = new Date(declaredDateStr).getTime();
+        const diffMs = Math.max(0, asOfTime - declaredTime);
+        const daysUnclaimed = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        const yearsUnclaimed = Math.round((daysUnclaimed / 365.25) * 10) / 10;
+        const isIpfEligible = daysUnclaimed >= 1825; // 5 years
 
-      if (params.companyId && params.companyId !== "all") {
-        q = q.eq("company_id", params.companyId);
+        items.push({
+          id: d.id,
+          boid: d.client?.boid || "N/A",
+          shareholderName: d.client?.full_name || "Unknown Investor",
+          companyName: d.company?.company_name || companyName,
+          companyCode: d.company?.company_code || companyCode,
+          fiscalYear: d.fiscal_year || "N/A",
+          paymentType,
+          declaredDate: declaredDateStr,
+          grossAmount: Number(d.gross_dividend || d.gross_interest || 0),
+          taxAmount: Number(d.tax_amount || 0),
+          netPayable: Number(d.net_payable || 0),
+          daysUnclaimed,
+          yearsUnclaimed,
+          isIpfEligible,
+          bankName: d.bank_name || undefined,
+          bankAccountNo: d.bank_account_no || undefined,
+          remarks: d.remarks || undefined,
+        });
       }
-      return q;
-    });
+    };
 
-    for (const d of divData || []) {
-      const declaredDateStr = d.payment_date || d.created_at?.split("T")[0] || "2020-01-01";
-      const declaredTime = new Date(declaredDateStr).getTime();
-      const diffMs = Math.max(0, asOfTime - declaredTime);
-      const daysUnclaimed = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-      const yearsUnclaimed = Math.round((daysUnclaimed / 365.25) * 10) / 10;
-      const isIpfEligible = daysUnclaimed >= 1825; // 5 years
+    const previewCap = params.maxPreviewRows ?? 200;
 
-      items.push({
-        id: d.id,
-        boid: d.client?.boid || "N/A",
-        shareholderName: d.client?.full_name || "Unknown Investor",
-        companyName: d.company?.company_name || companyName,
-        companyCode: d.company?.company_code || companyCode,
-        fiscalYear: d.fiscal_year || "N/A",
-        paymentType: "DIVIDEND",
-        declaredDate: declaredDateStr,
-        grossAmount: Number(d.gross_dividend || 0),
-        taxAmount: Number(d.tax_amount || 0),
-        netPayable: Number(d.net_payable || 0),
-        daysUnclaimed,
-        yearsUnclaimed,
-        isIpfEligible,
-        bankName: d.bank_name || undefined,
-        bankAccountNo: d.bank_account_no || undefined,
-        remarks: d.remarks || undefined,
-      });
+    // 2a. Fetch Unpaid Dividends (Pending, Partial)
+    let divQ = (supabase as any)
+      .from("dividend_payables")
+      .select(
+        "*, company:companies(company_name, company_code), client:clients(id, full_name, boid, phone)",
+      )
+      .in("payment_status", ["Pending", "Partial"])
+      .order("created_at", { ascending: false })
+      .limit(previewCap);
+    if (params.companyId && params.companyId !== "all") {
+      divQ = divQ.eq("company_id", params.companyId);
     }
+    const divRes = await divQ;
+    processRows(divRes.data || [], "DIVIDEND");
+
+    // 2b. Fetch Unpaid Mutual Funds (Pending, Partial)
+    let mfQ = (supabase as any)
+      .from("mutual_fund_payables")
+      .select(
+        "*, company:companies(company_name, company_code), client:clients(id, full_name, boid, phone)",
+      )
+      .in("payment_status", ["Pending", "Partial"])
+      .order("created_at", { ascending: false })
+      .limit(previewCap);
+    if (params.companyId && params.companyId !== "all") {
+      mfQ = mfQ.eq("company_id", params.companyId);
+    }
+    const mfRes = await mfQ;
+    processRows(mfRes.data || [], "MUTUAL_FUND");
 
     // 3. Build Aging Buckets
     const b1 = { label: "< 1 Year (Fresh)", count: 0, totalAmount: 0, isEligibleForIpf: false };

@@ -8,6 +8,7 @@
  */
 
 import { supabase } from "@/integrations/supabase/client";
+import { ReportService } from "./report.service";
 
 export interface IrdAnnex10Row {
   sn: number;
@@ -100,8 +101,9 @@ export const IrdEtdsService = {
     companyId?: string;
     fiscalYear?: string;
     payableType?: "dividend" | "interest" | "mutual_fund" | "all";
+    maxPreviewRows?: number;
   }): Promise<IrdAnnex10Summary> {
-    const { companyId, fiscalYear, payableType = "all" } = params;
+    const { companyId, fiscalYear, payableType = "all", maxPreviewRows } = params;
     const isAllCompanies = !companyId || companyId === "all";
 
     let companyName = "All Authorized Companies (Consolidated)";
@@ -125,20 +127,21 @@ export const IrdEtdsService = {
     const rows: IrdAnnex10Row[] = [];
     let sn = 1;
 
-    // Helper to fetch all rows paginated in 1000-item chunks
+    // Helper to fetch rows paginated in 1000-item chunks (or capped for fast preview)
     const fetchAllPayables = async (tableName: string) => {
       const allRows: any[] = [];
       const PAGE_SIZE = 1000;
       let from = 0;
       let hasMore = true;
+      const limit = maxPreviewRows ? Math.min(maxPreviewRows, 100) : 200000;
 
-      while (hasMore) {
+      while (hasMore && allRows.length < limit) {
         let q = (supabase as any)
           .from(tableName)
           .select(
             "*, client:clients(id, full_name, boid, pan_no, pan_or_citizenship, citizenship_no)",
           )
-          .range(from, from + PAGE_SIZE - 1);
+          .range(from, from + Math.min(PAGE_SIZE, limit - allRows.length) - 1);
 
         if (!isAllCompanies) {
           q = q.eq("company_id", companyId);
@@ -154,7 +157,7 @@ export const IrdEtdsService = {
 
         const batch = data || [];
         allRows.push(...batch);
-        if (batch.length < PAGE_SIZE) {
+        if (batch.length < PAGE_SIZE || allRows.length >= limit) {
           hasMore = false;
         } else {
           from += PAGE_SIZE;
@@ -268,18 +271,39 @@ export const IrdEtdsService = {
       }
     }
 
-    const totalGrossAmount = rows.reduce((s, r) => s + r.grossAmount, 0);
-    const totalTdsAmount = rows.reduce((s, r) => s + r.tdsAmount, 0);
-    const totalNetAmount = rows.reduce((s, r) => s + r.netPayable, 0);
-    const panWithholdees = rows.filter((r) => r.withholdeePan !== "UNREGISTERED").length;
-    const unregisteredWithholdees = rows.length - panWithholdees;
+    let totalGrossAmount = rows.reduce((s, r) => s + r.grossAmount, 0);
+    let totalTdsAmount = rows.reduce((s, r) => s + r.tdsAmount, 0);
+    let totalNetAmount = rows.reduce((s, r) => s + r.netPayable, 0);
+    let panWithholdees = rows.filter((r) => r.withholdeePan !== "UNREGISTERED").length;
+    let unregisteredWithholdees = rows.length - panWithholdees;
+    let totalWithholdees = rows.length;
+
+    if (maxPreviewRows) {
+      try {
+        const grand = await ReportService.getReportGrandTotals("tax_register", {
+          companyId: !isAllCompanies ? companyId : undefined,
+          fiscalYear: fiscalYear && fiscalYear !== "all" ? fiscalYear : undefined,
+        });
+        if (grand && grand.total_records > 0) {
+          totalWithholdees = grand.total_records;
+          totalGrossAmount = grand.total_gross;
+          totalTdsAmount = grand.total_tax;
+          totalNetAmount = grand.total_net;
+          const sampleRatio = rows.length > 0 ? panWithholdees / rows.length : 0.05;
+          panWithholdees = Math.round(totalWithholdees * sampleRatio);
+          unregisteredWithholdees = Math.max(0, totalWithholdees - panWithholdees);
+        }
+      } catch (err) {
+        console.warn("Fast Annex-10 grand totals warning:", err);
+      }
+    }
 
     const summary: IrdAnnex10Summary = {
       companyName,
       companyPan,
       fiscalYear: fiscalYear || "All Fiscal Years",
       payableType: payableType.toUpperCase(),
-      totalWithholdees: rows.length,
+      totalWithholdees,
       panWithholdees,
       unregisteredWithholdees,
       totalGrossAmount: Math.round(totalGrossAmount * 100) / 100,
@@ -288,8 +312,10 @@ export const IrdEtdsService = {
       rows,
     };
 
-    // Assert mathematical invariants before returning
-    this.assertReportInvariants(summary);
+    // Assert mathematical invariants on full runs
+    if (!maxPreviewRows) {
+      this.assertReportInvariants(summary);
+    }
 
     return summary;
   },

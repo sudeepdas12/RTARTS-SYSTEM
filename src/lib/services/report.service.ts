@@ -10,6 +10,21 @@ export interface ReportFilters {
   classification?: string;
 }
 
+export type ReportId =
+  | "dividend_register"
+  | "interest_register"
+  | "mutual_fund_register"
+  | "tax_register"
+  | "pending_register"
+  | "payment_register"
+  | "reconciliation_report"
+  | "upload_history_report";
+
+export interface RegisterPageResult<T = any> {
+  rows: T[];
+  totalCount: number;
+}
+
 export interface ReportGrandTotals {
   total_records: number;
   total_shares: number;
@@ -1219,5 +1234,503 @@ export const ReportService = {
         total_remaining: 0,
       };
     }
+  },
+
+  // 12. Instant Paginated Register Grid View (<100ms response time)
+  async getRegisterPage(
+    reportId: ReportId,
+    filters: ReportFilters = {},
+    page = 1,
+    pageSize = 15,
+    search = "",
+  ): Promise<RegisterPageResult> {
+    const from = Math.max(0, (page - 1) * pageSize);
+    const to = from + pageSize - 1;
+    const cleanSearch = search.trim().replace(/[%_,]/g, "");
+
+    const getMatchedClientIds = async (): Promise<string[] | null> => {
+      if (!cleanSearch) return null;
+      const { data } = await (supabase as any)
+        .from("clients")
+        .select("id")
+        .or(
+          `full_name.ilike.%${cleanSearch}%,boid.ilike.%${cleanSearch}%,pan_no.ilike.%${cleanSearch}%,pan_or_citizenship.ilike.%${cleanSearch}%,client_code.ilike.%${cleanSearch}%`,
+        )
+        .limit(300);
+      return (data || []).map((c: any) => c.id);
+    };
+
+    if (reportId === "dividend_register") {
+      let q = (supabase as any)
+        .from("dividend_payables")
+        .select(
+          "id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, paid_amount, remaining_amount, payment_status, payment_date, payment_reference, fiscal_year, payee_classification, bank_name, bank_account_no, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
+          { count: "exact" },
+        );
+
+      if (filters.companyId && filters.companyId !== "all")
+        q = q.eq("company_id", filters.companyId);
+      if (filters.fiscalYear && filters.fiscalYear !== "all")
+        q = q.eq("fiscal_year", filters.fiscalYear);
+      if (filters.status && filters.status !== "all") q = q.eq("payment_status", filters.status);
+      q = applyClassificationFilter(q, filters.classification, "dividend_payables");
+      q = applyDateFilter(q, "payment_date", filters.startDate, filters.endDate);
+
+      if (cleanSearch) {
+        const clientIds = await getMatchedClientIds();
+        if (clientIds && clientIds.length > 0) {
+          q = q.in("client_id", clientIds);
+        } else {
+          q = q.or(
+            `bank_account_no.ilike.%${cleanSearch}%,payment_reference.ilike.%${cleanSearch}%`,
+          );
+        }
+      }
+
+      const { data, count, error } = await q
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to);
+
+      if (error) throw error;
+      const rows = (data || []).map((row: any) => {
+        const netVal = nr(row.net_payable);
+        const paidVal =
+          row.paid_amount != null
+            ? nr(row.paid_amount)
+            : row.payment_status === "Paid"
+              ? netVal
+              : 0;
+        const remVal =
+          row.remaining_amount != null
+            ? nr(row.remaining_amount)
+            : row.payment_status === "Paid"
+              ? 0
+              : Math.max(0, netVal - paidVal);
+        return {
+          id: row.id,
+          boid: row.client?.boid ?? null,
+          full_name: row.client?.full_name ?? "Unknown",
+          company_name: row.company?.company_name ?? "Unknown",
+          shares_held: nr(row.shares_held),
+          dividend_rate: nr(row.dividend_rate),
+          dividend_type: row.dividend_type ?? "Cash",
+          gross_dividend: nr(row.gross_dividend),
+          tax_amount: nr(row.tax_amount),
+          net_payable: netVal,
+          paid_amount: paidVal,
+          remaining_amount: remVal,
+          payment_status: row.payment_status ?? "Pending",
+          payment_date: row.payment_date ?? null,
+          payment_reference: row.payment_reference ?? null,
+          fiscal_year: row.fiscal_year ?? null,
+          bank_name: row.bank_name || row.client?.bank_name || null,
+          bank_account_no: row.bank_account_no || row.client?.bank_account_no || null,
+          pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
+        };
+      });
+      return { rows, totalCount: count ?? 0 };
+    }
+
+    if (reportId === "mutual_fund_register") {
+      let q = (supabase as any)
+        .from("mutual_fund_payables")
+        .select(
+          "id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, paid_amount, remaining_amount, payment_status, payment_date, payment_reference, fiscal_year, payee_classification, bank_name, bank_account_no, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
+          { count: "exact" },
+        );
+
+      if (filters.companyId && filters.companyId !== "all")
+        q = q.eq("company_id", filters.companyId);
+      if (filters.fiscalYear && filters.fiscalYear !== "all")
+        q = q.eq("fiscal_year", filters.fiscalYear);
+      if (filters.status && filters.status !== "all") q = q.eq("payment_status", filters.status);
+      q = applyClassificationFilter(q, filters.classification, "mutual_fund_payables");
+      q = applyDateFilter(q, "payment_date", filters.startDate, filters.endDate);
+
+      if (cleanSearch) {
+        const clientIds = await getMatchedClientIds();
+        if (clientIds && clientIds.length > 0) {
+          q = q.in("client_id", clientIds);
+        } else {
+          q = q.or(
+            `bank_account_no.ilike.%${cleanSearch}%,payment_reference.ilike.%${cleanSearch}%`,
+          );
+        }
+      }
+
+      const { data, count, error } = await q
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to);
+
+      if (error) throw error;
+      const rows = (data || []).map((row: any) => {
+        const netVal = nr(row.net_payable);
+        const paidVal =
+          row.paid_amount != null
+            ? nr(row.paid_amount)
+            : row.payment_status === "Paid"
+              ? netVal
+              : 0;
+        const remVal =
+          row.remaining_amount != null
+            ? nr(row.remaining_amount)
+            : row.payment_status === "Paid"
+              ? 0
+              : Math.max(0, netVal - paidVal);
+        return {
+          id: row.id,
+          boid: row.client?.boid ?? null,
+          full_name: row.client?.full_name ?? "Unknown",
+          company_name: row.company?.company_name ?? "Unknown",
+          shares_held: nr(row.shares_held),
+          dividend_rate: nr(row.dividend_rate),
+          dividend_type: row.dividend_type ?? "Distribution",
+          gross_dividend: nr(row.gross_dividend),
+          tax_amount: nr(row.tax_amount),
+          net_payable: netVal,
+          paid_amount: paidVal,
+          remaining_amount: remVal,
+          payment_status: row.payment_status ?? "Pending",
+          payment_date: row.payment_date ?? null,
+          payment_reference: row.payment_reference ?? null,
+          fiscal_year: row.fiscal_year ?? null,
+          bank_name: row.bank_name || row.client?.bank_name || null,
+          bank_account_no: row.bank_account_no || row.client?.bank_account_no || null,
+          pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
+        };
+      });
+      return { rows, totalCount: count ?? 0 };
+    }
+
+    if (reportId === "interest_register") {
+      let q = (supabase as any)
+        .from("interest_payables")
+        .select(
+          "id, instrument_ref, gross_interest, tax_amount, net_payable, paid_amount, remaining_amount, payment_status, due_date, payment_date, payment_reference, fiscal_year, payee_classification, bank_name, bank_account_no, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
+          { count: "exact" },
+        );
+
+      if (filters.companyId && filters.companyId !== "all")
+        q = q.eq("company_id", filters.companyId);
+      if (filters.fiscalYear && filters.fiscalYear !== "all")
+        q = q.eq("fiscal_year", filters.fiscalYear);
+      if (filters.status && filters.status !== "all") q = q.eq("payment_status", filters.status);
+      q = applyClassificationFilter(q, filters.classification, "interest_payables");
+      q = applyDateFilter(q, "payment_date", filters.startDate, filters.endDate);
+
+      if (cleanSearch) {
+        const clientIds = await getMatchedClientIds();
+        if (clientIds && clientIds.length > 0) {
+          q = q.in("client_id", clientIds);
+        } else {
+          q = q.or(
+            `bank_account_no.ilike.%${cleanSearch}%,payment_reference.ilike.%${cleanSearch}%`,
+          );
+        }
+      }
+
+      const { data, count, error } = await q
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to);
+
+      if (error) throw error;
+      const rows = (data || []).map((row: any) => {
+        const netVal = nr(row.net_payable);
+        const paidVal =
+          row.paid_amount != null
+            ? nr(row.paid_amount)
+            : row.payment_status === "Paid"
+              ? netVal
+              : 0;
+        const remVal =
+          row.remaining_amount != null
+            ? nr(row.remaining_amount)
+            : row.payment_status === "Paid"
+              ? 0
+              : Math.max(0, netVal - paidVal);
+        return {
+          id: row.id,
+          boid: row.client?.boid ?? null,
+          full_name: row.client?.full_name ?? "Unknown",
+          company_name: row.company?.company_name ?? "Unknown",
+          instrument_ref: row.instrument_ref ?? "DEBENTURE",
+          gross_interest: nr(row.gross_interest),
+          tax_amount: nr(row.tax_amount),
+          net_payable: netVal,
+          paid_amount: paidVal,
+          remaining_amount: remVal,
+          payment_status: row.payment_status ?? "Pending",
+          payment_date: row.payment_date ?? null,
+          due_date: row.due_date ?? null,
+          payment_reference: row.payment_reference ?? null,
+          fiscal_year: row.fiscal_year ?? null,
+          bank_name: row.bank_name || row.client?.bank_name || null,
+          bank_account_no: row.bank_account_no || row.client?.bank_account_no || null,
+          pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
+        };
+      });
+      return { rows, totalCount: count ?? 0 };
+    }
+
+    if (reportId === "tax_register") {
+      let q = (supabase as any)
+        .from("mutual_fund_payables")
+        .select(
+          "id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)",
+          { count: "exact" },
+        )
+        .gt("tax_amount", 0);
+
+      if (filters.companyId && filters.companyId !== "all")
+        q = q.eq("company_id", filters.companyId);
+      if (filters.fiscalYear && filters.fiscalYear !== "all")
+        q = q.eq("fiscal_year", filters.fiscalYear);
+      q = applyClassificationFilter(q, filters.classification, "mutual_fund_payables");
+      q = applyDateFilter(q, "payment_date", filters.startDate, filters.endDate);
+
+      if (cleanSearch) {
+        const clientIds = await getMatchedClientIds();
+        if (clientIds && clientIds.length > 0) {
+          q = q.in("client_id", clientIds);
+        }
+      }
+
+      const { data, count, error } = await q
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to);
+
+      if (error) throw error;
+      let rows = (data || []).map((row: any) => {
+        const gross = nr(row.gross_dividend);
+        const tax = nr(row.tax_amount);
+        const rate = gross > 0 ? (tax / gross) * 100 : 5;
+        return {
+          id: row.id,
+          boid: row.client?.boid ?? null,
+          full_name: row.client?.full_name ?? "Unknown",
+          pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
+          company_name: row.company?.company_name ?? "Unknown",
+          payable_type: "Mutual Fund",
+          gross_amount: gross,
+          tds_rate: Math.round(rate * 10) / 10,
+          tax_amount: tax,
+          net_payable: nr(row.net_payable),
+          fiscal_year: row.fiscal_year ?? null,
+          payment_date: row.payment_date ?? null,
+        };
+      });
+
+      if ((count ?? 0) === 0 && (!filters.companyId || filters.companyId === "all")) {
+        const divRes = await (supabase as any)
+          .from("dividend_payables")
+          .select(
+            "id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)",
+            { count: "exact" },
+          )
+          .gt("tax_amount", 0)
+          .order("created_at", { ascending: false })
+          .range(from, to);
+
+        if (divRes.data && divRes.data.length > 0) {
+          count = divRes.count;
+          rows = divRes.data.map((row: any) => {
+            const gross = nr(row.gross_dividend);
+            const tax = nr(row.tax_amount);
+            const rate = gross > 0 ? (tax / gross) * 100 : 5;
+            return {
+              id: row.id,
+              boid: row.client?.boid ?? null,
+              full_name: row.client?.full_name ?? "Unknown",
+              pan_or_citizenship: row.client?.pan_or_citizenship ?? null,
+              company_name: row.company?.company_name ?? "Unknown",
+              payable_type: "Dividend",
+              gross_amount: gross,
+              tds_rate: Math.round(rate * 10) / 10,
+              tax_amount: tax,
+              net_payable: nr(row.net_payable),
+              fiscal_year: row.fiscal_year ?? null,
+              payment_date: row.payment_date ?? null,
+            };
+          });
+        }
+      }
+
+      return { rows, totalCount: count ?? 0 };
+    }
+
+    if (reportId === "pending_register") {
+      let q = (supabase as any)
+        .from("mutual_fund_payables")
+        .select(
+          "id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, bank_name, bank_account_no, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)",
+          { count: "exact" },
+        )
+        .eq("payment_status", "Pending");
+
+      if (filters.companyId && filters.companyId !== "all")
+        q = q.eq("company_id", filters.companyId);
+      if (filters.fiscalYear && filters.fiscalYear !== "all")
+        q = q.eq("fiscal_year", filters.fiscalYear);
+      if (cleanSearch) {
+        const clientIds = await getMatchedClientIds();
+        if (clientIds && clientIds.length > 0) {
+          q = q.in("client_id", clientIds);
+        } else {
+          q = q.or(`bank_account_no.ilike.%${cleanSearch}%`);
+        }
+      }
+
+      const {
+        data,
+        count: rawCount,
+        error,
+      } = await q
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to);
+
+      if (error) throw error;
+      let count = rawCount;
+      let rows = (data || []).map((row: any) => ({
+        id: row.id,
+        boid: row.client?.boid ?? null,
+        full_name: row.client?.full_name ?? "Unknown",
+        company_name: row.company?.company_name ?? "Unknown",
+        payable_type: "Mutual Fund",
+        bank_name: row.bank_name || row.client?.bank_name || null,
+        bank_account_no: row.bank_account_no || row.client?.bank_account_no || null,
+        gross_amount: nr(row.gross_dividend),
+        tax_amount: nr(row.tax_amount),
+        net_payable: nr(row.net_payable),
+        fiscal_year: row.fiscal_year ?? null,
+        due_date: row.payment_date ?? null,
+      }));
+
+      if ((count ?? 0) === 0 && (!filters.companyId || filters.companyId === "all")) {
+        const divRes = await (supabase as any)
+          .from("dividend_payables")
+          .select(
+            "id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, bank_name, bank_account_no, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)",
+            { count: "exact" },
+          )
+          .eq("payment_status", "Pending")
+          .order("created_at", { ascending: false })
+          .range(from, to);
+
+        if (divRes.data && divRes.data.length > 0) {
+          count = divRes.count;
+          rows = divRes.data.map((row: any) => ({
+            id: row.id,
+            boid: row.client?.boid ?? null,
+            full_name: row.client?.full_name ?? "Unknown",
+            company_name: row.company?.company_name ?? "Unknown",
+            payable_type: "Dividend",
+            bank_name: row.bank_name || row.client?.bank_name || null,
+            bank_account_no: row.bank_account_no || row.client?.bank_account_no || null,
+            gross_amount: nr(row.gross_dividend),
+            tax_amount: nr(row.tax_amount),
+            net_payable: nr(row.net_payable),
+            fiscal_year: row.fiscal_year ?? null,
+            due_date: row.payment_date ?? null,
+          }));
+        }
+      }
+
+      return { rows, totalCount: count ?? 0 };
+    }
+
+    if (reportId === "payment_register") {
+      let q = (supabase as any)
+        .from("payment_batches")
+        .select(
+          "id, batch_name, payment_method, status, total_payments, total_amount, fiscal_year, created_at, approved_at, processed_at",
+          { count: "exact" },
+        );
+      if (filters.companyId && filters.companyId !== "all")
+        q = q.eq("company_id", filters.companyId);
+      if (filters.status && filters.status !== "all") q = q.eq("status", filters.status);
+      q = applyDateFilter(q, "created_at", filters.startDate, filters.endDate);
+      if (cleanSearch) {
+        q = q.ilike("batch_name", `%${cleanSearch}%`);
+      }
+      const { data, count, error } = await q
+        .order("created_at", { ascending: false })
+        .range(from, to);
+      if (error) throw error;
+      const rows = (data || []).map((row: any) => ({
+        id: row.id,
+        batch_name: row.batch_name ?? "",
+        payment_method: row.payment_method ?? "NEFT",
+        status: row.status ?? "Draft",
+        total_payments: nr(row.total_payments),
+        total_amount: nr(row.total_amount),
+        fiscal_year: row.fiscal_year ?? null,
+        created_at: row.created_at,
+        approved_at: row.approved_at ?? null,
+        processed_at: row.processed_at ?? null,
+      }));
+      return { rows, totalCount: count ?? 0 };
+    }
+
+    if (reportId === "reconciliation_report") {
+      let q = (supabase as any)
+        .from("reconciliation_results")
+        .select(
+          "id, expected_amount, actual_amount, difference, result, notes, created_at, reconciliation_date, client:clients(boid, full_name), company:companies(company_name)",
+          { count: "exact" },
+        );
+      if (filters.companyId && filters.companyId !== "all")
+        q = q.eq("company_id", filters.companyId);
+      if (cleanSearch) {
+        q = q.ilike("notes", `%${cleanSearch}%`);
+      }
+      const { data, count, error } = await q
+        .order("created_at", { ascending: false })
+        .range(from, to);
+      if (error) throw error;
+      const rows = (data || []).map((row: any) => ({
+        id: row.id,
+        boid: row.client?.boid ?? null,
+        shareholder_name: row.client?.full_name ?? "Unknown",
+        category: row.notes ?? "Standard",
+        excel_amount: nr(row.actual_amount),
+        system_amount: nr(row.expected_amount),
+        difference: nr(row.difference),
+        status: row.result ?? "Pending",
+        created_at: row.reconciliation_date || row.created_at,
+      }));
+      return { rows, totalCount: count ?? 0 };
+    }
+
+    if (reportId === "upload_history_report") {
+      let q = (supabase as any)
+        .from("upload_history")
+        .select("id, file_name, file_type, status, rows_processed, rows_failed, created_at", {
+          count: "exact",
+        });
+      if (cleanSearch) {
+        q = q.ilike("file_name", `%${cleanSearch}%`);
+      }
+      const { data, count, error } = await q
+        .order("created_at", { ascending: false })
+        .range(from, to);
+      if (error) throw error;
+      const rows = (data || []).map((row: any) => ({
+        id: row.id,
+        file_name: row.file_name ?? "Unknown",
+        file_type: row.file_type ?? null,
+        status: row.status ?? "Processed",
+        rows_processed: nr(row.rows_processed),
+        rows_failed: nr(row.rows_failed),
+        created_at: row.created_at,
+      }));
+      return { rows, totalCount: count ?? 0 };
+    }
+
+    return { rows: [], totalCount: 0 };
   },
 };

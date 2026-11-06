@@ -234,9 +234,10 @@ interface RegisterViewerDialogProps {
   filters?: ReportFilters;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  fetchData: (id: ReportId) => Promise<any[]>;
+  fetchData?: (id: ReportId) => Promise<any[]>;
   onExport: (id: ReportId, kind: "xlsx" | "pdf") => void;
   isExporting: boolean;
+  onSelectReport?: (id: ReportId) => void;
 }
 
 function RegisterViewerDialog({
@@ -247,24 +248,45 @@ function RegisterViewerDialog({
   filters,
   open,
   onOpenChange,
-  fetchData,
   onExport,
   isExporting,
+  onSelectReport,
 }: RegisterViewerDialogProps) {
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(15);
 
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 250);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, reportId, pageSize, companyName]);
+
   const {
-    data = [],
+    data: pageData,
     isLoading,
     isError,
     refetch,
   } = useQuery({
-    queryKey: ["view-register-dialog-data", reportId, companyName],
-    queryFn: () => (reportId ? fetchData(reportId) : Promise.resolve([])),
+    queryKey: [
+      "view-register-page-data",
+      reportId,
+      companyName,
+      filters,
+      page,
+      pageSize,
+      debouncedSearch,
+    ],
+    queryFn: () =>
+      reportId
+        ? ReportService.getRegisterPage(reportId, filters, page, pageSize, debouncedSearch)
+        : Promise.resolve({ rows: [], totalCount: 0 }),
     enabled: open && !!reportId,
-    staleTime: 60 * 1000,
+    staleTime: 30 * 1000,
   });
 
   const { data: serverTotals } = useQuery({
@@ -275,57 +297,10 @@ function RegisterViewerDialog({
     staleTime: 60 * 1000,
   });
 
-  useEffect(() => {
-    setPage(1);
-  }, [search, reportId, pageSize]);
-
   const columns = reportId ? REPORT_COLUMNS[reportId] || [] : [];
-
-  const filteredRows = useMemo(() => {
-    if (!search.trim()) return data;
-    const q = search.toLowerCase().trim();
-    return data.filter((row: any) =>
-      Object.values(row).some((val) => val != null && String(val).toLowerCase().includes(q)),
-    );
-  }, [data, search]);
-
-  const stats = useMemo(() => {
-    let gross = 0;
-    let tax = 0;
-    let net = 0;
-    let paid = 0;
-    let remaining = 0;
-    for (const r of filteredRows as any[]) {
-      gross += Number(
-        r.gross_dividend ||
-          r.gross_interest ||
-          r.gross_amount ||
-          r.total_amount ||
-          r.system_amount ||
-          0,
-      );
-      tax += Number(r.tax_amount || 0);
-      const netVal = Number(r.net_payable || r.total_amount || r.excel_amount || 0);
-      net += netVal;
-      paid += Number(
-        r.paid_amount != null ? r.paid_amount : r.payment_status === "Paid" ? netVal : 0,
-      );
-      remaining += Number(
-        r.remaining_amount != null
-          ? r.remaining_amount
-          : r.payment_status === "Paid"
-            ? 0
-            : Math.max(0, netVal - Number(r.paid_amount || 0)),
-      );
-    }
-    return { count: filteredRows.length, gross, tax, net, paid, remaining };
-  }, [filteredRows]);
-
-  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
-  const paginatedRows = useMemo(() => {
-    const start = (page - 1) * pageSize;
-    return filteredRows.slice(start, start + pageSize);
-  }, [filteredRows, page, pageSize]);
+  const rows = pageData?.rows ?? [];
+  const totalCount = pageData?.totalCount ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
   const renderCell = (row: any, dataKey: string) => {
     const val = row[dataKey];
@@ -464,7 +439,7 @@ function RegisterViewerDialog({
                 variant="outline"
                 size="sm"
                 className="h-8 text-xs"
-                disabled={isExporting || isLoading || !data.length}
+                disabled={isExporting || isLoading || totalCount === 0}
                 onClick={() => reportId && onExport(reportId, "xlsx")}
               >
                 <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
@@ -474,7 +449,7 @@ function RegisterViewerDialog({
                 variant="outline"
                 size="sm"
                 className="h-8 text-xs"
-                disabled={isExporting || isLoading || !data.length}
+                disabled={isExporting || isLoading || totalCount === 0}
                 onClick={() => reportId && onExport(reportId, "pdf")}
               >
                 <FileText className="mr-1.5 h-3.5 w-3.5 text-rose-600" />
@@ -493,80 +468,72 @@ function RegisterViewerDialog({
           </div>
 
           {/* Quick Stats Summary Strip */}
-          {!isLoading && data.length > 0 && (
+          {!isLoading && (totalCount > 0 || (serverTotals && serverTotals.total_records > 0)) && (
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 pt-3">
               <div className="px-3 py-1.5 bg-background/80 border rounded text-xs flex justify-between items-center">
                 <span className="text-muted-foreground font-medium">
-                  {search ? "Filtered / Total:" : "Records:"}
+                  {debouncedSearch ? "Filtered / Total:" : "Records:"}
                 </span>
                 <span className="font-bold font-mono">
-                  {search
-                    ? `${filteredRows.length.toLocaleString()} / ${(serverTotals?.total_records ?? data.length).toLocaleString()}`
-                    : (serverTotals?.total_records ?? stats.count).toLocaleString()}
+                  {debouncedSearch
+                    ? `${totalCount.toLocaleString()} / ${(serverTotals?.total_records ?? totalCount).toLocaleString()}`
+                    : (serverTotals?.total_records ?? totalCount).toLocaleString()}
                 </span>
               </div>
-              {((search ? stats.gross : serverTotals?.total_gross) ?? 0) > 0 && (
+              {(serverTotals?.total_gross ?? 0) > 0 && (
                 <div className="px-3 py-1.5 bg-background/80 border rounded text-xs flex justify-between items-center">
                   <span className="text-muted-foreground font-medium">Gross:</span>
                   <span className="font-bold font-mono text-primary">
                     NPR{" "}
-                    {((search ? stats.gross : serverTotals?.total_gross) ?? 0).toLocaleString(
-                      "en-IN",
-                      {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      },
-                    )}
+                    {(serverTotals?.total_gross ?? 0).toLocaleString("en-IN", {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
                   </span>
                 </div>
               )}
-              {((search ? stats.tax : serverTotals?.total_tax) ?? 0) > 0 && (
+              {(serverTotals?.total_tax ?? 0) > 0 && (
                 <div className="px-3 py-1.5 bg-background/80 border rounded text-xs flex justify-between items-center">
                   <span className="text-muted-foreground font-medium">Tax:</span>
                   <span className="font-bold font-mono text-amber-600">
                     NPR{" "}
-                    {((search ? stats.tax : serverTotals?.total_tax) ?? 0).toLocaleString("en-IN", {
+                    {(serverTotals?.total_tax ?? 0).toLocaleString("en-IN", {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
                     })}
                   </span>
                 </div>
               )}
-              {((search ? stats.net : serverTotals?.total_net) ?? 0) > 0 && (
+              {(serverTotals?.total_net ?? 0) > 0 && (
                 <div className="px-3 py-1.5 bg-background/80 border rounded text-xs flex justify-between items-center">
                   <span className="text-muted-foreground font-medium">Net:</span>
                   <span className="font-bold font-mono text-foreground">
                     NPR{" "}
-                    {((search ? stats.net : serverTotals?.total_net) ?? 0).toLocaleString("en-IN", {
+                    {(serverTotals?.total_net ?? 0).toLocaleString("en-IN", {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
                     })}
                   </span>
                 </div>
               )}
-              {((search ? stats.paid : serverTotals?.total_disbursed) ?? 0) > 0 && (
+              {(serverTotals?.total_disbursed ?? 0) > 0 && (
                 <div className="px-3 py-1.5 bg-background/80 border rounded text-xs flex justify-between items-center">
                   <span className="text-muted-foreground font-medium">Disbursed:</span>
                   <span className="font-bold font-mono text-emerald-600">
                     NPR{" "}
-                    {((search ? stats.paid : serverTotals?.total_disbursed) ?? 0).toLocaleString(
-                      "en-IN",
-                      {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      },
-                    )}
+                    {(serverTotals?.total_disbursed ?? 0).toLocaleString("en-IN", {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
                   </span>
                 </div>
               )}
-              {((search ? stats.remaining : serverTotals?.total_remaining) ?? 0) > 0 && (
+              {(serverTotals?.total_remaining ?? 0) > 0 && (
                 <div className="px-3 py-1.5 bg-background/80 border rounded text-xs flex justify-between items-center">
                   <span className="text-muted-foreground font-medium">Due:</span>
                   <span className="font-bold font-mono text-rose-600">
                     NPR{" "}
-                    {(
-                      (search ? stats.remaining : serverTotals?.total_remaining) ?? 0
-                    ).toLocaleString("en-IN", {
+                    {(serverTotals?.total_remaining ?? 0).toLocaleString("en-IN", {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
                     })}
@@ -615,14 +582,85 @@ function RegisterViewerDialog({
               ))}
             </div>
           ) : isError ? (
-            <div className="p-12 text-center text-sm text-destructive">
-              Failed to load register records. Please try again.
+            <div className="p-12 text-center text-sm text-destructive space-y-2">
+              <p>Failed to load register records.</p>
+              <Button size="sm" variant="outline" onClick={() => refetch()}>
+                Retry
+              </Button>
             </div>
-          ) : paginatedRows.length === 0 ? (
-            <div className="p-12 text-center text-sm text-muted-foreground">
-              {search
-                ? "No matching records found for your search."
-                : "No records found in this register."}
+          ) : rows.length === 0 ? (
+            <div className="p-12 text-center text-sm space-y-3">
+              {debouncedSearch ? (
+                <p className="text-muted-foreground">
+                  No matching records found for "{debouncedSearch}".
+                </p>
+              ) : reportId === "dividend_register" ? (
+                <div className="max-w-md mx-auto p-4 bg-muted/40 border rounded-lg space-y-2 text-left">
+                  <p className="font-semibold text-foreground text-sm flex items-center gap-2">
+                    <FileText className="h-4 w-4 text-primary" />
+                    No Equity Dividend Records Found
+                  </p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    The Equity Dividend Register manages corporate stock dividends. If your uploaded
+                    files are Mutual Funds (such as RMF1 or RMF2), those unit-holder payouts are
+                    available in the <strong>Mutual Fund Register</strong>.
+                  </p>
+                  {onSelectReport && (
+                    <Button
+                      size="sm"
+                      className="mt-2 text-xs"
+                      onClick={() => onSelectReport("mutual_fund_register")}
+                    >
+                      Open Mutual Fund Register
+                    </Button>
+                  )}
+                </div>
+              ) : reportId === "interest_register" ? (
+                <div className="max-w-md mx-auto p-4 bg-muted/40 border rounded-lg space-y-2 text-left">
+                  <p className="font-semibold text-foreground text-sm flex items-center gap-2">
+                    <FileText className="h-4 w-4 text-primary" />
+                    No Debenture Interest Records Found
+                  </p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    The Debenture Register tracks corporate bonds and coupon schedules. For mutual
+                    fund unitholder payouts, please switch to the{" "}
+                    <strong>Mutual Fund Register</strong>.
+                  </p>
+                  {onSelectReport && (
+                    <Button
+                      size="sm"
+                      className="mt-2 text-xs"
+                      onClick={() => onSelectReport("mutual_fund_register")}
+                    >
+                      Open Mutual Fund Register
+                    </Button>
+                  )}
+                </div>
+              ) : reportId === "payment_register" ? (
+                <div className="max-w-md mx-auto p-4 bg-muted/40 border rounded-lg space-y-2 text-left">
+                  <p className="font-semibold text-foreground text-sm flex items-center gap-2">
+                    <ShieldCheck className="h-4 w-4 text-primary" />
+                    No Payment Batches Generated
+                  </p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Disbursement payment batches are created in the Payments module during
+                    ConnectIPS / bank transfer batching.
+                  </p>
+                </div>
+              ) : reportId === "reconciliation_report" ? (
+                <div className="max-w-md mx-auto p-4 bg-muted/40 border rounded-lg space-y-2 text-left">
+                  <p className="font-semibold text-foreground text-sm flex items-center gap-2">
+                    <ShieldCheck className="h-4 w-4 text-primary" />
+                    No Reconciliation Matches Recorded
+                  </p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Bank statement settlement records are generated in the Bank Reconciliation
+                    module upon uploading bank statements.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-muted-foreground">No records found in this register.</p>
+              )}
             </div>
           ) : (
             <Table>
@@ -652,7 +690,7 @@ function RegisterViewerDialog({
                 </TableRow>
               </TableHeader>
               <TableBody className="divide-y divide-border">
-                {paginatedRows.map((row: any, idx) => (
+                {rows.map((row: any, idx) => (
                   <TableRow
                     key={row.id || idx}
                     className="hover:bg-muted/40 divide-x divide-border"
@@ -677,16 +715,13 @@ function RegisterViewerDialog({
           <div>
             Showing{" "}
             <span className="font-semibold text-foreground">
-              {filteredRows.length === 0 ? 0 : (page - 1) * pageSize + 1}
+              {totalCount === 0 ? 0 : (page - 1) * pageSize + 1}
             </span>{" "}
             to{" "}
             <span className="font-semibold text-foreground">
-              {Math.min(page * pageSize, filteredRows.length)}
+              {Math.min(page * pageSize, totalCount)}
             </span>{" "}
-            of{" "}
-            <span className="font-semibold text-foreground">
-              {filteredRows.length.toLocaleString()}
-            </span>{" "}
+            of <span className="font-semibold text-foreground">{totalCount.toLocaleString()}</span>{" "}
             records
             {serverTotals && serverTotals.total_records > 0 && (
               <span className="ml-2 text-muted-foreground">
@@ -964,6 +999,7 @@ function ReportsRoute() {
     queryFn: () =>
       IrdEtdsService.getAnnex10Report({
         companyId: companyId === "all" ? undefined : companyId,
+        maxPreviewRows: 50,
       }),
     enabled: companies.length > 0,
   });
@@ -978,6 +1014,7 @@ function ReportsRoute() {
     queryFn: () =>
       IpfService.getIpfAgingReport({
         companyId: companyId === "all" ? undefined : companyId,
+        maxPreviewRows: 100,
       }),
   });
   const ipfReport = ipfAgingQuery.data;
@@ -1808,8 +1845,15 @@ function ReportsRoute() {
             </Card>
           ) : (
             <Card>
-              <CardContent className="py-12 text-center text-muted-foreground">
-                No dividend records found for the selected company.
+              <CardContent className="py-12 text-center text-muted-foreground space-y-2">
+                <p className="font-medium text-foreground">
+                  No equity dividend records found for the selected company.
+                </p>
+                <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                  The AGM Equities tab generates distributions for listed shares. If you are
+                  managing Mutual Funds (such as RMF1 or RMF2), unitholder returns are calculated
+                  under the <strong>Mutual Funds (CDS)</strong> tab.
+                </p>
               </CardContent>
             </Card>
           )}
@@ -1946,8 +1990,14 @@ function ReportsRoute() {
             </Card>
           ) : (
             <Card>
-              <CardContent className="py-12 text-center text-muted-foreground">
-                No debenture interest records found for the selected company.
+              <CardContent className="py-12 text-center text-muted-foreground space-y-2">
+                <p className="font-medium text-foreground">
+                  No debenture interest records found for the selected company.
+                </p>
+                <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                  Debenture coupon reports apply to bond issuances. For mutual fund unitholder
+                  distributions, please check the <strong>Mutual Funds (CDS)</strong> tab.
+                </p>
               </CardContent>
             </Card>
           )}
@@ -2351,7 +2401,7 @@ function ReportsRoute() {
                 </>
               ) : (
                 <div className="py-12 text-center text-muted-foreground text-sm">
-                  Please select a company to view the IRD Annex-10 e-TDS schedule.
+                  No withholding tax records found for the selected criteria.
                 </div>
               )}
             </CardContent>
@@ -2474,6 +2524,7 @@ function ReportsRoute() {
         fetchData={fetchReport}
         onExport={exportReport}
         isExporting={!!activeExport}
+        onSelectReport={(newId) => setViewingReport(newId)}
       />
     </div>
   );
