@@ -18,6 +18,9 @@ import {
   FileSpreadsheet,
   Building2,
   Users,
+  Landmark,
+  Calendar,
+  Wallet,
 } from "lucide-react";
 
 interface ReconciliationDashboardProps {
@@ -74,6 +77,114 @@ export function ReconciliationDashboard({ report }: ReconciliationDashboardProps
 
   return (
     <div className="space-y-6">
+      {/* Statement Profile & Mathematical Balance Audit Strip */}
+      {report.statementMetadata && (
+        <Card className="border-primary/30 bg-muted/20 shadow-sm overflow-hidden">
+          <CardHeader className="py-2.5 px-4 bg-muted/40 border-b flex flex-row items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Landmark className="w-4 h-4 text-primary shrink-0" />
+              <span className="font-semibold text-sm">Statement Profile & Balance Audit</span>
+              {report.statementMetadata.bankName && (
+                <Badge variant="outline" className="text-xs bg-background">
+                  {report.statementMetadata.bankName}
+                </Badge>
+              )}
+              {report.statementMetadata.accountNo && (
+                <span className="text-xs font-mono text-muted-foreground bg-background px-2 py-0.5 rounded border">
+                  A/C: {report.statementMetadata.accountNo}
+                </span>
+              )}
+              {report.statementMetadata.accountHolder && (
+                <span className="text-xs font-medium text-foreground">
+                  • {report.statementMetadata.accountHolder}
+                </span>
+              )}
+              {(report.statementMetadata.fromDate || report.statementMetadata.toDate) && (
+                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Calendar className="w-3 h-3" />
+                  {report.statementMetadata.fromDate || "?"} to{" "}
+                  {report.statementMetadata.toDate || "?"}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {report.statementMetadata.isBalanced ? (
+                <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-300">
+                  <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+                  Mathematically Balanced (Diff: NPR 0.00)
+                </Badge>
+              ) : (
+                <Badge variant="destructive">
+                  <AlertTriangle className="w-3.5 h-3.5 mr-1" />
+                  Balance Variance (Diff: NPR{" "}
+                  {(report.statementMetadata.balanceDifference ?? 0).toFixed(2)})
+                </Badge>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent className="p-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+              <div className="space-y-1">
+                <span className="text-[11px] text-muted-foreground uppercase font-medium">
+                  Opening Balance
+                </span>
+                <p className="text-base font-mono font-bold text-foreground">
+                  NPR{" "}
+                  {(report.statementMetadata.openingBalance ?? 0).toLocaleString("en-IN", {
+                    minimumFractionDigits: 2,
+                  })}
+                </p>
+              </div>
+              <div className="space-y-1">
+                <span className="text-[11px] text-muted-foreground uppercase font-medium">
+                  Total Credits (+)
+                </span>
+                <p className="text-base font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                  + NPR{" "}
+                  {(report.statementMetadata.totalCredit ?? 0).toLocaleString("en-IN", {
+                    minimumFractionDigits: 2,
+                  })}
+                </p>
+              </div>
+              <div className="space-y-1">
+                <span className="text-[11px] text-muted-foreground uppercase font-medium">
+                  Total Debits (-)
+                </span>
+                <p className="text-base font-mono font-bold text-rose-600 dark:text-rose-400">
+                  - NPR{" "}
+                  {(report.statementMetadata.totalDebit ?? 0).toLocaleString("en-IN", {
+                    minimumFractionDigits: 2,
+                  })}
+                </p>
+              </div>
+              <div className="space-y-1">
+                <span className="text-[11px] text-muted-foreground uppercase font-medium">
+                  Calculated Balance
+                </span>
+                <p className="text-base font-mono font-bold text-foreground">
+                  NPR{" "}
+                  {(report.statementMetadata.calculatedClosingBalance ?? 0).toLocaleString(
+                    "en-IN",
+                    { minimumFractionDigits: 2 },
+                  )}
+                </p>
+              </div>
+              <div className="space-y-1">
+                <span className="text-[11px] text-muted-foreground uppercase font-medium">
+                  Actual Bank Closing
+                </span>
+                <p className="text-base font-mono font-bold text-primary">
+                  NPR{" "}
+                  {(report.statementMetadata.closingBalance ?? 0).toLocaleString("en-IN", {
+                    minimumFractionDigits: 2,
+                  })}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* File Overview Header */}
       <Card className="bg-card/50 border-primary/20">
         <CardContent className="p-4 flex items-center justify-between">

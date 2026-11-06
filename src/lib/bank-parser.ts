@@ -178,6 +178,22 @@ export interface BankTransaction {
   accountHolder?: string;
 }
 
+export interface StatementMetadata {
+  bankName?: string;
+  accountNo?: string;
+  accountHolder?: string;
+  openingBalance?: number;
+  closingBalance?: number;
+  fromDate?: string;
+  toDate?: string;
+  currency?: string;
+  totalDebit?: number;
+  totalCredit?: number;
+  calculatedClosingBalance?: number;
+  balanceDifference?: number;
+  isBalanced?: boolean;
+}
+
 export interface FileParseStatus {
   file: File;
   fileName: string;
@@ -188,6 +204,7 @@ export interface FileParseStatus {
   acceptedCount: number;
   selectedSheet?: string;
   availableSheets?: string[];
+  metadata?: StatementMetadata;
   error?: string;
 }
 
@@ -206,6 +223,7 @@ export interface ParseMultipleFilesResult {
   hasFailures: boolean;
   duplicateCount: number;
   variantWarnings: FileVariantWarning[];
+  statementMetadata?: StatementMetadata;
 }
 
 /**
@@ -319,24 +337,140 @@ export const BankParser = {
    *  - Excel (.xls/.xlsx) ACH settlement reports & ConnectIPS files
    *  - RBB and commercial bank Electronic Account Statements (with header metadata, circular sweep filtering)
    */
-  async parseBankStatement(
+  /**
+   * Parse a bank statement or ACH payment settlement report and return transactions with balance metadata.
+   */
+  async parseBankStatementWithMetadata(
     file: File,
     options: { includeCircularSweeps?: boolean } = {},
-  ): Promise<BankTransaction[]> {
+  ): Promise<{ transactions: BankTransaction[]; metadata: StatementMetadata }> {
     const fileName = file.name.toLowerCase();
     const isExcel =
       fileName.endsWith(".xls") || fileName.endsWith(".xlsx") || fileName.endsWith(".xlsm");
 
     if (isExcel) {
-      return this.parseExcelSettlement(file, options);
+      return this.parseExcelSettlementWithMetadata(file, options);
     }
+    return this.parseCsvStatementWithMetadata(file, options);
+  },
 
-    // CSV/TXT parsing
+  /**
+   * Parse a bank statement or ACH payment settlement report.
+   * Supports:
+   *  - CSV/TXT bank statements (date, description, debit, credit, balance)
+   *  - Excel (.xls/.xlsx) ACH settlement reports & ConnectIPS files
+   *  - RBB and commercial bank Electronic Account Statements (with header metadata, circular sweep filtering)
+   */
+  async parseBankStatement(
+    file: File,
+    options: { includeCircularSweeps?: boolean } = {},
+  ): Promise<BankTransaction[]> {
+    const { transactions } = await this.parseBankStatementWithMetadata(file, options);
+    return transactions;
+  },
+
+  /**
+   * Parse CSV/TXT bank statements with multi-row metadata extraction and balance calculations.
+   */
+  async parseCsvStatementWithMetadata(
+    file: File,
+    options: { includeCircularSweeps?: boolean } = {},
+  ): Promise<{ transactions: BankTransaction[]; metadata: StatementMetadata }> {
     const text = await file.text();
     const lines = text.split(/\r?\n/).filter((line) => line.trim());
-    if (!lines.length) return [];
+    if (!lines.length) {
+      return {
+        transactions: [],
+        metadata: {
+          bankName: "Commercial Bank",
+          accountNo: "Statement Account",
+          totalDebit: 0,
+          totalCredit: 0,
+          isBalanced: true,
+        },
+      };
+    }
 
-    const headerRow = parseCsvRow(lines[0]);
+    let headerRowIndex = 0;
+    let detectedAccountHolder = "";
+    let detectedAccountNo = "";
+    let detectedOpeningBalance: number | undefined = undefined;
+    let detectedClosingBalance: number | undefined = undefined;
+    let detectedFromDate: string | undefined = undefined;
+    let detectedToDate: string | undefined = undefined;
+    const detectedCurrency = "NPR";
+    let detectedBankName = "";
+
+    // Scan the first 25 lines for metadata and locate the actual table header row
+    for (let i = 0; i < Math.min(25, lines.length); i++) {
+      const lineStr = lines[i];
+      const cols = parseCsvRow(lineStr);
+      const textRow = cols.join(" ").trim();
+      const upperRow = textRow.toUpperCase();
+
+      if (upperRow.includes("ACCOUNT HOLDER") || upperRow.includes("ACCOUNT NAME")) {
+        const m = textRow.match(
+          /Account\s*(?:Holder's\s*)?Name:\s*([^,;:]+?)(?:\s+From:|\s+To:|$)/i,
+        );
+        if (m && m[1]) detectedAccountHolder = m[1].trim();
+      }
+      if (upperRow.includes("ACCOUNT NO") || upperRow.includes("ACCOUNT NUMBER")) {
+        const m = textRow.match(/Account\s*(?:Number|No):\s*([0-9A-Za-z]+)/i);
+        if (m && m[1]) detectedAccountNo = m[1].trim();
+      }
+      if (upperRow.includes("OPENING BALANCE")) {
+        const m = textRow.match(/Opening\s*Balance:\s*([0-9,.]+)/i);
+        if (m && m[1]) detectedOpeningBalance = normalizeAmount(m[1]);
+      }
+      if (upperRow.includes("CLOSING BALANCE")) {
+        const m = textRow.match(/Closing\s*Balance:\s*([0-9,.]+)/i);
+        if (m && m[1]) detectedClosingBalance = normalizeAmount(m[1]);
+      }
+      if (upperRow.includes("FROM:")) {
+        const m = textRow.match(/From:\s*([0-9\-/.]+)/i);
+        if (m && m[1]) detectedFromDate = normalizeDate(m[1]);
+      }
+      if (upperRow.includes("TO:")) {
+        const m = textRow.match(/To:\s*([0-9\-/.]+)/i);
+        if (m && m[1]) detectedToDate = normalizeDate(m[1]);
+      }
+      if (/RBB|Rastriya Banijya/i.test(textRow)) {
+        detectedBankName = "Rastriya Banijya Bank Ltd.";
+      } else if (/Sanima/i.test(textRow)) {
+        detectedBankName = "Sanima Bank Ltd.";
+      } else if (/Nabil/i.test(textRow)) {
+        detectedBankName = "Nabil Bank Ltd.";
+      } else if (/Global IME/i.test(textRow)) {
+        detectedBankName = "Global IME Bank Ltd.";
+      } else if (/ConnectIPS|NCHL/i.test(textRow)) {
+        detectedBankName = "Nepal Clearing House Ltd. (ConnectIPS)";
+      }
+
+      // Check if this row is the table header
+      const cleanCols = cols.map((c) => cleanPattern(c));
+      const hasDateCol = cleanCols.some(
+        (c) => c.includes("date") || c.includes("txndate") || c.includes("settlement"),
+      );
+      const hasAmtOrDesc = cleanCols.some(
+        (c) =>
+          c.includes("desc") ||
+          c.includes("particular") ||
+          c.includes("withdraw") ||
+          c.includes("debit") ||
+          c.includes("amount") ||
+          c.includes("deposit") ||
+          c.includes("credit") ||
+          c.includes("balance") ||
+          c.includes("txnamt") ||
+          c.includes("amt"),
+      );
+      if (hasDateCol && hasAmtOrDesc) {
+        headerRowIndex = i;
+        break;
+      }
+    }
+
+    const headerRow = parseCsvRow(lines[headerRowIndex]);
     const indices = {
       date: findColumnIndexByPriority(headerRow, [
         ["settlementdt", "settlement date", "created on", "transaction date", "date"],
@@ -356,6 +490,10 @@ export const BankParser = {
       credit: findColumnIndexByPriority(headerRow, [
         ["transaction amount", "transactionamount", "amt"],
         ["credit", "deposit", "amount", "net amount"],
+      ]),
+      amount: findColumnIndexByPriority(headerRow, [
+        ["transaction amount", "transactionamount", "amt", "txnamt", "txn amt"],
+        ["amount", "net amount"],
       ]),
       balance: findColumnIndexByPriority(headerRow, [["balance"]]),
       bankName: findColumnIndexByPriority(headerRow, [
@@ -412,7 +550,7 @@ export const BankParser = {
     };
 
     const transactions: BankTransaction[] = [];
-    for (let rowIndex = 1; rowIndex < lines.length; rowIndex += 1) {
+    for (let rowIndex = headerRowIndex + 1; rowIndex < lines.length; rowIndex += 1) {
       const line = lines[rowIndex];
       const columns = parseCsvRow(line);
       if (!columns.length) continue;
@@ -421,15 +559,39 @@ export const BankParser = {
       if (
         rowText.includes("TOTAL") ||
         rowText.includes("SUMMARY") ||
-        rowText.includes("OPENING BALANCE") ||
         rowText.includes("CLOSING BALANCE")
       ) {
         continue;
       }
 
-      const debit = indices.debit >= 0 ? Math.abs(normalizeAmount(columns[indices.debit])) : 0;
-      const credit = indices.credit >= 0 ? Math.abs(normalizeAmount(columns[indices.credit])) : 0;
+      if (rowText.includes("OPENING BALANCE")) {
+        const bal = indices.balance >= 0 ? normalizeAmount(columns[indices.balance]) : 0;
+        if (detectedOpeningBalance === undefined && bal !== 0) {
+          detectedOpeningBalance = bal;
+        }
+        continue;
+      }
+
+      let debit = indices.debit >= 0 ? Math.abs(normalizeAmount(columns[indices.debit])) : 0;
+      let credit = indices.credit >= 0 ? Math.abs(normalizeAmount(columns[indices.credit])) : 0;
+      const rawAmt = indices.amount >= 0 ? normalizeAmount(columns[indices.amount]) : 0;
       const balance = indices.balance >= 0 ? normalizeAmount(columns[indices.balance]) : 0;
+
+      // Handle single amount column where negative or DR represents debit, positive represents credit
+      if (indices.debit < 0 && indices.credit < 0 && indices.amount >= 0) {
+        if (rawAmt < 0) {
+          debit = Math.abs(rawAmt);
+          credit = 0;
+        } else {
+          credit = Math.abs(rawAmt);
+          debit = 0;
+        }
+      }
+
+      if (debit === 0 && credit === 0 && balance === 0 && !columns[indices.description]) {
+        continue;
+      }
+
       const status = indices.status >= 0 ? String(columns[indices.status] || "").trim() : undefined;
       const beneficiaryName =
         indices.beneficiaryName >= 0
@@ -513,9 +675,56 @@ export const BankParser = {
         isLiquiditySweep: isCircular,
         category,
       });
+
+      // Capture final row balance as closing balance fallback
+      if (balance !== 0) {
+        detectedClosingBalance = balance;
+      }
     }
 
-    return transactions;
+    const totalDebit = transactions.reduce((sum, t) => sum + (t.debit || 0), 0);
+    const totalCredit = transactions.reduce((sum, t) => sum + (t.credit || 0), 0);
+    if (
+      detectedOpeningBalance === undefined &&
+      transactions.length > 0 &&
+      transactions[0].balance !== 0
+    ) {
+      detectedOpeningBalance =
+        transactions[0].balance + transactions[0].debit - transactions[0].credit;
+    }
+    const calculatedClosingBalance = (detectedOpeningBalance ?? 0) + totalCredit - totalDebit;
+    const balanceDifference =
+      detectedClosingBalance !== undefined
+        ? Math.abs(calculatedClosingBalance - detectedClosingBalance)
+        : 0;
+    const isBalanced = detectedClosingBalance !== undefined ? balanceDifference <= 0.05 : true;
+
+    if (!detectedBankName) {
+      const firstBank = transactions.find((t) => t.bankName)?.bankName;
+      if (firstBank) detectedBankName = firstBank;
+      else if (/RBB/i.test(file.name)) detectedBankName = "Rastriya Banijya Bank Ltd.";
+      else if (/IPS|NCHL|LOT/i.test(file.name))
+        detectedBankName = "Nepal Clearing House Ltd. (ConnectIPS)";
+      else detectedBankName = "Commercial Bank";
+    }
+
+    const metadata: StatementMetadata = {
+      bankName: detectedBankName,
+      accountNo: detectedAccountNo || transactions[0]?.accountNo || "Statement Account",
+      accountHolder: detectedAccountHolder || transactions[0]?.accountHolder || undefined,
+      openingBalance: detectedOpeningBalance,
+      closingBalance: detectedClosingBalance,
+      fromDate: detectedFromDate,
+      toDate: detectedToDate,
+      currency: detectedCurrency,
+      totalDebit,
+      totalCredit,
+      calculatedClosingBalance,
+      balanceDifference,
+      isBalanced,
+    };
+
+    return { transactions, metadata };
   },
 
   /**
@@ -525,6 +734,14 @@ export const BankParser = {
     file: File,
     options: { includeCircularSweeps?: boolean } = {},
   ): Promise<BankTransaction[]> {
+    const { transactions } = await this.parseExcelSettlementWithMetadata(file, options);
+    return transactions;
+  },
+
+  async parseExcelSettlementWithMetadata(
+    file: File,
+    options: { includeCircularSweeps?: boolean } = {},
+  ): Promise<{ transactions: BankTransaction[]; metadata: StatementMetadata }> {
     let rawBuffer: ArrayBuffer;
     if (typeof file.arrayBuffer === "function") {
       rawBuffer = await file.arrayBuffer();
@@ -588,6 +805,15 @@ export const BankParser = {
     const seenWorkbookTxnKeys = new Set<string>();
     const seenSheetFingerprints = new Set<string>();
 
+    let detectedAccountHolder = "";
+    let detectedAccountNo = "";
+    let detectedOpeningBalance: number | undefined = undefined;
+    let detectedClosingBalance: number | undefined = undefined;
+    let detectedFromDate: string | undefined = undefined;
+    let detectedToDate: string | undefined = undefined;
+    let detectedCurrency = "NPR";
+    let detectedBankName = "";
+
     for (const sheetName of sheetsToProcess) {
       const sheet = workbook.Sheets[sheetName];
       const rows = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1, defval: "" });
@@ -603,9 +829,7 @@ export const BankParser = {
       }
       seenSheetFingerprints.add(sheetSample);
 
-      // 1. Scan metadata in the first 20 rows (Account Holder, Account Number)
-      let detectedAccountHolder = "";
-      let detectedAccountNo = "";
+      // 1. Scan metadata in the first 25 rows (Account Holder, Account Number, Balances, Dates)
       let headerRowIndex = 0;
 
       for (let i = 0; i < Math.min(25, rows.length); i++) {
@@ -622,6 +846,39 @@ export const BankParser = {
         if (lineText.includes("Account Number:") || lineText.includes("Account No:")) {
           const m = lineText.match(/Account\s*(?:Number|No):\s*([0-9A-Za-z]+)/i);
           if (m && m[1]) detectedAccountNo = m[1].trim();
+        }
+        if (lineText.includes("Opening Balance:")) {
+          const m = lineText.match(/Opening\s*Balance:\s*([0-9,.]+)/i);
+          if (m && m[1]) detectedOpeningBalance = normalizeAmount(m[1]);
+        }
+        if (lineText.includes("Closing Balance:")) {
+          const m = lineText.match(/Closing\s*Balance:\s*([0-9,.]+)/i);
+          if (m && m[1]) detectedClosingBalance = normalizeAmount(m[1]);
+        }
+        if (lineText.includes("From:")) {
+          const m = lineText.match(/From:\s*([0-9\-/.]+)/i);
+          if (m && m[1]) detectedFromDate = normalizeDate(m[1]);
+        }
+        if (lineText.includes("To:")) {
+          const m = lineText.match(/To:\s*([0-9\-/.]+)/i);
+          if (m && m[1]) detectedToDate = normalizeDate(m[1]);
+        }
+        if (lineText.includes("Currency Code:") || lineText.includes("Currency:")) {
+          const m = lineText.match(/Currency(?:\s*Code)?:\s*([A-Za-z]{3})/i);
+          if (m && m[1]) detectedCurrency = m[1].toUpperCase();
+        }
+        if (/RBB|Rastriya Banijya/i.test(lineText)) {
+          detectedBankName = "Rastriya Banijya Bank Ltd.";
+        } else if (/Sanima/i.test(lineText)) {
+          detectedBankName = "Sanima Bank Ltd.";
+        } else if (/Nabil/i.test(lineText)) {
+          detectedBankName = "Nabil Bank Ltd.";
+        } else if (/Global IME/i.test(lineText)) {
+          detectedBankName = "Global IME Bank Ltd.";
+        } else if (/Prabhu/i.test(lineText)) {
+          detectedBankName = "Prabhu Bank Ltd.";
+        } else if (/ConnectIPS|NCHL/i.test(lineText)) {
+          detectedBankName = "Nepal Clearing House Ltd. (ConnectIPS)";
         }
 
         // Check if this row is the actual table header row
@@ -1118,7 +1375,49 @@ export const BankParser = {
       }
     }
 
-    return transactions;
+    const totalDebit = transactions.reduce((sum, t) => sum + (t.debit || 0), 0);
+    const totalCredit = transactions.reduce((sum, t) => sum + (t.credit || 0), 0);
+    if (
+      detectedOpeningBalance === undefined &&
+      transactions.length > 0 &&
+      transactions[0].balance !== 0
+    ) {
+      detectedOpeningBalance =
+        transactions[0].balance + transactions[0].debit - transactions[0].credit;
+    }
+    const calculatedClosingBalance = (detectedOpeningBalance ?? 0) + totalCredit - totalDebit;
+    const balanceDifference =
+      detectedClosingBalance !== undefined
+        ? Math.abs(calculatedClosingBalance - detectedClosingBalance)
+        : 0;
+    const isBalanced = detectedClosingBalance !== undefined ? balanceDifference <= 0.05 : true;
+
+    if (!detectedBankName) {
+      const firstBank = transactions.find((t) => t.bankName)?.bankName;
+      if (firstBank) detectedBankName = firstBank;
+      else if (/RBB/i.test(file.name)) detectedBankName = "Rastriya Banijya Bank Ltd.";
+      else if (/IPS|NCHL|LOT/i.test(file.name))
+        detectedBankName = "Nepal Clearing House Ltd. (ConnectIPS)";
+      else detectedBankName = "Commercial Bank";
+    }
+
+    const metadata: StatementMetadata = {
+      bankName: detectedBankName,
+      accountNo: detectedAccountNo || transactions[0]?.accountNo || "Statement Account",
+      accountHolder: detectedAccountHolder || transactions[0]?.accountHolder || undefined,
+      openingBalance: detectedOpeningBalance,
+      closingBalance: detectedClosingBalance,
+      fromDate: detectedFromDate,
+      toDate: detectedToDate,
+      currency: detectedCurrency,
+      totalDebit,
+      totalCredit,
+      calculatedClosingBalance,
+      balanceDifference,
+      isBalanced,
+    };
+
+    return { transactions, metadata };
   },
 
   /**
@@ -1178,7 +1477,8 @@ export const BankParser = {
       }
 
       try {
-        const txns = await this.parseBankStatement(file, options);
+        const { transactions: txns, metadata: fileMeta } =
+          await this.parseBankStatementWithMetadata(file, options);
         perFileTransactions.set(file, txns);
 
         const rejected = txns.filter(
@@ -1199,6 +1499,7 @@ export const BankParser = {
           transactionCount: txns.length,
           rejectedCount: rejected,
           acceptedCount: accepted,
+          metadata: fileMeta,
         });
 
         for (const t of txns) {
@@ -1273,6 +1574,31 @@ export const BankParser = {
       }
     }
 
+    const primaryStatus = fileStatuses.find((s) => s.status === "parsed" && s.metadata);
+    const allDebits = allTransactions.reduce((sum, t) => sum + (t.debit || 0), 0);
+    const allCredits = allTransactions.reduce((sum, t) => sum + (t.credit || 0), 0);
+    const initialOpening = primaryStatus?.metadata?.openingBalance;
+    const finalClosing = primaryStatus?.metadata?.closingBalance;
+    const calculatedClosingBalance =
+      initialOpening !== undefined ? initialOpening + allCredits - allDebits : undefined;
+
+    const statementMetadata: StatementMetadata | undefined = primaryStatus?.metadata
+      ? {
+          ...primaryStatus.metadata,
+          totalDebit: allDebits,
+          totalCredit: allCredits,
+          calculatedClosingBalance,
+          balanceDifference:
+            finalClosing !== undefined && calculatedClosingBalance !== undefined
+              ? Math.abs(calculatedClosingBalance - finalClosing)
+              : 0,
+          isBalanced:
+            finalClosing !== undefined && calculatedClosingBalance !== undefined
+              ? Math.abs(calculatedClosingBalance - finalClosing) <= 0.05
+              : true,
+        }
+      : undefined;
+
     return {
       transactions: allTransactions,
       perFileTransactions,
@@ -1280,6 +1606,7 @@ export const BankParser = {
       hasFailures,
       duplicateCount,
       variantWarnings,
+      statementMetadata,
     };
   },
 

@@ -177,4 +177,55 @@ describe("BankParser Comprehensive Unit Tests", () => {
     expect(txs[0].instructionId).toBe("02012610030097PR");
     expect(txs[0].debit).toBe(8550);
   });
+
+  it("extracts statement metadata and verifies opening + credit - debit = closing", async () => {
+    const csvContent = [
+      "Bank: Rastriya Banijya Bank",
+      "Account No: 1090100000001001",
+      "Opening Balance: 100000.00",
+      "Closing Balance: 85000.00",
+      "Date,Description,Debit,Credit,Balance",
+      "2026-04-10,Payout 1,10000.00,0.00,90000.00",
+      "2026-04-11,Payout 2,10000.00,0.00,80000.00",
+      "2026-04-12,Bounce Credit,0.00,5000.00,85000.00",
+    ].join("\n");
+
+    const file = createMockFile(csvContent, "statement_with_header.csv");
+    const res = await BankParser.parseBankStatementWithMetadata(file);
+
+    expect(res.transactions).toHaveLength(3);
+    expect(res.metadata.bankName).toBe("Rastriya Banijya Bank Ltd.");
+    expect(res.metadata.accountNo).toBe("1090100000001001");
+    expect(res.metadata.openingBalance).toBe(100000);
+    expect(res.metadata.closingBalance).toBe(85000);
+    expect(res.metadata.totalDebit).toBe(20000);
+    expect(res.metadata.totalCredit).toBe(5000);
+    expect(res.metadata.calculatedClosingBalance).toBe(85000);
+    expect(res.metadata.isBalanced).toBe(true);
+    expect(res.metadata.balanceDifference).toBe(0);
+  });
+
+  it("multi-file provenance tracks individual files and consolidates metadata", async () => {
+    const csv1 = [
+      "Bank: RBB",
+      "Opening Balance: 50000",
+      "Closing Balance: 40000",
+      "Date,Description,Debit,Credit,Balance",
+      "2026-04-10,Lot 1 Debit,10000,0,40000",
+    ].join("\n");
+
+    const csv2 = [
+      "Date,Description,Debit,Credit,Balance",
+      "2026-04-11,Lot 2 Debit,5000,0,35000",
+    ].join("\n");
+
+    const file1 = createMockFile(csv1, "file1.csv");
+    const file2 = createMockFile(csv2, "file2.csv");
+
+    const provenance = await BankParser.parseMultipleFilesWithProvenance([file1, file2]);
+    expect(provenance.transactions).toHaveLength(2);
+    expect(provenance.fileStatuses).toHaveLength(2);
+    expect(provenance.hasFailures).toBe(false);
+    expect(provenance.statementMetadata?.totalDebit).toBe(15000);
+  });
 });

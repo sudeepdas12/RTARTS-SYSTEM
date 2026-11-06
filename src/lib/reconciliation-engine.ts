@@ -3,6 +3,7 @@ import { fetchAllRows } from "./services/database";
 import { ParsedExcelData } from "./excel-parser";
 import { RECONCILIATION_TOLERANCE_NPR, BULK_CHUNK_SIZE } from "./constants";
 import { toPaisa, fromPaisa, roundToPaisa } from "./currency";
+import type { StatementMetadata } from "./bank-parser";
 
 /**
  * Compares two amounts in integer paisa to eliminate IEEE 754 float drift.
@@ -106,6 +107,7 @@ export interface ComprehensiveReconciliationReport {
   fileName: string;
   categories: CategorySummary[];
   matches: ReconciliationMatch[];
+  statementMetadata?: StatementMetadata;
   grandTotal: {
     totalRecords: number;
     totalKitta: number;
@@ -956,6 +958,7 @@ export const ReconciliationEngine = {
       companyIds?: string[] | null;
       client?: any;
       allowUniqueAmountOnly?: boolean;
+      metadata?: StatementMetadata;
     },
   ): Promise<ComprehensiveReconciliationReport> {
     const db = options?.client || supabase;
@@ -2028,6 +2031,7 @@ export const ReconciliationEngine = {
       matches,
       grandTotal,
       summary,
+      statementMetadata: options?.metadata,
     };
   },
 };

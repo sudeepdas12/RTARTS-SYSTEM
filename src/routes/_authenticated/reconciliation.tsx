@@ -63,7 +63,28 @@ import {
   Layers,
   ExternalLink,
   Info,
+  Eye,
+  Table as TableIcon,
+  LayoutGrid,
+  Landmark,
 } from "lucide-react";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { TransactionDetailModal } from "@/components/reconciliation/transaction-detail-modal";
 import { ReconciliationGroupedLot } from "@/lib/services/reconciliation.service";
 import {
   AccountRemediationDialog,
@@ -138,6 +159,13 @@ export function ReconciliationRoute() {
   >({});
   const [parsedFileStatuses, setParsedFileStatuses] = useState<FileParseStatus[]>([]);
   const [variantAlerts, setVariantAlerts] = useState<FileVariantWarning[]>([]);
+  const [viewMode, setViewMode] = useState<"table" | "cards">("table");
+  const [inspectingMatch, setInspectingMatch] = useState<ReconciliationMatch | null>(null);
+  const [companySelectModalOpen, setCompanySelectModalOpen] = useState<boolean>(false);
+  const [pendingFilesToProcess, setPendingFilesToProcess] = useState<{
+    files: File[];
+    isBankStatement: boolean;
+  } | null>(null);
 
   const { hasAny, isAdmin, user, roles } = useAuth();
   const canApply = hasAny(["admin", "finance_operator", "reconciliation_officer"]);
@@ -431,7 +459,58 @@ export function ReconciliationRoute() {
     loadHistory();
   }, [loadHistory]);
 
-  const processExcelFiles = async (files: File[]) => {
+  const resolveTargetCompany = (
+    files: File[],
+    isBankStatement: boolean,
+    overrideCompanyId?: string,
+  ): string | null => {
+    if (overrideCompanyId) return overrideCompanyId;
+    if (reconCompanyIds.length > 0 && reconCompanyIds[0]) return reconCompanyIds[0];
+
+    // Auto-detect single company
+    if (companiesList.length === 1) {
+      const singleId = companiesList[0].id;
+      setReconCompanyIds([singleId]);
+      return singleId;
+    }
+
+    // Auto-detect matching company code or name in filenames
+    if (companiesList.length > 1) {
+      const matchedComp = companiesList.find((c) =>
+        files.some(
+          (f) =>
+            (c.company_code && f.name.toUpperCase().includes(c.company_code.toUpperCase())) ||
+            (c.company_name && f.name.toUpperCase().includes(c.company_name.toUpperCase())),
+        ),
+      );
+      if (matchedComp) {
+        setReconCompanyIds([matchedComp.id]);
+        toast.info(`Auto-selected target fund: ${matchedComp.company_name}`);
+        return matchedComp.id;
+      }
+    }
+
+    // Prompt user via modal
+    setPendingFilesToProcess({ files, isBankStatement });
+    setCompanySelectModalOpen(true);
+    return null;
+  };
+
+  const handleSelectCompanyForPending = (companyId: string) => {
+    setReconCompanyIds([companyId]);
+    setCompanySelectModalOpen(false);
+    if (pendingFilesToProcess) {
+      const pending = pendingFilesToProcess;
+      setPendingFilesToProcess(null);
+      if (pending.isBankStatement) {
+        processBankStatementFiles(pending.files, companyId);
+      } else {
+        processExcelFiles(pending.files, companyId);
+      }
+    }
+  };
+
+  const processExcelFiles = async (files: File[], overrideCompanyId?: string) => {
     if (!files.length) return;
     if (!canApply) {
       toast.error("Unauthorized: Read-only accounts cannot upload files for reconciliation.");
@@ -481,12 +560,8 @@ export function ReconciliationRoute() {
       }
 
       if (bankFiles.length > 0) {
-        if (!reconCompanyIds.length || !reconCompanyIds[0]) {
-          toast.error(
-            "Target company selection is required before analyzing and ingesting settlement reports.",
-          );
-          return;
-        }
+        const targetCompany = resolveTargetCompany(bankFiles, false, overrideCompanyId);
+        if (!targetCompany) return;
         try {
           const {
             transactions,
@@ -495,6 +570,7 @@ export function ReconciliationRoute() {
             hasFailures,
             duplicateCount,
             variantWarnings,
+            statementMetadata,
           } = await BankParser.parseMultipleFilesWithProvenance(bankFiles, {
             onProgress: (cur, tot, name) =>
               setProcessingProgress(`Analyzing settlement report ${cur} of ${tot}: ${name}`),
@@ -524,18 +600,24 @@ export function ReconciliationRoute() {
 
           if (transactions.length > 0) {
             // Persist into immutable bank ledger per file with provenance (fail closed)
-            const targetCompany = reconCompanyIds.length > 0 ? reconCompanyIds[0] : null;
             for (const file of bankFiles) {
               const fileTxns = perFileTransactions.get(file) || [];
               if (fileTxns.length === 0) continue;
+              const fileStatus = fileStatuses.find((s) => s.fileName === file.name);
               setProcessingProgress(`Persisting ledger for ${file.name}...`);
-              await ReconciliationService.ingestBankStatementFile(targetCompany, file, fileTxns);
+              await ReconciliationService.ingestBankStatementFile(
+                targetCompany,
+                file,
+                fileTxns,
+                fileStatus?.metadata,
+              );
             }
 
             setProcessingProgress("Performing 5-way multi-source reconciliation...");
             const rep = await ReconciliationEngine.analyzeBankStatement(transactions, {
               fileName: bankFiles.map((f) => f.name).join(", "),
-              companyIds: reconCompanyIds.length > 0 ? reconCompanyIds : null,
+              companyIds: [targetCompany],
+              metadata: statementMetadata,
             });
             setReport(rep);
             toast.success(
@@ -588,15 +670,11 @@ export function ReconciliationRoute() {
     }
   };
 
-  const processBankStatementFiles = async (files: File[]) => {
+  const processBankStatementFiles = async (files: File[], overrideCompanyId?: string) => {
     if (!files.length) return;
 
-    if (!reconCompanyIds.length || !reconCompanyIds[0]) {
-      toast.error(
-        "Target company selection is required before analyzing and ingesting bank statements.",
-      );
-      return;
-    }
+    const targetCompany = resolveTargetCompany(files, true, overrideCompanyId);
+    if (!targetCompany) return;
 
     setIsProcessing(true);
     setProcessingProgress(
@@ -612,6 +690,7 @@ export function ReconciliationRoute() {
         hasFailures,
         duplicateCount,
         variantWarnings,
+        statementMetadata,
       } = await BankParser.parseMultipleFilesWithProvenance(files, {
         onProgress: (cur, tot, name) =>
           setProcessingProgress(`Parsing bank statement ${cur} of ${tot}: ${name}`),
@@ -640,18 +719,24 @@ export function ReconciliationRoute() {
 
       if (transactions.length > 0) {
         // Persist into immutable bank ledger per file with provenance (fail closed)
-        const targetCompany = reconCompanyIds.length > 0 ? reconCompanyIds[0] : null;
         for (const file of files) {
           const fileTxns = perFileTransactions.get(file) || [];
           if (fileTxns.length === 0) continue;
+          const fileStatus = fileStatuses.find((s) => s.fileName === file.name);
           setProcessingProgress(`Persisting statement ledger for ${file.name}...`);
-          await ReconciliationService.ingestBankStatementFile(targetCompany, file, fileTxns);
+          await ReconciliationService.ingestBankStatementFile(
+            targetCompany,
+            file,
+            fileTxns,
+            fileStatus?.metadata,
+          );
         }
 
         setProcessingProgress("Matching statement transactions with disbursements & payouts...");
         const rep = await ReconciliationEngine.analyzeBankStatement(transactions, {
           fileName: files.map((f) => f.name).join(", "),
-          companyIds: reconCompanyIds.length > 0 ? reconCompanyIds : null,
+          companyIds: [targetCompany],
+          metadata: statementMetadata,
         });
         setReport(rep);
         toast.success(
@@ -1760,7 +1845,152 @@ export function ReconciliationRoute() {
               </div>
             </div>
           </div>
+          <div className="pt-0.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+              title="Inspect Details"
+              onClick={() => setInspectingMatch(match)}
+            >
+              <Eye className="w-4 h-4" />
+            </Button>
+          </div>
         </div>
+      </div>
+    );
+  };
+
+  const renderMatchTable = (matches: ReconciliationMatch[]) => {
+    return (
+      <div className="border rounded-md overflow-x-auto bg-background">
+        <Table>
+          <TableHeader className="bg-muted/50">
+            <TableRow>
+              <TableHead className="w-10">
+                <Checkbox
+                  checked={matches.length > 0 && matches.every((m) => selectedMatchIds.has(m.id))}
+                  onCheckedChange={(checked) => {
+                    const next = new Set(selectedMatchIds);
+                    if (checked) {
+                      matches.forEach((m) => next.add(m.id));
+                    } else {
+                      matches.forEach((m) => next.delete(m.id));
+                    }
+                    setSelectedMatchIds(next);
+                  }}
+                  aria-label="Select all on this page"
+                />
+              </TableHead>
+              <TableHead className="font-semibold text-xs">Shareholder / BOID</TableHead>
+              <TableHead className="font-semibold text-xs">Category</TableHead>
+              <TableHead className="font-semibold text-xs">Bank / Account</TableHead>
+              <TableHead className="text-right font-semibold text-xs">Statement / Excel</TableHead>
+              <TableHead className="text-right font-semibold text-xs">System Amount</TableHead>
+              <TableHead className="text-right font-semibold text-xs">Difference</TableHead>
+              <TableHead className="font-semibold text-xs">Confidence</TableHead>
+              <TableHead className="text-center font-semibold text-xs">Status</TableHead>
+              <TableHead className="text-center font-semibold text-xs w-16">Inspect</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {matches.map((match) => {
+              const isSelected = selectedMatchIds.has(match.id);
+              return (
+                <TableRow
+                  key={match.id}
+                  className={`cursor-pointer transition-colors ${
+                    isSelected ? "bg-primary/5 hover:bg-primary/10" : "hover:bg-muted/40"
+                  }`}
+                  onClick={() => toggleSelectMatch(match.id)}
+                >
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <Checkbox
+                      checked={isSelected}
+                      onCheckedChange={() => toggleSelectMatch(match.id)}
+                      aria-label={`Select ${match.shareholderName}`}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <div className="font-medium text-xs text-foreground">
+                      {match.shareholderName || "Unknown Shareholder"}
+                    </div>
+                    <div className="font-mono text-[11px] text-muted-foreground">
+                      {match.boid || "—"}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="text-[11px]">
+                      {match.category || "General"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <div className="text-xs">{match.bankName || "—"}</div>
+                    {match.bankAccountNo && (
+                      <div className="font-mono text-[11px] text-muted-foreground">
+                        {match.bankAccountNo}
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right font-mono font-medium text-xs">
+                    NPR {match.excelAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                    NPR {match.systemAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </TableCell>
+                  <TableCell className="text-right font-mono font-semibold text-xs">
+                    <span
+                      className={
+                        match.difference !== 0
+                          ? "text-destructive"
+                          : "text-emerald-600 dark:text-emerald-400"
+                      }
+                    >
+                      {match.difference !== 0
+                        ? (match.difference > 0 ? "+" : "") +
+                          match.difference.toLocaleString("en-IN", { minimumFractionDigits: 2 })
+                        : "0.00"}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    {match.confidenceScore !== undefined && match.confidenceScore > 0 ? (
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] h-5 font-semibold ${
+                          match.confidenceScore >= 90
+                            ? "border-emerald-500/40 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400"
+                            : match.confidenceScore >= 70
+                              ? "border-amber-500/40 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400"
+                              : "border-rose-500/40 bg-rose-50 text-rose-700 dark:bg-rose-950/30 dark:text-rose-400"
+                        }`}
+                      >
+                        {match.confidenceScore}%
+                      </Badge>
+                    ) : (
+                      <span className="text-[11px] text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <Badge variant={getStatusBadgeVariant(match.status)} className="text-[11px]">
+                      {match.status.replace("_", " ")}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                      title="Inspect Transaction Details"
+                      onClick={() => setInspectingMatch(match)}
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
       </div>
     );
   };
@@ -2472,6 +2702,29 @@ export function ReconciliationRoute() {
                   )}
                 </div>
 
+                <div className="flex items-center gap-2 ml-auto">
+                  <div className="flex items-center border rounded-md p-0.5 bg-muted/40">
+                    <Button
+                      variant={viewMode === "table" ? "secondary" : "ghost"}
+                      size="sm"
+                      className="h-7 px-2.5 text-xs flex items-center gap-1.5 cursor-pointer"
+                      onClick={() => setViewMode("table")}
+                    >
+                      <TableIcon className="w-3.5 h-3.5" />
+                      Table View
+                    </Button>
+                    <Button
+                      variant={viewMode === "cards" ? "secondary" : "ghost"}
+                      size="sm"
+                      className="h-7 px-2.5 text-xs flex items-center gap-1.5 cursor-pointer"
+                      onClick={() => setViewMode("cards")}
+                    >
+                      <LayoutGrid className="w-3.5 h-3.5" />
+                      Card View
+                    </Button>
+                  </div>
+                </div>
+
                 {selectedMatchIds.size > 0 && (
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-xs font-semibold text-primary">
@@ -2571,7 +2824,9 @@ export function ReconciliationRoute() {
                     </p>
                   ) : (
                     <>
-                      {paginatedFilteredMatches.map(renderMatchRow)}
+                      {viewMode === "table"
+                        ? renderMatchTable(paginatedFilteredMatches)
+                        : paginatedFilteredMatches.map(renderMatchRow)}
                       {renderPaginationToolbar(filteredMatches.length)}
                     </>
                   )}
@@ -2586,7 +2841,9 @@ export function ReconciliationRoute() {
                     </p>
                   ) : (
                     <>
-                      {paginatedMatchedOnly.map(renderMatchRow)}
+                      {viewMode === "table"
+                        ? renderMatchTable(paginatedMatchedOnly)
+                        : paginatedMatchedOnly.map(renderMatchRow)}
                       {renderPaginationToolbar(matchedOnlyMatches.length)}
                     </>
                   )}
@@ -2609,7 +2866,9 @@ export function ReconciliationRoute() {
                           When applied, payables will update to &ldquo;Partial&rdquo; status.
                         </AlertDescription>
                       </Alert>
-                      {paginatedPartial.map(renderMatchRow)}
+                      {viewMode === "table"
+                        ? renderMatchTable(paginatedPartial)
+                        : paginatedPartial.map(renderMatchRow)}
                       {renderPaginationToolbar(partialMatches.length)}
                     </>
                   )}
@@ -2638,7 +2897,9 @@ export function ReconciliationRoute() {
                           unpaid for retry.
                         </AlertDescription>
                       </Alert>
-                      {paginatedRejected.map(renderMatchRow)}
+                      {viewMode === "table"
+                        ? renderMatchTable(paginatedRejected)
+                        : paginatedRejected.map(renderMatchRow)}
                       {renderPaginationToolbar(rejectedMatches.length)}
                     </>
                   )}
@@ -2666,7 +2927,9 @@ export function ReconciliationRoute() {
                           clients in the system. They require manual review.
                         </AlertDescription>
                       </Alert>
-                      {paginatedUnmatchedBank.map(renderMatchRow)}
+                      {viewMode === "table"
+                        ? renderMatchTable(paginatedUnmatchedBank)
+                        : paginatedUnmatchedBank.map(renderMatchRow)}
                       {renderPaginationToolbar(unmatchedBankMatches.length)}
                     </>
                   )}
@@ -3671,6 +3934,63 @@ export function ReconciliationRoute() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Transaction Detail Deep Inspection Modal */}
+      <TransactionDetailModal
+        match={inspectingMatch}
+        open={Boolean(inspectingMatch)}
+        onOpenChange={(open) => !open && setInspectingMatch(null)}
+        onRemediate={(m) => {
+          setInspectingMatch(null);
+          openRemediationForMatches();
+        }}
+      />
+
+      {/* Company Selection Modal for Statement Ingestion */}
+      <Dialog open={companySelectModalOpen} onOpenChange={setCompanySelectModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Building2 className="w-5 h-5 text-primary" />
+              Select Target Company
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              To ingest statement transactions into the immutable financial ledger, please select
+              the target issuing company / fund:
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-60 overflow-y-auto space-y-2 py-2">
+            {companiesList.map((company) => (
+              <button
+                key={company.id}
+                type="button"
+                className="w-full text-left p-3 rounded-lg border hover:border-primary/50 hover:bg-primary/5 transition-all flex items-center justify-between cursor-pointer"
+                onClick={() => handleSelectCompanyForPending(company.id)}
+              >
+                <div>
+                  <div className="font-semibold text-sm">{company.company_name}</div>
+                  <div className="text-xs text-muted-foreground font-mono">
+                    {company.company_code}
+                  </div>
+                </div>
+                <Badge variant="outline">Select</Badge>
+              </button>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setCompanySelectModalOpen(false);
+                setPendingFilesToProcess(null);
+              }}
+            >
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
