@@ -1015,7 +1015,7 @@ function UploadRoute() {
       ]);
 
       // Refresh materialized multi-scheme company_client_map in background
-      (supabase as any).rpc("refresh_company_client_map").catch(() => {});
+      Promise.resolve((supabase as any).rpc("refresh_company_client_map")).catch(() => {});
 
       if (result.successRows <= 0) {
         throw new Error("Import completed without inserting any rows.");
@@ -1384,7 +1384,7 @@ function UploadRoute() {
       ]);
 
       // Refresh materialized multi-scheme company_client_map in background
-      (supabase as any).rpc("refresh_company_client_map").catch(() => {});
+      Promise.resolve((supabase as any).rpc("refresh_company_client_map")).catch(() => {});
 
       if (overallErrors === 0) {
         toast.success(

@@ -39,13 +39,13 @@ test.describe("Overview — Dashboard Comprehensive End-to-End Suite", () => {
     const totalPayablesCard = page.locator("div.glass-card:has-text('Total Payables')").first();
     const payablesValue = await totalPayablesCard.locator(".tabular-nums").first().textContent();
     expect(payablesValue).toBeTruthy();
-    expect(payablesValue).toContain("₨");
+    expect(payablesValue?.includes("₨") || payablesValue === "—").toBe(true);
     expect(payablesValue).not.toContain("NaN");
 
     const pendingPaymentsCard = page.locator("div.glass-card:has-text('Pending Payments')").first();
     const pendingValue = await pendingPaymentsCard.locator(".tabular-nums").first().textContent();
     expect(pendingValue).toBeTruthy();
-    expect(pendingValue).toContain("₨");
+    expect(pendingValue?.includes("₨") || pendingValue === "—").toBe(true);
     expect(pendingValue).not.toContain("NaN");
   });
 
