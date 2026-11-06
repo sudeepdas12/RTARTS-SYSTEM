@@ -232,10 +232,15 @@ interface RegisterViewerDialogProps {
   reportDescription: string;
   companyName: string;
   filters?: ReportFilters;
+  companies?: { id: string; company_name: string; company_code: string }[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   fetchData?: (id: ReportId) => Promise<any[]>;
-  onExport: (id: ReportId, kind: "xlsx" | "pdf") => void;
+  onExport: (
+    id: ReportId,
+    kind: "xlsx" | "pdf",
+    options?: { companyId?: string; search?: string },
+  ) => void;
   isExporting: boolean;
   onSelectReport?: (id: ReportId) => void;
 }
@@ -246,6 +251,7 @@ function RegisterViewerDialog({
   reportDescription,
   companyName,
   filters,
+  companies = [],
   open,
   onOpenChange,
   onExport,
@@ -256,6 +262,23 @@ function RegisterViewerDialog({
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(15);
+  const [dialogCompanyId, setDialogCompanyId] = useState<string>(filters?.companyId || "all");
+
+  useEffect(() => {
+    if (filters?.companyId) {
+      setDialogCompanyId(filters.companyId);
+    } else {
+      setDialogCompanyId("all");
+    }
+  }, [filters?.companyId, open]);
+
+  const activeDialogFilters = useMemo(
+    () => ({
+      ...filters,
+      companyId: dialogCompanyId === "all" ? undefined : dialogCompanyId,
+    }),
+    [filters, dialogCompanyId],
+  );
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 250);
@@ -275,24 +298,32 @@ function RegisterViewerDialog({
     queryKey: [
       "view-register-page-data",
       reportId,
-      companyName,
-      filters,
+      dialogCompanyId,
+      activeDialogFilters,
       page,
       pageSize,
       debouncedSearch,
     ],
     queryFn: () =>
       reportId
-        ? ReportService.getRegisterPage(reportId, filters, page, pageSize, debouncedSearch)
+        ? ReportService.getRegisterPage(
+            reportId,
+            activeDialogFilters,
+            page,
+            pageSize,
+            debouncedSearch,
+          )
         : Promise.resolve({ rows: [], totalCount: 0 }),
     enabled: open && !!reportId,
     staleTime: 30 * 1000,
   });
 
   const { data: serverTotals } = useQuery({
-    queryKey: ["report-grand-totals", reportId, filters],
+    queryKey: ["report-grand-totals", reportId, activeDialogFilters],
     queryFn: () =>
-      reportId ? ReportService.getReportGrandTotals(reportId, filters) : Promise.resolve(null),
+      reportId
+        ? ReportService.getReportGrandTotals(reportId, activeDialogFilters)
+        : Promise.resolve(null),
     enabled: open && !!reportId,
     staleTime: 60 * 1000,
   });
@@ -440,7 +471,13 @@ function RegisterViewerDialog({
                 size="sm"
                 className="h-8 text-xs"
                 disabled={isExporting || isLoading || totalCount === 0}
-                onClick={() => reportId && onExport(reportId, "xlsx")}
+                onClick={() =>
+                  reportId &&
+                  onExport(reportId, "xlsx", {
+                    companyId: dialogCompanyId,
+                    search: debouncedSearch,
+                  })
+                }
               >
                 <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
                 Excel
@@ -450,7 +487,10 @@ function RegisterViewerDialog({
                 size="sm"
                 className="h-8 text-xs"
                 disabled={isExporting || isLoading || totalCount === 0}
-                onClick={() => reportId && onExport(reportId, "pdf")}
+                onClick={() =>
+                  reportId &&
+                  onExport(reportId, "pdf", { companyId: dialogCompanyId, search: debouncedSearch })
+                }
               >
                 <FileText className="mr-1.5 h-3.5 w-3.5 text-rose-600" />
                 PDF
@@ -544,16 +584,40 @@ function RegisterViewerDialog({
           )}
         </DialogHeader>
 
-        {/* Toolbar: Search + PageSize Selector */}
+        {/* Toolbar: Search + Company Filter + PageSize Selector */}
         <div className="p-3 border-b bg-background/50 flex flex-col sm:flex-row items-center justify-between gap-2 shrink-0">
-          <div className="relative w-full sm:w-80">
-            <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              placeholder="Search across all fields..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="h-8 pl-8 text-xs"
-            />
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto flex-1">
+            <div className="relative w-full sm:w-72">
+              <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Search shareholder, BOID, PAN, account…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="h-8 pl-8 text-xs"
+              />
+            </div>
+            {companies && companies.length > 0 && (
+              <Select
+                value={dialogCompanyId}
+                onValueChange={(val) => {
+                  setDialogCompanyId(val);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="h-8 w-52 text-xs bg-background shrink-0">
+                  <Building2 className="h-3.5 w-3.5 mr-1.5 text-muted-foreground shrink-0" />
+                  <SelectValue placeholder="All Companies / Schemes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Schemes / Companies</SelectItem>
+                  {companies.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.company_name} ({c.company_code})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground w-full sm:w-auto justify-end">
             <span>Show:</span>
@@ -966,6 +1030,15 @@ function ReportsRoute() {
     queryFn: () => SummaryReportService.getMutualFundSummary({ companyId }),
   });
   const mfSummary = useMemo(() => mfSummaryQuery.data || [], [mfSummaryQuery.data]);
+
+  const mfSchemesQuery = useQuery({
+    queryKey: ["mutual-fund-schemes-summary"],
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
+    queryFn: () => SummaryReportService.getMutualFundSchemesSummary(),
+  });
+  const mfSchemes = useMemo(() => mfSchemesQuery.data || [], [mfSchemesQuery.data]);
   const mfTotal = useMemo(
     () =>
       mfSummary.reduce(
@@ -1039,50 +1112,88 @@ function ReportsRoute() {
       upload_history_report: ReportService.getUploadHistoryReport,
     })[id](filters);
 
-  const exportReport = async (id: ReportId, kind: "xlsx" | "pdf") => {
+  const exportReport = async (
+    id: ReportId,
+    kind: "xlsx" | "pdf",
+    options?: { companyId?: string; search?: string },
+  ) => {
+    const targetCompanyId = options?.companyId !== undefined ? options.companyId : companyId;
+    const targetSearch = options?.search;
+    const targetCompany = companies.find((c) => c.id === targetCompanyId);
+    const targetCompanyName =
+      targetCompany?.company_name ||
+      (targetCompanyId === "all" ? "Consolidated Portfolio (RMF1 & RMF2)" : "RTARTS System");
+
     const title = [...PAYABLE_REPORTS, ...OPERATIONS_REPORTS].find((r) => r.id === id)?.title || id;
     setActiveExport(`${id}-${kind}`);
-    const toastId = toast.loading(`Fetching data for ${title}...`);
+    const toastId = toast.loading(
+      `Preparing ${kind.toUpperCase()} export for ${title} (${targetCompanyName})...`,
+    );
     try {
-      const data = await fetchReport(id);
-      if (!data || !data.length) {
-        toast.dismiss(toastId);
-        toast.info(
-          companyId !== "all"
-            ? "No records found matching the selected company."
-            : "No records currently found in the system for this register.",
-        );
-        return;
-      }
-      if (kind === "xlsx") {
-        ExcelExporter.exportToExcel(data as any[], title);
-        toast.dismiss(toastId);
-        toast.success(`${data.length.toLocaleString()} record(s) exported to Excel successfully.`);
-      } else {
+      const activeFilters: ReportFilters = {
+        ...filters,
+        companyId: targetCompanyId === "all" ? undefined : targetCompanyId,
+      };
+
+      if (kind === "pdf") {
         const MAX_PDF_ROWS = 3000;
-        const exportData = data.length > MAX_PDF_ROWS ? data.slice(0, MAX_PDF_ROWS) : data;
+        const result = await ReportService.getRegisterExportData(
+          id,
+          activeFilters,
+          targetSearch,
+          MAX_PDF_ROWS,
+        );
+        if (!result.rows || result.rows.length === 0) {
+          toast.dismiss(toastId);
+          toast.info(
+            targetCompanyId !== "all"
+              ? `No records found in ${title} matching ${targetCompanyName}.`
+              : "No records currently found in the system for this register.",
+          );
+          return;
+        }
+
+        const subtitle = result.isTruncated
+          ? `Displaying first ${result.rows.length.toLocaleString()} of ${result.totalCount.toLocaleString()} records — for complete register, use Excel`
+          : targetCompanyId === "all"
+            ? `Consolidated Register (${result.companyNames.join(", ")}) • ${result.totalCount.toLocaleString()} total records`
+            : `Scheme / Company Register (${targetCompanyName}) • ${result.totalCount.toLocaleString()} total records`;
 
         await PdfGenerator.generate(
           {
             title,
-            subtitle:
-              data.length > MAX_PDF_ROWS
-                ? `(Displaying first ${MAX_PDF_ROWS.toLocaleString()} of ${data.length.toLocaleString()} records — for complete register, use Excel)`
-                : undefined,
-            companyName: selectedCompany?.company_name || "RTARTS System",
+            subtitle,
+            companyName: targetCompanyName,
             generatedBy: "System",
           },
           REPORT_COLUMNS[id] || [],
-          exportData as unknown as Record<string, unknown>[],
+          result.rows as unknown as Record<string, unknown>[],
         );
         toast.dismiss(toastId);
-        if (data.length > MAX_PDF_ROWS) {
+        if (result.isTruncated) {
           toast.warning(
-            `PDF generated for first ${MAX_PDF_ROWS.toLocaleString()} records. For complete export (${data.length.toLocaleString()} rows), please download Excel.`,
+            `PDF generated for first ${result.rows.length.toLocaleString()} records. For complete export (${result.totalCount.toLocaleString()} rows), please download Excel.`,
           );
         } else {
-          toast.success(`${data.length.toLocaleString()} record(s) exported to PDF successfully.`);
+          toast.success(
+            `${result.rows.length.toLocaleString()} record(s) exported to PDF successfully.`,
+          );
         }
+      } else {
+        const result = await ReportService.getRegisterExportData(id, activeFilters, targetSearch);
+        if (!result.rows || result.rows.length === 0) {
+          toast.dismiss(toastId);
+          toast.info("No records found to export.");
+          return;
+        }
+        ExcelExporter.exportToExcel(
+          result.rows as any[],
+          `${targetCompanyName.replace(/[^a-zA-Z0-9]/g, "_")}_${title.replace(/[^a-zA-Z0-9]/g, "_")}`,
+        );
+        toast.dismiss(toastId);
+        toast.success(
+          `Successfully exported ${result.rows.length.toLocaleString()} record(s) to Excel.`,
+        );
       }
     } catch (error) {
       toast.dismiss(toastId);
@@ -1620,7 +1731,11 @@ function ReportsRoute() {
                     onClick={() =>
                       SummaryReportService.exportMutualFundSummaryToPdf(
                         mfSummary,
-                        selectedCompany?.company_name || "RTARTS System",
+                        selectedCompany?.company_name || "Consolidated Mutual Fund Portfolio",
+                        selectedCompany
+                          ? `Scheme: ${selectedCompany.company_name} (${selectedCompany.company_code})`
+                          : "Consolidated Portfolio (RMF1 & RMF2)",
+                        companyId === "all" ? mfSchemes : undefined,
                       )
                     }
                   >
@@ -2005,6 +2120,139 @@ function ReportsRoute() {
 
         {/* ─── TAB 4: MUTUAL FUNDS (CDS) ─── */}
         <TabsContent value="mf" className="space-y-4">
+          {/* Mutual Fund Schemes Portfolio Summary (RMF1, RMF2) */}
+          {companyId === "all" && mfSchemes.length > 0 && (
+            <Card className="border-indigo-200 dark:border-indigo-900 shadow-xs">
+              <CardHeader className="py-3 px-4 bg-indigo-50/60 dark:bg-indigo-950/30 border-b flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle className="text-sm font-semibold flex items-center gap-2 text-indigo-950 dark:text-indigo-200">
+                    <Building2 className="h-4 w-4 text-indigo-600" />
+                    Mutual Fund Schemes Breakdown (All Active Funds)
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    Independent financial totals per scheme (RMF1, RMF2) with unitholder counts,
+                    kitta, gross distribution, and TDS deductions.
+                  </p>
+                </div>
+              </CardHeader>
+              <CardContent className="p-0 overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50 text-[11px] uppercase">
+                      <TableHead className="w-10">S.N.</TableHead>
+                      <TableHead>Scheme Name</TableHead>
+                      <TableHead>Code</TableHead>
+                      <TableHead className="text-right">Unitholders</TableHead>
+                      <TableHead className="text-right">Units / Kitta</TableHead>
+                      <TableHead className="text-right">Gross Dividend</TableHead>
+                      <TableHead className="text-right">Tax</TableHead>
+                      <TableHead className="text-right">Net Payable</TableHead>
+                      <TableHead className="text-right pr-4">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {mfSchemes.map((s: any, idx: number) => (
+                      <TableRow key={s.company_id} className="hover:bg-muted/30">
+                        <TableCell className="text-muted-foreground">{idx + 1}</TableCell>
+                        <TableCell className="font-semibold text-foreground flex items-center gap-1.5">
+                          <Layers className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                          {s.company_name}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="font-mono text-[10px]">
+                            {s.company_code}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right font-mono tabular-nums">
+                          {fmtNr(s.unitholders)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono tabular-nums">
+                          {fmtNr(s.kitta)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono tabular-nums">
+                          {format(s.gross)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono tabular-nums text-amber-600">
+                          {format(s.tax)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono tabular-nums font-bold text-emerald-600">
+                          {format(s.net)}
+                        </TableCell>
+                        <TableCell className="text-right pr-4">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-[11px] px-2"
+                              onClick={() => {
+                                setCompanyId(s.company_id);
+                                setViewingReport("mutual_fund_register");
+                              }}
+                            >
+                              View Register
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-[11px] px-2 text-rose-600 hover:text-rose-700"
+                              onClick={() =>
+                                exportReport("mutual_fund_register", "pdf", {
+                                  companyId: s.company_id,
+                                })
+                              }
+                            >
+                              <FileText className="h-3 w-3 mr-1" />
+                              PDF
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                  <TableFooter>
+                    <TableRow className="bg-indigo-50/80 dark:bg-indigo-950/50 font-bold border-t-2 border-indigo-300 dark:border-indigo-800 font-mono">
+                      <TableCell
+                        colSpan={3}
+                        className="font-sans uppercase text-indigo-950 dark:text-indigo-200"
+                      >
+                        TOTAL PORTFOLIO ({mfSchemes.length} SCHEMES)
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {fmtNr(
+                          mfSchemes.reduce(
+                            (acc: number, s: any) => acc + Number(s.unitholders || 0),
+                            0,
+                          ),
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {fmtNr(
+                          mfSchemes.reduce((acc: number, s: any) => acc + Number(s.kitta || 0), 0),
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {format(
+                          mfSchemes.reduce((acc: number, s: any) => acc + Number(s.gross || 0), 0),
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right text-amber-600">
+                        {format(
+                          mfSchemes.reduce((acc: number, s: any) => acc + Number(s.tax || 0), 0),
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right text-emerald-600 dark:text-emerald-400 font-bold">
+                        {format(
+                          mfSchemes.reduce((acc: number, s: any) => acc + Number(s.net || 0), 0),
+                        )}
+                      </TableCell>
+                      <TableCell />
+                    </TableRow>
+                  </TableFooter>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
+
           {mfSummary.length > 0 ? (
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
@@ -2519,6 +2767,7 @@ function ReportsRoute() {
           (companyId === "all" ? "All Companies (Consolidated)" : "Selected Company")
         }
         filters={filters}
+        companies={companies}
         open={!!viewingReport}
         onOpenChange={(isOpen) => !isOpen && setViewingReport(null)}
         fetchData={fetchReport}

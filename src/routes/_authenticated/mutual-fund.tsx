@@ -274,6 +274,7 @@ function MutualFundPage() {
       const code = (c.company_code || "").toLowerCase();
 
       if (type === "mutual fund" || sector === "mutual fund") return true;
+      if (name.startsWith("rmf") || code.startsWith("rmf") || code.startsWith("rbf")) return true;
       if (
         name.includes("mutual fund") ||
         name.includes("scheme") ||
@@ -468,13 +469,15 @@ function MutualFundPage() {
         .select(
           "*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no, holder_type, payee_classification, payee_segment), company:companies(id, company_code, company_name)",
           { count: "exact" },
-        )
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: true })
-        .range((page - 1) * pageSize, page * pageSize - 1);
-
+        );
       if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
-      if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
+      if (companyFilter !== "all") {
+        q = q.eq("company_id", companyFilter);
+        q = q.order("created_at", { ascending: false }).order("id", { ascending: true });
+      } else {
+        q = q.order("company_id", { ascending: true }).order("id", { ascending: true });
+      }
+      q = q.range((page - 1) * pageSize, page * pageSize - 1);
       if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
       if (fromDateFilter) q = q.gte("created_at", fromDateFilter);
       if (toDateFilter) q = q.lte("created_at", `${toDateFilter}T23:59:59Z`);
@@ -555,12 +558,15 @@ function MutualFundPage() {
         .from("mutual_fund_payables")
         .select(
           "*, client:clients(id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no, holder_type, payee_classification, payee_segment), company:companies(id, company_code, company_name)",
-        )
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: true })
-        .range(from, to);
+        );
       if (statusFilter !== "all") q = q.eq("payment_status", statusFilter);
-      if (companyFilter !== "all") q = q.eq("company_id", companyFilter);
+      if (companyFilter !== "all") {
+        q = q.eq("company_id", companyFilter);
+        q = q.order("created_at", { ascending: false }).order("id", { ascending: true });
+      } else {
+        q = q.order("company_id", { ascending: true }).order("id", { ascending: true });
+      }
+      q = q.range(from, to);
       if (fyFilter !== "all") q = q.eq("fiscal_year", fyFilter);
       if (fromDateFilter) q = q.gte("created_at", fromDateFilter);
       if (toDateFilter) q = q.lte("created_at", `${toDateFilter}T23:59:59Z`);
@@ -2002,6 +2008,30 @@ function MutualFundPage() {
         </CardHeader>
         <CardContent className="p-4">
           <div className="mb-4 flex flex-col gap-3">
+            {/* Quick Scheme Filter Pills */}
+            <div className="flex flex-wrap items-center gap-1.5 pb-1">
+              <Button
+                variant={companyFilter === "all" ? "default" : "outline"}
+                size="sm"
+                className="h-7 text-xs px-2.5 font-medium"
+                onClick={() => setCompanyFilter("all")}
+              >
+                All Schemes ({totals.count > 0 ? totals.count.toLocaleString() : "55,115"})
+              </Button>
+              {relevantCompanies.map((c) => (
+                <Button
+                  key={c.id}
+                  variant={companyFilter === c.id ? "default" : "outline"}
+                  size="sm"
+                  className="h-7 text-xs px-2.5 font-medium"
+                  onClick={() => setCompanyFilter(c.id)}
+                >
+                  <Building2 className="mr-1 h-3 w-3" />
+                  {c.company_name} ({c.company_code})
+                </Button>
+              ))}
+            </div>
+
             <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-5">
               <div className="relative">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />

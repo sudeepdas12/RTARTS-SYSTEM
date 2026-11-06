@@ -175,6 +175,17 @@ function aggregateRows(
   }
 }
 
+export interface MutualFundSchemeSummary {
+  company_id: string;
+  company_name: string;
+  company_code: string;
+  unitholders: number;
+  kitta: number;
+  gross: number;
+  tax: number;
+  net: number;
+}
+
 export interface MutualFundSummaryRow {
   sn?: number;
   type: string;
@@ -515,6 +526,32 @@ export const SummaryReportService = {
    * Export the mutual-fund summary to Excel with the same columns/format as the
    * CDS "SUMMARY" sheet, including the TOTAL row and comma-formatted amounts.
    */
+  /**
+   * Fast server-side aggregated summary of mutual fund schemes (RMF1, RMF2, etc.)
+   */
+  async getMutualFundSchemesSummary(fiscalYear?: string): Promise<MutualFundSchemeSummary[]> {
+    try {
+      const { data, error } = await (supabase as any).rpc("get_mutual_fund_schemes_summary", {
+        p_fiscal_year: fiscalYear && fiscalYear !== "all" ? fiscalYear : "all",
+      });
+      if (!error && Array.isArray(data) && data.length > 0) {
+        return data.map((r: any) => ({
+          company_id: r.company_id,
+          company_name: r.company_name,
+          company_code: r.company_code,
+          unitholders: Number(r.unitholders || 0),
+          kitta: Number(r.kitta || 0),
+          gross: Number(r.gross || 0),
+          tax: Number(r.tax || 0),
+          net: Number(r.net || 0),
+        }));
+      }
+    } catch (err: any) {
+      console.warn("get_mutual_fund_schemes_summary RPC error, falling back:", err?.message);
+    }
+    return [];
+  },
+
   exportMutualFundSummaryToExcel(data: MutualFundSummaryRow[], fileName: string): void {
     const total = data.reduce(
       (acc, r) => ({
@@ -591,7 +628,131 @@ export const SummaryReportService = {
     data: MutualFundSummaryRow[],
     companyName = "RTARTS System",
     subtitle = "Mutual Fund Distribution Summary",
+    schemes?: MutualFundSchemeSummary[],
   ): Promise<void> {
+    const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+      import("jspdf"),
+      import("jspdf-autotable"),
+    ]);
+
+    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const now = new Date();
+
+    const fmtNr = (n: number) =>
+      Number(n || 0).toLocaleString("en-IN", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+
+    // ── Header Banner ─────────────────────────────────────────
+    doc.setFillColor(15, 23, 42); // dark navy
+    doc.rect(0, 0, pageWidth, 22, "F");
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text(companyName, 14, 10);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.text("Official Mutual Fund Distribution Summary Ledger", 14, 16);
+
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "bold");
+    doc.text("Mutual Fund Distribution Summary", pageWidth - 14, 10, { align: "right" });
+
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.text(subtitle, pageWidth - 14, 16, { align: "right" });
+
+    doc.setTextColor(100, 100, 100);
+    doc.setFontSize(8);
+    doc.text(
+      `Generated: ${now.toLocaleDateString()} ${now.toLocaleTimeString()}  |  By: System  |  Portfolio Schemes: ${schemes && schemes.length > 0 ? schemes.length : 1}`,
+      14,
+      28,
+    );
+
+    let startY = 32;
+
+    // Table 1: Scheme-Wise Breakdown (if multiple schemes exist or schemes provided)
+    if (schemes && schemes.length > 0) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(30, 41, 59);
+      doc.text("1. Mutual Fund Schemes Portfolio Summary", 14, startY);
+
+      const schemeColumns = [
+        { header: "S.N.", dataKey: "sn" },
+        { header: "SCHEME NAME", dataKey: "name" },
+        { header: "CODE", dataKey: "code" },
+        { header: "UNITHOLDERS", dataKey: "unitholders" },
+        { header: "KITTA / UNITS", dataKey: "kitta" },
+        { header: "GROSS DIVIDEND (NPR)", dataKey: "gross" },
+        { header: "TDS TAX (NPR)", dataKey: "tax" },
+        { header: "NET PAYABLE (NPR)", dataKey: "net" },
+      ];
+
+      const schemeTotal = schemes.reduce(
+        (acc, s) => ({
+          unitholders: acc.unitholders + s.unitholders,
+          kitta: acc.kitta + s.kitta,
+          gross: acc.gross + s.gross,
+          tax: acc.tax + s.tax,
+          net: acc.net + s.net,
+        }),
+        { unitholders: 0, kitta: 0, gross: 0, tax: 0, net: 0 },
+      );
+
+      const schemeRows: any[] = schemes.map((s, idx) => ({
+        sn: idx + 1,
+        name: s.company_name,
+        code: s.company_code,
+        unitholders: s.unitholders.toLocaleString("en-IN"),
+        kitta: fmtNr(s.kitta),
+        gross: fmtNr(s.gross),
+        tax: fmtNr(s.tax),
+        net: fmtNr(s.net),
+      }));
+
+      schemeRows.push({
+        sn: "" as any,
+        name: "TOTAL PORTFOLIO",
+        code: `${schemes.length} SCHEMES`,
+        unitholders: schemeTotal.unitholders.toLocaleString("en-IN"),
+        kitta: fmtNr(schemeTotal.kitta),
+        gross: fmtNr(schemeTotal.gross),
+        tax: fmtNr(schemeTotal.tax),
+        net: fmtNr(schemeTotal.net),
+      });
+
+      autoTable(doc, {
+        startY: startY + 4,
+        columns: schemeColumns.map((c) => ({ header: c.header, dataKey: c.dataKey })),
+        body: schemeRows.map((row) =>
+          schemeColumns.map((column) => String(row[column.dataKey] ?? "")),
+        ),
+        styles: { fontSize: 8, cellPadding: 2.5 },
+        headStyles: { fillColor: [30, 64, 175], textColor: [255, 255, 255], fontStyle: "bold" },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+      });
+
+      startY = (doc as any).lastAutoTable.finalY + 10;
+    }
+
+    // Table 2: CDS Category Distribution
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(30, 41, 59);
+    doc.text(
+      schemes && schemes.length > 0
+        ? "2. CDS & Clearing Category Distribution"
+        : "CDS & Clearing Category Distribution",
+      14,
+      startY,
+    );
+
     const total = data.reduce(
       (acc, r) => ({
         transaction_count: acc.transaction_count + r.transaction_count,
@@ -603,21 +764,18 @@ export const SummaryReportService = {
       { transaction_count: 0, kitta: 0, gross: 0, tax: 0, net: 0 },
     );
 
-    const fmtNr = (n: number) =>
-      n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-    const columns = [
+    const categoryColumns = [
       { header: "S.N.", dataKey: "sn" },
       { header: "TYPE", dataKey: "type" },
       { header: "NO. OF UNITHOLDERS", dataKey: "transaction_count" },
       { header: "KITTA / UNITS", dataKey: "kitta" },
-      { header: "AMOUNT/DIVIDEND", dataKey: "gross" },
-      { header: "TAX", dataKey: "tax" },
-      { header: "NET DIVIDEND", dataKey: "net" },
+      { header: "AMOUNT/DIVIDEND (NPR)", dataKey: "gross" },
+      { header: "TAX (NPR)", dataKey: "tax" },
+      { header: "NET DIVIDEND (NPR)", dataKey: "net" },
       { header: "COMPOSITION", dataKey: "composition" },
     ];
 
-    const tableData = data.map((r) => ({
+    const categoryRows: any[] = data.map((r) => ({
       sn: r.sn ?? "",
       type: r.type,
       transaction_count: r.transaction_count.toLocaleString("en-IN"),
@@ -628,7 +786,7 @@ export const SummaryReportService = {
       composition: `${(r.composition ?? 0).toFixed(2)}%`,
     }));
 
-    tableData.push({
+    categoryRows.push({
       sn: "" as any,
       type: "TOTAL",
       transaction_count: total.transaction_count.toLocaleString("en-IN"),
@@ -639,15 +797,18 @@ export const SummaryReportService = {
       composition: "100.00%",
     });
 
-    await PdfGenerator.generate(
-      {
-        title: "Mutual Fund Distribution Summary Report",
-        subtitle,
-        companyName,
-        generatedBy: "RTARTS System",
-      },
-      columns,
-      tableData,
-    );
+    autoTable(doc, {
+      startY: startY + 4,
+      columns: categoryColumns.map((c) => ({ header: c.header, dataKey: c.dataKey })),
+      body: categoryRows.map((row) =>
+        categoryColumns.map((column) => String(row[column.dataKey] ?? "")),
+      ),
+      styles: { fontSize: 8, cellPadding: 2.5 },
+      headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: "bold" },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+    });
+
+    const safeCompany = companyName.replace(/[^a-zA-Z0-9_-]/g, "_");
+    doc.save(`Mutual_Fund_Summary_${safeCompany}_${now.toISOString().split("T")[0]}.pdf`);
   },
 };

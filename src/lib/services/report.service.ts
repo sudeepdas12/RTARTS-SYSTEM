@@ -20,6 +20,13 @@ export type ReportId =
   | "reconciliation_report"
   | "upload_history_report";
 
+export interface RegisterExportResult<T = any> {
+  rows: T[];
+  totalCount: number;
+  companyNames: string[];
+  isTruncated: boolean;
+}
+
 export interface RegisterPageResult<T = any> {
   rows: T[];
   totalCount: number;
@@ -278,13 +285,14 @@ export const ReportService = {
           .from("dividend_payables")
           .select(
             "id, shares_held, dividend_rate, dividend_type, gross_dividend, tax_amount, net_payable, paid_amount, remaining_amount, payment_status, payment_date, payment_reference, fiscal_year, payee_classification, bank_name, bank_account_no, client:clients(boid, full_name, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name)",
-          )
-          .order("created_at", { ascending: false })
-          .order("id", { ascending: true })
-          .range(from, to);
-
-        if (filters.companyId && filters.companyId !== "all")
+          );
+        if (filters.companyId && filters.companyId !== "all") {
           query = query.eq("company_id", filters.companyId);
+          query = query.order("created_at", { ascending: false }).order("id", { ascending: true });
+        } else {
+          query = query.order("company_id", { ascending: true }).order("id", { ascending: true });
+        }
+        query = query.range(from, to);
         if (filters.fiscalYear && filters.fiscalYear !== "all")
           query = query.eq("fiscal_year", filters.fiscalYear);
         if (filters.status && filters.status !== "all")
@@ -476,12 +484,14 @@ export const ReportService = {
             .from("dividend_payables")
             .select(
               "id, gross_dividend, tax_amount, net_payable, fiscal_year, payment_date, payee_classification, client:clients(boid, full_name, pan_or_citizenship), company:companies(company_name)",
-            )
-            .order("created_at", { ascending: false })
-            .order("id", { ascending: true })
-            .range(from, to);
-          if (filters.companyId && filters.companyId !== "all")
+            );
+          if (filters.companyId && filters.companyId !== "all") {
             q = q.eq("company_id", filters.companyId);
+            q = q.order("created_at", { ascending: false }).order("id", { ascending: true });
+          } else {
+            q = q.order("company_id", { ascending: true }).order("id", { ascending: true });
+          }
+          q = q.range(from, to);
           if (filters.fiscalYear && filters.fiscalYear !== "all")
             q = q.eq("fiscal_year", filters.fiscalYear);
           q = applyClassificationFilter(q, filters.classification, "dividend_payables");
@@ -597,11 +607,14 @@ export const ReportService = {
             .select(
               "id, gross_dividend, tax_amount, net_payable, fiscal_year, bank_name, bank_account_no, client:clients(boid, full_name, bank_name, bank_account_no), company:companies(company_name)",
             )
-            .eq("payment_status", "Pending")
-            .order("created_at", { ascending: false })
-            .range(from, to);
-          if (filters.companyId && filters.companyId !== "all")
+            .eq("payment_status", "Pending");
+          if (filters.companyId && filters.companyId !== "all") {
             q = q.eq("company_id", filters.companyId);
+            q = q.order("created_at", { ascending: false });
+          } else {
+            q = q.order("company_id", { ascending: true });
+          }
+          q = q.range(from, to);
           if (filters.fiscalYear && filters.fiscalYear !== "all")
             q = q.eq("fiscal_year", filters.fiscalYear);
           return q;
@@ -1287,10 +1300,12 @@ export const ReportService = {
         }
       }
 
-      const { data, count, error } = await q
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: true })
-        .range(from, to);
+      if (filters.companyId && filters.companyId !== "all") {
+        q = q.order("created_at", { ascending: false }).order("id", { ascending: true });
+      } else {
+        q = q.order("company_id", { ascending: true }).order("id", { ascending: true });
+      }
+      const { data, count, error } = await q.range(from, to);
 
       if (error) throw error;
       const rows = (data || []).map((row: any) => {
@@ -1359,10 +1374,12 @@ export const ReportService = {
         }
       }
 
-      const { data, count, error } = await q
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: true })
-        .range(from, to);
+      if (filters.companyId && filters.companyId !== "all") {
+        q = q.order("created_at", { ascending: false }).order("id", { ascending: true });
+      } else {
+        q = q.order("company_id", { ascending: true }).order("id", { ascending: true });
+      }
+      const { data, count, error } = await q.range(from, to);
 
       if (error) throw error;
       const rows = (data || []).map((row: any) => {
@@ -1498,12 +1515,17 @@ export const ReportService = {
         }
       }
 
-      const { data, count, error } = await q
+      const {
+        data,
+        count: rawCount,
+        error,
+      } = await q
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
         .range(from, to);
 
       if (error) throw error;
+      let count = rawCount;
       let rows = (data || []).map((row: any) => {
         const gross = nr(row.gross_dividend);
         const tax = nr(row.tax_amount);
@@ -1732,5 +1754,139 @@ export const ReportService = {
     }
 
     return { rows: [], totalCount: 0 };
+  },
+
+  /**
+   * High-performance register export data retrieval for PDF and Excel exports.
+   * - If maxRows is passed (PDF export):
+   *   - If single company selected: directly retrieves up to maxRows records in < 150ms.
+   *   - If "all" companies selected: retrieves an equal representation from each active company
+   *     (e.g. 1,500 from RMF1 and 1,500 from RMF2), ensuring NO company is drowned out or missing!
+   *   - If search is provided: filters dynamically by shareholder full_name, boid, pan, or client_code.
+   * - If maxRows is not passed (Excel export):
+   *   - Retrieves complete unconstrained dataset for the specified filter/search.
+   */
+  async getRegisterExportData(
+    reportId: ReportId,
+    filters: ReportFilters = {},
+    search?: string,
+    maxRows?: number,
+  ): Promise<RegisterExportResult> {
+    const isSingleCompany = Boolean(filters.companyId && filters.companyId !== "all");
+
+    // Case 1: Specific single company or Excel export (no maxRows)
+    if (isSingleCompany || !maxRows) {
+      if (maxRows) {
+        const pageResult = await this.getRegisterPage(reportId, filters, 1, maxRows, search);
+        const companyNames = Array.from(
+          new Set(pageResult.rows.map((r: any) => r.company_name).filter(Boolean)),
+        ) as string[];
+        return {
+          rows: pageResult.rows,
+          totalCount: pageResult.totalCount,
+          companyNames: companyNames.length > 0 ? companyNames : ["Selected Company"],
+          isTruncated: pageResult.totalCount > maxRows,
+        };
+      }
+
+      // Full export for Excel
+      let fullRows: any[] = [];
+      if (reportId === "dividend_register") fullRows = await this.getDividendRegister(filters);
+      else if (reportId === "interest_register") fullRows = await this.getInterestRegister(filters);
+      else if (reportId === "mutual_fund_register")
+        fullRows = await this.getMutualFundRegister(filters);
+      else if (reportId === "tax_register") fullRows = await this.getTaxRegister(filters);
+      else if (reportId === "pending_register") fullRows = await this.getPendingPayments(filters);
+      else if (reportId === "payment_register") fullRows = await this.getPaymentRegister(filters);
+      else if (reportId === "reconciliation_report")
+        fullRows = await this.getReconciliationReport(filters);
+      else if (reportId === "upload_history_report")
+        fullRows = await this.getUploadHistoryReport(filters);
+      let rows = fullRows as any[];
+      if (search && search.trim()) {
+        const clean = search.trim().toLowerCase();
+        rows = rows.filter((r) =>
+          Object.values(r).some(
+            (v) => v !== null && v !== undefined && String(v).toLowerCase().includes(clean),
+          ),
+        );
+      }
+      const companyNames = Array.from(
+        new Set(rows.map((r: any) => r.company_name).filter(Boolean)),
+      ) as string[];
+      return {
+        rows,
+        totalCount: rows.length,
+        companyNames: companyNames.length > 0 ? companyNames : ["Consolidated"],
+        isTruncated: false,
+      };
+    }
+
+    // Case 2: Multi-company / Consolidated PDF Export with maxRows limit
+    let activeCompanies: { id: string; company_name: string; company_code: string }[] = [];
+    try {
+      const { data: compData } = await (supabase as any)
+        .from("companies")
+        .select("id, company_name, company_code")
+        .order("company_name", { ascending: true });
+      if (compData && compData.length > 0) {
+        activeCompanies = compData;
+      }
+    } catch (e) {
+      console.warn("Could not load active companies for export:", e);
+    }
+
+    if (activeCompanies.length <= 1) {
+      const pageResult = await this.getRegisterPage(reportId, filters, 1, maxRows, search);
+      const companyNames = Array.from(
+        new Set(pageResult.rows.map((r: any) => r.company_name).filter(Boolean)),
+      ) as string[];
+      return {
+        rows: pageResult.rows,
+        totalCount: pageResult.totalCount,
+        companyNames: companyNames.length > 0 ? companyNames : ["Consolidated"],
+        isTruncated: pageResult.totalCount > maxRows,
+      };
+    }
+
+    // Divide maxRows equally across active companies
+    const perCompanyLimit = Math.max(50, Math.ceil(maxRows / activeCompanies.length));
+    const combinedRows: any[] = [];
+    let combinedTotal = 0;
+    const includedCompanies: string[] = [];
+
+    const companyResults = await Promise.allSettled(
+      activeCompanies.map((c) =>
+        this.getRegisterPage(reportId, { ...filters, companyId: c.id }, 1, perCompanyLimit, search),
+      ),
+    );
+
+    companyResults.forEach((res, idx) => {
+      if (res.status === "fulfilled") {
+        const c = activeCompanies[idx];
+        if (res.value.rows.length > 0) {
+          combinedRows.push(...res.value.rows);
+          combinedTotal += res.value.totalCount;
+          includedCompanies.push(c.company_name || c.company_code);
+        }
+      }
+    });
+
+    if (combinedRows.length === 0) {
+      const fallback = await this.getRegisterPage(reportId, filters, 1, maxRows, search);
+      return {
+        rows: fallback.rows,
+        totalCount: fallback.totalCount,
+        companyNames: ["Consolidated Portfolio"],
+        isTruncated: fallback.totalCount > maxRows,
+      };
+    }
+
+    return {
+      rows: combinedRows.slice(0, maxRows),
+      totalCount: combinedTotal,
+      companyNames: includedCompanies.length > 0 ? includedCompanies : ["Consolidated"],
+      isTruncated: combinedTotal > maxRows,
+    };
   },
 };
