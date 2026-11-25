@@ -1,9 +1,14 @@
 import * as React from "react";
 import {
-  useReactTable,
-  getCoreRowModel,
-  getPaginationRowModel,
-  ColumnDef,
+  useTable,
+  tableFeatures,
+  rowPaginationFeature,
+  columnVisibilityFeature,
+  createPaginatedRowModel,
+  type ColumnDef,
+  type RowData,
+  type PaginationState,
+  type Updater,
   flexRender,
 } from "@tanstack/react-table";
 import {
@@ -23,32 +28,48 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 
-interface PaginatedTableProps<T> {
-  columns: ColumnDef<T, any>[];
+export const paginatedTableFeatures = tableFeatures({
+  rowPaginationFeature,
+  columnVisibilityFeature,
+  paginatedRowModel: createPaginatedRowModel(),
+});
+
+export type PaginatedTableFeatures = typeof paginatedTableFeatures;
+
+export type PaginatedColumnDef<TData extends RowData, TValue = any> = ColumnDef<
+  PaginatedTableFeatures,
+  TData,
+  TValue
+>;
+
+interface PaginatedTableProps<T extends RowData> {
+  columns: PaginatedColumnDef<T, any>[];
   data: T[];
   pageSize?: number;
   onRowClick?: (item: T) => void;
 }
 
-export function PaginatedTable<T extends object>({
+export function PaginatedTable<T extends RowData>({
   columns,
   data,
   pageSize = 10,
   onRowClick,
 }: PaginatedTableProps<T>) {
   const [size, setSize] = React.useState(pageSize);
-  const table = useReactTable({
-    data,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    initialState: { pagination: { pageSize: size } },
-    onPaginationChange: (updater) => {
-      const newState =
-        typeof updater === "function" ? updater(table.getState().pagination) : updater;
-      setSize(newState.pageSize);
+  const table = useTable(
+    {
+      features: paginatedTableFeatures,
+      data,
+      columns,
+      initialState: { pagination: { pageIndex: 0, pageSize: size } },
+      onPaginationChange: (updater: Updater<PaginationState>) => {
+        const prev = table.baseAtoms.pagination.get();
+        const newState = typeof updater === "function" ? updater(prev) : updater;
+        setSize(newState.pageSize);
+      },
     },
-  });
+    (state) => ({ pagination: state.pagination }),
+  );
 
   return (
     <div className="space-y-4">
@@ -141,7 +162,7 @@ export function PaginatedTable<T extends object>({
         </div>
         <div className="flex items-center gap-2">
           <span>
-            Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}
+            Page {table.state.pagination.pageIndex + 1} of {table.getPageCount()}
           </span>
           <Select
             value={size.toString()}

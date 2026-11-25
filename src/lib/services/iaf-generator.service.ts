@@ -391,7 +391,7 @@ export const IafGeneratorService = {
         }
       }
 
-      let parsedRows: Record<string, any>[] = [];
+      let parsedRows: Record<string, any>[];
       if (headerRowIdx >= 0) {
         parsedRows = XLSX.utils.sheet_to_json(ws, { range: headerRowIdx, defval: "" });
       } else {

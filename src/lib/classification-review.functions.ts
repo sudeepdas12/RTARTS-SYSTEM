@@ -300,7 +300,7 @@ export const adminListTaxExceptions = createServerFn({ method: "GET" })
     const out: any[] = [];
 
     for (const [table, meta] of Object.entries(PAYABLE_TABLES)) {
-      let data: any[] = [];
+      let data: any[];
       try {
         data = await fetchAllRows<any>((from, to) => {
           let q = supabaseAdmin

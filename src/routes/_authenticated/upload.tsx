@@ -11,6 +11,8 @@ import { ExcelParser, ParsedExcelData, DetectedSheetType } from "@/lib/excel-par
 import { ChunkProcessor, ChunkProgress } from "@/lib/chunk-processor";
 import { ImportService } from "@/lib/services/import.service";
 import { UploadService } from "@/lib/services/upload.service";
+import { DeclarationService, CorporateDeclaration } from "@/lib/services/declaration.service";
+import { DeclarationManagementDialog } from "@/components/declarations/declaration-management-dialog";
 import {
   loadTaxRules,
   getDividendDisplayRates,
@@ -236,6 +238,35 @@ function UploadRoute() {
     "SEMI_ANNUAL_183" | "SEMI_ANNUAL_182" | "ANNUAL_365" | "CUSTOM"
   >("SEMI_ANNUAL_183");
   const [customDebentureDays, setCustomDebentureDays] = useState("183");
+  const [selectedDeclarationId, setSelectedDeclarationId] = useState<string>("none");
+
+  const { data: declarations = [] } = useQuery({
+    queryKey: ["corporate-declarations", selectedCompanyId],
+    queryFn: () =>
+      DeclarationService.getDeclarations(
+        selectedCompanyId !== "auto" ? selectedCompanyId : undefined,
+      ),
+  });
+
+  const handleDeclarationSelect = (decId: string) => {
+    setSelectedDeclarationId(decId);
+    if (decId === "none") return;
+    const dec = declarations.find((d) => d.id === decId);
+    if (dec) {
+      if (dec.fiscal_year) setFiscalYear(dec.fiscal_year);
+      if (dec.rate_per_share) setDividendRate(String(dec.rate_per_share));
+      if (dec.declaration_type === "Interest") {
+        setDividendType("Debenture");
+      } else if (dec.sub_type === "Bonus") {
+        setDividendType("Bonus");
+      } else if (dec.sub_type === "Combined") {
+        setDividendType("Combined");
+      } else {
+        setDividendType("Cash");
+      }
+      toast.info(`Loaded declaration parameters: ${dec.declaration_code}`);
+    }
+  };
 
   const { data: taxRules } = useQuery({
     queryKey: ["tax-rules"],
@@ -252,15 +283,9 @@ function UploadRoute() {
   ) => {
     setDividendType(newType);
     if (parsedData) {
-      const defaultRate =
-        newType === "Debenture"
-          ? debRates.publicRatePct / 100
-          : newType === "MutualFund"
-            ? mfRates.exemptRatePct / 100
-            : divRates.publicRatePct / 100;
       const newTds: Record<number, string> = {};
       parsedData.sheets.forEach((sheet, idx) => {
-        let sheetTds = defaultRate;
+        let sheetTds: number;
         if (newType === "Debenture") {
           if (sheet.sheetType === "INSTITUTION" || sheet.sheetType === "PRIVATE")
             sheetTds = debRates.institutionRatePct / 100;
@@ -303,68 +328,66 @@ function UploadRoute() {
   });
 
   // When parsedData or companies load, auto-match existing company if strong match exists
-  useEffect(() => {
-    if (!parsedData || companies.length === 0) return;
-    if (selectedCompanyId !== "auto") return;
+  const autoMatchKey = `${parsedData?.detectedIsin ?? ""}|${parsedData?.detectedCompanyName ?? ""}|${parsedData?.sheets?.length ?? 0}|${companies.length}|${selectedCompanyId}`;
+  const [prevAutoMatchKey, setPrevAutoMatchKey] = useState("");
+  if (prevAutoMatchKey !== autoMatchKey) {
+    setPrevAutoMatchKey(autoMatchKey);
+    if (parsedData && companies.length > 0 && selectedCompanyId === "auto") {
+      // 1. Match by ISIN
+      if (parsedData.detectedIsin) {
+        const isinMatch = companies.find(
+          (c) =>
+            c.isin && c.isin.trim().toUpperCase() === parsedData.detectedIsin!.trim().toUpperCase(),
+        );
+        if (isinMatch) {
+          setSelectedCompanyId(isinMatch.id);
+        }
+      } else if (parsedData.detectedCompanyName) {
+        // 2. Match by detected company name (smart substring, token overlap, and code matching)
+        const cleanDetect = parsedData.detectedCompanyName.toLowerCase().trim();
+        const targetTokens = cleanDetect
+          .replace(/[^\w\s.%]/g, " ")
+          .split(/\s+/)
+          .filter((t) => t.length > 1 && !/^\d{4}$/.test(t));
 
-    // 1. Match by ISIN
-    if (parsedData.detectedIsin) {
-      const isinMatch = companies.find(
-        (c) =>
-          c.isin && c.isin.trim().toUpperCase() === parsedData.detectedIsin!.trim().toUpperCase(),
-      );
-      if (isinMatch) {
-        setSelectedCompanyId(isinMatch.id);
-        return;
-      }
-    }
+        let nameMatch = companies.find((c) => {
+          const cName = c.company_name.toLowerCase().trim();
+          return (
+            cName === cleanDetect || cName.includes(cleanDetect) || cleanDetect.includes(cName)
+          );
+        });
 
-    // 2. Match by detected company name (smart substring, token overlap, and code matching)
-    if (parsedData.detectedCompanyName) {
-      const cleanDetect = parsedData.detectedCompanyName.toLowerCase().trim();
-      const targetTokens = cleanDetect
-        .replace(/[^\w\s.%]/g, " ")
-        .split(/\s+/)
-        .filter((t) => t.length > 1 && !/^\d{4}$/.test(t));
-
-      // 2a. Substring / exact match
-      let nameMatch = companies.find((c) => {
-        const cName = c.company_name.toLowerCase().trim();
-        return cName === cleanDetect || cName.includes(cleanDetect) || cleanDetect.includes(cName);
-      });
-
-      // 2b. Token overlap match (e.g. "8.5%", "RBB", "Debentures" matching "RBB Debentures 8.5%")
-      if (!nameMatch && targetTokens.length >= 2) {
-        let maxOverlap = 0;
-        for (const c of companies) {
-          const cTokens = c.company_name
-            .toLowerCase()
-            .replace(/[^\w\s.%]/g, " ")
-            .split(/\s+/)
-            .filter((t: string) => t.length > 1);
-          const overlap = targetTokens.filter((t) =>
-            cTokens.some((ct: string) => ct === t || ct.includes(t) || t.includes(ct)),
-          ).length;
-          if (overlap > maxOverlap && overlap >= 2) {
-            maxOverlap = overlap;
-            nameMatch = c;
+        if (!nameMatch && targetTokens.length >= 2) {
+          let maxOverlap = 0;
+          for (const c of companies) {
+            const cTokens = c.company_name
+              .toLowerCase()
+              .replace(/[^\w\s.%]/g, " ")
+              .split(/\s+/)
+              .filter((t: string) => t.length > 1);
+            const overlap = targetTokens.filter((t) =>
+              cTokens.some((ct: string) => ct === t || ct.includes(t) || t.includes(ct)),
+            ).length;
+            if (overlap > maxOverlap && overlap >= 2) {
+              maxOverlap = overlap;
+              nameMatch = c;
+            }
           }
         }
-      }
 
-      // 2c. Company code match (e.g. "RBBLD8.5")
-      if (!nameMatch) {
-        nameMatch = companies.find((c) => {
-          const code = (c.company_code || "").toLowerCase().trim();
-          return code && (cleanDetect.includes(code) || code.includes(cleanDetect));
-        });
-      }
+        if (!nameMatch) {
+          nameMatch = companies.find((c) => {
+            const code = (c.company_code || "").toLowerCase().trim();
+            return code && (cleanDetect.includes(code) || code.includes(cleanDetect));
+          });
+        }
 
-      if (nameMatch) {
-        setSelectedCompanyId(nameMatch.id);
+        if (nameMatch) {
+          setSelectedCompanyId(nameMatch.id);
+        }
       }
     }
-  }, [parsedData, companies, selectedCompanyId]);
+  }
 
   const [isRegisteringCompany, setIsRegisteringCompany] = useState(false);
 
@@ -435,21 +458,24 @@ function UploadRoute() {
     }
   };
 
-  // When parsedData is set, auto-populate per-sheet rates from detected defaults
-  useEffect(() => {
-    if (!parsedData) return;
-    const tdsRates: Record<number, string> = {};
-    const divRates: Record<number, string> = {};
-    parsedData.sheets.forEach((sheet, idx) => {
-      const rate = getDefaultTdsRate(sheet.sheetType, parsedData.fileType);
-      tdsRates[idx] = String(Math.round(rate * 100));
-      if (sheet.detectedDividendRate !== undefined) {
-        divRates[idx] = String(sheet.detectedDividendRate);
-      }
-    });
-    setSheetTdsRates(tdsRates);
-    setSheetDividendRates(divRates);
-  }, [parsedData]);
+  // When parsedData changes, auto-populate per-sheet rates from detected defaults
+  const [prevParsedDataForRates, setPrevParsedDataForRates] = useState(parsedData);
+  if (prevParsedDataForRates !== parsedData) {
+    setPrevParsedDataForRates(parsedData);
+    if (parsedData) {
+      const tdsRates: Record<number, string> = {};
+      const divRates: Record<number, string> = {};
+      parsedData.sheets.forEach((sheet, idx) => {
+        const rate = getDefaultTdsRate(sheet.sheetType, parsedData.fileType);
+        tdsRates[idx] = String(Math.round(rate * 100));
+        if (sheet.detectedDividendRate !== undefined) {
+          divRates[idx] = String(sheet.detectedDividendRate);
+        }
+      });
+      setSheetTdsRates(tdsRates);
+      setSheetDividendRates(divRates);
+    }
+  }
 
   const handleFileSelect = async (selectedFile: File) => {
     setFile(selectedFile);
@@ -637,6 +663,7 @@ function UploadRoute() {
       companyIdOverride || (selectedCompanyId !== "auto" ? selectedCompanyId : undefined);
 
     return {
+      declarationId: selectedDeclarationId !== "none" ? selectedDeclarationId : undefined,
       fiscalYear: fiscalYear ? normalizeFiscalYear(fiscalYear) : undefined,
       dividendRate: sheetDivRate
         ? Number(sheetDivRate)
@@ -2093,6 +2120,64 @@ function UploadRoute() {
             </div>
           )}
 
+          {/* Corporate Declaration Selection */}
+          <Card className="border-primary/20 bg-primary/5">
+            <CardHeader className="pb-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-primary" /> Corporate Declaration Link
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  Link this upload directly to a declared corporate action to maintain true payable
+                  balances.
+                </CardDescription>
+              </div>
+              <DeclarationManagementDialog
+                companyId={selectedCompanyId !== "auto" ? selectedCompanyId : undefined}
+                companyName={
+                  companies.find((c: any) => c.id === selectedCompanyId)?.company_name ||
+                  parsedData?.detectedCompanyName
+                }
+                onDeclarationCreated={(newDec) => {
+                  handleDeclarationSelect(newDec.id);
+                }}
+              />
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">Select Declaration</Label>
+                  <Select value={selectedDeclarationId} onValueChange={handleDeclarationSelect}>
+                    <SelectTrigger className="h-8 text-xs bg-background">
+                      <SelectValue placeholder="No declaration linked (manual entry)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None (standalone upload)</SelectItem>
+                      {declarations.map((d) => (
+                        <SelectItem key={d.id} value={d.id}>
+                          {d.declaration_code} — {d.declaration_type} ({d.fiscal_year})
+                          {d.rate_per_share ? ` @ ${d.rate_per_share}%` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {selectedDeclarationId !== "none" && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground p-2 rounded bg-background border">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                    <span>
+                      Linked to{" "}
+                      <strong>
+                        {declarations.find((d) => d.id === selectedDeclarationId)?.declaration_code}
+                      </strong>
+                      . Parameters auto-populated below.
+                    </span>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Fiscal Year & Dividend / Debenture Metadata */}
           <Card>
             <CardHeader className="pb-2">
@@ -2509,6 +2594,26 @@ function UploadRoute() {
         operatorName={user?.user_metadata?.full_name || user?.email || "Authorized Operator"}
         operatorRole={roles?.[0] || "Maker"}
         taxRules={loadedTaxRules}
+        onApplySuggestedMappings={(suggestions) => {
+          setParsedData((prev) => {
+            if (!prev) return prev;
+            const updatedSheets = prev.sheets.map((sheet) => {
+              const sheetSuggestions = suggestions.filter((s) => s.sheetName === sheet.sheetName);
+              if (sheetSuggestions.length === 0) return sheet;
+              const nextMapping = { ...sheet.mapping };
+              for (const s of sheetSuggestions) {
+                if (!nextMapping[s.excelHeader]) {
+                  nextMapping[s.excelHeader] = s.suggestedField;
+                }
+              }
+              return { ...sheet, mapping: nextMapping };
+            });
+            return { ...prev, sheets: updatedSheets };
+          });
+          toast.success(
+            `Applied ${suggestions.length} suggested column mapping(s) to preview sheets.`,
+          );
+        }}
         onConfirmPost={async (notes) => {
           if (importReviewMode === "all") {
             await executeImportAllSheets(notes);

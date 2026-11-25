@@ -11,13 +11,7 @@ const ANON_KEY =
   process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
   process.env.VITE_SUPABASE_ANON_KEY;
 
-const isSupabaseConfigured =
-  (!process.env.CI ||
-    Boolean(
-      process.env.SUPABASE_SERVICE_ROLE_KEY &&
-      process.env.SUPABASE_URL !== "http://127.0.0.1:54321",
-    )) &&
-  Boolean(SUPABASE_URL && SERVICE_ROLE_KEY && ANON_KEY);
+const isSupabaseConfigured = Boolean(SUPABASE_URL && SERVICE_ROLE_KEY && ANON_KEY);
 
 const adminClient = isSupabaseConfigured
   ? createClient(SUPABASE_URL!, SERVICE_ROLE_KEY!, {
@@ -212,6 +206,7 @@ describe.skipIf(!isSupabaseConfigured)("Integration Financial & Security Invaria
       createdPayableIds.push({ table: "interest_payables", id: intPay.id });
 
       // 3. Create 1 mutual fund payable (requires upload_id, gross_dividend)
+      // Client A is NATURAL_PERSON -> 5% MF TDS (8000 * 0.05 = 400, net = 7600)
       const { data: mf, error: mfErr } = await adminClient
         .from("mutual_fund_payables")
         .insert({
@@ -220,8 +215,8 @@ describe.skipIf(!isSupabaseConfigured)("Integration Financial & Security Invaria
           client_id: clientAId,
           fiscal_year: "2081/82",
           gross_dividend: 8000,
-          tax_amount: 0,
-          net_payable: 8000,
+          tax_amount: 400,
+          net_payable: 7600,
           payment_status: "Pending",
         })
         .select("id")
@@ -237,8 +232,8 @@ describe.skipIf(!isSupabaseConfigured)("Integration Financial & Security Invaria
           batch_name: "Mixed Multi-Type Batch 001",
           status: "Processed",
           total_payments: 3,
-          total_amount: 22200,
-          total_tax: 800,
+          total_amount: 21800,
+          total_tax: 1200,
           payment_method: "ConnectIPS",
         })
         .select("id")
@@ -281,9 +276,9 @@ describe.skipIf(!isSupabaseConfigured)("Integration Financial & Security Invaria
           payable_type: "mutual_fund",
           payable_id: mf.id,
           gross_amount: 8000,
-          tax_amount: 0,
-          net_amount: 8000,
-          paid_amount: 8000,
+          tax_amount: 400,
+          net_amount: 7600,
+          paid_amount: 7600,
           payment_method: "ConnectIPS",
           status: "Processed",
         },

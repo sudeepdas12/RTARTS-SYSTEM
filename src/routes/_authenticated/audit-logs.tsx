@@ -8,6 +8,7 @@ import {
   type AuditFieldDiff,
   type AuditUserProfile,
 } from "@/lib/services/audit.service";
+import { LedgerSentinelService } from "@/lib/services/ledger-sentinel.service";
 import {
   Table,
   TableBody,
@@ -97,12 +98,7 @@ export const Route = createFileRoute("/_authenticated/audit-logs")({
 const PAGE_SIZE = 25;
 
 type DomainCategory =
-  | "ALL"
-  | "PAYABLES"
-  | "SHAREHOLDERS"
-  | "RECONCILIATION"
-  | "PAYMENTS"
-  | "SYSTEM";
+  "ALL" | "PAYABLES" | "SHAREHOLDERS" | "RECONCILIATION" | "PAYMENTS" | "SYSTEM";
 type DatePreset = "ALL" | "TODAY" | "7D" | "30D" | "CUSTOM";
 
 const DOMAIN_TABLE_MAP: Record<DomainCategory, string[]> = {
@@ -319,6 +315,16 @@ function AuditLogsRoute() {
   } = useQuery({
     queryKey: ["error-logs"],
     queryFn: () => AuditService.getErrorLogs(100),
+  });
+
+  const {
+    data: sentinelReport,
+    isFetching: loadingSentinel,
+    refetch: refetchSentinel,
+  } = useQuery({
+    queryKey: ["ledger-invariant-sentinel"],
+    queryFn: () => LedgerSentinelService.runAudit(),
+    staleTime: 60_000,
   });
 
   // Distinct tables for Activity filter
@@ -1406,6 +1412,72 @@ function AuditLogsRoute() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Deterministic Ledger Invariant Sentinel */}
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                    <ShieldCheck className="h-4 w-4 text-primary" /> Deterministic Ledger Invariant
+                    Sentinel
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Audits Gross - Tax - BonusTax = Net, batch line sums, settlement status, and
+                    classification gates across all live tables.
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  {sentinelReport && (
+                    <Badge
+                      variant={sentinelReport.passed ? "outline" : "destructive"}
+                      className={sentinelReport.passed ? "text-emerald-600 border-emerald-300" : ""}
+                    >
+                      {sentinelReport.passed
+                        ? "ALL INVARIANTS VERIFIED"
+                        : `${sentinelReport.total_violations} VIOLATION(S)`}
+                    </Badge>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs gap-1.5"
+                    onClick={() => refetchSentinel()}
+                    disabled={loadingSentinel}
+                  >
+                    <RefreshCw className={`h-3 w-3 ${loadingSentinel ? "animate-spin" : ""}`} />
+                    Run Audit
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-0">
+              {!sentinelReport ? (
+                <p className="text-xs text-muted-foreground py-4">
+                  Executing SQL invariant checks...
+                </p>
+              ) : (
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 text-xs">
+                  {sentinelReport.checks.map((chk) => (
+                    <div
+                      key={chk.code}
+                      className="flex items-center justify-between rounded-md border p-2.5 bg-muted/20"
+                    >
+                      <span className="font-medium pr-2">{chk.label}</span>
+                      <Badge
+                        variant={chk.passed ? "outline" : "destructive"}
+                        className={
+                          chk.passed ? "text-emerald-600 border-emerald-300 shrink-0" : "shrink-0"
+                        }
+                      >
+                        {chk.passed ? "PASS (0)" : `${chk.violations}`}
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
 

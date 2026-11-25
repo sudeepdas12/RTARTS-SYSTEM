@@ -206,7 +206,13 @@ function determinePayeeCategory(
 ): "PUBLIC" | "INSTITUTION" | "MUTUAL FUND" | "PROMOTER" | "LOCAL" | "EMPLOYEE" | "OTHERS" {
   const explicitClass = row.payee_classification || row.client?.payee_classification;
   if (explicitClass === "TAX_EXEMPT") return "MUTUAL FUND";
-  if (explicitClass === "COMPANY_INSTITUTION") return "INSTITUTION";
+  if (
+    explicitClass === "COMPANY_INSTITUTION" ||
+    explicitClass === "BANK_FI" ||
+    explicitClass === "FOREIGN_INVESTOR"
+  )
+    return "INSTITUTION";
+  if (explicitClass === "UNCLASSIFIED") return "OTHERS";
 
   const lot = String((row as any).lot_name || "").toUpperCase();
   const holder = String(row.client?.holder_type || row.holder_type || "").toUpperCase();
@@ -234,6 +240,8 @@ function determinePayeeCategory(
     segment === "EMPLOYEE"
   )
     return "EMPLOYEE";
+
+  if (explicitClass === "PUBLIC_LEGAL_PERSON") return "INSTITUTION";
 
   const result = smartClassify({
     full_name: row.client?.full_name,
@@ -503,7 +511,15 @@ export const SummaryReportService = {
       map.set(type, entry);
     }
 
-    const order = ["PUBLIC", "INSTITUTION", "MUTUAL FUND", "PROMOTER", "LOCAL", "EMPLOYEE"];
+    const order = [
+      "PUBLIC",
+      "INSTITUTION",
+      "MUTUAL FUND",
+      "PROMOTER",
+      "LOCAL",
+      "EMPLOYEE",
+      "OTHERS",
+    ];
     const filtered = Array.from(map.values()).filter(
       (item) => item.transaction_count > 0 || item.kitta > 0 || item.gross > 0,
     );

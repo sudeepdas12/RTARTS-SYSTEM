@@ -240,35 +240,47 @@ export const WorkflowEngine = {
 
     const newStatus = transition.to;
 
-    // Update the record status
-    const updateData: any = { [config.statusField]: newStatus };
-    if (action === "approve") {
-      updateData.approved_by = user?.id || null;
-      updateData.approved_at = new Date().toISOString();
-    } else if (action === "process") {
-      updateData.processed_at = new Date().toISOString();
-    } else if (action === "complete") {
-      updateData.completed_at = new Date().toISOString();
-      updateData.processed_at = updateData.processed_at || new Date().toISOString();
-    }
+    if (table === "payment_batches" && action === "complete") {
+      const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc(
+        "complete_payment_batch_atomic",
+        {
+          p_batch_id: recordId,
+          p_user_id: user?.id || null,
+        },
+      );
+      if (rpcErr || !rpcRes?.success) {
+        return {
+          success: false,
+          error: `Failed to complete payment batch: ${rpcErr?.message || rpcRes?.error || "Unknown error"}`,
+        };
+      }
+    } else {
+      // Update the record status atomically for standard transitions
+      const updateData: any = { [config.statusField]: newStatus };
+      if (action === "approve") {
+        updateData.approved_by = user?.id || null;
+        updateData.approved_at = new Date().toISOString();
+      } else if (action === "process") {
+        updateData.processed_at = new Date().toISOString();
+      }
 
-    // Atomic update: only apply if the record is still in currentStatus
-    const { data: updatedRows, error: updateError } = await (supabase as any)
-      .from(config.table)
-      .update(updateData)
-      .eq("id", recordId)
-      .eq(config.statusField, currentStatus)
-      .select("id");
+      const { data: updatedRows, error: updateError } = await (supabase as any)
+        .from(config.table)
+        .update(updateData)
+        .eq("id", recordId)
+        .eq(config.statusField, currentStatus)
+        .select("id");
 
-    if (updateError) {
-      return { success: false, error: `Failed to update record: ${updateError.message}` };
-    }
+      if (updateError) {
+        return { success: false, error: `Failed to update record: ${updateError.message}` };
+      }
 
-    if (!updatedRows || updatedRows.length === 0) {
-      return {
-        success: false,
-        error: `Action failed: The record was already modified by another user (expected status: ${currentStatus}). Please refresh.`,
-      };
+      if (!updatedRows || updatedRows.length === 0) {
+        return {
+          success: false,
+          error: `Action failed: The record was already modified by another user (expected status: ${currentStatus}). Please refresh.`,
+        };
+      }
     }
 
     // Log the approval action

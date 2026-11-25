@@ -212,7 +212,7 @@ function MutualFundPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("companies")
-        .select("id, company_code, company_name, company_type, sector_type")
+        .select("id, company_code, company_name, company_type, sector_type, face_value")
         .order("company_name");
       if (error) throw error;
       return (data || []) as {
@@ -221,20 +221,19 @@ function MutualFundPage() {
         company_name: string;
         company_type?: string | null;
         sector_type?: string | null;
+        face_value?: number | null;
       }[];
     },
     staleTime: 10_000,
   });
 
   // Self-heal orphaned companyFilter
-  useEffect(() => {
-    if (companyFilter !== "all" && companies.length > 0) {
-      const exists = companies.some((c) => c.id === companyFilter);
-      if (!exists) {
-        setCompanyFilter("all");
-      }
+  if (companyFilter !== "all" && companies.length > 0) {
+    const exists = companies.some((c) => c.id === companyFilter);
+    if (!exists) {
+      setCompanyFilter("all");
     }
-  }, [companies, companyFilter]);
+  }
 
   // Realtime subscription for live mutual fund payables updates
   useEffect(() => {
@@ -297,20 +296,24 @@ function MutualFundPage() {
   const { data: clients = [] } = useQuery({
     queryKey: ["clients-lookup"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("clients")
-        .select("id, client_code, full_name, boid, bank_name, bank_account_no")
-        .order("full_name")
-        .limit(5000);
-      if (error) throw error;
-      return (data || []) as {
+      return await fetchAllRows<{
         id: string;
         client_code: string;
         full_name: string;
         boid: string | null;
         bank_name: string | null;
         bank_account_no: string | null;
-      }[];
+        payee_classification?: string | null;
+      }>((from, to) =>
+        (supabase as any)
+          .from("clients")
+          .select(
+            "id, client_code, full_name, boid, bank_name, bank_account_no, payee_classification",
+          )
+          .order("full_name")
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
     },
     staleTime: 5 * 60 * 1000,
   });
@@ -344,17 +347,12 @@ function MutualFundPage() {
   const debouncedSearch = useDebounce(search, 300);
 
   // Reset to page 1 whenever filters change
-  useEffect(() => {
-    setPage(1);
-  }, [
-    debouncedSearch,
-    statusFilter,
-    companyFilter,
-    fyFilter,
-    classFilter,
-    fromDateFilter,
-    toDateFilter,
-  ]);
+  const filterResetKey = `${debouncedSearch}|${statusFilter}|${companyFilter}|${fyFilter}|${classFilter}|${fromDateFilter}|${toDateFilter}`;
+  const [prevFilterResetKey, setPrevFilterResetKey] = useState(filterResetKey);
+  if (prevFilterResetKey !== filterResetKey) {
+    setPrevFilterResetKey(filterResetKey);
+    if (page !== 1) setPage(1);
+  }
 
   // Fetch fiscal years for filter dropdown via fast RPC
   const { data: fiscalYears = [] } = useQuery({
@@ -648,12 +646,7 @@ function MutualFundPage() {
     if (!units || !rate) return null;
 
     const totalPrincipal = units * fv;
-    let gross = 0;
-    if (calcRateIsPerUnit) {
-      gross = units * rate;
-    } else {
-      gross = (units * fv * rate) / 100;
-    }
+    const gross = calcRateIsPerUnit ? units * rate : (units * fv * rate) / 100;
 
     let tdsRate = 0;
     // Authoritative: centralized MUTUAL_FUND rules (fallback = previous values).
@@ -700,11 +693,12 @@ function MutualFundPage() {
       if (!form.client_id) throw new Error("Please select a client.");
       const shares = form.shares_held ? Number(form.shares_held) : 0;
       const rate = form.dividend_rate ? Number(form.dividend_rate) : 0;
-      // Gross: use explicit value if provided, else units × rate (simple per-unit)
+      const selectedComp = companies.find((c) => c.id === form.company_id);
+      const faceVal = Number(selectedComp?.face_value || 10);
       const gross = form.gross_dividend
         ? Number(form.gross_dividend)
         : shares != null && rate != null
-          ? Math.round(shares * rate * 100) / 100
+          ? Math.round(shares * faceVal * (rate / 100) * 100) / 100
           : 0;
       const tax = form.tax_amount ? Number(form.tax_amount) : 0;
       const net = form.net_payable ? Number(form.net_payable) : Math.max(0, gross - tax);
@@ -1346,8 +1340,30 @@ function MutualFundPage() {
                             onClick={() => {
                               const units = Number(form.shares_held) || 0;
                               const rate = Number(form.dividend_rate) || 0;
-                              const gross = units * rate;
-                              const taxRate = 0.05;
+                              const selectedComp = companies.find((c) => c.id === form.company_id);
+                              const faceVal = Number(selectedComp?.face_value || 10);
+                              const gross =
+                                form.gross_dividend && (!units || !rate)
+                                  ? Number(form.gross_dividend) || 0
+                                  : Math.round(units * faceVal * (rate / 100) * 100) / 100;
+                              const selectedClient = clients.find((c) => c.id === form.client_id);
+                              const classification =
+                                investorCategoryToClassification(
+                                  selectedClient?.payee_classification,
+                                ) ?? "NATURAL_PERSON";
+                              const ruleRate = getTaxRateFromRules(
+                                mfRules ?? [],
+                                "MUTUAL_FUND",
+                                classification,
+                              );
+                              const taxRate =
+                                ruleRate != null
+                                  ? ruleRate
+                                  : classification === "TAX_EXEMPT"
+                                    ? 0
+                                    : classification === "NATURAL_PERSON"
+                                      ? 0.05
+                                      : 0.15;
                               const tax = Math.round(gross * taxRate * 100) / 100;
                               const net = Math.round((gross - tax) * 100) / 100;
                               setForm((f) => ({

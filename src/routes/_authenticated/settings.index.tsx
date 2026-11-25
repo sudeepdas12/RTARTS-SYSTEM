@@ -196,6 +196,12 @@ function SettingsRoute() {
   const [testEmail, setTestEmail] = useState("");
   const [testPhone, setTestPhone] = useState("");
   const [showSmtpPass, setShowSmtpPass] = useState(false);
+  const [showConnectIpsToken, setShowConnectIpsToken] = useState(false);
+  const [testingConnectIps, setTestingConnectIps] = useState(false);
+  const [connectIpsTestResult, setConnectIpsTestResult] = useState<{
+    success: boolean;
+    message: string;
+  } | null>(null);
 
   const merged: SystemSettings = { ...(settings || ({} as SystemSettings)), ...form };
 
@@ -207,7 +213,7 @@ function SettingsRoute() {
       if (!isAdmin)
         throw new Error("Unauthorized: Only administrators can modify system settings.");
       const payload: SystemSettings = { ...(settings || ({} as SystemSettings)), ...form };
-      // Omit masked placeholder values so the backend preserves existing stored credentials
+      // Omit masked placeholder values & transient *_configured flags so backend preserves existing secrets
       if (!form.connectips_token || form.connectips_token === "••••••••••••") {
         delete (payload as any).connectips_token;
       }
@@ -220,6 +226,10 @@ function SettingsRoute() {
       if (!form.sms_api_key || form.sms_api_key === "••••••••••••") {
         delete (payload as any).sms_api_key;
       }
+      delete (payload as any).connectips_token_configured;
+      delete (payload as any).connectips_cert_pass_configured;
+      delete (payload as any).smtp_pass_configured;
+      delete (payload as any).sms_api_key_configured;
       return SettingsService.saveSettings(payload);
     },
     onSuccess: () => {
@@ -547,90 +557,165 @@ function SettingsRoute() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>API Bearer Token / Secret Key</Label>
-                  <Input
-                    type="password"
-                    autoComplete="new-password"
-                    placeholder={
-                      settings?.connectips_token
-                        ? "•••••••••••• (Configured — enter new to change)"
-                        : "Enter Secret Key / Bearer Token"
-                    }
-                    value={
-                      form.connectips_token ?? (settings?.connectips_token ? "••••••••••••" : "")
-                    }
-                    onChange={(e) => update("connectips_token", e.target.value)}
-                    onFocus={(e) => {
-                      if (form.connectips_token === undefined && settings?.connectips_token) {
-                        update("connectips_token", "");
+                  <div className="flex items-center justify-between gap-2">
+                    <Label>API Bearer Token / Secret Key</Label>
+                    {settings?.connectips_token_configured && (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">
+                        <CheckCircle2 className="h-3 w-3" /> Saved &amp; Active
+                      </span>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <Input
+                      type={showConnectIpsToken ? "text" : "password"}
+                      autoComplete="new-password"
+                      placeholder={
+                        settings?.connectips_token_configured
+                          ? "•••••••••••• (Configured — enter new to replace)"
+                          : "Enter Secret Key / Bearer Token"
                       }
-                    }}
-                  />
+                      value={
+                        form.connectips_token ??
+                        (settings?.connectips_token_configured ? "••••••••••••" : "")
+                      }
+                      onChange={(e) => update("connectips_token", e.target.value)}
+                      onFocus={() => {
+                        if (
+                          form.connectips_token === undefined &&
+                          settings?.connectips_token_configured
+                        ) {
+                          update("connectips_token", "");
+                        }
+                      }}
+                      className="pr-10"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="absolute right-0 top-0 h-full px-3 hover:bg-transparent text-muted-foreground hover:text-foreground"
+                      onClick={() => setShowConnectIpsToken((v) => !v)}
+                      tabIndex={-1}
+                    >
+                      {showConnectIpsToken ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    {settings?.connectips_token_configured
+                      ? "Saved securely on server; never returned to browser. Leave untouched to keep existing key."
+                      : "Stored securely in system settings and read server-side during NCHL payout & status sync."}
+                  </p>
                 </div>
               </div>
 
               <div className="space-y-2">
-                <Label>Certificate Password / Private Key Passphrase</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label>Certificate Password / Private Key Passphrase</Label>
+                  {settings?.connectips_cert_pass_configured && (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">
+                      <CheckCircle2 className="h-3 w-3" /> Saved &amp; Active
+                    </span>
+                  )}
+                </div>
                 <Input
                   type="password"
                   autoComplete="new-password"
                   placeholder={
-                    settings?.connectips_cert_pass
+                    settings?.connectips_cert_pass_configured
                       ? "•••••••••••• (Configured — enter new to change)"
                       : "Enter Certificate Password"
                   }
                   value={
                     form.connectips_cert_pass ??
-                    (settings?.connectips_cert_pass ? "••••••••••••" : "")
+                    (settings?.connectips_cert_pass_configured ? "••••••••••••" : "")
                   }
                   onChange={(e) => update("connectips_cert_pass", e.target.value)}
-                  onFocus={(e) => {
-                    if (form.connectips_cert_pass === undefined && settings?.connectips_cert_pass) {
+                  onFocus={() => {
+                    if (
+                      form.connectips_cert_pass === undefined &&
+                      settings?.connectips_cert_pass_configured
+                    ) {
                       update("connectips_cert_pass", "");
                     }
                   }}
                 />
                 <p className="text-xs text-muted-foreground">
                   Used on the backend server for cryptographic SHA-256 RSA signing of disbursement
-                  payloads.
+                  payloads and NCHL status inquiries.
                 </p>
               </div>
 
               <div className="rounded-lg border bg-muted/30 p-3.5 text-xs text-muted-foreground space-y-1.5">
                 <p className="font-semibold text-foreground">
-                  💡 How to activate direct disbursement:
+                  💡 How to activate direct disbursement &amp; live status tracking:
                 </p>
                 <p>
-                  1. When your bank/NCHL provides you with your Merchant ID, App ID, and Token,
-                  paste them into these fields.
+                  1. When your bank/NCHL provides you with your Merchant ID, App ID, and API Token,
+                  paste them into these fields and click <strong>Save Gateway Settings</strong>.
                 </p>
                 <p>
                   2. Click <strong>Test Connection Handshake</strong> to verify credential
-                  authentication.
+                  authentication and server-side signing.
                 </p>
                 <p>
-                  3. Once verified, you can click{" "}
-                  <strong>"Disburse via Direct ConnectIPS API"</strong> inside any Approved payment
-                  batch.
+                  3. Once saved, <strong>"Disburse via ConnectIPS API"</strong> and{" "}
+                  <strong>"Sync ConnectIPS Status"</strong> inside Payments will automatically use
+                  your stored server credentials without exposing keys to the browser.
                 </p>
               </div>
+
+              {connectIpsTestResult && (
+                <div
+                  className={`rounded-md border px-3 py-2 text-xs ${
+                    connectIpsTestResult.success
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                      : "border-rose-300 bg-rose-50 text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300"
+                  }`}
+                >
+                  {connectIpsTestResult.message}
+                </div>
+              )}
 
               <div className="pt-2 border-t flex items-center justify-between">
                 <Button
                   type="button"
                   variant="outline"
+                  disabled={testingConnectIps}
                   onClick={async () => {
-                    const res = await (
-                      await import("@/lib/services/connectips.service")
-                    ).ConnectIPSService.testConnection(merged);
-                    if (res.success) {
-                      toast.success(res.message);
-                    } else {
-                      toast.error(res.message);
+                    setTestingConnectIps(true);
+                    setConnectIpsTestResult(null);
+                    try {
+                      const res = await (
+                        await import("@/lib/services/connectips.service")
+                      ).ConnectIPSService.testConnection({
+                        ...merged,
+                        connectips_token_configured: settings?.connectips_token_configured,
+                        connectips_cert_pass_configured: settings?.connectips_cert_pass_configured,
+                      });
+                      setConnectIpsTestResult({ success: res.success, message: res.message });
+                      if (res.success) {
+                        toast.success(res.message);
+                      } else {
+                        toast.error(res.message);
+                      }
+                    } catch (err: any) {
+                      const msg = err?.message || "ConnectIPS test failed.";
+                      setConnectIpsTestResult({ success: false, message: msg });
+                      toast.error(msg);
+                    } finally {
+                      setTestingConnectIps(false);
                     }
                   }}
                 >
-                  <Send className="w-4 h-4 mr-2" />
+                  {testingConnectIps ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Send className="w-4 h-4 mr-2" />
+                  )}
                   Test Connection Handshake
                 </Button>
                 <Button onClick={() => saveSettings()} disabled={isPending}>

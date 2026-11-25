@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.output/
 .git/
 .env
 .env.local
@@ -7,3 +8,9 @@ dist/
 supabase/
 brain/
 scratch/
+samples/
+test-fixtures/
+test-results/
+playwright-report/
+backups/
+node_modules_old/

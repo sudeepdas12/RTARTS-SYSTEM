@@ -167,25 +167,21 @@ function Dashboard() {
   });
 
   // Sanitize stored scope: if the saved company or fiscal year no longer exists, reset to "all"
-  useEffect(() => {
-    if (
-      selectedCompanyId !== "all" &&
-      companies.length > 0 &&
-      !companies.some((c: any) => c.id === selectedCompanyId)
-    ) {
-      setSelectedCompanyId("all");
-    }
-  }, [companies, selectedCompanyId]);
+  if (
+    selectedCompanyId !== "all" &&
+    companies.length > 0 &&
+    !companies.some((c: any) => c.id === selectedCompanyId)
+  ) {
+    setSelectedCompanyId("all");
+  }
 
-  useEffect(() => {
-    if (
-      selectedFiscalYear !== "all" &&
-      fiscalYears.length > 0 &&
-      !fiscalYears.includes(selectedFiscalYear)
-    ) {
-      setSelectedFiscalYear("all");
-    }
-  }, [fiscalYears, selectedFiscalYear]);
+  if (
+    selectedFiscalYear !== "all" &&
+    fiscalYears.length > 0 &&
+    !fiscalYears.includes(selectedFiscalYear)
+  ) {
+    setSelectedFiscalYear("all");
+  }
 
   const { data: opMetrics } = useQuery({
     queryKey: ["dashboard-operational-metrics", selectedCompanyId],

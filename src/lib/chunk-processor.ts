@@ -13,6 +13,7 @@ export interface ChunkProgress {
 
 export interface ChunkOptions {
   fiscalYear?: string;
+  declarationId?: string;
   dividendRate?: number;
   bonusRate?: number;
   tdsRate?: number; // Explicit TDS rate override (e.g. 0.15 for Institutions)

@@ -16,6 +16,37 @@ export const amountEqualsPaisa = (
   return Math.abs(toPaisa(amt1) - toPaisa(amt2)) <= tolerancePaisa;
 };
 
+/**
+ * Look up candidates in a formatted-amount map allowing up to `tolerancePaisa` rounding drift
+ * (default +-1 paisa for IEEE/bank half-to-even rounding).
+ */
+function getAmountCandidatesWithTolerance<T extends { id?: string }>(
+  amtMap: Map<string, T[]>,
+  amount: number,
+  tolerancePaisa = 1,
+): T[] {
+  const results: T[] = [];
+  const seen = new Set<string>();
+  const basePaisa = toPaisa(amount);
+  for (let delta = 0; delta <= tolerancePaisa; delta++) {
+    const offsets = delta === 0 ? [0] : [-delta, delta];
+    for (const off of offsets) {
+      const key = fromPaisa(basePaisa + off).toFixed(2);
+      const list = amtMap.get(key);
+      if (!list) continue;
+      for (const item of list) {
+        const keyId = item?.id;
+        if (keyId) {
+          if (seen.has(keyId)) continue;
+          seen.add(keyId);
+        }
+        results.push(item);
+      }
+    }
+  }
+  return results;
+}
+
 export interface CategorySummary {
   categoryName: string;
   rowCount: number;
@@ -613,9 +644,14 @@ export const ReconciliationEngine = {
               ? Number(p.remaining_amount)
               : null;
           if (p.payable_type === "interest") {
-            const days =
-              p.days_count && p.days_count > 0 && p.days_count < 365 ? p.days_count : 183;
-            const prorated = Number(((full / 365.0) * days).toFixed(2));
+            const storedDays = p.days_count && p.days_count > 0 ? p.days_count : 365;
+            if (storedDays < 365) {
+              // Stored net_payable is already prorated for storedDays — do not divide by 365 again!
+              const prorated = full;
+              const prorated182 = Number(((full / storedDays) * 182).toFixed(2));
+              return { full, prorated, prorated182, remaining };
+            }
+            const prorated = Number(((full / 365.0) * 183).toFixed(2));
             const prorated182 = Number(((full / 365.0) * 182).toFixed(2));
             return { full, prorated, prorated182, remaining };
           }
@@ -720,9 +756,13 @@ export const ReconciliationEngine = {
               ) || null;
           }
 
-          // 2c. Fallback: match by amount across system, strictly scoped to same company
+          // 2c. Fallback: match by amount across system, strictly scoped to same company (with 1-paisa rounding lookup)
           if (!bestPayment && excelAmount > 0) {
-            const amountCandidates = paymentsByAmount.get(buildAmountKey(excelAmount)) || [];
+            const amountCandidates = getAmountCandidatesWithTolerance(
+              paymentsByAmount,
+              excelAmount,
+              1,
+            );
             const targetCompId = bestPayable?.company_id || (client as any)?.company_id || null;
             bestPayment =
               amountCandidates.find(
@@ -790,7 +830,7 @@ export const ReconciliationEngine = {
           isRecognizedBankCharge;
 
         // Determine status
-        let status: ReconciliationMatch["status"] = "Missing";
+        let status: ReconciliationMatch["status"];
         const isRemainingOrRejectSheet =
           sheet.sheetName.toUpperCase().includes("REMAINING") ||
           sheet.sheetType === "REJECT_PENDING";
@@ -837,7 +877,7 @@ export const ReconciliationEngine = {
           usedPayableIds.add(bestPayable.id);
         }
 
-        let confidenceScore = 0;
+        let confidenceScore: number;
         let matchMethod: ReconciliationMatchMethod | undefined = undefined;
         let requiresManualApproval = false;
 
@@ -1089,8 +1129,13 @@ export const ReconciliationEngine = {
           ? Number(p.remaining_amount)
           : null;
       if (p.payable_type === "interest") {
-        const days = p.days_count && p.days_count > 0 && p.days_count < 365 ? p.days_count : 183;
-        const prorated = Number(((full / 365.0) * days).toFixed(2));
+        const storedDays = p.days_count && p.days_count > 0 ? p.days_count : 365;
+        if (storedDays < 365) {
+          const prorated = full;
+          const prorated182 = Number(((full / storedDays) * 182).toFixed(2));
+          return { full, prorated, prorated182, remaining };
+        }
+        const prorated = Number(((full / 365.0) * 183).toFixed(2));
         const prorated182 = Number(((full / 365.0) * 182).toFixed(2));
         return { full, prorated, prorated182, remaining };
       }
@@ -1585,9 +1630,9 @@ export const ReconciliationEngine = {
         }
       }
 
-      // 1g. Match against Payments by Exact Amount only (strictly isolated by company, requires no conflicting account)
+      // 1g. Match against Payments by Exact Amount only (strictly isolated by company, +-1 paisa tolerance, requires no conflicting account)
       if (!bestPayment && !matchedPayable && !matchedBatch && amount > 0) {
-        const amtPayments = paymentsByAmt.get(amtKey) || [];
+        const amtPayments = getAmountCandidatesWithTolerance(paymentsByAmt, amount, 1);
         const validAmtPayments = amtPayments.filter(
           (p) =>
             !usedPaymentIds.has(p.id) &&
@@ -1606,7 +1651,7 @@ export const ReconciliationEngine = {
       // STRICT AUDIT SAFEGUARD: Only match if amount is uniquely identifiable in the company
       // and there is no conflicting bank account number. Never guess randomly among multiple payables.
       if (!bestPayment && !matchedPayable && !matchedBatch && amount > 0) {
-        const amtPayables = payablesByAmt.get(amtKey) || [];
+        const amtPayables = getAmountCandidatesWithTolerance(payablesByAmt, amount, 1);
         const validAmtPayables = amtPayables.filter(
           (p) =>
             canUsePayable(p, amount) &&
@@ -1822,7 +1867,7 @@ export const ReconciliationEngine = {
       }
 
       const difference = fromPaisa(toPaisa(systemAmount) - toPaisa(amount));
-      let status: ReconciliationMatch["status"] = "Missing";
+      let status: ReconciliationMatch["status"];
 
       if (isBankReject) {
         status = "Rejected";
@@ -1893,7 +1938,7 @@ export const ReconciliationEngine = {
         categoryName = "Payment Batch Debit";
       }
 
-      let confidenceScore = 0;
+      let confidenceScore: number;
       if (status === "Matched") {
         confidenceScore = 70;
         if (client) confidenceScore += 15;

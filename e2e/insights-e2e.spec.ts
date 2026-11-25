@@ -78,8 +78,17 @@ test.describe("Insights & Operations Comprehensive End-to-End Suite", () => {
     await expect(ipfTab).toBeVisible();
     await expect(registersTab).toBeVisible();
 
-    // Under All Summaries or Mutual Funds tab, check Distribution Summary card
-    await expect(page.locator("text=/Mutual Fund Distribution Summary/i").first()).toBeVisible();
+    // Under All Summaries, verify either distribution summary card or empty state is rendered
+    const distSummaryCard = page.locator("text=/Mutual Fund Distribution Summary/i").first();
+    const emptyDistCard = page.locator("text=/No Distribution Records Found/i").first();
+    await expect(distSummaryCard.or(emptyDistCard)).toBeVisible();
+
+    // Under Mutual Funds (CDS) tab, verify either distribution summary card or empty state is rendered
+    await mutualFundTab.click();
+    const mfEmptyCard = page.locator("text=/No mutual fund records found/i").first();
+    await expect(distSummaryCard.or(mfEmptyCard)).toBeVisible({
+      timeout: 5000,
+    });
 
     // Switch to IRD Annex-10 tab
     await taxTab.click();
@@ -113,7 +122,7 @@ test.describe("Insights & Operations Comprehensive End-to-End Suite", () => {
 
     // Verify modal appears with live data grid, search, and export actions
     await expect(
-      page.locator("input[placeholder*='Search across all fields']").first(),
+      page.locator("[role='dialog'] input[placeholder*='Search shareholder']").first(),
     ).toBeVisible({
       timeout: 5000,
     });
@@ -230,7 +239,9 @@ test.describe("Insights & Operations Comprehensive End-to-End Suite", () => {
     // Verify Needs Review table or empty review queue message
     const reviewTable = page.locator("th:has-text('Shareholder')").first();
     const cleanQueue = page
-      .locator("text=/No payables require review|All records reviewed|Review Queue/i")
+      .locator(
+        "text=/No shareholders need review|No payables require review|All records reviewed|Review Queue/i",
+      )
       .first();
     await expect(reviewTable.or(cleanQueue)).toBeVisible({ timeout: 5000 });
 

@@ -222,11 +222,15 @@ function InterestPage() {
   const [calcResult, setCalcResult] = useState<InterestResult | null>(null);
 
   // Sync settings when they load
-  useEffect(() => {
-    if (settings?.interest_tds_natural) {
-      setCalcCustomTds((prev) => (prev ? prev : String(settings.interest_tds_natural)));
+  const [prevInterestTdsSetting, setPrevInterestTdsSetting] = useState(
+    settings?.interest_tds_natural,
+  );
+  if (prevInterestTdsSetting !== settings?.interest_tds_natural) {
+    setPrevInterestTdsSetting(settings?.interest_tds_natural);
+    if (settings?.interest_tds_natural && !calcCustomTds) {
+      setCalcCustomTds(String(settings.interest_tds_natural));
     }
-  }, [settings?.interest_tds_natural]);
+  }
 
   const calcDays = useMemo(() => {
     if (!calcFromDate || !calcToDate) return 0;
@@ -292,14 +296,12 @@ function InterestPage() {
   });
 
   // Self-heal orphaned companyFilter
-  useEffect(() => {
-    if (companyFilter !== "all" && companies.length > 0) {
-      const exists = companies.some((c) => c.id === companyFilter);
-      if (!exists) {
-        setCompanyFilter("all");
-      }
+  if (companyFilter !== "all" && companies.length > 0) {
+    const exists = companies.some((c) => c.id === companyFilter);
+    if (!exists) {
+      setCompanyFilter("all");
     }
-  }, [companies, companyFilter]);
+  }
 
   // Realtime subscription for live interest payables updates
   useEffect(() => {
@@ -351,15 +353,7 @@ function InterestPage() {
   const { data: clients = [] } = useQuery({
     queryKey: ["clients_selector"],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("clients")
-        .select(
-          "id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no",
-        )
-        .order("full_name")
-        .limit(2000);
-      if (error) throw error;
-      return (data || []) as {
+      return await fetchAllRows<{
         id: string;
         client_code: string;
         full_name: string;
@@ -372,7 +366,16 @@ function InterestPage() {
         phone: string | null;
         bank_name: string | null;
         bank_account_no: string | null;
-      }[];
+      }>((from, to) =>
+        (supabase as any)
+          .from("clients")
+          .select(
+            "id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no",
+          )
+          .order("full_name")
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
     },
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -406,17 +409,12 @@ function InterestPage() {
   const debouncedSearch = useDebounce(search, 300);
 
   // Reset to page 1 whenever filters change
-  useEffect(() => {
-    setPage(1);
-  }, [
-    debouncedSearch,
-    statusFilter,
-    companyFilter,
-    fyFilter,
-    classFilter,
-    fromDateFilter,
-    toDateFilter,
-  ]);
+  const filterResetKey = `${debouncedSearch}|${statusFilter}|${companyFilter}|${fyFilter}|${classFilter}|${fromDateFilter}|${toDateFilter}`;
+  const [prevFilterResetKey, setPrevFilterResetKey] = useState(filterResetKey);
+  if (prevFilterResetKey !== filterResetKey) {
+    setPrevFilterResetKey(filterResetKey);
+    if (page !== 1) setPage(1);
+  }
 
   // Fetch fiscal years for filter dropdown via fast RPC
   const { data: fiscalYears = [] } = useQuery({

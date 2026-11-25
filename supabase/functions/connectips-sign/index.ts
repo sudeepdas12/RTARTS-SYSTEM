@@ -133,15 +133,35 @@ serve(async (req) => {
 
     // 4. Server-held signing
     // In production, NCHL ConnectIPS mandates SHA256withRSA digital signing using an NCHL-issued client certificate (.pfx/.p12 converted to PKCS#8 PEM).
-    // The CONNECTIPS_TOKEN secret is supported as a fallback for sandbox testing.
-    const privateKeyPem = Deno.env.get("CONNECTIPS_PRIVATE_KEY");
-    const serverSecret = Deno.env.get("CONNECTIPS_TOKEN");
+    // Supports server env secrets first, with automatic fallback to credentials saved in system_settings.
+    let privateKeyPem = Deno.env.get("CONNECTIPS_PRIVATE_KEY") || "";
+    let serverSecret = Deno.env.get("CONNECTIPS_TOKEN") || "";
+
+    if (!privateKeyPem && !serverSecret) {
+      const { data: settingsRow } = await supabase
+        .from("system_settings")
+        .select("setting_value")
+        .eq("setting_key", "global")
+        .maybeSingle();
+
+      const settingsVal = (settingsRow?.setting_value as Record<string, any> | null) || {};
+      if (
+        typeof settingsVal.connectips_private_key === "string" &&
+        settingsVal.connectips_private_key.trim()
+      ) {
+        privateKeyPem = settingsVal.connectips_private_key.trim();
+      }
+      if (typeof settingsVal.connectips_token === "string" && settingsVal.connectips_token.trim()) {
+        serverSecret = settingsVal.connectips_token.trim();
+      }
+    }
 
     if (!privateKeyPem && !serverSecret) {
       return new Response(
         JSON.stringify({
           success: false,
-          error: "Neither CONNECTIPS_PRIVATE_KEY nor CONNECTIPS_TOKEN is configured in environment",
+          error:
+            "Neither CONNECTIPS_PRIVATE_KEY nor ConnectIPS API token is configured in environment or System Settings.",
         }),
         {
           status: 500,

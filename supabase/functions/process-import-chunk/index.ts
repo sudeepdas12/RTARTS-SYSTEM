@@ -12,6 +12,8 @@ interface ChunkPayload {
   companyName?: string;
   companyIsin?: string;
   fiscalYear?: string;
+  declarationId?: string;
+  bonusTaxMode?: "CASH_ADJUSTED" | "COMPANY_PAID" | "INVESTOR_PAID";
   dividendRate?: number;
   bonusRate?: number;
   tdsRate?: number;
@@ -131,13 +133,16 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
 
   const isPublicTranche = /PUBLIC|GENERAL|INDIVIDUAL|D-PUBLIC|P-PUBLIC/i.test(rawType);
   if (rawType && !isPublicTranche) {
-    if (/MUTUAL|MF|FUND/i.test(rawType)) return "MUTUAL_FUND";
+    if (/BANK_FI|\bBANK\b|\bBIKAS\s*BANK\b|FINANCIAL_INSTITUTION|\bBFI\b/i.test(rawType)) {
+      return "BANK_FI";
+    }
+    if (/MUTUAL|\bMF\b/i.test(rawType)) return "MUTUAL_FUND";
     if (/TAX.?EXEMPT|EXEMPT/i.test(rawType)) return "TAX_EXEMPT";
-    if (/PROMOT/i.test(rawType)) return "PROMOTER";
-    if (/INSTIT/i.test(rawType)) return "INSTITUTION";
-    if (/LOCAL/i.test(rawType)) return "LOCAL";
     if (/FOREIGN|NRN/i.test(rawType)) return "FOREIGN";
-    if (/D-PROMOT/.test(rawType)) return "PROMOTER";
+    if (/PROMOT|D-PROMOT/i.test(rawType)) return "PROMOTER";
+    if (/INSTIT|COMPANY|CORPORAT/i.test(rawType)) return "INSTITUTION";
+    if (/LOCAL/i.test(rawType)) return "LOCAL";
+    if (/STAFF|EMPLOYEE/i.test(rawType)) return "EMPLOYEE";
   }
 
   // 1. Natural Person indicators MUST take precedence over name heuristics.
@@ -157,15 +162,14 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
   ).trim();
 
   if (fatherName || grandfatherName) {
+    if (/PROMOT/i.test(rawType) || (sheetType && /PROMOT/i.test(sheetType))) return "PROMOTER";
+    if (/LOCAL/i.test(rawType) || (sheetType && /LOCAL/i.test(sheetType))) return "LOCAL";
     return "PUBLIC";
   }
-  // Nepal citizenship numbers contain hyphens (e.g. 27-01-72-12345) or letters,
-  // or are stored as 10+ digits when hyphens are stripped.
-  // A PURE 9-digit number (e.g. 606525655) is a Nepal PAN — both individuals AND
-  // companies have identical 9-digit PANs. Do NOT use a bare PAN as citizenship
-  // evidence or it will misclassify institutions as Natural Persons.
   const isPureNineDigitPan = /^\d{9}$/.test(citizenship);
   if (citizenship && !isPureNineDigitPan && /[-a-zA-Z0-9]/.test(citizenship)) {
+    if (/PROMOT/i.test(rawType) || (sheetType && /PROMOT/i.test(sheetType))) return "PROMOTER";
+    if (/LOCAL/i.test(rawType) || (sheetType && /LOCAL/i.test(sheetType))) return "LOCAL";
     return "PUBLIC";
   }
 
@@ -182,11 +186,6 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
       "",
   ).trim();
 
-  // 2. Corporate suffixes & Partnerships
-  const isCorporateSuffix =
-    /(PVT\.?\s*LTD|PRIVATE\s*LIMITED|P\.?\s*LTD|\bLIMITED\b|\bLTD\.?\b|\bCOMPANY\b|\bCORP\b|CORPORATION|\bINC\.?\b|\bLLC\b|\bPLC\b|\bPARTNERS\b|\bPARTNERSHIP\b)/i.test(
-      legalPersonName,
-    );
   const isMutualFundScheme =
     // NOTE: \bYOJANA\b alone is NOT a fund name — it is a common Nepali given name.
     // Only match YOJANA when followed by a fund-qualifying keyword (FUND, SCHEME, KOSH, etc.)
@@ -194,55 +193,64 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
       legalPersonName,
     );
 
-  if (isCorporateSuffix && !isMutualFundScheme) {
-    return "INSTITUTION";
+  // 2. Explicit TAX_EXEMPT / MUTUAL sheet-level categorization takes precedence over generic BANK/TRUST regex
+  // (e.g., "Nepal Bank Karmachari Awakash Kosh Byawasthapan Trust" or "RASTRIYA BANIJYA BANK RETIREMENT FUND" on RMF TAX_EXEMPTED sheet).
+  if (sheetType) {
+    const upperSheet = sheetType.toUpperCase();
+    if (/TAX.?EXEMPT|EXEMPT/i.test(upperSheet)) return "TAX_EXEMPT";
+    if (upperSheet.includes("MUTUAL") || /\bMF\b/.test(upperSheet)) return "MUTUAL_FUND";
   }
 
-  // 3. Tax Exempted / Mutual Fund detection from compound institutional name
-  if (
-    fatherName ||
-    grandfatherName ||
-    (citizenship && !isPureNineDigitPan && /[-a-zA-Z0-9]/.test(citizenship))
-  ) {
-    return "PUBLIC";
-  }
-
-  // 1. Tax Exempt Funds (Mutual funds & Statutory Social Funds)
-  if (
-    /\b(MUTUAL\s*FUND|MF|FOCUS\s*(40|30|\d+)|SELECT\s*(30|40|\d+)|SUPER\s*(30|40|\d+)|NMB\s*(50|HYBRID|SARAL)|SAMRIDDHI\s*FUND|DHANABRIDDHI|EQUITY\s*FUND|DYNAMIC\s*DEBT|LARGE\s*CAP|CITIZEN\s*INVESTMENT\s*TRUST|\bCIT\b|KARMACHARI\s*SANCHAYA\s*KOSH|\bEPF\b|SOCIAL\s*SECURITY\s*FUND|\bSSF\b)\b/i.test(
+  // 3. Statutory Tax-Exempt Funds & SEBON Mutual Fund Schemes
+  const isTaxableBankRetirement =
+    /\b(RASTRIYA\s*BANIJYA\s*BANK\s*RETIREMENT\s*FUND|RBB\s*RETIREMENT)\b/i.test(legalPersonName) ||
+    (/\b(BANK|BIKAS\s*BANK|FINANCE)\b.*\b(RETIREMENT|PENSION|GRATUITY|AWAKASH)\b/i.test(
       legalPersonName,
-    ) ||
-    /MUTUAL|MF\b|TAX.?EXEMPT/i.test(rawType)
+    ) &&
+      !/\b(CIT|EPF|SSF|SANCHAYA|LAGANI\s*KOSH|SURAKSHA\s*KOSH)\b/i.test(legalPersonName));
+
+  if (
+    !isTaxableBankRetirement &&
+    (isMutualFundScheme ||
+      /\b(CITIZEN\s*INVESTMENT\s*TRUST|NAGARIK\s*LAGANI\s*KOSH|\bCIT\b|KARMACHARI\s*SANCHAYA\s*KOSH|EMPLOYEES?\s*PROVIDENT\s*FUND|\bEPF\b|SAMAJIK\s*SURAKSHA\s*KOSH|SOCIAL\s*SECURITY\s*FUND|\bSSF\b)\b/i.test(
+        legalPersonName,
+      ) ||
+      /MUTUAL|\bMF\b|TAX.?EXEMPT/i.test(rawType))
   ) {
-    return "TAX_EXEMPT";
+    return isMutualFundScheme ? "MUTUAL_FUND" : "TAX_EXEMPT";
   }
 
-  // 2. Corporate Suffixes & Partnerships
-  if (
-    /\b(PVT\.?\s*LTD|PRIVATE\s*LIMITED|P\.?\s*LTD|LIMITED|LTD\.?|COMPANY|CORP|CORPORATION|INC\.?|LLC|PLC|PARTNERS|PARTNERSHIP|HOLDINGS\s*COMPANY)\b/i.test(
+  if (isTaxableBankRetirement) {
+    return "UNKNOWN";
+  }
+
+  // 4. Corporate suffixes & Partnerships
+  const isCorporateSuffix =
+    /(PVT\.?\s*LTD|PRIVATE\s*LIMITED|P\.?\s*LTD|\bLIMITED\b|\bLTD\.?\b|\bCOMPANY\b|\bCORP\b|CORPORATION|\bINC\.?\b|\bLLC\b|\bPLC\b|\bPARTNERS\b|\bPARTNERSHIP\b)/i.test(
       legalPersonName,
-    )
-  ) {
+    );
+
+  if (isCorporateSuffix) {
     return "COMPANY_INSTITUTION";
   }
 
-  // 3. Institutional Organizations — STRONG regulated-sector keywords only.
-  // Only include words that CANNOT be a personal name. VISION removed (given name in Nepal/India).
-  // Weak keywords (TRADING, SOLUTIONS, GROUP) are NOT here — their match alone is not conclusive proof.
+  // 5. Institutional Organizations — STRONG regulated-sector & trade entity keywords.
   const STRONG_INST_REGEX =
-    /\b(BANK|BIKAS\s*BANK|DEVELOPMENT\s*BANK|FINANCE|MICROFINANCE|MICRO\s*INSURANCE|LAGHUBITTA|BITTIYA|BITTIYA\s*SANSTHA|BIMA|BEEMA|INSURANCE|REINSURANCE|RE\s*INSURANCE|RE-INSURANCE|NIRJIBAN\s*BIMA|JIBAN\s*BIMA|HYDROPOWER|HYDRO\s*POWER|JALABIDHYUT|DOORSANCHAR|TELECOM|CLEARING\s*HOUSE|STOCK\s*EXCHANGE|STOCK\s*DEALER|STOCK\s*BROKER|STOCK\s*MARKET|CDS\s*(AND|&)?\s*CLEARING|PHARMA|PHARMACEUTICALS|HOSPITAL|COLLEGE|UNIVERSITY|ACADEMY|COOPERATIVE|CO-OPERATIVE|SAHAKARI|SECURITIES|BROKER|MERCHANT(\s*BANKING)?|INFRA(?:STRUCTURE)?|KHARID\s*BIKRI|BIKRI\s*KENDRA|SANIMA\s*RELIANCE|RELIANCE|PATHIVARA\s*MATA|MANDIR|SEWA\s*SAMITI|DHARMA\s*TRUST|GOVERNMENT|SARKAR|MINISTRY|DEPARTMENT|PRADHIKARAN|SANSTHAN|NIGAM|MUNICIPALITY|NAGARPALIKA|GAUNPALIKA|EMBASSY|GUTHI|ARMY\s*WELFARE|NEPALESE\s*ARMY\s*WELFARE|SAINIK\s*KALYAN|POLICE\s*WELFARE|PRAHARI\s*KALYAN|WELFARE\s*FUND|KALYAN\s*KOSH|SANSTHA|FOUNDATION|SOCIETY|RESORT|HOTEL|CLINIC|TRAVELS|TOURS|LOGISTICS)\b/i;
+    /\b(BANK|BIKAS\s*BANK|DEVELOPMENT\s*BANK|FINANCE|MICROFINANCE|MICRO\s*INSURANCE|LAGHUBITTA|BITTIYA|BITTIYA\s*SANSTHA|BIMA|BEEMA|INSURANCE|REINSURANCE|RE\s*INSURANCE|RE-INSURANCE|NIRJIBAN\s*BIMA|JIBAN\s*BIMA|HYDROPOWER|HYDRO\s*POWER|JALABIDHYUT|DOORSANCHAR|TELECOM|CLEARING\s*HOUSE|STOCK\s*EXCHANGE|STOCK\s*DEALER|STOCK\s*BROKER|STOCK\s*MARKET|CDS\s*(AND|&)?\s*CLEARING|PHARMA|PHARMACEUTICALS|HOSPITAL|COLLEGE|UNIVERSITY|ACADEMY|COOPERATIVE|CO-OPERATIVE|SAHAKARI|SECURITIES|BROKER|MERCHANT(\s*BANKING)?|INFRA(?:STRUCTURE)?|KHARID\s*BIKRI|BIKRI\s*KENDRA|SANIMA\s*RELIANCE|RELIANCE|PATHIVARA\s*MATA|MANDIR|SEWA\s*SAMITI|DHARMA\s*TRUST|GOVERNMENT|SARKAR|MINISTRY|DEPARTMENT|PRADHIKARAN|SANSTHAN|NIGAM|MUNICIPALITY|NAGARPALIKA|GAUNPALIKA|EMBASSY|GUTHI|SANSTHA|FOUNDATION|SOCIETY|RESORT|HOTEL|CLINIC|TRAVELS|TOURS|LOGISTICS|SUPPLIER|SUPPLIERS|TRADERS|ENTERPRISES)\b/i;
   if (STRONG_INST_REGEX.test(legalPersonName) || /LEGAL|INSTIT|COMPANY|CORPORAT/i.test(rawType)) {
     return "COMPANY_INSTITUTION";
   }
 
-  // 5. Sheet Type
+  // 6. Sheet Type fallbacks
   if (sheetType) {
     const upper = sheetType.toUpperCase();
-    if (upper.includes("MUTUAL") || upper.includes("MF")) return "MUTUAL_FUND";
+    if (upper.includes("MUTUAL") || /\bMF\b/.test(upper)) return "MUTUAL_FUND";
     if (upper.includes("TAX") && upper.includes("EXEMPT")) return "TAX_EXEMPT";
+    if (upper.includes("FOREIGN") || /\bNRN\b/.test(upper)) return "FOREIGN";
     if (upper.includes("PROMOT")) return "PROMOTER";
     if (upper.includes("INSTIT") || upper.includes("PRIVATE")) return "INSTITUTION";
     if (upper.includes("LOCAL")) return "LOCAL";
+    if (upper.includes("STAFF") || upper.includes("EMPLOYEE")) return "EMPLOYEE";
     // A PUBLIC sheet name alone is NOT proof of a human (lineage/citizenship were
     // already checked above). Leave as UNKNOWN so the operator reviews it.
   }
@@ -255,13 +263,21 @@ function payableClassification(category: string): string {
     .trim()
     .toUpperCase();
   if (upper === "FOREIGN" || upper === "FOREIGN_INVESTOR") return "FOREIGN_INVESTOR";
+  if (upper === "BANK_FI" || upper === "BANK" || upper === "BFI") return "BANK_FI";
   if (upper === "INSTITUTION" || upper === "COMPANY_INSTITUTION" || upper === "PRIVATE")
     return "COMPANY_INSTITUTION";
   if (upper === "MUTUAL_FUND" || upper === "TAX_EXEMPT" || upper === "TAX_EXEMPTED")
     return "TAX_EXEMPT";
-  if (upper === "PUBLIC" || upper === "NATURAL_PERSON" || upper === "PUBLIC_LEGAL_PERSON")
+  if (upper === "PUBLIC_LEGAL_PERSON") return "PUBLIC_LEGAL_PERSON";
+  if (
+    upper === "PUBLIC" ||
+    upper === "NATURAL_PERSON" ||
+    upper === "PROMOTER" ||
+    upper === "LOCAL" ||
+    upper === "EMPLOYEE" ||
+    upper === "STAFF"
+  )
     return "NATURAL_PERSON";
-  if (upper === "PROMOTER" || upper === "LOCAL") return "NATURAL_PERSON";
   return "UNCLASSIFIED";
 }
 
@@ -277,7 +293,7 @@ function payableSegment(category: string, isDebenture = false): string | null {
   if (upper === "PROMOTER") return "PROMOTER";
   if (upper === "LOCAL") return "LOCAL";
   if (upper === "PUBLIC") return "PUBLIC";
-  if (upper === "EMPLOYEE") return "EMPLOYEE";
+  if (upper === "EMPLOYEE" || upper === "STAFF") return "EMPLOYEE";
   return null;
 }
 
@@ -289,24 +305,29 @@ function roundToPaisa(value: number): number {
 }
 
 /**
- * Debenture TDS rules:
- *   Natural Person (Public, Promoter, Local, Employee): 6%
- *   Legal Person / Company (Institution, Foreign): 15%
- *   Tax Exempt / Mutual Fund / Bank FI: 0%
- *
- * Dividend TDS rules:
- *   Natural Person (Public, Promoter, Local, Employee): 5%
- *   Legal Person / Company (Resident Institution): 5% (Sec 88(2)(ka))
- *   Foreign Investor: 5% (Sec 92 final withholding)
- *   Mutual Fund / Tax Exempt: 0%
+ * Resolve TDS rate against authoritative payable_tax_rules first, then fallback switch.
  */
-function getCategoryTdsRate(category: string, isDebenture: boolean): number {
+function getCategoryTdsRate(
+  category: string,
+  isDebenture: boolean,
+  isMutualFund = false,
+  taxRulesMap?: Map<string, number>,
+): number {
+  if (taxRulesMap && taxRulesMap.size > 0) {
+    const payableCategory = isMutualFund ? "MUTUAL_FUND" : isDebenture ? "INTEREST" : "DIVIDEND";
+    const classification = payableClassification(category);
+    const dbRate = taxRulesMap.get(`${payableCategory}::${classification}`);
+    if (dbRate !== undefined) return dbRate;
+  }
+
   switch (category) {
     case "PROMOTER":
     case "PUBLIC":
     case "LOCAL":
     case "EMPLOYEE":
       return isDebenture ? 0.06 : 0.05;
+    case "PUBLIC_LEGAL_PERSON":
+      return isMutualFund ? 0.15 : isDebenture ? 0.06 : 0.05;
     case "INSTITUTION":
     case "COMPANY_INSTITUTION":
       return 0.15;
@@ -318,7 +339,7 @@ function getCategoryTdsRate(category: string, isDebenture: boolean): number {
       return 0;
     case "BANK_FI":
     case "BANK":
-      return isDebenture ? 0.0 : 0.05;
+      return isMutualFund ? 0.15 : isDebenture ? 0.0 : 0.05;
     default:
       return isDebenture ? 0.06 : 0.05;
   }
@@ -457,10 +478,23 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Verify caller session using the token or allow service_role key
+    // Verify caller session using the token or allow service_role / runtime secret key
     let user: any = null;
+    let isServiceSecret = token === supabaseKey;
+    if (!isServiceSecret) {
+      try {
+        const secretKeys = JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") || "{}");
+        const defaultSecret =
+          typeof secretKeys?.default === "string" ? secretKeys.default.trim() : "";
+        if (defaultSecret && token === defaultSecret) {
+          isServiceSecret = true;
+        }
+      } catch {
+        // Ignore malformed secret map
+      }
+    }
 
-    if (token === supabaseKey) {
+    if (isServiceSecret) {
       user = { id: "00000000-0000-0000-0000-000000000000" };
     } else {
       const {
@@ -486,14 +520,15 @@ serve(async (req) => {
         .eq("user_id", user.id);
 
       const hasAllowedRole = (roles || []).some((r: any) =>
-        ["admin", "supervisor", "finance_operator"].includes(r.role),
+        ["admin", "supervisor", "finance_operator", "operator", "maker"].includes(r.role),
       );
 
       if (rolesError || !hasAllowedRole) {
         return new Response(
           JSON.stringify({
             success: false,
-            error: "Forbidden: caller lacks required role (admin, supervisor, finance_operator)",
+            error:
+              "Forbidden: caller lacks required role (admin, supervisor, finance_operator, operator, maker)",
           }),
           { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
@@ -508,6 +543,8 @@ serve(async (req) => {
       companyName,
       companyIsin,
       fiscalYear,
+      declarationId,
+      bonusTaxMode: payloadBonusTaxMode,
       dividendRate,
       bonusRate,
       tdsRate,
@@ -518,6 +555,12 @@ serve(async (req) => {
       isPreCalculated,
       faceValue: payloadFaceValue,
     } = payload;
+    const bonusTaxMode =
+      payloadBonusTaxMode &&
+      ["CASH_ADJUSTED", "COMPANY_PAID", "INVESTOR_PAID"].includes(payloadBonusTaxMode)
+        ? payloadBonusTaxMode
+        : "CASH_ADJUSTED";
+    const isMutualFund = targetTable === "mutual_fund_payables";
 
     // Health-check / misconfigured calls should return a clear error instead of crashing
     if (!uploadId) {
@@ -529,6 +572,21 @@ serve(async (req) => {
 
     let chunkData = Array.isArray(payload.chunkData) ? payload.chunkData : [];
     const isDebenture = targetTable === "interest_payables";
+
+    // Load active TDS rules from payable_tax_rules once per request
+    const taxRulesMap = new Map<string, number>();
+    const { data: activeTaxRules } = await supabase
+      .from("payable_tax_rules")
+      .select("payable_category, payee_classification, tax_rate")
+      .eq("is_active", true);
+    for (const rule of activeTaxRules || []) {
+      if (rule?.payable_category && rule?.payee_classification && rule.tax_rate != null) {
+        taxRulesMap.set(
+          `${rule.payable_category}::${rule.payee_classification}`,
+          Number(rule.tax_rate),
+        );
+      }
+    }
 
     // Filter out footer/total/summary rows that carry no BOID but contain
     // "TOTAL" / "SUMMARY" markers (e.g. the trailing "NAME = TOTAL" row in
@@ -557,6 +615,44 @@ serve(async (req) => {
     });
     // Mutate chunkData to the filtered set so the rest of the function processes only investor rows
     chunkData = filteredData;
+
+    // Dry Run mode: evaluate authoritative classification and payable_tax_rules math
+    // without creating upload_history rows or requiring persistent company records.
+    if (payload.dryRun === true) {
+      let computedGross = 0;
+      let computedTax = 0;
+      let computedNet = 0;
+      let validRows = 0;
+      for (const row of chunkData) {
+        const investorCategory = detectInvestorCategory(row, sheetType);
+        const rate = getCategoryTdsRate(investorCategory, isDebenture, isMutualFund, taxRulesMap);
+        const rawGross = Number(
+          row.gross_dividend ?? row.gross_amount ?? row.gross_interest ?? row.amount ?? 0,
+        );
+        const gross = Number.isFinite(rawGross) ? roundToPaisa(rawGross) : 0;
+        const tax = roundToPaisa(gross * rate);
+        const net = roundToPaisa(gross - tax);
+        computedGross += gross;
+        computedTax += tax;
+        computedNet += net;
+        validRows += 1;
+      }
+      return new Response(
+        JSON.stringify({
+          success: true,
+          dryRun: true,
+          rowsProcessed: validRows,
+          metrics: {
+            totalRows: chunkData.length,
+            validRows,
+            computedGross: roundToPaisa(computedGross),
+            computedTax: roundToPaisa(computedTax),
+            computedNet: roundToPaisa(computedNet),
+          },
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     // 0. Ensure the upload_history record exists (bypasses RLS via service_role)
     // Strictly bound to authenticated user.id from verified JWT
@@ -1062,7 +1158,6 @@ serve(async (req) => {
           row["TAX @ 15%"] ||
           row["TAX @15%"] ||
           row["TAX EXEMPTED"] ||
-          row.bon_tax ||
           row["TDS"] ||
           row["TDS AMOUNT"] ||
           row["WITHHOLDING TAX"] ||
@@ -1151,13 +1246,25 @@ serve(async (req) => {
 
       // *** SMART ROW-LEVEL CATEGORIZATION ***
       const investorCategory = detectInvestorCategory(row, sheetType);
-      // Determine TDS rate: use smart row-level categorization
-      const rowTdsRate = getCategoryTdsRate(investorCategory, isDebenture);
+      // Determine TDS rate: authoritative payable_tax_rules or smart row-level fallback
+      const rowTdsRate = getCategoryTdsRate(
+        investorCategory,
+        isDebenture,
+        isMutualFund,
+        taxRulesMap,
+      );
 
       // Auto-calculate: if gross is 0 but we have shares × rate, compute it
       let grossAmount = rawGross;
       let taxAmount = rawTax;
       let netPayable = rawNet;
+      const hasExplicitTaxInRow =
+        row.tax_amount !== undefined ||
+        row.div_tax !== undefined ||
+        row.tax !== undefined ||
+        row.TAX !== undefined ||
+        row["TDS"] !== undefined ||
+        row["TDS AMOUNT"] !== undefined;
 
       if (targetTable === "dividend_payables" || targetTable === "mutual_fund_payables") {
         const defaultFaceValue = targetTable === "mutual_fund_payables" ? 10 : 100;
@@ -1172,11 +1279,11 @@ serve(async (req) => {
           investorCategory !== "MUTUAL_FUND" &&
           investorCategory !== "TAX_EXEMPT"
         ) {
-          // Bonus tax is on the FACE VALUE of bonus shares (10 for mutual funds, 100 otherwise), not a fixed 100
+          // Bonus tax is on the FACE VALUE of bonus shares (10 for mutual funds, 100 otherwise)
           rowBonusTax = roundToPaisa(rowIssuedBonus * faceVal * rowTdsRate);
         }
 
-        // True only when the uploaded sheet supplied the net amount (assumed to exclude bonus tax).
+        const effectiveBonusDeduction = bonusTaxMode === "CASH_ADJUSTED" ? rowBonusTax : 0;
         const netGivenBySheet = Boolean(netPayable);
         if (!isPreCalculated) {
           // Auto-calculate gross from shares × dividend rate if gross is missing
@@ -1187,7 +1294,7 @@ serve(async (req) => {
           if (!taxAmount && grossAmount && rowTdsRate > 0) {
             taxAmount = roundToPaisa(grossAmount * rowTdsRate);
           }
-          const totalTaxToDeduct = taxAmount + rowBonusTax;
+          const totalTaxToDeduct = taxAmount + effectiveBonusDeduction;
           if (!netPayable && grossAmount) {
             netPayable = Math.max(0, roundToPaisa(grossAmount - totalTaxToDeduct));
           }
@@ -1195,16 +1302,25 @@ serve(async (req) => {
           if (!netPayable) netPayable = Math.max(0, roundToPaisa(grossAmount - totalTaxToDeduct));
         }
 
+        // Only subtract bonus tax from supplied sheet net if the sheet hadn't already deducted it
+        const shouldDeductSuppliedBonus =
+          effectiveBonusDeduction > 0 &&
+          !isPreCalculated &&
+          netGivenBySheet &&
+          Math.abs(netPayable - (grossAmount - taxAmount)) <= 0.05;
+        const resolvedNetPayable = Math.max(
+          0,
+          roundToPaisa(netPayable - (shouldDeductSuppliedBonus ? effectiveBonusDeduction : 0)),
+        );
+
         payables.push({
           upload_id: uploadId,
           company_id: companyId,
           client_id: clientId,
+          declaration_id: declarationId || null,
           gross_dividend: grossAmount,
-          tax_amount: taxAmount + rowBonusTax,
-          net_payable: Math.max(
-            0,
-            netPayable - (rowBonusTax > 0 && !isPreCalculated && netGivenBySheet ? rowBonusTax : 0),
-          ),
+          tax_amount: taxAmount,
+          net_payable: resolvedNetPayable,
           shares_held: sharesHeld,
           dividend_rate: dividendRate ?? null,
           bonus_rate: bonusRate ?? null,
@@ -1215,7 +1331,9 @@ serve(async (req) => {
           bonus_issued: Number(row.bonus_issued || 0) || null,
           bonus_fraction: Number(row.bonus_fraction || 0) || null,
           after_bonus_kitta: Number(row.after_bonus_kitta || 0) || null,
-          bonus_tax: rowBonusTax || Number(row.bon_tax || 0) || null,
+          bonus_tax: rowBonusTax || null,
+          bonus_tax_mode: bonusTaxMode,
+          is_tax_manual: Boolean(isPreCalculated && (rawTax > 0 || hasExplicitTaxInRow)),
           bank_name: bankName || null,
           bank_account_no: bankAccountNo || null,
           bank_branch: bankBranch || null,
@@ -1262,12 +1380,14 @@ serve(async (req) => {
           upload_id: uploadId,
           company_id: companyId,
           client_id: clientId,
+          declaration_id: declarationId || null,
           shares_held: sharesHeld || null,
           kitta: sharesHeld || null,
           gross_interest: grossAmount,
           tax_amount: taxAmount,
           net_payable: netPayable,
           tds_rate: rowTdsRate,
+          is_tax_manual: Boolean(isPreCalculated && (rawTax > 0 || hasExplicitTaxInRow)),
           days_count: effectiveDays,
           due_date: dueDate,
           fiscal_year: fiscalYear ?? null,
@@ -1292,7 +1412,7 @@ serve(async (req) => {
       let computedTax = 0;
       let computedNet = 0;
       for (const p of payables) {
-        computedGross += Number(p.gross_amount || p.gross_interest || 0);
+        computedGross += Number(p.gross_dividend ?? p.gross_amount ?? p.gross_interest ?? 0);
         computedTax += Number(p.tax_amount || 0);
         computedNet += Number(p.net_payable || 0);
       }

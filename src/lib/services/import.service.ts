@@ -188,13 +188,21 @@ function payableClassification(category: string): string {
   const upper = String(category || "")
     .trim()
     .toUpperCase();
+  if (upper === "FOREIGN" || upper === "FOREIGN_INVESTOR") return "FOREIGN_INVESTOR";
+  if (upper === "BANK_FI" || upper === "BANK" || upper === "BFI") return "BANK_FI";
   if (upper === "INSTITUTION" || upper === "FOREIGN" || upper === "COMPANY_INSTITUTION")
     return "COMPANY_INSTITUTION";
   if (upper === "MUTUAL_FUND" || upper === "TAX_EXEMPT" || upper === "TAX_EXEMPTED")
     return "TAX_EXEMPT";
-  if (upper === "PUBLIC" || upper === "NATURAL_PERSON" || upper === "PUBLIC_LEGAL_PERSON")
-    return "NATURAL_PERSON";
-  if (upper === "PROMOTER" || upper === "LOCAL" || upper === "EMPLOYEE" || upper === "STAFF")
+  if (upper === "PUBLIC_LEGAL_PERSON") return "PUBLIC_LEGAL_PERSON";
+  if (
+    upper === "PUBLIC" ||
+    upper === "NATURAL_PERSON" ||
+    upper === "PROMOTER" ||
+    upper === "LOCAL" ||
+    upper === "EMPLOYEE" ||
+    upper === "STAFF"
+  )
     return "NATURAL_PERSON";
   return "UNCLASSIFIED";
 }
@@ -399,6 +407,7 @@ export const ImportService = {
     targetTable: string,
     options?: {
       fiscalYear?: string;
+      declarationId?: string;
       dividendRate?: number;
       bonusRate?: number;
       tdsRate?: number; // Per-sheet TDS rate (0, 0.05, 0.06, 0.15, etc.) — used as fallback when no row-level category
@@ -666,6 +675,7 @@ export const ImportService = {
         } catch (autoErr: any) {
           throw new Error(
             `Target company "${cleanName}" could not be auto-registered: ${autoErr?.message || autoErr}`,
+            { cause: autoErr },
           );
         }
       }
@@ -1402,7 +1412,6 @@ export const ImportService = {
           row["TAX @ 15%"] ||
           row["TAX @15%"] ||
           row["TAX EXEMPTED"] ||
-          row.bon_tax ||
           row["TDS"] ||
           row["TDS AMOUNT"] ||
           row["WITHHOLDING TAX"] ||
@@ -1610,10 +1619,16 @@ export const ImportService = {
             investorCategory !== "MUTUAL_FUND" &&
             investorCategory !== "TAX_EXEMPT"
           ) {
+            const defaultBonusFace = targetTable === "mutual_fund_payables" ? 10 : 100;
             rowBonusTax =
-              Math.round(rowIssuedBonus * (options?.faceValue || 100) * rowTdsRate * 100) / 100;
+              Math.round(
+                rowIssuedBonus * (options?.faceValue || defaultBonusFace) * rowTdsRate * 100,
+              ) / 100;
           }
         }
+
+        const bonusTaxMode = (options as any)?.bonusTaxMode || "CASH_ADJUSTED";
+        const effectiveBonusDeduction = bonusTaxMode === "CASH_ADJUSTED" ? rowBonusTax : 0;
 
         if (!options?.isPreCalculated) {
           if (!grossAmount && sharesHeld && options?.dividendRate) {
@@ -1625,13 +1640,11 @@ export const ImportService = {
           if (!taxAmount && grossAmount && rowTdsRate > 0) {
             taxAmount = Math.round(grossAmount * rowTdsRate * 100) / 100;
           }
-          const totalTaxToDeduct = taxAmount + rowBonusTax;
+          const totalTaxToDeduct = taxAmount + effectiveBonusDeduction;
           if (!netPayable && grossAmount) {
             netPayable = Math.max(0, Math.round((grossAmount - totalTaxToDeduct) * 100) / 100);
           }
           if (!grossAmount) grossAmount = netPayable || 0;
-          if (!netPayable)
-            netPayable = Math.max(0, Math.round((grossAmount - totalTaxToDeduct) * 100) / 100);
         }
 
         const totals =
@@ -1661,16 +1674,25 @@ export const ImportService = {
           continue;
         }
 
+        const sheetNetProvidedBeforeBonus =
+          effectiveBonusDeduction > 0 &&
+          !options?.isPreCalculated &&
+          Math.abs(totals.netPayable - (totals.grossAmount - totals.taxAmount)) <= 0.05;
+        const resolvedNetPayable = Math.max(
+          0,
+          Math.round(
+            (totals.netPayable - (sheetNetProvidedBeforeBonus ? effectiveBonusDeduction : 0)) * 100,
+          ) / 100,
+        );
+
         payablesToInsert.push({
+          declaration_id: options?.declarationId || null,
           upload_id: uploadId,
           company_id: companyId,
           client_id: clientId,
           gross_dividend: totals.grossAmount,
-          tax_amount: totals.taxAmount + rowBonusTax,
-          net_payable: Math.max(
-            0,
-            totals.netPayable - (rowBonusTax > 0 && !options?.isPreCalculated ? rowBonusTax : 0),
-          ),
+          tax_amount: totals.taxAmount,
+          net_payable: resolvedNetPayable,
           shares_held: sharesHeld,
           dividend_rate: options?.dividendRate ?? null,
           bonus_rate: options?.bonusRate ?? null,
@@ -1683,6 +1705,8 @@ export const ImportService = {
           bonus_fraction: rowBonusFraction || null,
           after_bonus_kitta: rowAfterBonusKitta || null,
           bonus_tax: rowBonusTax || null,
+          bonus_tax_mode: bonusTaxMode,
+          is_tax_manual: Boolean(options?.isPreCalculated && rawTax > 0),
           bank_name: bankName || null,
           bank_account_no: bankAccountNo || null,
           bank_branch: bankBranch || null,
@@ -1726,7 +1750,6 @@ export const ImportService = {
             netPayable = Math.round((grossAmount - taxAmount) * 100) / 100;
           }
           if (!grossAmount) grossAmount = netPayable || 0;
-          if (!netPayable) netPayable = Math.round((grossAmount - taxAmount) * 100) / 100;
         }
 
         const totals =
@@ -1751,6 +1774,7 @@ export const ImportService = {
         }
 
         payablesToInsert.push({
+          declaration_id: options?.declarationId || null,
           upload_id: uploadId,
           company_id: companyId,
           client_id: clientId,
@@ -1761,6 +1785,7 @@ export const ImportService = {
           tax_amount: totals.taxAmount,
           net_payable: totals.netPayable,
           tds_rate: totals.taxRate,
+          is_tax_manual: Boolean(options?.isPreCalculated && rawTax > 0),
           due_date: dueDate,
           fiscal_year: options?.fiscalYear ?? null,
           bank_name: bankName || null,
@@ -1853,7 +1878,9 @@ export const ImportService = {
           }
         } catch (fallbackEx: any) {
           console.error("Direct payable insert fallback failed:", fallbackEx);
-          throw new Error("Payable insert failed: " + (fallbackEx?.message || String(fallbackEx)));
+          throw new Error("Payable insert failed: " + (fallbackEx?.message || String(fallbackEx)), {
+            cause: fallbackEx,
+          });
         }
       }
     }

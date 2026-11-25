@@ -329,6 +329,23 @@ export async function classifyReconciliationFile(
   return "ambiguous";
 }
 
+function normalizeTxnStatus(
+  rawStatus?: string,
+  isReject?: boolean,
+  defaultRejectStatus: "RJCT" | "Rejected" = "RJCT",
+): string | undefined {
+  const clean = String(rawStatus || "").trim();
+  const upper = clean.toUpperCase();
+  if (/ACCEPTED\s*SETTLEMENT\s*COMPLETED/.test(upper) || upper === "ACSC") {
+    return "ACSC";
+  }
+  if (upper === "RJCT" || upper === "REJECTED" || upper === "FAILED") {
+    return clean.toUpperCase() === "RJCT" ? "RJCT" : clean;
+  }
+  if (!clean) return isReject ? defaultRejectStatus : undefined;
+  return clean;
+}
+
 export const BankParser = {
   /**
    * Parse a bank statement or ACH payment settlement report.
@@ -451,6 +468,9 @@ export const BankParser = {
       const hasDateCol = cleanCols.some(
         (c) => c.includes("date") || c.includes("txndate") || c.includes("settlement"),
       );
+      const hasStatusOrInstrCol = cleanCols.some(
+        (c) => c.includes("status") || c.includes("instruction") || c.includes("beneficiary"),
+      );
       const hasAmtOrDesc = cleanCols.some(
         (c) =>
           c.includes("desc") ||
@@ -464,7 +484,7 @@ export const BankParser = {
           c.includes("txnamt") ||
           c.includes("amt"),
       );
-      if (hasDateCol && hasAmtOrDesc) {
+      if ((hasDateCol || hasStatusOrInstrCol) && hasAmtOrDesc) {
         headerRowIndex = i;
         break;
       }
@@ -511,14 +531,11 @@ export const BankParser = {
         ["debtor name", "debtorname"],
       ]),
       status: findColumnIndexByPriority(headerRow, [
-        [
-          "credit status",
-          "creditstatus",
-          "achstatus.description",
-          "achstatus",
-          "status",
-          "tx status",
-        ],
+        ["credit status", "creditstatus"],
+        ["achstatus.description", "ach status"],
+        ["achstatus"],
+        ["tx status", "txn status"],
+        ["status"],
       ]),
       transId: findColumnIndexByPriority(headerRow, [
         ["transid", "transaction id", "transactionid"],
@@ -550,6 +567,8 @@ export const BankParser = {
     };
 
     const transactions: BankTransaction[] = [];
+    let ledgerDebit = 0;
+    let ledgerCredit = 0;
     for (let rowIndex = headerRowIndex + 1; rowIndex < lines.length; rowIndex += 1) {
       const line = lines[rowIndex];
       const columns = parseCsvRow(line);
@@ -624,6 +643,8 @@ export const BankParser = {
 
       const upperDesc = String(desc || "").toUpperCase();
       const isCircular = upperDesc.includes("NRB CIRCULAR");
+      ledgerDebit += debit;
+      ledgerCredit += credit;
       if (isCircular && !options.includeCircularSweeps) {
         continue;
       }
@@ -641,13 +662,19 @@ export const BankParser = {
           upperDesc.includes("DEPOSIT") ||
           upperDesc.includes("INWARD"));
 
+      const isPayoutByStatus =
+        Boolean(status) &&
+        /ACCEPTED\s*SETTLEMENT|\bACSC\b|\bSUCCESS\b|\bCOMPLETED\b/i.test(status || "");
+
       const category: BankTransaction["category"] = isCircular
         ? "NRB_CIRCULAR"
         : isReject
           ? "REJECT_RETURN"
           : isFunding
             ? "FUNDING_DEPOSIT"
-            : "PAYOUT_DEBIT";
+            : isPayoutByStatus || debit > 0
+              ? "PAYOUT_DEBIT"
+              : "PAYOUT_DEBIT";
 
       let finalDebit = debit;
       let finalCredit = credit;
@@ -656,7 +683,7 @@ export const BankParser = {
         finalCredit = 0;
       }
 
-      const resolvedStatus = status || (isReject ? "Rejected" : undefined);
+      const resolvedStatus = normalizeTxnStatus(status, Boolean(isReject), "Rejected");
 
       transactions.push({
         id: `txn-${rowIndex}`,
@@ -676,23 +703,32 @@ export const BankParser = {
         category,
       });
 
-      // Capture final row balance as closing balance fallback
-      if (balance !== 0) {
-        detectedClosingBalance = balance;
+      // Capture final row balance only when explicit Closing Balance wasn't already read
+      if (balance !== 0 && detectedClosingBalance === undefined) {
+        // Defer fallback closing balance assignment until chronological orientation is checked
       }
     }
 
     const totalDebit = transactions.reduce((sum, t) => sum + (t.debit || 0), 0);
     const totalCredit = transactions.reduce((sum, t) => sum + (t.credit || 0), 0);
-    if (
-      detectedOpeningBalance === undefined &&
-      transactions.length > 0 &&
-      transactions[0].balance !== 0
-    ) {
-      detectedOpeningBalance =
-        transactions[0].balance + transactions[0].debit - transactions[0].credit;
+    const effectiveLedgerDebit = ledgerDebit > 0 || ledgerCredit > 0 ? ledgerDebit : totalDebit;
+    const effectiveLedgerCredit = ledgerDebit > 0 || ledgerCredit > 0 ? ledgerCredit : totalCredit;
+    const txnsWithBal = transactions.filter((t) => t.balance !== 0);
+    const isReverseChron =
+      txnsWithBal.length >= 2 &&
+      Boolean(txnsWithBal[0].date && txnsWithBal[txnsWithBal.length - 1].date) &&
+      txnsWithBal[0].date > txnsWithBal[txnsWithBal.length - 1].date;
+    const oldestBalTxn = isReverseChron ? txnsWithBal[txnsWithBal.length - 1] : txnsWithBal[0];
+    const newestBalTxn = isReverseChron ? txnsWithBal[0] : txnsWithBal[txnsWithBal.length - 1];
+
+    if (detectedOpeningBalance === undefined && oldestBalTxn) {
+      detectedOpeningBalance = oldestBalTxn.balance + oldestBalTxn.debit - oldestBalTxn.credit;
     }
-    const calculatedClosingBalance = (detectedOpeningBalance ?? 0) + totalCredit - totalDebit;
+    if (detectedClosingBalance === undefined && newestBalTxn) {
+      detectedClosingBalance = newestBalTxn.balance;
+    }
+    const calculatedClosingBalance =
+      (detectedOpeningBalance ?? 0) + effectiveLedgerCredit - effectiveLedgerDebit;
     const balanceDifference =
       detectedClosingBalance !== undefined
         ? Math.abs(calculatedClosingBalance - detectedClosingBalance)
@@ -759,7 +795,7 @@ export const BankParser = {
     const transactions: BankTransaction[] = [];
 
     // Choose sheets to process based on semantic priority
-    let sheetsToProcess = workbook.SheetNames;
+    let sheetsToProcess: string[];
     const isMultiBankLateRtn = workbook.SheetNames.some((s) => /LATE\s*RTN/i.test(s));
     const isMultiLotWorkbook =
       workbook.SheetNames.every((s) => /^Sheet\d+$/i.test(s)) && workbook.SheetNames.length > 1;
@@ -804,6 +840,8 @@ export const BankParser = {
 
     const seenWorkbookTxnKeys = new Set<string>();
     const seenSheetFingerprints = new Set<string>();
+    let ledgerDebit = 0;
+    let ledgerCredit = 0;
 
     let detectedAccountHolder = "";
     let detectedAccountNo = "";
@@ -1011,14 +1049,11 @@ export const BankParser = {
           ["debtor name", "debtorname"],
         ]),
         status: findColumnIndexByPriority(headerRow, [
-          [
-            "credit status",
-            "creditstatus",
-            "achstatus.description",
-            "achstatus",
-            "status",
-            "tx status",
-          ],
+          ["credit status", "creditstatus"],
+          ["achstatus.description", "ach status"],
+          ["achstatus"],
+          ["tx status", "txn status"],
+          ["status"],
         ]),
         transId: findColumnIndexByPriority(headerRow, [
           ["transid", "transaction id", "transactionid", "txn id", "txnid"],
@@ -1060,6 +1095,7 @@ export const BankParser = {
         }
       });
 
+      const sheetSeenKeys: string[] = [];
       for (let i = headerRowIndex + 1; i < rows.length; i++) {
         const row = rows[i];
         if (
@@ -1122,6 +1158,10 @@ export const BankParser = {
             ? String(row[indices.status]).trim().toUpperCase()
             : "";
         const isCircular = upperDesc.includes("NRB CIRCULAR");
+
+        // Track full statement ledger totals before circular sweep filtering so Closing Balance verification matches statement reality
+        ledgerDebit += withdrawVal;
+        ledgerCredit += depositVal;
 
         // If options specify to exclude circular sweeps, skip them
         if (isCircular && !options.includeCircularSweeps) {
@@ -1292,10 +1332,11 @@ export const BankParser = {
             extractedName = "CITIZEN LIFE INSURANCE CO.LTD";
         }
 
-        const status =
+        const rawRowStatus =
           indices.status >= 0 && row[indices.status]
             ? String(row[indices.status]).trim()
             : autoStatus;
+        const status = normalizeTxnStatus(rawRowStatus, isReject);
 
         // Extract ConnectIPS instruction ID or reference ID from description if not in dedicated column
         let instructionId =
@@ -1348,10 +1389,14 @@ export const BankParser = {
           referenceId?.trim().toUpperCase() ||
           `${indices.date >= 0 ? normalizeDate(row[indices.date]) : ""}_${extractedAccountNo}_${finalDebit}_${finalCredit}_${description}`;
 
-        if (seenWorkbookTxnKeys.has(uniqueTxnKey)) {
-          continue; // Suppress duplicate transaction from copy sheets within same workbook
+        const hasUniqueBankRef = Boolean(instructionId || referenceId);
+        // On bank statements without unique transaction refs, two identical amounts on the same sheet are separate real transactions — only deduplicate identical refs across copy sheets
+        if (hasUniqueBankRef && seenWorkbookTxnKeys.has(uniqueTxnKey)) {
+          continue;
         }
-        seenWorkbookTxnKeys.add(uniqueTxnKey);
+        if (hasUniqueBankRef) {
+          sheetSeenKeys.push(uniqueTxnKey);
+        }
 
         transactions.push({
           id: `txn-${sheetName}-${i}`,
@@ -1373,19 +1418,29 @@ export const BankParser = {
           accountHolder: detectedAccountHolder || undefined,
         });
       }
+      sheetSeenKeys.forEach((k) => seenWorkbookTxnKeys.add(k));
     }
 
     const totalDebit = transactions.reduce((sum, t) => sum + (t.debit || 0), 0);
     const totalCredit = transactions.reduce((sum, t) => sum + (t.credit || 0), 0);
-    if (
-      detectedOpeningBalance === undefined &&
-      transactions.length > 0 &&
-      transactions[0].balance !== 0
-    ) {
-      detectedOpeningBalance =
-        transactions[0].balance + transactions[0].debit - transactions[0].credit;
+    const effectiveLedgerDebit = ledgerDebit > 0 || ledgerCredit > 0 ? ledgerDebit : totalDebit;
+    const effectiveLedgerCredit = ledgerDebit > 0 || ledgerCredit > 0 ? ledgerCredit : totalCredit;
+    const txnsWithBal = transactions.filter((t) => t.balance !== 0);
+    const isReverseChron =
+      txnsWithBal.length >= 2 &&
+      Boolean(txnsWithBal[0].date && txnsWithBal[txnsWithBal.length - 1].date) &&
+      txnsWithBal[0].date > txnsWithBal[txnsWithBal.length - 1].date;
+    const oldestBalTxn = isReverseChron ? txnsWithBal[txnsWithBal.length - 1] : txnsWithBal[0];
+    const newestBalTxn = isReverseChron ? txnsWithBal[0] : txnsWithBal[txnsWithBal.length - 1];
+
+    if (detectedOpeningBalance === undefined && oldestBalTxn) {
+      detectedOpeningBalance = oldestBalTxn.balance + oldestBalTxn.debit - oldestBalTxn.credit;
     }
-    const calculatedClosingBalance = (detectedOpeningBalance ?? 0) + totalCredit - totalDebit;
+    if (detectedClosingBalance === undefined && newestBalTxn) {
+      detectedClosingBalance = newestBalTxn.balance;
+    }
+    const calculatedClosingBalance =
+      (detectedOpeningBalance ?? 0) + effectiveLedgerCredit - effectiveLedgerDebit;
     const balanceDifference =
       detectedClosingBalance !== undefined
         ? Math.abs(calculatedClosingBalance - detectedClosingBalance)

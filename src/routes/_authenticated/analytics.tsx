@@ -125,14 +125,12 @@ function AnalyticsPage() {
   });
 
   // Self-heal orphaned selectedCompany filter
-  useEffect(() => {
-    if (selectedCompany !== "all" && companies.length > 0) {
-      const exists = companies.some((c) => c.id === selectedCompany);
-      if (!exists) {
-        setSelectedCompany("all");
-      }
+  if (selectedCompany !== "all" && companies.length > 0) {
+    const exists = companies.some((c) => c.id === selectedCompany);
+    if (!exists) {
+      setSelectedCompany("all");
     }
-  }, [companies, selectedCompany]);
+  }
 
   // Realtime subscription for instant synchronization
   useEffect(() => {

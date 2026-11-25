@@ -281,6 +281,7 @@ export const PaymentService = {
       console.error("get_available_payables_preview error:", err?.message || err);
       throw new Error(
         `Unable to calculate available payables preview: ${err?.message || "Unknown error"}`,
+        { cause: err },
       );
     }
   },
@@ -330,7 +331,6 @@ export const PaymentService = {
     // 2. Populate line items in safe, fast sub-2-second chunks (2,500 rows per chunk)
     const chunkSize = 2500;
     let hasMore = true;
-    let totalInserted = 0;
 
     while (hasMore) {
       const { data: chunk, error: chunkErr } = await (supabase as any).rpc(
@@ -360,7 +360,7 @@ export const PaymentService = {
         throw new Error(`Failed to populate batch items: ${chunkErr.message}`);
       }
 
-      totalInserted = Number(chunk?.total_in_batch || 0);
+      const totalInserted = Number(chunk?.total_in_batch || 0);
       hasMore = Boolean(chunk?.has_more) && Number(chunk?.inserted_count || 0) > 0;
 
       if (onProgress) {
@@ -655,13 +655,13 @@ export const PaymentService = {
 
   async updateBatchTotals(batchId: string): Promise<void> {
     try {
-      // Get all active payments for this batch (excluding Reversed, Failed, Cancelled)
+      // Get all active payments for this batch (excluding Reversed, Failed, Rejected, Returned, Cancelled)
       const payments = await fetchAllRows<any>((from, to) => {
         return (supabase as any)
           .from("payments")
           .select("net_amount, tax_amount, gross_amount, status")
           .eq("batch_id", batchId)
-          .not("status", "in", '("Reversed","Failed","Cancelled")')
+          .not("status", "in", '("Reversed","Failed","Rejected","Returned","Cancelled")')
           .range(from, to);
       });
 
@@ -860,25 +860,60 @@ export const PaymentService = {
       throw new Error(`Failed to reverse payment: ${updateError.message}`);
     }
 
-    // Restore the payable status to Pending
+    // Restore the payable status accurately from any surviving Completed/Paid installment legs
     if (payment.payable_type && payment.payable_id) {
+      const normalizedType = String(payment.payable_type).toLowerCase();
       const tableName =
-        payment.payable_type === "dividend"
+        normalizedType === "dividend" || normalizedType === "dividend_payables"
           ? "dividend_payables"
-          : payment.payable_type === "interest"
+          : normalizedType === "interest" ||
+              normalizedType === "interest_payables" ||
+              normalizedType === "debenture"
             ? "interest_payables"
-            : payment.payable_type === "mutual_fund"
+            : normalizedType === "mutual_fund" || normalizedType === "mutual_fund_payables"
               ? "mutual_fund_payables"
               : null;
 
       if (tableName) {
+        const { data: survivingPayments } = await (supabase as any)
+          .from("payments")
+          .select("paid_amount, net_amount, payment_date, payment_reference, connectips_ref")
+          .eq("payable_id", payment.payable_id)
+          .in("status", ["Completed", "Paid"]);
+
+        const survivingPaid = (survivingPayments || []).reduce(
+          (sum: number, p: any) => sum + Number(p.paid_amount || p.net_amount || 0),
+          0,
+        );
+
+        let netPayable = Number(payment.net_amount || 0);
+        const { data: payableRow } = await (supabase as any)
+          .from(tableName)
+          .select("net_payable")
+          .eq("id", payment.payable_id)
+          .maybeSingle();
+        if (payableRow?.net_payable != null) {
+          netPayable = Number(payableRow.net_payable);
+        }
+
+        const boundedPaid = Math.min(netPayable, Math.max(0, survivingPaid));
+        const remaining = Math.max(0, Number((netPayable - boundedPaid).toFixed(2)));
+        const nextStatus =
+          remaining <= 0.05 && netPayable > 0 ? "Paid" : boundedPaid > 0 ? "Partial" : "Pending";
+        const lastPayment =
+          survivingPayments && survivingPayments.length > 0
+            ? survivingPayments[survivingPayments.length - 1]
+            : null;
+
         const { error: restoreErr } = await (supabase as any)
           .from(tableName)
           .update({
-            payment_status: "Pending",
-            payment_date: null,
-            payment_reference: null,
-            paid_amount: 0,
+            payment_status: nextStatus,
+            payment_date: lastPayment?.payment_date || null,
+            payment_reference:
+              lastPayment?.connectips_ref || lastPayment?.payment_reference || null,
+            paid_amount: boundedPaid,
+            remaining_amount: remaining,
             updated_at: new Date().toISOString(),
           })
           .eq("id", payment.payable_id);
@@ -1017,6 +1052,7 @@ export const PaymentService = {
         console.error("Could not check existing batched payments:", checkErr);
         throw new Error(
           `Unable to verify existing payment locks: ${checkErr?.message || "Unknown error"}`,
+          { cause: checkErr },
         );
       }
 
@@ -1063,7 +1099,9 @@ export const PaymentService = {
           );
         } catch (dividendError: any) {
           console.error("Failed to fetch dividend payables:", dividendError.message);
-          throw new Error(`Failed to fetch dividend payables: ${dividendError.message}`);
+          throw new Error(`Failed to fetch dividend payables: ${dividendError.message}`, {
+            cause: dividendError,
+          });
         }
         if (dividendData) {
           payables.push(
@@ -1133,7 +1171,9 @@ export const PaymentService = {
           );
         } catch (interestError: any) {
           console.error("Failed to fetch interest payables:", interestError.message);
-          throw new Error(`Failed to fetch interest payables: ${interestError.message}`);
+          throw new Error(`Failed to fetch interest payables: ${interestError.message}`, {
+            cause: interestError,
+          });
         }
         if (interestData) {
           const days =
@@ -1148,19 +1188,29 @@ export const PaymentService = {
                     : 365;
 
           if (days > 0 && days !== 365) {
-            // High-precision proration with exact statutory paisa balancing
+            // High-precision proration with exact statutory paisa balancing (prevent double-proration!)
             const interestItems = interestData.map((p: any) => {
-              const annualGross = Number(p.gross_interest ?? 0);
-              const annualTax = Number(p.tax_amount ?? 0);
-              const gross = (annualGross / 365) * days;
+              const storedGross = Number(p.gross_interest ?? 0);
+              const storedTax = Number(p.tax_amount ?? 0);
+              const storedNet = Number(p.net_payable ?? p.net_interest ?? storedGross - storedTax);
+              const storedDays = Number(p.days_count ?? 365);
+              const alreadyMatchesPeriod =
+                storedDays > 0 &&
+                storedDays < 365 &&
+                (storedDays === days || Math.abs(storedDays - days) <= 2);
+              const gross = alreadyMatchesPeriod
+                ? storedGross
+                : storedDays > 0 && storedDays < 365
+                  ? (storedGross / storedDays) * days
+                  : (storedGross / 365) * days;
               // Respect the explicitly uploaded/stored tax rate instead of blindly enforcing statutory
               // This is critical because some payees might have tax exemption certificates
               const rate =
-                annualGross > 0
-                  ? annualTax / annualGross
+                storedGross > 0
+                  ? storedTax / storedGross
                   : getPayeeTaxRate(p.payee_classification, true, null, false);
-              const tax = gross * rate;
-              const net = gross - tax;
+              const tax = alreadyMatchesPeriod ? storedTax : gross * rate;
+              const net = alreadyMatchesPeriod ? storedNet : gross - tax;
               return {
                 ...p,
                 payable_type: "interest",
@@ -1308,7 +1358,9 @@ export const PaymentService = {
           );
         } catch (mfError: any) {
           console.error("Failed to fetch mutual fund payables:", mfError.message);
-          throw new Error(`Failed to fetch mutual fund payables: ${mfError.message}`);
+          throw new Error(`Failed to fetch mutual fund payables: ${mfError.message}`, {
+            cause: mfError,
+          });
         }
         if (mfData) {
           payables.push(

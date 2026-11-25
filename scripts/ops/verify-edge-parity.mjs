@@ -74,10 +74,16 @@ if (seedPath) {
 // 3. Live Edge Runtime Health Probe
 console.log("\n[3/3] Checking Live Edge Function Endpoint Reachability...");
 const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+const anonKey =
+  process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  process.env.SUPABASE_PUBLISHABLE_KEY ||
+  process.env.VITE_SUPABASE_ANON_KEY ||
+  process.env.SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !anonKey) {
-  console.log("  [INFO] SUPABASE_URL or ANON_KEY not set in current process environment.");
+  console.log(
+    "  [INFO] SUPABASE_URL or PUBLISHABLE/ANON_KEY not set in current process environment.",
+  );
   console.log("  [INFO] Live cloud probe skipped. Static & logic parity tests passed.");
 } else {
   try {

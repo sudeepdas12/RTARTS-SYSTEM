@@ -121,11 +121,7 @@ function AuthPage() {
     if (type && tokenHash) {
       const validTypes = ["recovery", "invite", "magiclink", "email_change", "signup"];
       const otpType = (validTypes.includes(type) ? type : "signup") as
-        | "recovery"
-        | "invite"
-        | "magiclink"
-        | "email_change"
-        | "signup";
+        "recovery" | "invite" | "magiclink" | "email_change" | "signup";
 
       const { data, error } = await supabase.auth.verifyOtp({
         token_hash: tokenHash,
@@ -166,10 +162,12 @@ function AuthPage() {
 
   useEffect(() => {
     let active = true;
-    handleAuthCallback().catch((err) => {
-      console.error("Auth callback error:", err);
-      if (active) setView(mode === "forgot" ? "forgot" : "signin");
-    });
+    Promise.resolve()
+      .then(() => handleAuthCallback())
+      .catch((err) => {
+        console.error("Auth callback error:", err);
+        if (active) setView(mode === "forgot" ? "forgot" : "signin");
+      });
 
     // Fallback: If session check hangs or takes longer than 3 seconds, force signin form view
     const fallbackTimer = setTimeout(() => {
@@ -287,6 +285,53 @@ function AuthPage() {
 // Sign in
 // ---------------------------------------------------------------------------
 
+function getFailedAttemptsKey(email: string) {
+  return `login_attempts_${email.toLowerCase().trim()}`;
+}
+
+function readLockoutRemaining(email: string): number {
+  try {
+    const raw = localStorage.getItem(getFailedAttemptsKey(email));
+    if (!raw) return 0;
+    const { count, lastAttempt } = JSON.parse(raw) as { count: number; lastAttempt: number };
+    const elapsedSec = (Date.now() - lastAttempt) / 1000;
+    if (count >= 5 && elapsedSec < 300) {
+      return Math.ceil(300 - elapsedSec);
+    }
+    if (elapsedSec >= 300) {
+      localStorage.removeItem(getFailedAttemptsKey(email));
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return 0;
+}
+
+function persistFailedAttempt(email: string): boolean {
+  try {
+    const key = getFailedAttemptsKey(email);
+    const raw = localStorage.getItem(key);
+    let count = 1;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      count = (parsed.count || 0) + 1;
+    }
+    localStorage.setItem(key, JSON.stringify({ count, lastAttempt: Date.now() }));
+    return count >= 5;
+  } catch {
+    // Ignore storage errors
+  }
+  return false;
+}
+
+function clearFailedAttempts(email: string) {
+  try {
+    localStorage.removeItem(getFailedAttemptsKey(email));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 function SignInForm({
   onForgot,
   onEmailConfirmed,
@@ -311,57 +356,12 @@ function SignInForm({
     return () => clearInterval(interval);
   }, [lockoutRemaining]);
 
-  const getFailedAttemptsKey = (email: string) => `login_attempts_${email.toLowerCase().trim()}`;
-
-  const checkLockout = (email: string): boolean => {
-    try {
-      const raw = localStorage.getItem(getFailedAttemptsKey(email));
-      if (!raw) return false;
-      const { count, lastAttempt } = JSON.parse(raw) as { count: number; lastAttempt: number };
-      const elapsedSec = (Date.now() - lastAttempt) / 1000;
-      if (count >= 5 && elapsedSec < 300) {
-        setLockoutRemaining(Math.ceil(300 - elapsedSec));
-        return true;
-      }
-      if (elapsedSec >= 300) {
-        localStorage.removeItem(getFailedAttemptsKey(email));
-      }
-    } catch {
-      // Ignore storage errors
-    }
-    return false;
-  };
-
-  const recordFailedAttempt = (email: string) => {
-    try {
-      const key = getFailedAttemptsKey(email);
-      const raw = localStorage.getItem(key);
-      let count = 1;
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        count = (parsed.count || 0) + 1;
-      }
-      localStorage.setItem(key, JSON.stringify({ count, lastAttempt: Date.now() }));
-      if (count >= 5) {
-        setLockoutRemaining(300);
-      }
-    } catch {
-      // Ignore storage errors
-    }
-  };
-
-  const clearFailedAttempts = (email: string) => {
-    try {
-      localStorage.removeItem(getFailedAttemptsKey(email));
-    } catch {
-      // Ignore storage errors
-    }
-  };
-
   const onSubmit = form.handleSubmit(async (values) => {
-    if (checkLockout(values.email)) {
+    const remaining = readLockoutRemaining(values.email);
+    if (remaining > 0) {
+      setLockoutRemaining(remaining);
       toast.error("Too many failed attempts", {
-        description: `Account temporarily locked. Please try again in ${lockoutRemaining} seconds.`,
+        description: `Account temporarily locked. Please try again in ${remaining} seconds.`,
       });
       return;
     }
@@ -374,7 +374,9 @@ function SignInForm({
     setSubmitting(false);
 
     if (error) {
-      recordFailedAttempt(values.email);
+      if (persistFailedAttempt(values.email)) {
+        setLockoutRemaining(300);
+      }
       void AuditService.recordLoginAttempt({
         email: values.email,
         status: "failed",

@@ -700,7 +700,7 @@ function parseSheetWithMergedHeaders(ws: XLSX.WorkSheet): { rows: any[]; headerR
   }
 
   let mergedHeaders: string[] = [];
-  let dataStartAbsRow = matchingRowIndices[0].absIdx + 1;
+  let dataStartAbsRow: number;
 
   if (
     matchingRowIndices.length >= 2 &&
@@ -976,6 +976,8 @@ export const AgmStudioService = {
     explicitConvertedShares?: number,
     explicitRightAllotted?: number,
     isConversionMerged?: boolean,
+    faceValue: number = 100,
+    taxRateOverride?: number,
   ): ShareholderYearlySnapshot[] {
     const rawConfigs = timeline || this.getHistoricalTimeline();
     const targetIdx = targetFy ? rawConfigs.findIndex((c) => c.fiscalYear === targetFy) : 0;
@@ -1126,11 +1128,16 @@ export const AgmStudioService = {
         }
       }
 
-      const grossCash = Math.round((currentKitta * 100 * cashRate + 1e-7) * 100) / 100;
-      const bonusTax = isMutualFund
-        ? 0.0
-        : Math.round((issuedBonus * 100 * 0.05 + 1e-7) * 100) / 100;
-      const cashTax = isMutualFund ? 0.0 : Math.round((grossCash * 0.05 + 1e-7) * 100) / 100;
+      const effectiveFaceValue = isMutualFund && faceValue === 100 ? 10 : faceValue;
+      const effectiveTaxRate = isMutualFund ? 0.0 : (taxRateOverride ?? 0.05);
+      const grossCash =
+        Math.round((currentKitta * effectiveFaceValue * cashRate + 1e-7) * 100) / 100;
+      const bonusTax =
+        effectiveTaxRate <= 0
+          ? 0.0
+          : Math.round((issuedBonus * effectiveFaceValue * effectiveTaxRate + 1e-7) * 100) / 100;
+      const cashTax =
+        effectiveTaxRate <= 0 ? 0.0 : Math.round((grossCash * effectiveTaxRate + 1e-7) * 100) / 100;
 
       let netCash = isMutualFund
         ? grossCash
@@ -2094,7 +2101,7 @@ export const AgmStudioService = {
             !msg.includes("42883") &&
             !msg.includes("42P01")
           ) {
-            throw new Error(`Atomic import staging failed: ${msg}`);
+            throw new Error(`Atomic import staging failed: ${msg}`, { cause: stageEx });
           }
         }
       }
@@ -5184,8 +5191,8 @@ export const AgmStudioService = {
         snap = dynamicSnapshots.find((s) => s.fiscalYear === fiscalYear);
       }
 
-      let eventKitta = 0;
-      let eventFrac = 0;
+      let eventKitta: number;
+      let eventFrac: number;
 
       if (exportMode === "CUMULATIVE_BALANCE") {
         eventKitta = snap?.postEventKitta ?? p.currentKitta2081;

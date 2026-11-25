@@ -85,7 +85,7 @@ export const InterestCalculator = {
     }
 
     // High-precision Gross Period Interest (direct or fixed coupon frequency)
-    let grossPeriodInterest = 0;
+    let grossPeriodInterest: number;
     if (params.couponFrequency === "SEMI_ANNUAL") {
       grossPeriodInterest = (totalPrincipal * annualInterestRate) / 200;
     } else if (params.couponFrequency === "ANNUAL") {

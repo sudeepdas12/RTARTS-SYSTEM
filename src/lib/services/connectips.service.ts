@@ -1,7 +1,23 @@
 import { supabase } from "@/integrations/supabase/client";
 import * as XLSX from "xlsx";
 import { SettingsService, SystemSettings } from "./settings.service";
-import { PaymentService, PaymentBatch, PaymentLineItem } from "./payment.service";
+import { PaymentService } from "./payment.service";
+import {
+  buildConnectIpsSignatureString,
+  calculatePayableSettlementFromPaid,
+  deriveBatchStatusFromLineStatuses,
+  normalizeNchlStatus,
+  type ConnectIpsBatchStatus,
+  type ConnectIpsGatewayStatus,
+  type ConnectIpsLedgerPaymentStatus,
+} from "@/lib/connectips-utils";
+
+export {
+  buildConnectIpsSignatureString,
+  calculatePayableSettlementFromPaid,
+  deriveBatchStatusFromLineStatuses,
+  normalizeNchlStatus,
+};
 
 export interface ConnectIPSTransaction {
   merchantId: string;
@@ -19,8 +35,12 @@ export interface ConnectIPSTransaction {
 
 export interface ConnectIPSDisbursementResult {
   success: boolean;
+  executionMode: "SANDBOX_SIMULATION" | "PRODUCTION_ADAPTER";
+  isSimulated: boolean;
+  batchStatus?: ConnectIpsBatchStatus;
   totalProcessed: number;
   totalSuccess: number;
+  totalProcessing?: number;
   totalFailed: number;
   totalAmount: number;
   results: {
@@ -28,10 +48,40 @@ export interface ConnectIPSDisbursementResult {
     boid?: string;
     payeeName: string;
     amount: number;
-    status: "SUCCESS" | "FAILED" | "PENDING";
+    status: ConnectIpsGatewayStatus;
+    ledgerStatus?: ConnectIpsLedgerPaymentStatus;
     connectipsRef?: string;
     errorMessage?: string;
   }[];
+}
+
+export interface ConnectIPSStatusCheckResult {
+  status: ConnectIpsGatewayStatus;
+  ledgerStatus?: ConnectIpsLedgerPaymentStatus;
+  refId: string;
+  batchStatus?: string | null;
+  synced?: boolean;
+  message: string;
+}
+
+export interface ConnectIPSBatchSyncResult {
+  success: boolean;
+  batchStatus: string | null;
+  totalChecked: number;
+  settled: number;
+  processing: number;
+  pending: number;
+  failed: number;
+  returned: number;
+  synced: boolean;
+  message: string;
+}
+
+function canInvokeServerFunctions(): boolean {
+  const isVitest =
+    (typeof import.meta !== "undefined" && Boolean((import.meta as any).env?.VITEST)) ||
+    (typeof process !== "undefined" && Boolean(process.env?.VITEST));
+  return typeof window !== "undefined" && !isVitest;
 }
 
 export const ConnectIPSService = {
@@ -45,14 +95,14 @@ export const ConnectIPSService = {
     appPaymentId: string;
     amount: number;
   }): string {
-    const formattedAmount = Number(tx.amount).toFixed(2);
-    return `MERCHANTID=${tx.merchantId},APPID=${tx.appId},APPPAYMENTID=${tx.appPaymentId},AMOUNT=${formattedAmount}`;
+    return buildConnectIpsSignatureString(tx);
   },
 
   /**
-   * Computes SHA-256 hash or token signature for ConnectIPS payload
-   * When secretKey is provided (e.g. backend / testing), computes directly.
-   * When secretKey is omitted in client, routes through secure backend Edge Function.
+   * Computes SHA-256 hash or token signature for ConnectIPS payload.
+   * When secretKey is provided (e.g. testing), computes directly.
+   * When secretKey is omitted in browser, routes through authenticated Edge Function `connectips-sign`
+   * which reads CONNECTIPS_PRIVATE_KEY / CONNECTIPS_TOKEN or saved system_settings credentials.
    */
   async generateSignature(payloadStr: string, secretKey?: string): Promise<string> {
     if (secretKey !== undefined && secretKey !== null) {
@@ -72,7 +122,7 @@ export const ConnectIPSService = {
           return data.signature;
         }
       } catch {
-        // Fall back
+        // Fall through to environment guard
       }
     }
 
@@ -94,7 +144,7 @@ export const ConnectIPSService = {
   },
 
   /**
-   * Tests connection to ConnectIPS Gateway
+   * Tests connection to NCHL ConnectIPS Gateway using either unsaved overrides or stored DB API keys.
    */
   async testConnection(
     settings?: SystemSettings,
@@ -108,22 +158,44 @@ export const ConnectIPSService = {
       };
     }
 
-    const testTxn = {
+    if (canInvokeServerFunctions()) {
+      const { testConnectIpsConnectionServerFn } = await import("@/lib/connectips.functions");
+      return await testConnectIpsConnectionServerFn({
+        data: {
+          connectips_enabled: config.connectips_enabled,
+          connectips_mode: config.connectips_mode,
+          connectips_merchant_id: config.connectips_merchant_id,
+          connectips_app_id: config.connectips_app_id,
+          connectips_app_name: config.connectips_app_name,
+          connectips_base_url: config.connectips_base_url,
+          connectips_token:
+            config.connectips_token && config.connectips_token !== "••••••••••••"
+              ? config.connectips_token
+              : undefined,
+          connectips_cert_pass:
+            config.connectips_cert_pass && config.connectips_cert_pass !== "••••••••••••"
+              ? config.connectips_cert_pass
+              : undefined,
+        },
+      });
+    }
+
+    const hasTokenOrSaved = Boolean(config.connectips_token || config.connectips_token_configured);
+    const sigString = this.buildSignatureString({
       merchantId: config.connectips_merchant_id,
       appId: config.connectips_app_id,
       appPaymentId: `TEST-${Date.now()}`,
       amount: 100.0,
-    };
+    });
+    const signature = await this.generateSignature(sigString, config.connectips_token || undefined);
 
-    const sigString = this.buildSignatureString(testTxn);
-    const signature = await this.generateSignature(sigString, config.connectips_token);
-
-    if (config.connectips_mode === "SANDBOX" && !config.connectips_token) {
+    if (config.connectips_mode === "SANDBOX" && !hasTokenOrSaved) {
       return {
         success: true,
         message: `ConnectIPS Sandbox test handshake verified (${config.connectips_base_url}). Ready to disburse.`,
         details: {
           mode: config.connectips_mode,
+          hasApiKey: false,
           merchantId: config.connectips_merchant_id,
           appId: config.connectips_app_id,
           signaturePreview: signature.slice(0, 16) + "...",
@@ -131,44 +203,89 @@ export const ConnectIPSService = {
       };
     }
 
-    try {
-      const endpoint = `${config.connectips_base_url || "https://uat.connectips.com:7443"}/connectipswebgw/api/v2/credittransfer/validation`;
-
-      return {
-        success: true,
-        message: `Gateway credentials valid. Connected to ${config.connectips_mode} gateway.`,
-        details: {
-          mode: config.connectips_mode,
-          merchantId: config.connectips_merchant_id,
-          endpoint,
-        },
-      };
-    } catch (err: any) {
+    if (config.connectips_mode === "PRODUCTION" && !hasTokenOrSaved) {
       return {
         success: false,
-        message: `Gateway connection error: ${err?.message || err}`,
+        message:
+          "ConnectIPS PRODUCTION mode requires an API Bearer Token / Secret Key saved in System Settings.",
+        details: {
+          mode: config.connectips_mode,
+          hasApiKey: false,
+          merchantId: config.connectips_merchant_id,
+        },
       };
     }
+
+    return {
+      success: true,
+      message: `Gateway credentials valid. Configured for ${config.connectips_mode} (${config.connectips_base_url}).`,
+      details: {
+        mode: config.connectips_mode,
+        hasApiKey: hasTokenOrSaved,
+        merchantId: config.connectips_merchant_id,
+        endpoint: `${config.connectips_base_url || "https://uat.connectips.com:7443"}/connectipswebgw/api/creditor/validatetxn`,
+      },
+    };
   },
 
   /**
-   * Disburses an entire payment batch directly via ConnectIPS API
+   * Disburses pending/retryable payments in an Approved batch via NCHL ConnectIPS API (PRODUCTION)
+   * or Sandbox simulator (SANDBOX), atomically synchronizing payments, payables, and batch status.
    */
   async disbursePaymentBatch(
     batchId: string,
     onProgress?: (processed: number, total: number) => void,
+    options?: { retryFailedOnly?: boolean },
   ): Promise<ConnectIPSDisbursementResult> {
-    const settings = await SettingsService.getSettings();
-    const lineItems = await PaymentService.getAllLineItemsForExport(batchId);
+    if (canInvokeServerFunctions()) {
+      const { disburseConnectIpsBatchServerFn } = await import("@/lib/connectips.functions");
+      const res = await disburseConnectIpsBatchServerFn({
+        data: {
+          batchId,
+          retryFailedOnly: options?.retryFailedOnly,
+        },
+      });
+      if (onProgress) {
+        onProgress(res.totalProcessed, res.totalProcessed);
+      }
+      return {
+        ...res,
+        batchStatus: res.batchStatus as ConnectIpsBatchStatus,
+      };
+    }
 
-    if (!lineItems || lineItems.length === 0) {
+    const settings = await SettingsService.getSettings();
+    const allItems = await PaymentService.getAllLineItemsForExport(batchId);
+
+    if (!allItems || allItems.length === 0) {
       throw new Error("No payable line items found in this batch.");
+    }
+
+    const isSandbox = settings.connectips_mode !== "PRODUCTION";
+    if (!isSandbox) {
+      throw new Error(
+        "ConnectIPS PRODUCTION settlement requires an authenticated server session with NCHL credentials saved in System Settings.",
+      );
+    }
+
+    const allowedStatuses = options?.retryFailedOnly
+      ? new Set(["Failed", "Rejected", "Returned"])
+      : new Set(["Pending", "Failed", "Rejected", "Returned"]);
+    const payableItems = allItems.filter((it) =>
+      allowedStatuses.has(String(it.status || "Pending")),
+    );
+
+    if (payableItems.length === 0) {
+      throw new Error("No pending or retryable line items remain in this batch.");
     }
 
     const result: ConnectIPSDisbursementResult = {
       success: true,
+      executionMode: "SANDBOX_SIMULATION",
+      isSimulated: true,
       totalProcessed: 0,
       totalSuccess: 0,
+      totalProcessing: 0,
       totalFailed: 0,
       totalAmount: 0,
       results: [],
@@ -177,9 +294,10 @@ export const ConnectIPSService = {
     const today = new Date().toISOString().slice(0, 10);
     const merchantId = settings.connectips_merchant_id || "DEMO_MERCHANT";
     const appId = settings.connectips_app_id || "RTARTS_APP";
+    const syncUpdates: Array<Record<string, unknown>> = [];
 
-    for (let i = 0; i < lineItems.length; i++) {
-      const item = lineItems[i];
+    for (let i = 0; i < payableItems.length; i++) {
+      const item = payableItems[i];
       const rawNet = item.net_amount ?? null;
       const rawGross = Number(item.gross_amount ?? 0);
       const rawTax = Number(item.tax_amount ?? 0);
@@ -189,68 +307,40 @@ export const ConnectIPSService = {
       const payeeName = item.clients?.full_name || "Shareholder";
       const bankAccount = item.bank_account_no || item.clients?.bank_account_no;
 
-      if (!bankAccount) {
+      if (!bankAccount || amount <= 0) {
+        const reason = !bankAccount
+          ? "ConnectIPS disbursement failed: Missing bank account number"
+          : "ConnectIPS disbursement failed: Invalid payable amount";
         result.totalFailed += 1;
+        syncUpdates.push({
+          payment_id: item.id,
+          status: "Failed",
+          remarks: reason,
+          reversal_reason: reason,
+        });
         result.results.push({
           lineItemId: item.id,
           boid: item.clients?.boid || undefined,
           payeeName,
           amount,
           status: "FAILED",
-          errorMessage: "Missing bank account number",
+          ledgerStatus: "Failed",
+          errorMessage: reason,
         });
-        try {
-          await (supabase as any)
-            .from("payments")
-            .update({
-              status: "Failed",
-              remarks: "ConnectIPS disbursement failed: Missing bank account number",
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", item.id);
-        } catch {
-          // Ignore secondary update error
-        }
-        continue;
-      }
+      } else {
+        const sigString = this.buildSignatureString({ merchantId, appId, appPaymentId, amount });
+        await this.generateSignature(sigString, settings.connectips_token || "");
+        const connectipsRef = `CIPS-${Date.now().toString(36).toUpperCase()}-${String(i + 1).padStart(4, "0")}`;
 
-      // Generate transaction signature
-      const sigString = this.buildSignatureString({ merchantId, appId, appPaymentId, amount });
-      const signature = await this.generateSignature(sigString, settings.connectips_token);
-      const connectipsRef = `CIPS-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 1000)}`;
-
-      // Update line item in database to Completed / Processed
-      try {
-        await (supabase as any)
-          .from("payments")
-          .update({
-            status: "Completed",
-            payment_date: today,
-            connectips_ref: connectipsRef,
-            payment_reference: connectipsRef,
-            remarks: `Disbursed via ConnectIPS (${appPaymentId})`,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", item.id);
-
-        // Update underlying payable to Paid
-        if (item.payable_id) {
-          const tableName =
-            item.payable_type === "interest"
-              ? "interest_payables"
-              : item.payable_type === "mutual_fund"
-                ? "mutual_fund_payables"
-                : "dividend_payables";
-
-          await (supabase as any)
-            .from(tableName)
-            .update({
-              payment_status: "Paid",
-              payment_date: today,
-              payment_reference: connectipsRef,
-            })
-            .eq("id", item.payable_id);
-        }
+        syncUpdates.push({
+          payment_id: item.id,
+          status: "Completed",
+          connectips_ref: connectipsRef,
+          payment_reference: connectipsRef,
+          payment_date: today,
+          paid_amount: amount,
+          remarks: `[SANDBOX SIMULATED] Disbursed via ConnectIPS (${appPaymentId})`,
+        });
 
         result.totalSuccess += 1;
         result.totalAmount += amount;
@@ -260,99 +350,184 @@ export const ConnectIPSService = {
           payeeName,
           amount,
           status: "SUCCESS",
+          ledgerStatus: "Completed",
           connectipsRef,
         });
-      } catch (err: any) {
-        result.totalFailed += 1;
-        const errMsg = err?.message || "Payment update failed";
-        result.results.push({
-          lineItemId: item.id,
-          boid: item.clients?.boid || undefined,
-          payeeName,
-          amount,
-          status: "FAILED",
-          errorMessage: errMsg,
-        });
-        try {
-          await (supabase as any)
-            .from("payments")
-            .update({
-              status: "Failed",
-              remarks: `ConnectIPS disbursement failed: ${errMsg}`,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", item.id);
-        } catch {
-          // Ignore secondary update error
-        }
       }
 
       result.totalProcessed += 1;
       if (onProgress) {
-        onProgress(result.totalProcessed, lineItems.length);
+        onProgress(result.totalProcessed, payableItems.length);
       }
     }
 
-    // Update batch status to Completed / Partial / Failed
-    const finalBatchStatus =
-      result.totalFailed === 0 ? "Completed" : result.totalSuccess > 0 ? "Approved" : "Failed";
+    const { data: rpcData, error: rpcErr } = await (supabase as any).rpc(
+      "sync_connectips_payment_results",
+      {
+        p_batch_id: batchId,
+        p_updates: syncUpdates,
+      },
+    );
 
-    await (supabase as any)
-      .from("payment_batches")
-      .update({
-        status: finalBatchStatus,
-        processed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", batchId);
-
-    await PaymentService.updateBatchTotals(batchId);
+    if (rpcErr) {
+      // Fallback for mocked non-RPC environments
+      for (const upd of syncUpdates) {
+        await (supabase as any)
+          .from("payments")
+          .update({
+            status: upd.status,
+            payment_date: upd.payment_date || null,
+            paid_amount: upd.paid_amount ?? 0,
+            connectips_ref: upd.connectips_ref || null,
+            payment_reference: upd.payment_reference || null,
+            remarks: upd.remarks || null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", upd.payment_id);
+      }
+      const derived = deriveBatchStatusFromLineStatuses(
+        result.results.map((r) => r.ledgerStatus || "Pending"),
+      );
+      await (supabase as any)
+        .from("payment_batches")
+        .update({
+          status: derived,
+          processed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", batchId);
+      await PaymentService.updateBatchTotals(batchId);
+      result.batchStatus = derived;
+    } else {
+      result.batchStatus = rpcData?.batch_status as ConnectIpsBatchStatus;
+    }
 
     result.success = result.totalFailed === 0;
     return result;
   },
 
   /**
-   * Inquires real-time status of a ConnectIPS transaction
+   * Inquires real-time status of a single ConnectIPS transaction and synchronizes ledger state.
    */
   async checkTransactionStatus(
     appPaymentId: string,
-  ): Promise<{ status: "SUCCESS" | "FAILED" | "PENDING"; refId: string; message: string }> {
+    options?: { paymentId?: string; batchId?: string },
+  ): Promise<ConnectIPSStatusCheckResult> {
+    if (canInvokeServerFunctions()) {
+      try {
+        const { checkConnectIpsStatusServerFn } = await import("@/lib/connectips.functions");
+        const res = await checkConnectIpsStatusServerFn({
+          data: {
+            paymentId: options?.paymentId,
+            batchId: options?.batchId,
+            referenceId: options?.paymentId ? undefined : appPaymentId,
+          },
+        });
+        return {
+          status: res.status,
+          ledgerStatus: res.ledgerStatus,
+          refId: res.refId,
+          batchStatus: res.batchStatus,
+          synced: res.synced,
+          message: res.message,
+        };
+      } catch (serverErr: any) {
+        return {
+          status: "PENDING",
+          ledgerStatus: "Pending",
+          refId: appPaymentId,
+          message: `Unable to verify transaction ${appPaymentId}: ${serverErr?.message || "Gateway unreachable"}. Verification pending.`,
+        };
+      }
+    }
+
     try {
-      // Check database payment record first
       const { data: payment } = await (supabase as any)
         .from("payments")
-        .select("status, connectips_ref, remarks")
+        .select("id, status, connectips_ref, payment_reference, remarks")
         .or(`connectips_ref.eq.${appPaymentId},payment_reference.eq.${appPaymentId}`)
         .maybeSingle();
 
       if (payment) {
-        const isSuccess = payment.status === "Completed" || payment.status === "Paid";
-        const isFailed = payment.status === "Failed" || payment.status === "Rejected";
+        const normalized = normalizeNchlStatus(payment.status, payment.remarks);
         return {
-          status: isSuccess ? "SUCCESS" : isFailed ? "FAILED" : "PENDING",
-          refId: payment.connectips_ref || appPaymentId,
-          message: isSuccess
-            ? `Transaction ${appPaymentId} verified successfully in system ledger.`
-            : isFailed
-              ? `Transaction ${appPaymentId} marked as failed: ${payment.remarks || "Payment rejected"}.`
-              : `Transaction ${appPaymentId} status is currently ${payment.status}. Manual reconciliation required.`,
+          status: normalized.gatewayStatus,
+          ledgerStatus: normalized.ledgerStatus,
+          refId: payment.connectips_ref || payment.payment_reference || appPaymentId,
+          message:
+            normalized.gatewayStatus === "SUCCESS"
+              ? `Transaction ${appPaymentId} verified successfully in system ledger.`
+              : normalized.ledgerStatus === "Processing"
+                ? `Transaction ${appPaymentId} is Processing in NCHL ConnectIPS clearing. Awaiting final settlement confirmation.`
+                : normalized.gatewayStatus === "FAILED"
+                  ? `Transaction ${appPaymentId} marked as ${normalized.ledgerStatus}: ${payment.remarks || "Payment rejected"}.`
+                  : `Transaction ${appPaymentId} status is currently ${payment.status}. Manual reconciliation required.`,
         };
       }
 
-      // If not found in payments, report pending verification requiring reconciliation
       return {
         status: "PENDING",
+        ledgerStatus: "Pending",
         refId: appPaymentId,
         message: `Transaction ${appPaymentId} status inquiry pending gateway confirmation. Manual reconciliation recommended.`,
       };
     } catch (err: any) {
       return {
         status: "PENDING",
+        ledgerStatus: "Pending",
         refId: appPaymentId,
         message: `Unable to verify transaction ${appPaymentId}: ${err?.message || "Gateway unreachable"}. Verification pending.`,
       };
     }
+  },
+
+  /**
+   * Checks & synchronizes all unresolved ConnectIPS transactions across a payment batch,
+   * updating line items, underlying payable paid/remaining amounts, and parent batch status.
+   */
+  async syncBatchTransactionStatuses(batchId: string): Promise<ConnectIPSBatchSyncResult> {
+    if (canInvokeServerFunctions()) {
+      const { checkConnectIpsStatusServerFn } = await import("@/lib/connectips.functions");
+      const res = await checkConnectIpsStatusServerFn({
+        data: { batchId },
+      });
+      return {
+        success: res.success,
+        batchStatus: res.batchStatus,
+        totalChecked: res.totalChecked,
+        settled: res.settled,
+        processing: res.processing,
+        pending: res.pending,
+        failed: res.failed,
+        returned: res.returned,
+        synced: res.synced,
+        message: res.message,
+      };
+    }
+
+    const { data: rpcData, error: rpcErr } = await (supabase as any).rpc(
+      "sync_connectips_payment_results",
+      {
+        p_batch_id: batchId,
+        p_updates: [],
+      },
+    );
+    if (rpcErr) {
+      throw new Error(`Failed to synchronize batch statuses: ${rpcErr.message}`);
+    }
+    const counts = rpcData?.counts || {};
+    return {
+      success: true,
+      batchStatus: rpcData?.batch_status || null,
+      totalChecked: Number(counts.total || 0),
+      settled: Number(counts.settled || 0),
+      processing: Number(counts.processing || 0),
+      pending: Number(counts.pending || 0),
+      failed: Number(counts.failed || 0),
+      returned: Number(counts.returned || 0),
+      synced: false,
+      message: `Batch ledger synced (${rpcData?.batch_status || "Updated"}).`,
+    };
   },
 
   /**
@@ -364,7 +539,6 @@ export const ConnectIPSService = {
   }): Promise<{ totalRows: number; totalAmount: number; fileName: string }> {
     const { batchId, debitAccount = "" } = params;
 
-    // Fetch batch line items
     const lineItems = await PaymentService.getAllLineItemsForExport(batchId);
     if (!lineItems || lineItems.length === 0) {
       throw new Error("No line items found in this payment batch.");
@@ -447,7 +621,8 @@ export const ConnectIPSService = {
   },
 
   /**
-   * Parses bank / NCHL disbursement return and rejection report files to auto-reconcile failed payments.
+   * Parses bank / NCHL disbursement return and rejection report files to auto-reconcile failed payments,
+   * accurately restoring paid/remaining balances on underlying payables and batch totals.
    */
   async parseDisbursementReturnFile(file: File): Promise<{
     totalProcessed: number;
@@ -462,49 +637,96 @@ export const ConnectIPSService = {
 
     const failedItems: { lineItemId?: string; boid?: string; reason: string; amount: number }[] =
       [];
+    const syncUpdates: Array<Record<string, unknown>> = [];
+    const today = new Date().toISOString().slice(0, 10);
 
     for (const row of json) {
+      const rawStatusCell =
+        row["Status"] ||
+        row["Txn Status"] ||
+        row["TXN_STATUS"] ||
+        row["Payment Status"] ||
+        row["Error Code"] ||
+        "";
       const rowStr = JSON.stringify(row).toUpperCase();
-      const isFailed =
-        rowStr.includes("FAIL") ||
-        rowStr.includes("REJECT") ||
-        rowStr.includes("RJCT") ||
-        rowStr.includes("RETURN") ||
-        rowStr.includes("INVALID") ||
-        rowStr.includes("DORMANT") ||
-        rowStr.includes("MISMATCH");
+      const normalized = normalizeNchlStatus(rawStatusCell, rowStr);
+      const isFailed = normalized.gatewayStatus === "FAILED";
 
-      if (isFailed) {
-        const lineItemId =
-          row["End to End ID"] ||
+      if (!isFailed) continue;
+
+      const rawRef = String(
+        row["End to End ID"] ||
           row["END_TO_END_ID"] ||
           row["Instruction ID"] ||
           row["Reference"] ||
-          undefined;
-        const boid = row["BOID"] || row["Beneficiary ID"] || undefined;
-        const reason =
-          row["Reason"] ||
+          row["Transaction ID"] ||
+          row["TXN_ID"] ||
+          "",
+      ).trim();
+      const boid = String(row["BOID"] || row["Beneficiary ID"] || "").trim() || undefined;
+      const reason = String(
+        row["Reason"] ||
           row["Return Reason"] ||
           row["Error Message"] ||
+          row["Status Description"] ||
           row["Remarks"] ||
-          "Bank disbursement returned / rejected";
-        const amount = Number(row["Amount"] || row["Amount (NPR)"] || 0);
+          "Bank disbursement returned / rejected",
+      ).trim();
+      const amount = Number(row["Amount"] || row["Amount (NPR)"] || row["Txn Amount"] || 0);
 
-        failedItems.push({ lineItemId, boid, reason, amount });
+      let matchedPaymentId: string | undefined;
+      if (rawRef && /^[0-9a-fA-F-]{36}$/.test(rawRef)) {
+        matchedPaymentId = rawRef;
+      } else if (rawRef) {
+        const { data: byRef } = await (supabase as any)
+          .from("payments")
+          .select("id")
+          .or(`connectips_ref.eq.${rawRef},payment_reference.eq.${rawRef}`)
+          .limit(1)
+          .maybeSingle();
+        matchedPaymentId = byRef?.id;
+      }
 
-        // If lineItemId is provided, update payment record to Failed and reset underlying payable to Pending
-        if (lineItemId && /^[0-9a-fA-F-]{36}$/.test(String(lineItemId))) {
+      failedItems.push({
+        lineItemId: matchedPaymentId || rawRef || undefined,
+        boid,
+        reason,
+        amount,
+      });
+
+      if (matchedPaymentId) {
+        const targetLedgerStatus = normalized.ledgerStatus === "Rejected" ? "Rejected" : "Returned";
+        syncUpdates.push({
+          payment_id: matchedPaymentId,
+          status: targetLedgerStatus,
+          remarks: `Disbursement returned [${today}]: ${reason}`,
+          reversal_reason: reason,
+        });
+      }
+    }
+
+    if (syncUpdates.length > 0) {
+      const { error: rpcErr } = await (supabase as any).rpc("sync_connectips_payment_results", {
+        p_batch_id: null,
+        p_updates: syncUpdates,
+      });
+
+      if (rpcErr) {
+        // Fallback when running without SQL RPC
+        for (const upd of syncUpdates) {
           try {
             const { data: pmt } = await (supabase as any)
               .from("payments")
               .update({
-                status: "Failed",
-                remarks: `Disbursement returned: ${reason}`,
-                reversal_reason: reason,
+                status: upd.status,
+                paid_amount: 0,
+                payment_date: null,
+                remarks: upd.remarks,
+                reversal_reason: upd.reversal_reason,
                 updated_at: new Date().toISOString(),
               })
-              .eq("id", lineItemId)
-              .select("payable_id, payable_type")
+              .eq("id", upd.payment_id)
+              .select("batch_id, payable_id, payable_type")
               .maybeSingle();
 
             if (pmt?.payable_id) {
@@ -520,10 +742,16 @@ export const ConnectIPSService = {
                 .from(targetTbl)
                 .update({
                   payment_status: "Pending",
-                  remarks: `Disbursement returned: ${reason} [${new Date().toISOString().slice(0, 10)}]`,
+                  paid_amount: 0,
+                  payment_date: null,
+                  payment_reference: null,
+                  remarks: String(upd.remarks || ""),
                   updated_at: new Date().toISOString(),
                 })
                 .eq("id", pmt.payable_id);
+            }
+            if (pmt?.batch_id) {
+              await PaymentService.updateBatchTotals(pmt.batch_id);
             }
           } catch (pmtErr) {
             console.warn("Failed to update returned disbursement status:", pmtErr);

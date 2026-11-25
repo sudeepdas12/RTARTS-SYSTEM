@@ -62,7 +62,15 @@ export function determineDebentureCategory(p: any): DebentureParticular {
     lot.includes("MUTUAL") ||
     lot.includes("EXEMPT");
 
+  const hasBankFiSignal =
+    explicitClass === "BANK_FI" ||
+    explicitClass === "BANK" ||
+    holder.includes("BANK / FI") ||
+    holder.includes("BANK_FI") ||
+    holder.includes("FINANCIAL INSTITUTION");
+
   const hasInstitutionSignal =
+    hasBankFiSignal ||
     explicitClass === "COMPANY_INSTITUTION" ||
     explicitClass === "INSTITUTION" ||
     holder.includes("LEGAL") ||
@@ -74,11 +82,20 @@ export function determineDebentureCategory(p: any): DebentureParticular {
     segment === "INSTITUTION" ||
     segment === "PRIVATE";
 
+  // 0. Bank / Financial Institution (0% Interest TDS per Income Tax Act, categorized under INSTITUTION summary bucket)
+  if (hasBankFiSignal) {
+    return "INSTITUTION";
+  }
+
   // 1. Tax Exempted / Mutual Funds (0% TDS)
   // tdsRate === 0 alone is not sufficient (null → 0). Require a corroborating classification.
   if (
     hasTaxExemptSignal ||
-    (tdsRate === 0 && !Number.isNaN(tdsRate) && p.tds_rate !== null && p.tds_rate !== undefined)
+    (!hasBankFiSignal &&
+      tdsRate === 0 &&
+      !Number.isNaN(tdsRate) &&
+      p.tds_rate !== null &&
+      p.tds_rate !== undefined)
   ) {
     return "MUTUAL FUND";
   }

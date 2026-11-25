@@ -112,12 +112,22 @@ async function isAuthorized(req: Request): Promise<boolean> {
     if (diff === 0) return true;
   }
 
-  // Check Bearer token with Supabase Auth
+  // Check Bearer token with Supabase Auth (service key / runtime secret key / user JWT)
   const authHeader = req.headers.get("Authorization") || "";
-  const jwt = authHeader.replace(/^Bearer\s+/i, "");
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (jwt && serviceKey && jwt === serviceKey) return true;
+  const jwt = authHeader.replace(/^Bearer\s+/i, "").trim();
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  if (jwt && serviceKey && jwt === serviceKey) {
+    return true;
+  }
   if (jwt) {
+    try {
+      const secretKeys = JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") || "{}");
+      const defaultSecret =
+        typeof secretKeys?.default === "string" ? secretKeys.default.trim() : "";
+      if (defaultSecret && jwt === defaultSecret) return true;
+    } catch {
+      // Ignore malformed secret map
+    }
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const supabaseKey =
       Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -132,9 +142,7 @@ async function isAuthorized(req: Request): Promise<boolean> {
     }
   }
 
-  const isDev = !Deno.env.get("DENO_DEPLOYMENT_ID");
-  if (!token && isDev) return true;
-
+  // Deny by default when neither valid x-send-token nor verified Bearer JWT is supplied
   return false;
 }
 

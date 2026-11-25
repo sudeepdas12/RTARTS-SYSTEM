@@ -162,6 +162,6 @@ export const sendTestEmailServerFn = createServerFn({ method: "POST" })
         message = `Host not found: Could not resolve SMTP host "${host}". Please verify the hostname.`;
       }
 
-      throw new Error(message);
+      throw new Error(message, { cause: err });
     }
   });

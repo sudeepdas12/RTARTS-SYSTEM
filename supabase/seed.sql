@@ -3,6 +3,8 @@
 -- Seeds initial admin users with full GoTrue compatibility.
 -- =========================================================
 
+SET search_path = public, extensions, auth;
+
 DO $$
 DECLARE
   v_admin_id uuid;
@@ -227,10 +229,14 @@ BEGIN
     DO UPDATE SET tax_rate = EXCLUDED.tax_rate;
   END IF;
 
-  -- 6. Seed default cron secret in system_settings if missing
+  -- 6. Seed cryptographically random cron secret in system_settings if missing (never a static hardcoded secret)
   IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'system_settings') THEN
     INSERT INTO public.system_settings (setting_key, setting_value, description)
-    VALUES ('cron_secret', '{"secret": "rtarts-internal-cron-secret"}'::jsonb, 'Internal cron secret for scheduled reports')
+    VALUES (
+      'cron_secret',
+      jsonb_build_object('secret', replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', '')),
+      'Internal cron secret for scheduled reports'
+    )
     ON CONFLICT (setting_key) DO NOTHING;
   END IF;
 END $$;

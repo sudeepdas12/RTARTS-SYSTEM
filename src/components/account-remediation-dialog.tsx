@@ -123,8 +123,9 @@ export function AccountRemediationDialog({
     );
   }, []);
 
-  // Sync initial items when dialog opens or items change
-  React.useEffect(() => {
+  const [prevInitialItems, setPrevInitialItems] = useState<RejectedAccountItem[]>(initialItems);
+  if (prevInitialItems !== initialItems) {
+    setPrevInitialItems(initialItems);
     setItems(initialItems);
     if (initialItems.length > 0) {
       const exists = selectedId && initialItems.some((i) => i.payable_id === selectedId);
@@ -136,7 +137,7 @@ export function AccountRemediationDialog({
     } else {
       setSelectedId(null);
     }
-  }, [initialItems, selectedId, loadItemForm]);
+  }
 
   const selectedItem = useMemo(() => {
     return items.find((i) => i.payable_id === selectedId) || null;

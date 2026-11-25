@@ -83,7 +83,7 @@ test.describe("Comprehensive Upload & Ingestion Across All Sections", () => {
       await adminClient.from("clients").delete().ilike("boid", "130102000000000%");
 
       // 5. Test companies
-      await adminClient.from("companies").delete().ilike("company_code", "TESTCO");
+      await adminClient.from("companies").delete().in("company_code", ["TESTCO", "TESTHYDRO"]);
       await adminClient.from("companies").delete().ilike("company_name", "section1 payables%");
       await adminClient
         .from("companies")
@@ -275,6 +275,12 @@ test.describe("Comprehensive Upload & Ingestion Across All Sections", () => {
     // Target #reconcile-bank-upload
     const bankFileInput = page.locator("#reconcile-bank-upload");
     await bankFileInput.setInputFiles(path.join(FIXTURES_DIR, "section4_bank_statement.xlsx"));
+
+    // Multiple companies trigger the "Select Target Company" dialog before bank parsing completes
+    const targetCompDlg = page.locator("[role='dialog']:has-text('Select Target Company')");
+    if (await targetCompDlg.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await targetCompDlg.locator("button:has-text('Select')").first().click();
+    }
 
     // Verify bank statement processed or transaction summary shows up
     await expect(

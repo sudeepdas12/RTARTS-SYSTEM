@@ -9,6 +9,7 @@ import { exportToExcel, exportMultiSheetExcel } from "@/lib/xlsx-utils";
 import { getPayeeCategoryLabel } from "@/lib/services/payable-summary";
 import { PaymentService, PaymentBatch, PaymentLineItem } from "@/lib/services/payment.service";
 import { ConnectIPSService } from "@/lib/services/connectips.service";
+import { getPaymentStatusPresentation } from "@/lib/connectips-utils";
 import {
   SmsBroadcastService,
   BroadcastSummary,
@@ -77,11 +78,14 @@ import {
   ChevronsRight,
   RotateCcw,
   Edit3,
+  RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ApprovalBar } from "@/components/workflow/approval-bar";
 import { STANDARD_PERIODS, type PeriodPreset } from "@/lib/services/period-calculator";
+import { BankErrorUploadDialog } from "@/components/reconciliation/bank-error-upload-dialog";
+import { DeclarationSummaryCard } from "@/components/declarations/declaration-summary-card";
 
 export const Route = createFileRoute("/_authenticated/payments")({
   component: PaymentsRoute,
@@ -121,7 +125,74 @@ function PaymentsRoute() {
   const [disburseProgress, setDisburseProgress] = useState<{ done: number; total: number } | null>(
     null,
   );
+  const [isSyncingConnectIps, setIsSyncingConnectIps] = useState(false);
+  const [checkingPaymentId, setCheckingPaymentId] = useState<string | null>(null);
   const [installmentTag, setInstallmentTag] = useState<string>("FULL");
+
+  const invalidatePaymentLedgers = (batchId?: string | null) => {
+    qc.invalidateQueries({ queryKey: ["payments"] });
+    qc.invalidateQueries({ queryKey: ["payment-batches"] });
+    qc.invalidateQueries({ queryKey: ["payment-batch"] });
+    qc.invalidateQueries({ queryKey: ["payment-line-items"] });
+    if (batchId) {
+      qc.invalidateQueries({ queryKey: ["payment-batch", batchId] });
+      qc.invalidateQueries({ queryKey: ["payment-line-items", batchId] });
+    }
+    qc.invalidateQueries({ queryKey: ["payments-individual-server"] });
+    qc.invalidateQueries({ queryKey: ["payables-preview"] });
+    qc.invalidateQueries({ queryKey: ["available-payables"] });
+    qc.invalidateQueries({ queryKey: ["dividend_payables"] });
+    qc.invalidateQueries({ queryKey: ["interest_payables"] });
+    qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
+    qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+    qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] });
+  };
+
+  const handleCheckSinglePaymentStatus = async (params: {
+    paymentId: string;
+    referenceId?: string | null;
+    batchId?: string | null;
+  }) => {
+    const ref = params.referenceId || params.paymentId;
+    setCheckingPaymentId(params.paymentId);
+    try {
+      const res = await ConnectIPSService.checkTransactionStatus(ref, {
+        paymentId: params.paymentId,
+        batchId: params.batchId || undefined,
+      });
+      invalidatePaymentLedgers(params.batchId);
+      if (res.status === "SUCCESS") {
+        toast.success(res.message);
+      } else if (res.status === "FAILED") {
+        toast.error(res.message);
+      } else {
+        toast.info(res.message);
+      }
+    } catch (err: any) {
+      toast.error(`ConnectIPS status inquiry failed: ${err?.message || err}`);
+    } finally {
+      setCheckingPaymentId(null);
+    }
+  };
+
+  const handleSyncBatchStatuses = async (batchId: string) => {
+    setIsSyncingConnectIps(true);
+    try {
+      const res = await ConnectIPSService.syncBatchTransactionStatuses(batchId);
+      invalidatePaymentLedgers(batchId);
+      if (res.failed > 0 || res.returned > 0) {
+        toast.warning(res.message);
+      } else if (res.processing > 0 || res.pending > 0) {
+        toast.info(res.message);
+      } else {
+        toast.success(res.message);
+      }
+    } catch (err: any) {
+      toast.error(`Failed to sync ConnectIPS statuses: ${err?.message || err}`);
+    } finally {
+      setIsSyncingConnectIps(false);
+    }
+  };
   const [createBatchProgress, setCreateBatchProgress] = useState<string | null>(null);
 
   // Edit Batch Dialog State (for Draft batches)
@@ -307,11 +378,9 @@ function PaymentsRoute() {
   });
 
   // Default fiscal year to 'all' if empty
-  useEffect(() => {
-    if (!fiscalYear) {
-      setFiscalYear("all");
-    }
-  }, [fiscalYear]);
+  if (!fiscalYear) {
+    setFiscalYear("all");
+  }
 
   // Fast server-side payables preview (< 50ms)
   const {
@@ -1083,20 +1152,8 @@ function PaymentsRoute() {
     }
   };
 
-  const statusVariant = (status: string) => {
-    switch (status) {
-      case "Completed":
-        return "default";
-      case "Approved":
-        return "secondary";
-      case "Processed":
-        return "outline";
-      case "Draft":
-        return "outline";
-      default:
-        return "destructive";
-    }
-  };
+  const statusVariant = (status: string) => getPaymentStatusPresentation(status).variant;
+  const statusBadgeClass = (status: string) => getPaymentStatusPresentation(status).className;
 
   const batchTotals = useMemo(() => {
     if (
@@ -1173,6 +1230,12 @@ function PaymentsRoute() {
           description="Create payment batches, manage installment tranches, generate clearing manifests (ConnectIPS, NCHL, RTGS), and authorize disbursements."
         />
         <div className="flex items-center gap-2">
+          <BankErrorUploadDialog
+            companyId={selectedCompany}
+            onSuccess={() => {
+              qc.invalidateQueries({ queryKey: ["payment-batches"] });
+            }}
+          />
           <Button
             variant="outline"
             onClick={handleExportAvailablePayables}
@@ -1562,6 +1625,9 @@ function PaymentsRoute() {
         </div>
       </div>
 
+      {/* Corporate Action Declaration Live Status */}
+      <DeclarationSummaryCard companyId={selectedCompany} />
+
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
@@ -1645,8 +1711,10 @@ function PaymentsRoute() {
                 <SelectItem value="Draft">Draft</SelectItem>
                 <SelectItem value="Pending">Pending Approval</SelectItem>
                 <SelectItem value="Approved">Approved</SelectItem>
-                <SelectItem value="Processed">Processed</SelectItem>
+                <SelectItem value="Processed">Processed (In Clearing)</SelectItem>
                 <SelectItem value="Completed">Completed</SelectItem>
+                <SelectItem value="Failed">Failed</SelectItem>
+                <SelectItem value="Returned">Returned</SelectItem>
                 <SelectItem value="Rejected">Rejected</SelectItem>
               </SelectContent>
             </Select>
@@ -1806,7 +1874,10 @@ function PaymentsRoute() {
                         })}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={statusVariant(batch.status || "Draft")}>
+                        <Badge
+                          variant={statusVariant(batch.status || "Draft")}
+                          className={statusBadgeClass(batch.status || "Draft")}
+                        >
                           {batch.status || "Draft"}
                         </Badge>
                       </TableCell>
@@ -1827,8 +1898,29 @@ function PaymentsRoute() {
                           {(batch.status === "Approved" ||
                             batch.status === "Draft" ||
                             batch.status === "Processed" ||
-                            batch.status === "Completed") && (
+                            batch.status === "Completed" ||
+                            batch.status === "Failed" ||
+                            batch.status === "Returned") && (
                             <>
+                              {(batch.status === "Processed" ||
+                                batch.status === "Failed" ||
+                                batch.status === "Returned") && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-xs text-sky-600 hover:text-sky-700 hover:bg-sky-50 dark:text-sky-400 dark:hover:bg-sky-950"
+                                  title="Sync NCHL ConnectIPS Payment Status"
+                                  disabled={isSyncingConnectIps}
+                                  onClick={() => handleSyncBatchStatuses(batch.id)}
+                                >
+                                  {isSyncingConnectIps ? (
+                                    <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                                  ) : (
+                                    <RefreshCw className="w-3.5 h-3.5 mr-1" />
+                                  )}
+                                  Sync
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -2052,8 +2144,12 @@ function PaymentsRoute() {
               <SelectContent>
                 <SelectItem value="all">All Statuses</SelectItem>
                 <SelectItem value="Completed">Completed / Paid</SelectItem>
+                <SelectItem value="Processing">Processing (NCHL Clearing)</SelectItem>
                 <SelectItem value="Pending">Pending</SelectItem>
                 <SelectItem value="Failed">Failed / Bounced</SelectItem>
+                <SelectItem value="Returned">Returned</SelectItem>
+                <SelectItem value="Rejected">Rejected</SelectItem>
+                <SelectItem value="Reversed">Reversed</SelectItem>
               </SelectContent>
             </Select>
             <span className="text-xs text-muted-foreground ml-auto whitespace-nowrap">
@@ -2144,20 +2240,41 @@ function PaymentsRoute() {
                       </TableCell>
                       <TableCell>
                         <Badge
-                          variant={
-                            p.status === "Completed"
-                              ? "default"
-                              : p.status === "Failed"
-                                ? "destructive"
-                                : "secondary"
-                          }
-                          className="text-[10px]"
+                          variant={statusVariant(p.status)}
+                          className={`text-[10px] ${statusBadgeClass(p.status)}`}
                         >
                           {p.status}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1">
+                          {(p.status === "Processing" ||
+                            p.status === "Pending" ||
+                            p.status === "Failed" ||
+                            p.status === "Returned" ||
+                            Boolean(p.connectips_ref || p.payment_reference)) && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs text-sky-700 hover:text-sky-800 hover:bg-sky-50 dark:text-sky-300 dark:hover:bg-sky-950/30 cursor-pointer"
+                              title="Inquire & sync NCHL ConnectIPS status"
+                              disabled={checkingPaymentId === p.id}
+                              onClick={() =>
+                                handleCheckSinglePaymentStatus({
+                                  paymentId: p.id,
+                                  referenceId: p.connectips_ref || p.payment_reference,
+                                  batchId: p.batch_id,
+                                })
+                              }
+                            >
+                              {checkingPaymentId === p.id ? (
+                                <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                              ) : (
+                                <RefreshCw className="w-3.5 h-3.5 mr-1" />
+                              )}
+                              Status
+                            </Button>
+                          )}
                           {(p.status === "Failed" ||
                             p.status === "Pending" ||
                             p.status === "Rejected") && (
@@ -2313,7 +2430,10 @@ function PaymentsRoute() {
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Status</p>
-                  <Badge variant={statusVariant(activeBatchData.status)}>
+                  <Badge
+                    variant={statusVariant(activeBatchData.status)}
+                    className={statusBadgeClass(activeBatchData.status)}
+                  >
                     {activeBatchData.status}
                   </Badge>
                 </div>
@@ -2505,13 +2625,15 @@ function PaymentsRoute() {
                           activeBatchId!,
                           (done, total) => setDisburseProgress({ done, total }),
                         );
-                        if (res.success || res.totalSuccess > 0) {
+                        invalidatePaymentLedgers(activeBatchId);
+                        if (res.success && (res.totalProcessing || 0) === 0) {
                           toast.success(
                             `Disbursed ${res.totalSuccess} payments (NPR ${res.totalAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}) successfully via ConnectIPS.`,
                           );
-                          qc.invalidateQueries({ queryKey: ["payments"] });
-                          qc.invalidateQueries({ queryKey: ["payment-batch", activeBatchId] });
-                          qc.invalidateQueries({ queryKey: ["payment-line-items", activeBatchId] });
+                        } else if ((res.totalProcessing || 0) > 0 || res.totalSuccess > 0) {
+                          toast.info(
+                            `ConnectIPS batch processed: ${res.totalSuccess} settled, ${res.totalProcessing || 0} processing in NCHL clearing, ${res.totalFailed} failed.`,
+                          );
                         } else {
                           toast.error(
                             `Disbursement failed: ${res.results[0]?.errorMessage || "Error executing gateway payment"}`,
@@ -2575,12 +2697,110 @@ function PaymentsRoute() {
                 </div>
               )}
 
+              {(activeBatchData.status === "Processed" ||
+                activeBatchData.status === "Failed" ||
+                activeBatchData.status === "Returned") && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-sky-300 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/30"
+                    disabled={isSyncingConnectIps}
+                    onClick={() => activeBatchId && handleSyncBatchStatuses(activeBatchId)}
+                  >
+                    {isSyncingConnectIps ? (
+                      <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4 mr-1.5" />
+                    )}
+                    Sync ConnectIPS Status
+                  </Button>
+                  {activeBatchData.status === "Processed" && canApprove && (
+                    <Button
+                      size="sm"
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow-sm"
+                      onClick={() => {
+                        if (activeBatchId) {
+                          updateBatchStatus({ batchId: activeBatchId, action: "complete" });
+                        }
+                      }}
+                    >
+                      <CheckCircle2 className="w-4 h-4 mr-1.5" />
+                      Complete Batch
+                    </Button>
+                  )}
+                  {(lineItems || []).some(
+                    (it) =>
+                      it.status === "Failed" ||
+                      it.status === "Rejected" ||
+                      it.status === "Returned" ||
+                      it.status === "Pending",
+                  ) && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={isDisbursing}
+                      onClick={async () => {
+                        if (!activeBatchId) return;
+                        setIsDisbursing(true);
+                        setDisburseProgress(null);
+                        try {
+                          const res = await ConnectIPSService.disbursePaymentBatch(
+                            activeBatchId,
+                            (done, total) => setDisburseProgress({ done, total }),
+                            { retryFailedOnly: false },
+                          );
+                          invalidatePaymentLedgers(activeBatchId);
+                          if (res.success && (res.totalProcessing || 0) === 0) {
+                            toast.success(`Retried & settled ${res.totalSuccess} payment(s).`);
+                          } else {
+                            toast.info(
+                              `ConnectIPS retry: ${res.totalSuccess} settled, ${res.totalProcessing || 0} processing, ${res.totalFailed} failed.`,
+                            );
+                          }
+                        } catch (err: any) {
+                          toast.error(`Retry failed: ${err?.message || err}`);
+                        } finally {
+                          setIsDisbursing(false);
+                          setDisburseProgress(null);
+                        }
+                      }}
+                    >
+                      {isDisbursing ? (
+                        <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                      ) : (
+                        <Send className="w-4 h-4 mr-1.5" />
+                      )}
+                      Retry Unsettled via ConnectIPS
+                    </Button>
+                  )}
+                  {canExport && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleDownloadExcel(activeBatchData)}
+                    >
+                      <FileSpreadsheet className="w-4 h-4 mr-1.5 text-emerald-600" />
+                      Export Excel (.xlsx)
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleDownloadPaymentFile(activeBatchData)}
+                  >
+                    <Download className="w-4 h-4 mr-1.5" />
+                    Download {activeBatchData.payment_method} File
+                  </Button>
+                </div>
+              )}
+
               <div className="border rounded-lg">
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Client</TableHead>
-                      <TableHead>Bank</TableHead>
+                      <TableHead>Bank &amp; Reference</TableHead>
                       <TableHead>Account</TableHead>
                       <TableHead className="text-right">Net Amount</TableHead>
                       <TableHead>Status</TableHead>
@@ -2608,7 +2828,14 @@ function PaymentsRoute() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            {item.bank_name || item.clients?.bank_name || "N/A"}
+                            <div className="text-sm">
+                              {item.bank_name || item.clients?.bank_name || "N/A"}
+                            </div>
+                            {(item.connectips_ref || item.payment_reference) && (
+                              <div className="font-mono text-[11px] text-muted-foreground">
+                                {item.connectips_ref || item.payment_reference}
+                              </div>
+                            )}
                           </TableCell>
                           <TableCell className="font-mono text-xs">
                             {item.bank_account_no || item.clients?.bank_account_no || "N/A"}
@@ -2620,20 +2847,66 @@ function PaymentsRoute() {
                             })}
                           </TableCell>
                           <TableCell>
-                            <Badge variant={statusVariant(item.status)}>{item.status}</Badge>
+                            <div className="space-y-1">
+                              <Badge
+                                variant={statusVariant(item.status)}
+                                className={statusBadgeClass(item.status)}
+                              >
+                                {item.status}
+                              </Badge>
+                              {item.remarks && item.status !== "Completed" && (
+                                <p
+                                  className="text-[11px] text-muted-foreground max-w-[180px] truncate"
+                                  title={item.remarks}
+                                >
+                                  {item.remarks}
+                                </p>
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell className="text-right">
-                            {item.status !== "Reversed" && item.status !== "Failed" && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 text-xs text-destructive hover:text-destructive"
-                                onClick={() => setReverseDialogOpen(item)}
-                              >
-                                <X className="w-3 h-3 mr-1" />
-                                Reverse
-                              </Button>
-                            )}
+                            <div className="flex items-center justify-end gap-1">
+                              {(item.status === "Processing" ||
+                                item.status === "Pending" ||
+                                item.status === "Failed" ||
+                                item.status === "Returned" ||
+                                Boolean(item.connectips_ref || item.payment_reference)) && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-xs text-sky-700 hover:text-sky-800 dark:text-sky-300"
+                                  title="Check NCHL ConnectIPS Transaction Status"
+                                  disabled={checkingPaymentId === item.id}
+                                  onClick={() =>
+                                    handleCheckSinglePaymentStatus({
+                                      paymentId: item.id,
+                                      referenceId: item.connectips_ref || item.payment_reference,
+                                      batchId: activeBatchId,
+                                    })
+                                  }
+                                >
+                                  {checkingPaymentId === item.id ? (
+                                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                  ) : (
+                                    <RefreshCw className="w-3 h-3 mr-1" />
+                                  )}
+                                  Check Status
+                                </Button>
+                              )}
+                              {item.status !== "Reversed" &&
+                                item.status !== "Failed" &&
+                                item.status !== "Returned" && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 text-xs text-destructive hover:text-destructive"
+                                    onClick={() => setReverseDialogOpen(item)}
+                                  >
+                                    <X className="w-3 h-3 mr-1" />
+                                    Reverse
+                                  </Button>
+                                )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))

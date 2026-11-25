@@ -7,14 +7,15 @@ const ThemeContext = createContext<Ctx | null>(null);
 const STORAGE_KEY = "rta-theme-v2";
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>("light");
-
-  useEffect(() => {
-    const stored = (typeof window !== "undefined" &&
-      localStorage.getItem(STORAGE_KEY)) as Theme | null;
-    const initial: Theme = stored ?? "light";
-    setThemeState(initial);
-  }, []);
+  const [theme, setThemeState] = useState<Theme>(() => {
+    if (typeof window === "undefined") return "light";
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY) as Theme | null;
+      return stored ?? "light";
+    } catch {
+      return "light";
+    }
+  });
 
   useEffect(() => {
     const root = document.documentElement;

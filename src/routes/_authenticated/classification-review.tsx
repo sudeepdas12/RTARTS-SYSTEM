@@ -53,6 +53,12 @@ import {
 } from "@/lib/classification-review.functions";
 import { exportToExcel } from "@/lib/xlsx-utils";
 import { useAuth } from "@/hooks/use-auth";
+import {
+  redactSensitiveText,
+  triageClassificationQueue,
+  type ClassificationTriageProposal,
+} from "@/lib/services/hitl-triage-agent.service";
+import { runHitlAiAdvisory, type HitlAdvisoryResponse } from "@/lib/hitl-triage.functions";
 
 export const Route = createFileRoute("/_authenticated/classification-review")({
   component: ClassificationReviewPage,
@@ -160,6 +166,7 @@ function ReviewRow({
   isSelected,
   onToggleSelect,
   onExplain,
+  triageProposal,
 }: {
   client: any;
   onConfirmed: (
@@ -173,6 +180,7 @@ function ReviewRow({
   isSelected?: boolean;
   onToggleSelect?: (id: string) => void;
   onExplain?: (client: any) => void;
+  triageProposal?: ClassificationTriageProposal;
 }) {
   const [classification, setClassification] = useState<PayeeClassification>(
     (["NATURAL_PERSON", "PUBLIC_LEGAL_PERSON", "COMPANY_INSTITUTION", "TAX_EXEMPT"].includes(
@@ -183,7 +191,10 @@ function ReviewRow({
   );
   const [segment, setSegment] = useState(client.payee_segment ?? "");
 
-  useEffect(() => {
+  const rowSyncKey = `${client.id}:${client.payee_classification ?? ""}:${client.payee_segment ?? ""}`;
+  const [prevRowSyncKey, setPrevRowSyncKey] = useState(rowSyncKey);
+  if (prevRowSyncKey !== rowSyncKey) {
+    setPrevRowSyncKey(rowSyncKey);
     setClassification(
       (["NATURAL_PERSON", "PUBLIC_LEGAL_PERSON", "COMPANY_INSTITUTION", "TAX_EXEMPT"].includes(
         client.payee_classification,
@@ -192,7 +203,7 @@ function ReviewRow({
         : "NATURAL_PERSON") as PayeeClassification,
     );
     setSegment(client.payee_segment ?? "");
-  }, [client.id, client.payee_classification, client.payee_segment]);
+  }
 
   return (
     <TableRow key={client.id} className={`hover:bg-muted/30 ${isSelected ? "bg-muted/50" : ""}`}>
@@ -208,9 +219,34 @@ function ReviewRow({
       <TableCell className="font-medium text-sm">
         <div>{client.full_name}</div>
         {client.pan_or_citizenship && (
-          <span className="text-[11px] text-muted-foreground font-mono">
+          <span className="text-[11px] text-muted-foreground font-mono block">
             PAN: {client.pan_or_citizenship}
           </span>
+        )}
+        {triageProposal && (
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
+            <Badge
+              variant="outline"
+              className={`px-1.5 py-0 ${
+                triageProposal.requiresHumanJudgment
+                  ? "border-amber-400 text-amber-700 dark:text-amber-300 bg-amber-50/70 dark:bg-amber-950/30"
+                  : "border-indigo-400 text-indigo-700 dark:text-indigo-300 bg-indigo-50/70 dark:bg-indigo-950/30"
+              }`}
+            >
+              AI Suggested: {triageProposal.suggestedClassification} (
+              {Math.round(triageProposal.confidence * 100)}%)
+            </Badge>
+            <button
+              type="button"
+              className="underline text-primary hover:text-primary/80 cursor-pointer"
+              onClick={() => {
+                setClassification(triageProposal.suggestedClassification);
+                setSegment(triageProposal.suggestedSegment ?? "");
+              }}
+            >
+              Stage
+            </button>
+          </div>
         )}
       </TableCell>
       <TableCell className="font-mono text-xs text-muted-foreground">
@@ -253,7 +289,19 @@ function ReviewRow({
             className="h-8 text-xs px-2.5"
             disabled={isPending}
             onClick={() =>
-              onConfirmed(client.id, classification, segment === "" ? undefined : segment)
+              onConfirmed(
+                client.id,
+                classification,
+                segment === "" ? undefined : segment,
+                triageProposal ? "HITL-TRIAGE-2.0" : undefined,
+                triageProposal
+                  ? {
+                      triageConfidence: triageProposal.confidence,
+                      signals: triageProposal.matchedSignals,
+                      tdsImplication: triageProposal.tdsImplication,
+                    }
+                  : undefined,
+              )
             }
           >
             <ShieldCheck className="w-3.5 h-3.5 mr-1" /> Confirm
@@ -404,6 +452,80 @@ function ClassificationReviewPage() {
     useState<PayeeClassification>("NATURAL_PERSON");
   const [bulkSegment, setBulkSegment] = useState<string>("");
   const [isBulkApplying, setIsBulkApplying] = useState(false);
+  const [showTriageCopilot, setShowTriageCopilot] = useState(false);
+  const [triageAdvisory, setTriageAdvisory] = useState<HitlAdvisoryResponse | null>(null);
+  const [isRunningTriage, setIsRunningTriage] = useState(false);
+  const [confirmHighConfidenceStep, setConfirmHighConfidenceStep] = useState(false);
+
+  const triageSummary = useMemo(
+    () => triageClassificationQueue(filteredClients),
+    [filteredClients],
+  );
+
+  const proposalByClientId = useMemo(() => {
+    const map = new Map<string, ClassificationTriageProposal>();
+    for (const prop of triageSummary.proposals) {
+      map.set(prop.clientId, prop);
+    }
+    return map;
+  }, [triageSummary]);
+
+  const handleRunHitlQueueTriage = async () => {
+    setShowTriageCopilot(true);
+    setConfirmHighConfidenceStep(false);
+    if (triageSummary.proposals.length === 0) return;
+    setIsRunningTriage(true);
+    try {
+      const res = await runHitlAiAdvisory({
+        data: {
+          workflow: "classification_queue",
+          contextTitle: `Investor Classification Queue (${triageSummary.totalAnalyzed} pending)`,
+          items: triageSummary.proposals.slice(0, 25).map((p) => ({
+            id: p.clientId,
+            label: `${p.shareholderName} (${p.redactedBoid})`,
+            suggestedDecision: p.suggestedClassification,
+            summary: redactSensitiveText(`${p.rationale} ${p.tdsImplication}`).slice(0, 320),
+          })),
+        },
+      });
+      setTriageAdvisory(res);
+    } catch {
+      setTriageAdvisory(null);
+    } finally {
+      setIsRunningTriage(false);
+    }
+  };
+
+  const handleConfirmHighConfidenceProposals = async () => {
+    const eligible = triageSummary.proposals.filter(
+      (p) => p.confidence >= 0.85 && !p.requiresHumanJudgment,
+    );
+    if (eligible.length === 0) return;
+    setIsBulkApplying(true);
+    try {
+      for (const prop of eligible) {
+        await confirmMutation.mutateAsync({
+          clientId: prop.clientId,
+          classification: prop.suggestedClassification,
+          segment: prop.suggestedSegment ?? undefined,
+          ruleVersion: "HITL-TRIAGE-2.0",
+          evidence: {
+            triageConfidence: prop.confidence,
+            signals: prop.matchedSignals,
+            rationale: prop.rationale,
+          },
+        });
+      }
+      toast.success(
+        `Confirmed ${eligible.length} HITL triage proposal(s) with Checker audit trail.`,
+      );
+      setConfirmHighConfidenceStep(false);
+    } catch (err: any) {
+      toast.error(`Batch triage confirmation failed: ${err?.message || err}`);
+    } finally {
+      setIsBulkApplying(false);
+    }
+  };
 
   const toggleSelectClient = (id: string) => {
     setSelectedClientIds((prev) => {
@@ -565,6 +687,19 @@ function ClassificationReviewPage() {
                   </CardDescription>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-indigo-500/40 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/30"
+                    onClick={handleRunHitlQueueTriage}
+                    disabled={isRunningTriage || filteredClients.length === 0}
+                    title="Stage HITL rule/AI classification suggestions with Checker confirmation gate"
+                  >
+                    <Sparkles
+                      className={`h-3.5 w-3.5 mr-1.5 ${isRunningTriage ? "animate-spin" : "text-indigo-600"}`}
+                    />
+                    {isRunningTriage ? "Triaging Queue..." : "Run HITL Queue Triage"}
+                  </Button>
                   {canManage && (
                     <Button
                       variant="outline"
@@ -675,6 +810,87 @@ function ClassificationReviewPage() {
                 </div>
               ) : (
                 <>
+                  {showTriageCopilot && triageSummary.totalAnalyzed > 0 && (
+                    <div className="mx-6 mb-4 p-3.5 rounded-lg border border-indigo-200 dark:border-indigo-900/50 bg-indigo-50/40 dark:bg-indigo-950/20 space-y-2 text-xs">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="font-semibold text-indigo-900 dark:text-indigo-200 flex items-center gap-1.5">
+                          <Sparkles className="h-4 w-4 text-indigo-600" />
+                          <span>
+                            HITL Classification Triage Copilot — {triageSummary.totalAnalyzed}{" "}
+                            analyzed ({triageSummary.highConfidenceCount} high-confidence ≥85%,{" "}
+                            {triageSummary.needsHumanJudgmentCount} need explicit review)
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {canManage &&
+                            triageSummary.highConfidenceCount > 0 &&
+                            (!confirmHighConfidenceStep ? (
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                className="h-7 text-[11px]"
+                                disabled={isBulkApplying}
+                                onClick={() => setConfirmHighConfidenceStep(true)}
+                              >
+                                Approve High-Confidence ({triageSummary.highConfidenceCount})
+                              </Button>
+                            ) : (
+                              <>
+                                <Button
+                                  size="sm"
+                                  className="h-7 text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white"
+                                  disabled={isBulkApplying}
+                                  onClick={handleConfirmHighConfidenceProposals}
+                                >
+                                  {isBulkApplying
+                                    ? "Confirming..."
+                                    : `Confirm & Recompute ${triageSummary.highConfidenceCount} Accounts`}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 text-[11px]"
+                                  onClick={() => setConfirmHighConfidenceStep(false)}
+                                >
+                                  Cancel
+                                </Button>
+                              </>
+                            ))}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-[11px]"
+                            onClick={() => setShowTriageCopilot(false)}
+                          >
+                            Close Copilot
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        <Badge variant="outline" className="text-[10px]">
+                          Natural Person: {triageSummary.bySuggestedClass.NATURAL_PERSON}
+                        </Badge>
+                        <Badge variant="outline" className="text-[10px]">
+                          Institution: {triageSummary.bySuggestedClass.COMPANY_INSTITUTION}
+                        </Badge>
+                        <Badge variant="outline" className="text-[10px]">
+                          Public Legal: {triageSummary.bySuggestedClass.PUBLIC_LEGAL_PERSON}
+                        </Badge>
+                        <Badge variant="outline" className="text-[10px]">
+                          Tax Exempt: {triageSummary.bySuggestedClass.TAX_EXEMPT}
+                        </Badge>
+                      </div>
+                      {triageAdvisory && (
+                        <div className="p-2 rounded bg-background/80 border text-[11px] text-muted-foreground">
+                          <strong className="text-foreground">
+                            {triageAdvisory.providerLabel}:
+                          </strong>{" "}
+                          {triageAdvisory.advisorSummary}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {selectedClientIds.size > 0 && (
                     <div className="flex flex-wrap items-center justify-between gap-3 p-3 mx-6 mb-3 bg-muted/60 rounded-lg border border-primary/20 text-xs">
                       <div className="flex items-center gap-2">
@@ -755,6 +971,9 @@ function ClassificationReviewPage() {
                             isSelected={selectedClientIds.has(client.id)}
                             onToggleSelect={toggleSelectClient}
                             onExplain={setExplainClient}
+                            triageProposal={
+                              showTriageCopilot ? proposalByClientId.get(client.id) : undefined
+                            }
                           />
                         ))}
                       </TableBody>

@@ -38,11 +38,13 @@ export function normalizePayeeCategory(value?: string | null): PayeeCategory {
   )
     return "TAX_EXEMPT";
 
-  // 2. Promoter, Local, Employee segments
+  // 2. Promoter, Local, Employee, Bank/FI segments
   if (/PROMOT/i.test(raw)) return "PROMOTER";
   if (/LOCAL/i.test(raw)) return "LOCAL";
   if (/EMPLOYEE|STAFF/i.test(raw)) return "EMPLOYEE";
   if (/FOREIGN|NRN/i.test(raw)) return "FOREIGN";
+  if (/BANK_FI|\bBFI\b|BANK\s*\/\s*FI/i.test(raw)) return "BANK_FI";
+  if (/PUBLIC_LEGAL_PERSON/i.test(raw)) return "PUBLIC";
 
   // 3. Institution / Company
   if (

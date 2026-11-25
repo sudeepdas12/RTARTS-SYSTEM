@@ -77,6 +77,7 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         output: {
           manualChunks(id) {
+            if (!id.includes("node_modules")) return;
             if (id.includes("node_modules/xlsx")) {
               return "vendor-xlsx";
             }
@@ -85,6 +86,32 @@ export default defineConfig(({ mode }) => {
             }
             if (id.includes("node_modules/recharts")) {
               return "vendor-recharts";
+            }
+            if (id.includes("node_modules/@supabase")) {
+              return "vendor-supabase";
+            }
+            if (
+              id.includes("node_modules/react/") ||
+              id.includes("node_modules/react-dom/") ||
+              id.includes("node_modules/scheduler/")
+            ) {
+              return "vendor-react";
+            }
+            if (
+              id.includes("node_modules/@radix-ui") ||
+              id.includes("node_modules/cmdk") ||
+              id.includes("node_modules/vaul")
+            ) {
+              return "vendor-ui";
+            }
+            if (id.includes("node_modules/lucide-react")) {
+              return "vendor-icons";
+            }
+            if (
+              id.includes("node_modules/date-fns") ||
+              id.includes("node_modules/nepali-date-converter")
+            ) {
+              return "vendor-date";
             }
           },
         },

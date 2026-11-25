@@ -23,8 +23,12 @@ async function sendViaSparrowSMS(
   to: string,
   message: string,
 ): Promise<void> {
-  const url = `https://api.sparrowsms.com/v2/sms/?token=${token}&from=${from}&to=${to}&text=${encodeURIComponent(message)}`;
-  const res = await fetch(url, { method: "GET" });
+  // Send via HTTP POST body rather than query string to keep API tokens out of logs
+  const res = await fetch("https://api.sparrowsms.com/v2/sms/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, from, to, text: message }),
+  });
   if (!res.ok) throw new Error(`Sparrow SMS error: ${res.status} ${await res.text()}`);
 }
 
@@ -54,10 +58,22 @@ async function isAuthorized(req: Request): Promise<boolean> {
     if (diff === 0) return true;
   }
 
-  // 2. Check Bearer token with Supabase Auth
+  // 2. Check Bearer token with Supabase Auth (service key / runtime secret key / user JWT)
   const authHeader = req.headers.get("Authorization") || "";
-  const token = authHeader.replace(/^Bearer\s+/i, "");
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  if (token && serviceKey && token === serviceKey) {
+    return true;
+  }
   if (token) {
+    try {
+      const secretKeys = JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") || "{}");
+      const defaultSecret =
+        typeof secretKeys?.default === "string" ? secretKeys.default.trim() : "";
+      if (defaultSecret && token === defaultSecret) return true;
+    } catch {
+      // Ignore malformed secret map
+    }
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const supabaseAnonKey =
       Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -72,12 +88,7 @@ async function isAuthorized(req: Request): Promise<boolean> {
     }
   }
 
-  // 3. Backward-compatibility: if no sendToken configured and in local development, allow
-  const isDev = !Deno.env.get("DENO_DEPLOYMENT_ID");
-  if (!sendToken && isDev) {
-    return true;
-  }
-
+  // 3. Deny by default unless a valid x-send-token or verified Bearer JWT was provided
   return false;
 }
 

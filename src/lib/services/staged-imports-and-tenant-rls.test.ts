@@ -10,13 +10,7 @@ const ANON_KEY =
   process.env.VITE_SUPABASE_ANON_KEY ||
   "";
 
-const isLiveDb =
-  (!process.env.CI ||
-    Boolean(
-      process.env.SUPABASE_SERVICE_ROLE_KEY &&
-      process.env.SUPABASE_URL !== "http://127.0.0.1:54321",
-    )) &&
-  Boolean(SUPABASE_URL && SERVICE_ROLE_KEY && ANON_KEY);
+const isLiveDb = Boolean(SUPABASE_URL && SERVICE_ROLE_KEY && ANON_KEY);
 
 const adminClient = isLiveDb
   ? createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {

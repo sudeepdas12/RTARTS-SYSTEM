@@ -231,11 +231,15 @@ function DividendPage() {
   const [calcResult, setCalcResult] = useState<DividendResult | null>(null);
 
   // Sync settings when they load
-  useEffect(() => {
-    if (settings?.dividend_tds_natural) {
-      setCalcCustomTds((prev) => (prev ? prev : String(settings.dividend_tds_natural)));
+  const [prevDividendTdsSetting, setPrevDividendTdsSetting] = useState(
+    settings?.dividend_tds_natural,
+  );
+  if (prevDividendTdsSetting !== settings?.dividend_tds_natural) {
+    setPrevDividendTdsSetting(settings?.dividend_tds_natural);
+    if (settings?.dividend_tds_natural && !calcCustomTds) {
+      setCalcCustomTds(String(settings.dividend_tds_natural));
     }
-  }, [settings?.dividend_tds_natural]);
+  }
 
   const handleCalcDividend = () => {
     const shares = Number(calcShares);
@@ -312,14 +316,12 @@ function DividendPage() {
   });
 
   // Self-heal orphaned companyFilter
-  useEffect(() => {
-    if (companyFilter !== "all" && companies.length > 0) {
-      const exists = companies.some((c) => c.id === companyFilter);
-      if (!exists) {
-        setCompanyFilter("all");
-      }
+  if (companyFilter !== "all" && companies.length > 0) {
+    const exists = companies.some((c) => c.id === companyFilter);
+    if (!exists) {
+      setCompanyFilter("all");
     }
-  }, [companies, companyFilter]);
+  }
 
   // Realtime subscription for live dividend payables updates
   useEffect(() => {
@@ -389,20 +391,21 @@ function DividendPage() {
   const { data: clients = [] } = useQuery({
     queryKey: ["clients-lookup"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("clients")
-        .select("id, client_code, full_name, boid, bank_name, bank_account_no")
-        .order("full_name")
-        .limit(5000);
-      if (error) throw error;
-      return (data || []) as {
+      return await fetchAllRows<{
         id: string;
         client_code: string;
         full_name: string;
         boid: string | null;
         bank_name: string | null;
         bank_account_no: string | null;
-      }[];
+      }>((from, to) =>
+        supabase
+          .from("clients")
+          .select("id, client_code, full_name, boid, bank_name, bank_account_no")
+          .order("full_name")
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
     },
     staleTime: 5 * 60 * 1000,
   });
@@ -430,23 +433,20 @@ function DividendPage() {
   const debouncedSearch = useDebounce(search, 300);
 
   // Reset to page 1 whenever filters change, and clear selection
-  useEffect(() => {
-    setPage(1);
-    setSelectedIds(new Set());
-  }, [
-    debouncedSearch,
-    statusFilter,
-    companyFilter,
-    fyFilter,
-    typeFilter,
-    classFilter,
-    fromDateFilter,
-    toDateFilter,
-  ]);
+  const filterResetKey = `${debouncedSearch}|${statusFilter}|${companyFilter}|${fyFilter}|${typeFilter}|${classFilter}|${fromDateFilter}|${toDateFilter}`;
+  const [prevFilterResetKey, setPrevFilterResetKey] = useState(filterResetKey);
+  if (prevFilterResetKey !== filterResetKey) {
+    setPrevFilterResetKey(filterResetKey);
+    if (page !== 1) setPage(1);
+    if (selectedIds.size > 0) setSelectedIds(new Set());
+  }
 
-  useEffect(() => {
-    setSelectedIds(new Set());
-  }, [page, pageSize]);
+  const pageSelectionKey = `${page}|${pageSize}`;
+  const [prevPageSelectionKey, setPrevPageSelectionKey] = useState(pageSelectionKey);
+  if (prevPageSelectionKey !== pageSelectionKey) {
+    setPrevPageSelectionKey(pageSelectionKey);
+    if (selectedIds.size > 0) setSelectedIds(new Set());
+  }
 
   // Fetch fiscal years for filter dropdown (lightweight)
   const { data: fiscalYears = [] } = useQuery({

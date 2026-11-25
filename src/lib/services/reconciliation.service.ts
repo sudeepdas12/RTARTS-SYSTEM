@@ -361,6 +361,7 @@ export const ReconciliationService = {
       if (import.meta.env?.PROD || process.env.NODE_ENV === "production") {
         throw new Error(
           `Atomic draft persistence required in production, but was bypassed: ${e?.message || e}`,
+          { cause: e },
         );
       }
     }
@@ -919,37 +920,34 @@ export const ReconciliationService = {
           `${resolvedCompanyId || "all"}|${lotName || "batch"}|${groupItems.length}|${todayStr}`,
         );
 
-        let rpcRes: any = null;
-
         // Call unified atomic apply + persist RPC (fails closed, no insecure legacy fallback)
-        const { data: unifiedData, error: unifiedErr } = await (supabase as any).rpc(
-          "apply_and_record_reconciliation_batch",
-          {
-            p_run_info: {
-              run_id: activeRunId,
-              chunk_index: chunkIndex,
-              total_chunks: totalChunks,
-              expected_chunk_count: totalChunks,
-              is_final_chunk: isFinalChunk,
-              company_id: resolvedCompanyId,
-              fiscal_year: chunk[0]?.fiscal_year || null,
-              source_type: chunk[0]?.source_a_type || "excel",
-              file_name: lotName || "Reconciliation Batch",
-              file_hash_sha256: fileHash,
-              idempotency_key: `${resolvedCompanyId || "all"}_${fileHash || lotName}_chunk_${chunkIndex}`,
-              row_count: groupItems.length,
-              total_amount: groupItems.reduce(
-                (acc: number, item: any) =>
-                  acc + Number(item.actual_amount || item.expected_amount || 0),
-                0,
-              ),
-              parser_version: "2.0.0",
-              matching_rule_version: "2.0.0",
-            },
-            p_items: chunk,
-            p_batch_info: i === 0 ? batchInfo : null,
+        const { data: unifiedData, error: unifiedErr }: { data: any; error: any } = await (
+          supabase as any
+        ).rpc("apply_and_record_reconciliation_batch", {
+          p_run_info: {
+            run_id: activeRunId,
+            chunk_index: chunkIndex,
+            total_chunks: totalChunks,
+            expected_chunk_count: totalChunks,
+            is_final_chunk: isFinalChunk,
+            company_id: resolvedCompanyId,
+            fiscal_year: chunk[0]?.fiscal_year || null,
+            source_type: chunk[0]?.source_a_type || "excel",
+            file_name: lotName || "Reconciliation Batch",
+            file_hash_sha256: fileHash,
+            idempotency_key: `${resolvedCompanyId || "all"}_${fileHash || lotName}_chunk_${chunkIndex}`,
+            row_count: groupItems.length,
+            total_amount: groupItems.reduce(
+              (acc: number, item: any) =>
+                acc + Number(item.actual_amount || item.expected_amount || 0),
+              0,
+            ),
+            parser_version: "2.0.0",
+            matching_rule_version: "2.0.0",
           },
-        );
+          p_items: chunk,
+          p_batch_info: i === 0 ? batchInfo : null,
+        });
 
         if (unifiedErr) {
           throw new Error(
@@ -963,7 +961,7 @@ export const ReconciliationService = {
           );
         }
 
-        rpcRes = unifiedData;
+        const rpcRes: any = unifiedData;
         if (rpcRes.run_id && !activeRunId) {
           activeRunId = rpcRes.run_id;
           if (!allRunIds.includes(rpcRes.run_id)) {
@@ -1429,6 +1427,7 @@ export const ReconciliationService = {
       if (import.meta.env?.PROD || process.env.NODE_ENV === "production") {
         throw new Error(
           `Bank statement import ledger creation failed for ${file.name}: ${e?.message || e}`,
+          { cause: e },
         );
       }
       // If RPC is unavailable in offline unit tests, continue to direct fallback

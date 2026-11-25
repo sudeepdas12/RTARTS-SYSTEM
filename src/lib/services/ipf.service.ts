@@ -143,6 +143,21 @@ export const IpfService = {
     const mfRes = await mfQ;
     processRows(mfRes.data || [], "MUTUAL_FUND");
 
+    // 2c. Fetch Unpaid Debentures / Interest (Pending, Partial)
+    let intQ = (supabase as any)
+      .from("interest_payables")
+      .select(
+        "*, company:companies(company_name, company_code), client:clients(id, full_name, boid, phone)",
+      )
+      .in("payment_status", ["Pending", "Partial"])
+      .order("created_at", { ascending: false })
+      .limit(previewCap);
+    if (params.companyId && params.companyId !== "all") {
+      intQ = intQ.eq("company_id", params.companyId);
+    }
+    const intRes = await intQ;
+    processRows(intRes.data || [], "INTEREST");
+
     // 3. Build Aging Buckets
     const b1 = { label: "< 1 Year (Fresh)", count: 0, totalAmount: 0, isEligibleForIpf: false };
     const b2 = {

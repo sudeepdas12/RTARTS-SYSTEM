@@ -176,9 +176,14 @@ export function ClassificationExplainabilityDialog({
   const [rulesError, setRulesError] = useState<string | null>(null);
 
   // Security Invariant: Reset reveal state whenever client or dialog open state changes
-  useEffect(() => {
-    setRevealSensitive(false);
-  }, [client?.id, open]);
+  const revealResetKey = `${client?.id ?? ""}:${open}`;
+  const [prevRevealResetKey, setPrevRevealResetKey] = useState(revealResetKey);
+  if (prevRevealResetKey !== revealResetKey) {
+    setPrevRevealResetKey(revealResetKey);
+    if (revealSensitive) {
+      setRevealSensitive(false);
+    }
+  }
 
   const handleToggleReveal = async () => {
     if (!canRevealSensitive || !client) return;
@@ -217,26 +222,36 @@ export function ClassificationExplainabilityDialog({
     setSampleGross(val);
   };
 
-  useEffect(() => {
-    if (!initialTaxRules || initialTaxRules.length === 0) {
-      setIsLoadingRules(true);
-      setRulesError(null);
-      loadTaxRules()
-        .then((rules) => {
-          setDbTaxRules(rules);
-          setIsLoadingRules(false);
-        })
-        .catch((err) => {
-          console.warn("Could not load tax rules for explainability:", err);
-          setRulesError(
-            "Could not load authoritative database tax rules. Please verify database connectivity.",
-          );
-          setIsLoadingRules(false);
-        });
-    } else {
+  const [prevInitialRules, setPrevInitialRules] = useState(initialTaxRules);
+  if (prevInitialRules !== initialTaxRules) {
+    setPrevInitialRules(initialTaxRules);
+    if (initialTaxRules && initialTaxRules.length > 0) {
       setDbTaxRules(initialTaxRules);
       setIsLoadingRules(false);
     }
+  }
+
+  useEffect(() => {
+    if (initialTaxRules && initialTaxRules.length > 0) return;
+    let active = true;
+    loadTaxRules()
+      .then((rules) => {
+        if (!active) return;
+        setDbTaxRules(rules);
+        setIsLoadingRules(false);
+        setRulesError(null);
+      })
+      .catch((err) => {
+        if (!active) return;
+        console.warn("Could not load tax rules for explainability:", err);
+        setRulesError(
+          "Could not load authoritative database tax rules. Please verify database connectivity.",
+        );
+        setIsLoadingRules(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [initialTaxRules]);
 
   const explanation = useMemo(() => {

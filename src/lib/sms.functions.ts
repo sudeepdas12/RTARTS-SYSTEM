@@ -159,6 +159,6 @@ export const sendTestSmsServerFn = createServerFn({ method: "POST" })
         },
       };
     } catch (err: any) {
-      throw new Error(err.message || "Failed to communicate with SMS gateway.");
+      throw new Error(err.message || "Failed to communicate with SMS gateway.", { cause: err });
     }
   });

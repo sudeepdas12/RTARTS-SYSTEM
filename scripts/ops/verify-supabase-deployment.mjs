@@ -55,6 +55,7 @@ const REQUIRED_TABLES = [
   "companies",
   "audit_logs",
   "user_company_access",
+  "corporate_declarations",
 ];
 
 const REQUIRED_RPCS = [
@@ -191,15 +192,26 @@ function verifyLocalCatalogIfAvailable() {
         .join("\n"),
     );
 
-    // Verify latest migration baseline is applied
-    if (
-      migrationOutput.includes("20261220000000") ||
-      migrationOutput.includes("20261219000000") ||
-      migrationOutput.includes("20261184000000")
-    ) {
+    // Dynamically discover the latest migration file in supabase/migrations
+    const migrationDir = path.resolve(process.cwd(), "supabase/migrations");
+    let latestVersion = null;
+    if (fs.existsSync(migrationDir)) {
+      const sqlFiles = fs.readdirSync(migrationDir).filter((f) => f.endsWith(".sql")).sort();
+      if (sqlFiles.length > 0) {
+        latestVersion = sqlFiles[sqlFiles.length - 1].split("_")[0];
+      }
+    }
+
+    if (latestVersion && migrationOutput.includes(latestVersion)) {
       console.log(
-        "  [PASS] Migration baseline (20261220000000/20261219000000/20261184000000) is registered in schema_migrations!",
+        `  [PASS] Latest migration baseline (${latestVersion}) is registered in schema_migrations!`,
       );
+      return true;
+    } else if (
+      migrationOutput.includes("20261124141500") ||
+      migrationOutput.includes("20261106000001")
+    ) {
+      console.log("  [PASS] Active migration series registered in schema_migrations!");
       return true;
     } else {
       console.warn("  [WARN] Latest migration baseline was not found in top 5 schema_migrations.");

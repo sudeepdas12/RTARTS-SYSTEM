@@ -95,7 +95,7 @@ export function generateCompanyCode(name: string, fileType?: string, rate?: numb
       issuer = found.toUpperCase().replace(/[^A-Z0-9]/g, "");
     }
 
-    let rateSuffix = "";
+    let rateSuffix: string;
     if (detectedRate !== undefined && detectedRate !== null && !isNaN(detectedRate)) {
       rateSuffix = `D${detectedRate}`;
     } else {

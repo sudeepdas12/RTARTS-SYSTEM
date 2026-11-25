@@ -103,14 +103,17 @@ export function ShareholderNoticeDialog({
   }, [client]);
 
   // Pre-populate default subject when single client changes
-  useEffect(() => {
+  const clientResetKey = `${client?.id ?? ""}:${singleMissingType}`;
+  const [prevClientResetKey, setPrevClientResetKey] = useState(clientResetKey);
+  if (prevClientResetKey !== clientResetKey) {
+    setPrevClientResetKey(clientResetKey);
     if (client) {
       const compName = client.company_name || "RBB Merchant Banking";
       setSingleSubject(ShareholderNoticeService.generateSubject(compName, singleMissingType));
       setSingleCustomNote("");
       setActiveTab("compose");
     }
-  }, [client, singleMissingType]);
+  }
 
   // Batch candidates estimation query
   const { data: batchCandidates = [], isLoading: isLoadingCandidates } = useQuery({

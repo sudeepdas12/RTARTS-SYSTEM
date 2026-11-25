@@ -70,8 +70,7 @@ import {
   Clock,
 } from "lucide-react";
 import { toast } from "sonner";
-import { PaginatedTable } from "@/components/paginated-table";
-import type { ColumnDef } from "@tanstack/react-table";
+import { PaginatedTable, type PaginatedColumnDef } from "@/components/paginated-table";
 import { exportToExcel, importFromExcel } from "@/lib/xlsx-utils";
 import { DataManagementService } from "@/lib/services/data-management.service";
 
@@ -267,13 +266,19 @@ function CompaniesPage() {
     refetchOnWindowFocus: true,
     queryFn: async () => {
       const statsMap: Record<string, CompanyLiveStats> = {};
+      const { data: mapCountRows } = await (supabase as any).rpc("get_company_client_counts", {
+        p_company_ids: companyIds,
+      });
+      const mapCountByCompany = new Map<string, number>(
+        (Array.isArray(mapCountRows) ? mapCountRows : []).map((row: any) => [
+          String(row.company_id),
+          Number(row.client_count || 0),
+        ]),
+      );
+
       await Promise.all(
         companyIds.map(async (id) => {
-          const [mapRes, cRes, dRes, iRes, mRes] = await Promise.all([
-            (supabase as any)
-              .from("company_client_map")
-              .select("client_id", { count: "exact", head: true })
-              .eq("company_id", id),
+          const [cRes, dRes, iRes, mRes] = await Promise.all([
             (supabase.from("clients") as any)
               .select("id", { count: "exact", head: true })
               .eq("company_id", id),
@@ -288,8 +293,9 @@ function CompaniesPage() {
               .select("id", { count: "exact", head: true })
               .eq("company_id", id),
           ]);
+          const mappedClients = mapCountByCompany.get(id) ?? 0;
           // Prioritize accurate multi-scheme company_client_map count, fallback to primary client ownership count
-          const clients = mapRes.count != null && mapRes.count > 0 ? mapRes.count : cRes.count || 0;
+          const clients = mappedClients > 0 ? mappedClients : cRes.count || 0;
           const dividends = dRes.count || 0;
           const interests = iRes.count || 0;
           const mutualFunds = mRes.count || 0;
@@ -549,7 +555,7 @@ function CompaniesPage() {
     onError: (e: Error) => toast.error(`Delete failed: ${e.message}`),
   });
 
-  const columns: ColumnDef<Company>[] = useMemo(
+  const columns: PaginatedColumnDef<Company>[] = useMemo(
     () => [
       {
         accessorKey: "company_code",

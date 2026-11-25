@@ -720,7 +720,13 @@ export const ValidationEngine = {
           get("gross_interest") ??
           get("amount"),
       );
-      const tax = parseNumber(get("div_tax") ?? get("bon_tax") ?? get("tax_amount") ?? get("tax"));
+      const divTaxPart = parseNumber(get("div_tax") ?? get("tax_amount") ?? get("tax"));
+      const bonTaxPart = parseNumber(get("bon_tax") ?? get("bonus_tax"));
+      const tax =
+        divTaxPart !== null || bonTaxPart !== null
+          ? Math.round(((divTaxPart ?? 0) + (bonTaxPart ?? 0)) * 100) / 100
+          : null;
+      const cashTaxOnly = divTaxPart !== null ? divTaxPart : tax;
       const net = parseNumber(get("net_payable") ?? get("net"));
       const sharesHeld = parseNumber(get("shares_held") ?? get("kitta") ?? get("QUANTITY"));
       const tdsRate = parseNumber(get("tds_rate") ?? get("TDS_RATE"));
@@ -1055,15 +1061,15 @@ export const ValidationEngine = {
           const ruleRate = getTaxRateFromRules(ctx.taxRules, payableCategory, classification);
           if (ruleRate != null) tdsForTaxCheck = ruleRate;
         }
-        if (!isExempt && tax !== null && gross !== null && tdsForTaxCheck !== null) {
+        if (!isExempt && cashTaxOnly !== null && gross !== null && tdsForTaxCheck !== null) {
           const expectedTax = Math.round(gross * tdsForTaxCheck * 100) / 100;
-          if (Math.abs(expectedTax - tax) > 0.5) {
+          if (Math.abs(expectedTax - cashTaxOnly) > 0.5) {
             errors.push({
               row: rowNum,
               field: "tax_amount",
               type: "tax_calc_mismatch",
               severity: "warning",
-              message: `Tax calculation notice: expected ${expectedTax.toFixed(2)} based on ${(tdsForTaxCheck * 100).toFixed(0)}% rate, sheet has ${tax.toFixed(2)}.`,
+              message: `Tax calculation notice: expected ${expectedTax.toFixed(2)} based on ${(tdsForTaxCheck * 100).toFixed(0)}% rate, sheet has ${cashTaxOnly.toFixed(2)}.`,
               rawData,
             });
           }

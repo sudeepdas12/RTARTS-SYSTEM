@@ -29,7 +29,9 @@ export interface SystemSettings {
   connectips_app_name: string;
   connectips_base_url: string;
   connectips_token: string;
+  connectips_token_configured?: boolean;
   connectips_cert_pass: string;
+  connectips_cert_pass_configured?: boolean;
 }
 
 const DEFAULT_SETTINGS: SystemSettings = {
@@ -92,6 +94,12 @@ export const SettingsService = {
       ...rawVal,
       smtp_pass_configured: Boolean(rawVal.smtp_pass_configured || rawVal.smtp_pass),
       sms_api_key_configured: Boolean(rawVal.sms_api_key_configured || rawVal.sms_api_key),
+      connectips_token_configured: Boolean(
+        rawVal.connectips_token_configured || rawVal.connectips_token,
+      ),
+      connectips_cert_pass_configured: Boolean(
+        rawVal.connectips_cert_pass_configured || rawVal.connectips_cert_pass,
+      ),
     };
 
     // TDS rates are authoritative in `payable_tax_rules` (the table the DB
@@ -132,6 +140,8 @@ export const SettingsService = {
     // SECURITY: never expose stored secrets to the browser/client.
     settings.smtp_pass = "";
     settings.sms_api_key = "";
+    settings.connectips_token = "";
+    settings.connectips_cert_pass = "";
 
     cachedSettings = { settings: { ...settings }, at: Date.now() };
     return settings;
@@ -143,7 +153,11 @@ export const SettingsService = {
     // 1) Atomically save settings using safe DB RPC which automatically preserves
     // existing secrets (smtp_pass, connectips_token, connectips_cert_pass, sms_api_key)
     // when empty or placeholder values are passed from the UI.
-    const resolved = { ...settings };
+    const resolved: Record<string, any> = { ...settings };
+    delete resolved.smtp_pass_configured;
+    delete resolved.sms_api_key_configured;
+    delete resolved.connectips_token_configured;
+    delete resolved.connectips_cert_pass_configured;
     const { error: rpcError } = await (supabase as any).rpc("save_system_settings_global", {
       p_settings: resolved,
     });
@@ -246,6 +260,7 @@ export const SettingsService = {
       if (error)
         throw new Error(
           (error as Error).message || serverErr?.message || "Failed to send test email",
+          { cause: serverErr },
         );
       return { success: true, message: `Test email sent successfully to ${to}` };
     }

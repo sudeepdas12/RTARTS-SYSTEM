@@ -384,15 +384,20 @@ function ClientsPage() {
     return "all";
   });
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const p = new URLSearchParams(window.location.search);
-      const paramComp = p.get("companyId") || p.get("companyFilter");
-      if (paramComp && paramComp !== companyFilter) {
-        setCompanyFilter(paramComp);
-      }
+  const urlParamComp =
+    typeof window !== "undefined"
+      ? (() => {
+          const p = new URLSearchParams(window.location.search);
+          return p.get("companyId") || p.get("companyFilter");
+        })()
+      : null;
+  const [prevUrlParamComp, setPrevUrlParamComp] = useState(urlParamComp);
+  if (prevUrlParamComp !== urlParamComp) {
+    setPrevUrlParamComp(urlParamComp);
+    if (urlParamComp && urlParamComp !== companyFilter) {
+      setCompanyFilter(urlParamComp);
     }
-  }, [companyFilter]);
+  }
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [verFilter, setVerFilter] = useState("all");
@@ -521,14 +526,12 @@ function ClientsPage() {
   });
 
   // Self-heal orphaned companyFilter
-  useEffect(() => {
-    if (companyFilter !== "all" && companies.length > 0) {
-      const exists = companies.some((c) => c.id === companyFilter);
-      if (!exists) {
-        setCompanyFilter("all");
-      }
+  if (companyFilter !== "all" && companies.length > 0) {
+    const exists = companies.some((c) => c.id === companyFilter);
+    if (!exists) {
+      setCompanyFilter("all");
     }
-  }, [companies, companyFilter]);
+  }
 
   // Realtime subscription for clients & uploads
   useEffect(() => {

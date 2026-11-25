@@ -29,6 +29,17 @@ import {
 import { ParsedExcelData } from "@/lib/excel-parser";
 import { TaxRule } from "@/lib/services/tax-rules.service";
 import { detectPayeeCategory, getPayeeTaxRate } from "@/lib/services/payable-summary";
+import {
+  evaluateWorkbookTriage,
+  resolveMappedSheetColumns,
+  type PreImportTriageFinding,
+} from "@/lib/pre-import-triage";
+import {
+  redactSensitiveText,
+  triageWorkbookMappings,
+  type MappingRepairSuggestion,
+} from "@/lib/services/hitl-triage-agent.service";
+import { runHitlAiAdvisory, type HitlAdvisoryResponse } from "@/lib/hitl-triage.functions";
 import { ImportService } from "@/lib/services/import.service";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -49,6 +60,7 @@ export interface PreImportReviewDialogProps {
   operatorName: string;
   operatorRole: string;
   taxRules: TaxRule[];
+  onApplySuggestedMappings?: (suggestions: MappingRepairSuggestion[]) => void;
   onConfirmPost: (makerNotes?: string) => Promise<void> | void;
   isPosting: boolean;
 }
@@ -81,6 +93,7 @@ export function PreImportReviewDialog({
   operatorName,
   operatorRole,
   taxRules,
+  onApplySuggestedMappings,
   onConfirmPost,
   isPosting,
 }: PreImportReviewDialogProps) {
@@ -89,6 +102,8 @@ export function PreImportReviewDialog({
   const [checkerAcknowledged, setCheckerAcknowledged] = useState(false);
   const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
   const [serverDryRunMetrics, setServerDryRunMetrics] = useState<any | null>(null);
+  const [advisory, setAdvisory] = useState<HitlAdvisoryResponse | null>(null);
+  const [isRunningAdvisory, setIsRunningAdvisory] = useState(false);
 
   const isMultiSheet = selectedSheetIndex === -1;
   const targetSheets = useMemo(() => {
@@ -141,6 +156,7 @@ export function PreImportReviewDialog({
         computedTax: 0,
         computedNet: 0,
         taxExceptions: [] as Array<{ rowIdx: number; name: string; reason: string }>,
+        triageFindings: [] as PreImportTriageFinding[],
       };
     }
 
@@ -158,13 +174,8 @@ export function PreImportReviewDialog({
     targetSheets.forEach((sheet) => {
       totalRows += sheet.rows.length;
 
-      const grossCol = sheet.headers.find((h) =>
-        /gross|amount|payable_amount|alloted_quantity/i.test(h),
-      );
-      const taxCol = sheet.headers.find((h) => /tax|bon_tax|div_tax/i.test(h));
-      const netCol = sheet.headers.find((h) => /net|net_payable|roundup/i.test(h));
-      const nameCol = sheet.headers.find((h) => /name|shareholder|client/i.test(h));
-      const kittaCol = sheet.headers.find((h) => /kitta|shares|holding|units|qty/i.test(h));
+      const { grossCol, cashTaxCol, bonusTaxCol, netCol, nameCol, kittaCol } =
+        resolveMappedSheetColumns(sheet);
 
       sheet.rows.forEach((r, idx) => {
         if (!r || Object.keys(r).length === 0) {
@@ -174,7 +185,9 @@ export function PreImportReviewDialog({
         validRows++;
 
         const g = Number(grossCol ? r[grossCol] : 0) || 0;
-        const t = Number(taxCol ? r[taxCol] : 0) || 0;
+        const cashT = Number(cashTaxCol ? r[cashTaxCol] : 0) || 0;
+        const bonT = Number(bonusTaxCol ? r[bonusTaxCol] : 0) || 0;
+        const t = cashT + bonT;
         const n = Number(netCol ? r[netCol] : 0) || 0;
         const shares = Number(kittaCol ? r[kittaCol] : 0) || 0;
 
@@ -194,29 +207,32 @@ export function PreImportReviewDialog({
           rowEngineGross = n + t;
         }
 
-        const rowEngineTax = Math.round(rowEngineGross * engineTaxRate * 100) / 100;
+        const rowEngineCashTax = Math.round(rowEngineGross * engineTaxRate * 100) / 100;
+        const rowEngineTax = Math.round((rowEngineCashTax + bonT) * 100) / 100;
         const rowEngineNet = Math.round((rowEngineGross - rowEngineTax) * 100) / 100;
 
         computedGross += rowEngineGross;
         computedTax += rowEngineTax;
         computedNet += rowEngineNet;
 
-        // Source vs Calculation invariant check
+        // Source vs Calculation invariant check (includes both Cash Tax and Bonus Tax)
         if (g > 0 && Math.abs(g - t - n) > 0.05 && n > 0) {
           taxExceptions.push({
             rowIdx: idx + 1,
             name: String(nameCol ? r[nameCol] : `Row ${idx + 1}`),
             reason: `Excel Invariant Mismatch: Net (${n.toFixed(2)}) ≠ Gross (${g.toFixed(2)}) - Tax (${t.toFixed(2)})`,
           });
-        } else if (sheet.isPreCalculated && t > 0 && Math.abs(t - rowEngineTax) > 0.5) {
+        } else if (sheet.isPreCalculated && cashT > 0 && Math.abs(cashT - rowEngineCashTax) > 0.5) {
           taxExceptions.push({
             rowIdx: idx + 1,
             name: String(nameCol ? r[nameCol] : `Row ${idx + 1}`),
-            reason: `Tax Rate Divergence: Excel Tax (${t.toFixed(2)}) vs Statutory Rate Engine (${rowEngineTax.toFixed(2)}) [${category}]`,
+            reason: `Tax Rate Divergence: Excel Tax (${cashT.toFixed(2)}) vs Statutory Rate Engine (${rowEngineCashTax.toFixed(2)}) [${category}]`,
           });
         }
       });
     });
+
+    const triage = evaluateWorkbookTriage(parsedData);
 
     return {
       totalRows,
@@ -230,11 +246,58 @@ export function PreImportReviewDialog({
       computedTax,
       computedNet,
       taxExceptions,
+      triageFindings: triage.findings,
       isServerDerived: Boolean(serverDryRunMetrics),
     };
-  }, [targetSheets, isDebenture, isMutualFund, rateNumber, taxRules, serverDryRunMetrics]);
+  }, [
+    parsedData,
+    targetSheets,
+    isDebenture,
+    isMutualFund,
+    rateNumber,
+    taxRules,
+    serverDryRunMetrics,
+  ]);
 
   const isMaterial = metrics.sourceNet >= MATERIAL_THRESHOLD_NPR;
+  const mappingTriage = useMemo(
+    () => triageWorkbookMappings(parsedData, selectedSheetIndex),
+    [parsedData, selectedSheetIndex],
+  );
+
+  const handleRunMappingAdvisory = async () => {
+    setIsRunningAdvisory(true);
+    try {
+      const items = mappingTriage.suggestions.map((s) => ({
+        id: `${s.sheetName}:${s.excelHeader}`,
+        label: `${s.sheetName} -> ${s.excelHeader}`,
+        suggestedDecision: String(s.suggestedField),
+        summary: redactSensitiveText(s.rationale).slice(0, 320),
+      }));
+      const res = await runHitlAiAdvisory({
+        data: {
+          workflow: "mapping_review",
+          contextTitle: `Workbook Mapping Review (${mappingTriage.sheetCount} sheets, ${mappingTriage.coverageScorePct}% coverage)`,
+          items:
+            items.length > 0
+              ? items
+              : [
+                  {
+                    id: "summary",
+                    label: companyCode || "WORKBOOK",
+                    suggestedDecision: `${mappingTriage.coverageScorePct}% mapped`,
+                    summary: redactSensitiveText(mappingTriage.summaryNote).slice(0, 320),
+                  },
+                ],
+        },
+      });
+      setAdvisory(res);
+    } catch {
+      toast.info("Deterministic mapping verification remains active.");
+    } finally {
+      setIsRunningAdvisory(false);
+    }
+  };
   const isCheckerOrAdmin =
     operatorRole === "admin" ||
     operatorRole === "supervisor" ||
@@ -559,6 +622,88 @@ export function PreImportReviewDialog({
               )}
             </CardContent>
           </Card>
+
+          {/* Pre-Import Structural Triage Advisories */}
+          {metrics.triageFindings.length > 0 && (
+            <div className="bg-blue-500/10 border border-blue-500/30 p-3 rounded-lg text-xs space-y-1.5">
+              <div className="font-semibold text-blue-800 dark:text-blue-300 flex items-center gap-1.5">
+                <Info className="h-4 w-4" />
+                Pre-Import Workbook Triage ({metrics.triageFindings.length} advisory)
+              </div>
+              <div className="space-y-1">
+                {metrics.triageFindings.slice(0, 4).map((f, idx) => (
+                  <div key={idx} className="text-muted-foreground flex items-start gap-2">
+                    <Badge variant="outline" className="text-[10px] shrink-0 uppercase">
+                      {f.severity}
+                    </Badge>
+                    <span>{f.message}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* HITL Mapping & Schema Copilot */}
+          <div className="bg-indigo-500/10 border border-indigo-500/30 p-3 rounded-lg text-xs space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="font-semibold text-indigo-800 dark:text-indigo-300 flex items-center gap-1.5">
+                <Scale className="h-4 w-4" />
+                <span>
+                  HITL Mapping Copilot ({mappingTriage.coverageScorePct}% core field coverage)
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-[11px] border-indigo-400/50"
+                  disabled={isRunningAdvisory}
+                  onClick={handleRunMappingAdvisory}
+                >
+                  {isRunningAdvisory ? "Reviewing..." : "Run AI Advisory"}
+                </Button>
+                {onApplySuggestedMappings && mappingTriage.suggestions.length > 0 && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    className="h-7 text-[11px]"
+                    onClick={() => onApplySuggestedMappings(mappingTriage.suggestions)}
+                  >
+                    Apply {mappingTriage.suggestions.length} Header Suggestion(s)
+                  </Button>
+                )}
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground">{mappingTriage.summaryNote}</p>
+            {advisory && (
+              <div className="bg-background/75 rounded border p-2 text-[11px] space-y-1">
+                <div className="font-medium text-indigo-700 dark:text-indigo-300">
+                  {advisory.providerLabel}
+                </div>
+                <p className="text-muted-foreground">{advisory.advisorSummary}</p>
+              </div>
+            )}
+            {mappingTriage.suggestions.length > 0 && (
+              <div className="space-y-1 max-h-24 overflow-y-auto">
+                {mappingTriage.suggestions.slice(0, 5).map((s, idx) => (
+                  <div
+                    key={`${s.sheetName}-${s.excelHeader}-${idx}`}
+                    className="flex items-center justify-between bg-background/60 px-2 py-1 rounded border text-[11px]"
+                  >
+                    <span>
+                      <strong className="font-mono">{s.excelHeader}</strong> ({s.sheetName})
+                    </span>
+                    <span className="flex items-center gap-1 text-indigo-700 dark:text-indigo-300 font-mono">
+                      <ArrowRight className="h-3 w-3" />
+                      {s.suggestedField} ({Math.round(s.confidence * 100)}%)
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Exceptions Box */}
           {metrics.taxExceptions.length > 0 ? (

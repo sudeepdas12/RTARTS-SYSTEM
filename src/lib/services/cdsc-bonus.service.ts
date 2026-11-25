@@ -243,7 +243,7 @@ export const CdscBonusService = {
         Math.round((grossCashDividend * bonusTaxRate + Number.EPSILON) * 100) / 100;
 
       let taxPayableByInvestor = 0;
-      let netCashPayableCombined = fractionalNetPayable;
+      let netCashPayableCombined: number;
 
       if (taxMode === "INVESTOR_PAID") {
         taxPayableByInvestor = bonusShareTaxPayable;
@@ -471,6 +471,39 @@ export const CdscBonusService = {
     });
 
     return [headerLine, ...detailLines].join("\r\n") + "\r\n";
+  },
+
+  /**
+   * Generates CDSC RT tilde-delimited bonus credit batch format (`00~`, `01~`, `02~`).
+   * Used by CDSC RTA/RT bulk bonus upload portals alongside the fixed-width `.cas` file.
+   */
+  generateCdscRtTildeFile(summary: BonusAllocationSummary): string {
+    const validRows = summary.rows.filter((r) => r.creditedBonusKitta > 0 && r.boid.length === 16);
+    const header = [
+      "00",
+      summary.isin || summary.companyCode,
+      summary.companyCode,
+      String(validRows.length),
+      summary.totalFreeBonusKitta.toFixed(3),
+      summary.totalLockedBonusKitta.toFixed(3),
+      `BONUS_${summary.fiscalYear}`,
+    ].join("~");
+
+    const lines = validRows.map((r) => {
+      if (r.lockInCode === "00") {
+        return ["01", r.boid, r.creditedBonusKitta.toFixed(3), String(r.bonusRatio)].join("~");
+      }
+      return [
+        "02",
+        r.boid,
+        r.creditedBonusKitta.toFixed(3),
+        r.lockInCode.padStart(2, "0"),
+        r.lockInExpiryDate || "00000000",
+        (r.lockInReason || "LOCKED").replace(/~/g, " ").trim(),
+      ].join("~");
+    });
+
+    return [header, ...lines].join("\r\n") + "\r\n";
   },
 
   /**

@@ -151,7 +151,7 @@ const CORPORATE_SUFFIX_REGEX =
 // The absence of father/grandfather name is the PRIMARY signal for REVIEW_REQUIRED; keyword matching
 // is only a secondary shortcut for definitively non-human regulated entities.
 const INSTITUTIONAL_BUSINESS_REGEX =
-  /\b(BANK|BIKAS\s*BANK|DEVELOPMENT\s*BANK|FINANCE|MICROFINANCE|MICRO\s*INSURANCE|MICRO|LAGHUBITTA|BITTIYA|BITTIYA\s*SANSTHA|BIMA|BEEMA|INSURANCE|REINSURANCE|RE\s*INSURANCE|RE-INSURANCE|NIRJIBAN\s*BIMA|JIBAN\s*BIMA|HYDROPOWER|HYDRO\s*POWER|HYDRO|JALABIDHYUT|DOORSANCHAR|TELECOM|CLEARING\s*HOUSE|STOCK\s*EXCHANGE|STOCK\s*DEALER|STOCK\s*BROKER|STOCK\s*MARKET|CDS\s*(AND|&)?\s*CLEARING|PHARMA|PHARMACEUTICALS|HOSPITAL|COLLEGE|UNIVERSITY|ACADEMY|COOPERATIVE|CO-OPERATIVE|SAHAKARI|ENTERPRISES|TRADING|TRADERS|SUPPLIERS|DISTRIBUTORS|INDUSTRIES|VENTURES|SECURITIES|BROKER|MERCHANT(\s*BANKING)?|CAPITAL|INVESTMENT|HOLDINGS|ASSET\s*MANAGEMENT|DEVELOPERS?|INFRA(?:STRUCTURE)?|KHARID\s*BIKRI|BIKRI\s*KENDRA|SANIMA\s*RELIANCE|RELIANCE|PATHIVARA\s*MATA|MATA\s*PATHIVARA|MANDIR|SEWA\s*SAMITI|DHARMA\s*TRUST|\bTRUST\b|GOVERNMENT|SARKAR|MINISTRY|DEPARTMENT|PRADHIKARAN|SANSTHAN|NIGAM|MUNICIPALITY|NAGARPALIKA|GAUNPALIKA|EMBASSY|GUTHI|ARMY\s*WELFARE|NEPALESE\s*ARMY\s*WELFARE|SAINIK\s*KALYAN|POLICE\s*WELFARE|PRAHARI\s*KALYAN|WELFARE\s*FUND|KALYAN\s*KOSH|SOLUTIONS|SERVICES|CONSULTANCY|ASSOCIATES|INTERNATIONAL|NETWORK|GROUP|MANAGEMENT|SANSTHA|FOUNDATION|SOCIETY|COMMUNITY|RESORT|HOTEL|CLINIC|TRAVELS|TOURS|LOGISTICS)\b/i;
+  /\b(BANK|BIKAS\s*BANK|DEVELOPMENT\s*BANK|FINANCE|MICROFINANCE|MICRO\s*INSURANCE|MICRO|LAGHUBITTA|BITTIYA|BITTIYA\s*SANSTHA|BIMA|BEEMA|INSURANCE|REINSURANCE|RE\s*INSURANCE|RE-INSURANCE|NIRJIBAN\s*BIMA|JIBAN\s*BIMA|HYDROPOWER|HYDRO\s*POWER|HYDRO|JALABIDHYUT|DOORSANCHAR|TELECOM|CLEARING\s*HOUSE|STOCK\s*EXCHANGE|STOCK\s*DEALER|STOCK\s*BROKER|STOCK\s*MARKET|CDS\s*(AND|&)?\s*CLEARING|PHARMA|PHARMACEUTICALS|HOSPITAL|COLLEGE|UNIVERSITY|ACADEMY|COOPERATIVE|CO-OPERATIVE|SAHAKARI|ENTERPRISES?|TRADING|TRADERS?|SUPPLIERS?|DISTRIBUTORS?|INDUSTRIES|VENTURES|SECURITIES|BROKER|MERCHANT(\s*BANKING)?|CAPITAL|INVESTMENT|HOLDINGS|ASSET\s*MANAGEMENT|DEVELOPERS?|INFRA(?:STRUCTURE)?|KHARID\s*BIKRI|BIKRI\s*KENDRA|SANIMA\s*RELIANCE|RELIANCE|PATHIVARA\s*MATA|MATA\s*PATHIVARA|MANDIR|SEWA\s*SAMITI|DHARMA\s*TRUST|\bTRUST\b|GOVERNMENT|SARKAR|MINISTRY|DEPARTMENT|PRADHIKARAN|SANSTHAN|NIGAM|MUNICIPALITY|NAGARPALIKA|GAUNPALIKA|EMBASSY|GUTHI|ARMY\s*WELFARE|NEPALESE\s*ARMY\s*WELFARE|SAINIK\s*KALYAN|POLICE\s*WELFARE|PRAHARI\s*KALYAN|WELFARE\s*FUND|KALYAN\s*KOSH|SOLUTIONS|SERVICES|CONSULTANCY|ASSOCIATES|INTERNATIONAL|NETWORK|GROUP|MANAGEMENT|SANSTHA|FOUNDATION|SOCIETY|COMMUNITY|RESORT|HOTEL|CLINIC|TRAVELS|TOURS|LOGISTICS)\b/i;
 
 // 5. Distinct Human Honorifics & Personal Titles (Prefixes)
 const HUMAN_TITLES_REGEX =
@@ -270,7 +270,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
         payee_category: isPromoterSegment ? "PROMOTER" : "INSTITUTION",
         payee_segment: isPromoterSegment ? "PROMOTER" : null,
         holder_type: isPromoterSegment ? "Legal Person - Promoter" : "Legal Person",
-        tds_rate_dividend: 0.05,
+        tds_rate_dividend: 0.15,
         tds_rate_debenture: 0.15,
         rule_matched: "Explicit Payee Classification (Legal Person)",
       };
@@ -307,7 +307,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
         payee_category: "FOREIGN",
         payee_segment: null,
         holder_type: "Foreign",
-        tds_rate_dividend: 0.05,
+        tds_rate_dividend: 0.15,
         tds_rate_debenture: 0.15,
         rule_matched: "Explicit Payee Classification (Foreign)",
       };
@@ -347,8 +347,11 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
   }
 
   // =========================================================================
-  // TIER 0.25: Decisive explicit metadata (uploaded investor type) outranks name guessing
+  // TIER 0.25: Decisive explicit metadata (uploaded investor type / sheet tag) outranks name guessing
   // =========================================================================
+  const hasExplicitTaxExemptSheetOrType =
+    /TAX.?EXEMPT|EXEMPT/i.test(explicitType) || /TAX.?EXEMPT/i.test(lotName);
+
   if (explicitType && !(dbClassification && dbClassification !== "UNCLASSIFIED")) {
     if (
       /BANK_FI|\bBANK\b|\bBIKAS\s*BANK\b|FINANCIAL_INVESTOR|FINANCIAL_INSTITUTION|\bBFI\b/i.test(
@@ -371,7 +374,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
         payee_category: "FOREIGN",
         payee_segment: null,
         holder_type: "Foreign",
-        tds_rate_dividend: 0.05,
+        tds_rate_dividend: 0.15,
         tds_rate_debenture: 0.15,
         // Foreign individuals (with family lineage) vs foreign entities carry different TDS: confirm.
         classification_status:
@@ -390,6 +393,23 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
         rule_matched: "Explicit Metadata (Mutual Fund)",
       };
     }
+  }
+
+  if (
+    hasExplicitTaxExemptSheetOrType &&
+    !(dbClassification && dbClassification !== "UNCLASSIFIED")
+  ) {
+    const isMF = /MUTUAL/i.test(explicitType) || MUTUAL_FUND_SCHEMES_REGEX.test(nameUpper);
+    return {
+      payee_classification: "TAX_EXEMPT",
+      payee_category: isMF ? "MUTUAL_FUND" : "TAX_EXEMPT",
+      payee_segment: null,
+      holder_type: isMF ? "Mutual Fund" : "Tax Exempt",
+      tds_rate_dividend: 0.0,
+      tds_rate_debenture: 0.0,
+      classification_status: "AUTO_CLASSIFIED",
+      rule_matched: "Explicit Sheet / Metadata (Tax Exempted)",
+    };
   }
 
   // =========================================================================
@@ -468,7 +488,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
       payee_category: isPromoterSegment ? "PROMOTER" : "INSTITUTION",
       payee_segment: segment,
       holder_type: isPromoterSegment ? "Legal Person - Promoter" : "Legal Person",
-      tds_rate_dividend: 0.05,
+      tds_rate_dividend: 0.15,
       tds_rate_debenture: 0.15,
       rule_matched: "Legal Person (Corporate Registration Suffix / Partnership)",
     };
@@ -552,7 +572,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
       payee_category: isPromoterSegment ? "PROMOTER" : "INSTITUTION",
       payee_segment: segment,
       holder_type: isPromoterSegment ? "Legal Person - Promoter" : "Legal Person",
-      tds_rate_dividend: 0.05,
+      tds_rate_dividend: 0.15,
       tds_rate_debenture: 0.15,
       // Strong regulated-sector keyword → operator does not need to confirm (AUTO_CLASSIFIED).
       // Weak keyword (TRADING, CAPITAL, GROUP, etc.) → the absence of father/grandfather means
@@ -648,7 +668,8 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
   // =========================================================================
   // TIER 6: Explicit Upload / Form Metadata
   // =========================================================================
-  if (explicitType) {
+  const effectiveMeta = explicitType || lotName;
+  if (effectiveMeta) {
     if (
       /BANK_FI|\bBANK\b|\bBIKAS\s*BANK\b|FINANCIAL_INVESTOR|FINANCIAL_INSTITUTION|\bBFI\b/i.test(
         explicitType,
@@ -664,7 +685,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
         rule_matched: "Explicit Metadata (Bank / FI)",
       };
     }
-    if (/MUTUAL|MF\b/i.test(explicitType)) {
+    if (/MUTUAL|MF\b/i.test(effectiveMeta)) {
       return {
         payee_classification: "TAX_EXEMPT",
         payee_category: "MUTUAL_FUND",
@@ -675,7 +696,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
         rule_matched: "Explicit Metadata (Mutual Fund)",
       };
     }
-    if (/TAX.?EXEMPT|EXEMPT/i.test(explicitType)) {
+    if (/TAX.?EXEMPT|EXEMPT/i.test(effectiveMeta)) {
       return {
         payee_classification: "TAX_EXEMPT",
         payee_category: "TAX_EXEMPT",
@@ -686,18 +707,18 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
         rule_matched: "Explicit Metadata (Tax Exempt)",
       };
     }
-    if (/FOREIGN|NRN/i.test(explicitType)) {
+    if (/FOREIGN|NRN/i.test(effectiveMeta)) {
       return {
         payee_classification: "COMPANY_INSTITUTION",
         payee_category: "FOREIGN",
         payee_segment: null,
         holder_type: "Foreign",
-        tds_rate_dividend: 0.05,
+        tds_rate_dividend: 0.15,
         tds_rate_debenture: 0.15,
         rule_matched: "Explicit Metadata (Foreign / NRN)",
       };
     }
-    if (/PROMOT/i.test(explicitType)) {
+    if (explicitType && /PROMOT/i.test(explicitType)) {
       return {
         payee_classification: "NATURAL_PERSON",
         payee_category: "PROMOTER",
@@ -708,7 +729,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
         rule_matched: "Explicit Metadata (Promoter)",
       };
     }
-    if (/LOCAL/i.test(explicitType)) {
+    if (explicitType && /LOCAL/i.test(explicitType)) {
       return {
         payee_classification: "NATURAL_PERSON",
         payee_category: "LOCAL",
@@ -719,7 +740,7 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
         rule_matched: "Explicit Metadata (Local)",
       };
     }
-    if (/STAFF|EMPLOYEE/i.test(explicitType)) {
+    if (explicitType && /STAFF|EMPLOYEE/i.test(explicitType)) {
       return {
         payee_classification: "NATURAL_PERSON",
         payee_category: "EMPLOYEE",
@@ -730,18 +751,18 @@ export function smartClassify(input: ClassificationInput): ClassificationResult 
         rule_matched: "Explicit Metadata (Employee Quota)",
       };
     }
-    if (/LEGAL|INSTIT|COMPANY|CORPORAT|PRIVATE/i.test(explicitType)) {
+    if (/LEGAL|INSTIT|COMPANY|CORPORAT|PRIVATE/i.test(effectiveMeta)) {
       return {
         payee_classification: "COMPANY_INSTITUTION",
         payee_category: isPromoterSegment ? "PROMOTER" : "INSTITUTION",
         payee_segment: isPromoterSegment ? "PROMOTER" : null,
         holder_type: isPromoterSegment ? "Legal Person - Promoter" : "Legal Person",
-        tds_rate_dividend: 0.05,
+        tds_rate_dividend: 0.15,
         tds_rate_debenture: 0.15,
         rule_matched: "Explicit Metadata (Institution / Corporate)",
       };
     }
-    if (/PUBLIC|INDIVIDUAL|GENERAL/i.test(explicitType)) {
+    if (explicitType && /PUBLIC|INDIVIDUAL|GENERAL/i.test(explicitType)) {
       const hasHumanEvidence =
         Boolean(father || gfather || mother || spouse || guardian) ||
         Boolean(

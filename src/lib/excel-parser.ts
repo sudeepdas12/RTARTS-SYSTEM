@@ -432,6 +432,9 @@ const COLUMN_ALIASES: Record<keyof ColumnMapping, string[]> = {
     "AFTER BONUS",
   ],
   cash_dividend: [
+    "INT_AMT",
+    "INT. AMT",
+    "INT AMT",
     "INTEREST",
     "INTEREST @ 8.50%",
     "INT. @ 8.50%",
@@ -499,6 +502,8 @@ const COLUMN_ALIASES: Record<keyof ColumnMapping, string[]> = {
     "TAX DEDUCTED",
   ],
   net_payable: [
+    "NET_INT",
+    "NET INT.",
     "NET_DIV.",
     "NET_DIV",
     "NET INTEREST PAYABLE",
@@ -790,7 +795,7 @@ export const ExcelParser = {
       return null;
     }
 
-    let defaultTdsRate = 0.05;
+    let defaultTdsRate: number;
     if (fileType === "debenture") {
       if (sheetType === "INSTITUTION" || sheetType === "PRIVATE") defaultTdsRate = 0.15;
       else if (sheetType === "TAX_EXEMPTED") defaultTdsRate = 0;
@@ -837,32 +842,47 @@ export const ExcelParser = {
     let headerRowIndex = 0;
     let headers: string[] = [];
 
-    for (let i = 0; i < Math.min(25, json.length); i++) {
-      const row = json[i] as any[];
-      if (!row || row.length < 2) continue;
-
-      const stringCells = row
-        .filter((c) => typeof c === "string" && c.trim().length > 0)
+    const scoreHeaderRow = (rowArr: any[]): { score: number; nonEmptyCount: number } => {
+      if (!rowArr || rowArr.length < 2) return { score: 0, nonEmptyCount: 0 };
+      const textTokens = rowArr
+        .filter(
+          (c) =>
+            (typeof c === "string" && c.trim().length > 0) ||
+            (typeof c === "number" && c >= 2000 && c <= 2100),
+        )
         .map((c) => c.toString().trim().toLowerCase());
-
-      if (stringCells.length < 2) continue;
+      if (textTokens.length < 2) return { score: 0, nonEmptyCount: textTokens.length };
 
       let score = 0;
-      for (const cell of stringCells) {
+      for (const cell of textTokens) {
         const cleanCell = cell.replace(/[^a-z0-9]/g, "");
-        if (domainKeywords.some((kw) => cleanCell.includes(kw.replace(/[^a-z0-9]/g, "")))) {
+        if (
+          domainKeywords.some((kw) => cleanCell.includes(kw.replace(/[^a-z0-9]/g, ""))) ||
+          /^(20[6789]\d|fy)/.test(cleanCell)
+        ) {
           score++;
         }
       }
+      return { score, nonEmptyCount: textTokens.length };
+    };
+
+    for (let i = 0; i < Math.min(25, json.length); i++) {
+      const row = json[i] as any[];
+      const { score, nonEmptyCount } = scoreHeaderRow(row);
+      if (nonEmptyCount < 2) continue;
 
       if (score > bestHeaderScore && score >= 2) {
         bestHeaderScore = score;
         headerRowIndex = i;
         headers = row.map((h) => (h !== undefined && h !== null ? h.toString().trim() : ""));
         if (score >= 4) {
-          break;
+          // Only stop early if the immediately following row doesn't score strictly higher (multi-row headers)
+          const nextRowScore = i + 1 < json.length ? scoreHeaderRow(json[i + 1] as any[]).score : 0;
+          if (nextRowScore <= score) {
+            break;
+          }
         }
-      } else if (bestHeaderScore < 0 && stringCells.length >= 2) {
+      } else if (bestHeaderScore < 0 && nonEmptyCount >= 2) {
         bestHeaderScore = 0;
         headerRowIndex = i;
         headers = row.map((h) => (h !== undefined && h !== null ? h.toString().trim() : ""));
@@ -887,24 +907,84 @@ export const ExcelParser = {
         "FOLIO",
         "CLIENT CODE",
       ],
-      net_payable: [
-        "NET_DIV.",
-        "NET PAYABLE",
-        "NET DIVIDEND",
-        "NET INTEREST PAYABLE",
-        "NET",
-        "ROUND UP DIV",
-        "ROUNDUP",
+      full_name: [
+        "SHAREHOLDER NAME",
+        "SHARE HOLDER NAME",
+        "UNIT HOLDER NAME",
+        "UNITHOLDER NAME",
+        "DEBENTURE HOLDER",
+        "INVESTOR NAME",
+        "APPLICANT NAME",
+        "APPLICANT_NAME",
+        "HOLDER NAME",
+        "FULL NAME",
+        "FULL_NAME",
+        "BENEFICIARY NAME",
+        "CLIENT NAME",
+        "NAME",
       ],
-      cash_dividend: [
-        "DIVIDEND",
-        "DIVIDEND AMOUNT",
-        "GROSS DIVIDEND",
-        "GROSS PAYABLE",
-        "AMOUNT",
-        "TOTAL AMOUNT",
+      net_payable:
+        fileType === "debenture"
+          ? [
+              "NET_INT",
+              "NET INT.",
+              "NET INT",
+              "NET INTEREST PAYABLE",
+              "NET INTEREST",
+              "NET PAYABLE",
+              "NET AMOUNT",
+              "NET",
+            ]
+          : [
+              "NET_DIV.",
+              "NET_INT",
+              "NET PAYABLE",
+              "NET DIVIDEND",
+              "NET INTEREST PAYABLE",
+              "NET",
+              "ROUND UP DIV",
+              "ROUNDUP",
+            ],
+      cash_dividend:
+        fileType === "debenture"
+          ? [
+              "INT_AMT",
+              "INT. AMT",
+              "INT AMT",
+              "INTEREST AMOUNT",
+              "INT AMOUNT",
+              "COUPON AMOUNT",
+              "GROSS INTEREST",
+              "INTEREST",
+              "INTEREST @ 8.50%",
+              "INT. @ 8.50%",
+              "INTEREST @ 8.5%",
+              "INT. @ 8.5%",
+              "INTEREST @ 7%",
+              "INT. @ 7%",
+              "AMOUNT",
+              "TOTAL AMOUNT",
+            ]
+          : [
+              "DIVIDEND",
+              "DIVIDEND AMOUNT",
+              "GROSS DIVIDEND",
+              "GROSS PAYABLE",
+              "INT_AMT",
+              "INTEREST AMOUNT",
+              "AMOUNT",
+              "TOTAL AMOUNT",
+            ],
+      div_tax: [
+        "DIV_TAX",
+        "TAX @6%",
+        "TAX @ 6%",
+        "TAX @15%",
+        "TAX @ 15%",
+        "TAX",
+        "TAX AMOUNT",
+        "WHT",
       ],
-      div_tax: ["DIV_TAX", "TAX @6%", "TAX", "TAX AMOUNT", "WHT"],
       bon_tax: ["BON_TAX", "BONUS TAX"],
       shares_held: [
         "TOTAL KITTA",
@@ -920,7 +1000,17 @@ export const ExcelParser = {
 
     for (const [dbField, priorityList] of Object.entries(fieldPriority)) {
       for (const prioName of priorityList) {
-        const found = headers.find((h) => h && h.toUpperCase().trim() === prioName);
+        const found = headers.find((h) => {
+          if (!h) return false;
+          const up = h.toUpperCase().trim();
+          if (
+            dbField === "full_name" &&
+            /\b(FATHER|GRAND|NOMINEE|GUARDIAN|MOTHER|SPOUSE|BANK|BRANCH)\b/i.test(up)
+          ) {
+            return false;
+          }
+          return up === prioName;
+        });
         if (found && !mapping[found]) {
           mapping[found] = dbField as keyof ColumnMapping;
           break;
@@ -978,6 +1068,7 @@ export const ExcelParser = {
     headers.forEach((header) => {
       if (!header) return;
       const upperHeader = header.toUpperCase().trim();
+      if (/\b(TAX|TDS|WHT)\b/.test(upperHeader)) return;
       if (
         upperHeader.includes("DIVIDEND") ||
         upperHeader.includes("DIV") ||
@@ -1311,6 +1402,66 @@ export const ExcelParser = {
   },
 
   parseWorkbook(workbook: XLSX.WorkBook, fileName: string): ParsedExcelData {
+    // Reject Bank Statements / Electronic Account Statements before sheet classification so they
+    // are never imported into dividend_payables / interest_payables / mutual_fund_payables.
+    for (const sheetName of workbook.SheetNames.slice(0, 3)) {
+      const ws = workbook.Sheets[sheetName];
+      if (!ws) continue;
+      const previewGrid = XLSX.utils.sheet_to_json<any[]>(ws, {
+        header: 1,
+        range: { s: { r: 0, c: 0 }, e: { r: 25, c: 25 } },
+        blankrows: false,
+      });
+      const flatText = previewGrid
+        .flat()
+        .filter((c) => c !== null && c !== undefined)
+        .map((c) => String(c).toUpperCase().trim())
+        .join(" ");
+
+      const hasShareholderRegistryCols = previewGrid.some((r) => {
+        if (!Array.isArray(r)) return false;
+        const cells = r.map((c) =>
+          String(c ?? "")
+            .toUpperCase()
+            .trim(),
+        );
+        return cells.some(
+          (c) =>
+            c === "BOID" ||
+            c === "BOID NO" ||
+            c === "KITTA" ||
+            c === "TOTAL KITTA" ||
+            c === "TOTA KITTA" ||
+            c.includes("SHAREHOLDER") ||
+            c.includes("UNIT HOLDER") ||
+            c.includes("GROSS DIVIDEND") ||
+            c.includes("GROSS INTEREST"),
+        );
+      });
+
+      const hasStatementBanner =
+        flatText.includes("ELECTRONIC ACCOUNT STATEMENT") ||
+        (flatText.includes("ACCOUNT STATEMENT") && flatText.includes("BALANCE"));
+      const hasBankStatementLedgerRow = previewGrid.some((r) => {
+        if (!Array.isArray(r)) return false;
+        const clean = r.map((c) =>
+          String(c ?? "")
+            .toUpperCase()
+            .replace(/[^A-Z]/g, ""),
+        );
+        const hasDebit = clean.some((c) => c === "DEBIT" || c === "DR" || c.includes("WITHDRAW"));
+        const hasCredit = clean.some((c) => c === "CREDIT" || c === "CR" || c.includes("DEPOSIT"));
+        const hasBal = clean.some((c) => c === "BALANCE" || c.includes("RUNNINGBALANCE"));
+        return hasDebit && hasCredit && hasBal;
+      });
+
+      if (!hasShareholderRegistryCols && (hasStatementBanner || hasBankStatementLedgerRow)) {
+        throw new Error(
+          `Bank Statement detected in "${fileName}". Please upload Electronic Account Statements under Bank Reconciliation rather than Payable Import.`,
+        );
+      }
+    }
+
     let fileType: DetectedFileType = "unknown";
     const fileNameLower = fileName.toLowerCase();
     let detectedRate: number | undefined;
@@ -1576,8 +1727,20 @@ export const ExcelParser = {
     const formData = new FormData();
     formData.append("file", file);
 
+    const headers: Record<string, string> = {};
+    try {
+      const { supabase } = await import("@/integrations/supabase/client");
+      const { data } = await supabase.auth.getSession();
+      if (data?.session?.access_token) {
+        headers["Authorization"] = `Bearer ${data.session.access_token}`;
+      }
+    } catch {
+      // Fallback: proceed cleanly if session unavailable
+    }
+
     const response = await fetch("/api/parse-excel", {
       method: "POST",
+      headers,
       body: formData,
     });
 

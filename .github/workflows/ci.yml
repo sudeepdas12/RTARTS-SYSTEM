@@ -53,8 +53,11 @@ jobs:
           echo "VITE_SUPABASE_PUBLISHABLE_KEY=$(npx supabase status -o env | grep '^ANON_KEY=' | cut -d= -f2-)" >> "$GITHUB_ENV"
           echo "SUPABASE_SERVICE_ROLE_KEY=$(npx supabase status -o env | grep '^SERVICE_ROLE_KEY=' | cut -d= -f2-)" >> "$GITHUB_ENV"
 
-      - name: Verify Database Migrations & Lint
-        run: npx supabase db lint --local
+      - name: Verify Database Migrations, Lint & Advisors
+        run: npm run verify:db
+
+      - name: Verify Edge & Client Tax Rule Parity
+        run: npm run verify:edge
 
       - name: Generate & Verify Upload Section Fixtures
         run: |
@@ -74,6 +77,9 @@ jobs:
 
       - name: Verify Release Gate Invariants
         run: npm run verify:release-gate
+
+      - name: Verify Production Dependency Audit
+        run: npm audit --omit=dev
 
       - name: Verify Production Build
         run: npm run build

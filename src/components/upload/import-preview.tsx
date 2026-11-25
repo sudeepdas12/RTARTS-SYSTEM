@@ -26,9 +26,46 @@ interface ImportPreviewProps {
 }
 
 function formatNumber(value: any): string {
+  if (value === null || value === undefined || value === "") return "";
   const num = Number(value);
-  if (isNaN(num)) return String(value ?? "");
+  if (isNaN(num) || typeof value === "boolean") return String(value);
   return num.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+export function isIdentifierColumn(header: string, mappedField?: string): boolean {
+  const mappedIds = new Set([
+    "boid",
+    "client_id",
+    "client_code",
+    "pan",
+    "citizenship",
+    "nid_number",
+    "phone",
+    "bank_account_no",
+    "bank_code",
+    "isin",
+    "fiscal_year",
+    "due_date",
+    "approve_date",
+    "instruction_id",
+    "batch_id",
+  ]);
+  if (mappedField && mappedIds.has(mappedField)) return true;
+  return /\b(s\.?\s*n\.?|serial|boid|demat|folio|pan|citizenship|nid|a\/c|acc(ount)?(\s*no)?|phone|mobile|isin|client\s*(id|code|no)|fiscal|year|date|batch|instruction|ref|code)\b/i.test(
+    header,
+  );
+}
+
+function isQuantityColumn(header: string, mappedField?: string): boolean {
+  const qtyFields = new Set([
+    "shares_held",
+    "bonus_actual",
+    "bonus_issued",
+    "bonus_fraction",
+    "after_bonus_kitta",
+  ]);
+  if (mappedField && qtyFields.has(mappedField)) return true;
+  return /\b(kitta|shares|units|qty|quantity)\b/i.test(header);
 }
 
 function resolvePayableCategory(fileType: string): TaxPayableCategory {
@@ -165,8 +202,11 @@ export function ImportPreview({ data, selectedSheetIndex }: ImportPreviewProps) 
           <TableBody>
             {previewRows.map((row, rowIdx) => {
               // Attempt to resolve row-specific classification if row has category column
+              const investorTypeHeader = Object.entries(sheet.mapping).find(
+                ([, field]) => field === "investor_type",
+              )?.[0];
               const rowInvestorType =
-                row[sheet.mapping["investor_type"] || ""] ||
+                (investorTypeHeader ? row[investorTypeHeader] : undefined) ||
                 row["investor_type"] ||
                 row["INVESTOR_TYPE"] ||
                 row["HOLDER_TYPE"] ||
@@ -181,9 +221,34 @@ export function ImportPreview({ data, selectedSheetIndex }: ImportPreviewProps) 
                 <TableRow key={rowIdx}>
                   {sheet.headers.map((header, colIdx) => {
                     const value = row[header];
+                    const mappedField = sheet.mapping[header];
                     const isFinancial = financialColumns.includes(header);
+                    const isIdentifier = isIdentifierColumn(header, mappedField);
+                    const isQuantity = isQuantityColumn(header, mappedField);
                     const isFormulaObject = typeof value === "object" && value !== null;
                     const isTaxCol = header.toUpperCase().includes("TAX");
+
+                    let displayValue: string;
+                    if (isFormulaObject) {
+                      displayValue = "[object Object]";
+                    } else if (isIdentifier || typeof value !== "number") {
+                      const rawStr = String(value ?? "");
+                      const numericCandidate =
+                        !isIdentifier && rawStr.trim() !== "" && !isNaN(Number(rawStr));
+                      if (numericCandidate && isQuantity) {
+                        displayValue = Number(rawStr).toLocaleString("en-IN", {
+                          maximumFractionDigits: 4,
+                        });
+                      } else if (numericCandidate && (isFinancial || isTaxCol)) {
+                        displayValue = formatNumber(rawStr);
+                      } else {
+                        displayValue = rawStr;
+                      }
+                    } else if (isQuantity) {
+                      displayValue = value.toLocaleString("en-IN", { maximumFractionDigits: 4 });
+                    } else {
+                      displayValue = formatNumber(value);
+                    }
 
                     return (
                       <TableCell
@@ -192,14 +257,14 @@ export function ImportPreview({ data, selectedSheetIndex }: ImportPreviewProps) 
                           isFormulaObject
                             ? "bg-red-50 dark:bg-red-950/20 text-red-600 font-mono text-xs"
                             : ""
-                        } ${isFinancial && !isFormulaObject ? "font-mono" : ""}`}
+                        } ${(isFinancial || isIdentifier) && !isFormulaObject ? "font-mono" : ""}`}
                         title={
                           isTaxCol && rowTaxRate != null
                             ? `Calculated from current tax rules: ${(rowTaxRate * 100).toFixed(0)}% (${rowClassification})`
                             : undefined
                         }
                       >
-                        {isFormulaObject ? "[object Object]" : formatNumber(value)}
+                        {displayValue}
                       </TableCell>
                     );
                   })}

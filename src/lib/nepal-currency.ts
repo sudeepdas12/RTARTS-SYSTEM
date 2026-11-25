@@ -149,7 +149,7 @@ export function fmtNprWords(amount: number | string | null | undefined): string 
   const rupeeString = parts.length > 0 ? `${parts.join(" ")} Rupees` : "";
   const paisaString = paisa > 0 ? `${twoDigitsToWords(paisa)} Paisa` : "";
 
-  let result = "";
+  let result: string;
   if (rupeeString && paisaString) {
     result = `${rupeeString} and ${paisaString} Only`;
   } else if (rupeeString) {

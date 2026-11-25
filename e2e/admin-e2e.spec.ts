@@ -2,6 +2,16 @@ import { test, expect } from "@playwright/test";
 
 const TEST_ADMIN_PASSWORD = process.env.SUPABASE_TEST_ADMIN_PASSWORD || "Admin123!";
 
+async function getAdminSupabase() {
+  const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "http://127.0.0.1:54321";
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  if (!key) return null;
+  const { createClient } = await import("@supabase/supabase-js");
+  return createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
 test.describe("Administration Section Comprehensive End-to-End Suite", () => {
   test.beforeEach(async ({ page }) => {
     // Log in as administrator
@@ -120,6 +130,54 @@ test.describe("Administration Section Comprehensive End-to-End Suite", () => {
     await expect(page.locator("text=NCHL ConnectIPS Direct Banking Gateway").first()).toBeVisible({
       timeout: 5000,
     });
+
+    const adminClient = await getAdminSupabase();
+    const { data: priorSettings } = adminClient
+      ? await adminClient
+          .from("system_settings")
+          .select("setting_value")
+          .eq("setting_key", "global")
+          .maybeSingle()
+      : { data: null };
+
+    try {
+      const apiTokenInput = page
+        .locator("div:has(> div > label:has-text('API Bearer Token')) input")
+        .first();
+      await page.locator("input[placeholder*='M101']").first().fill("M_E2E_101");
+      await page.locator("input[placeholder*='APP_RTARTS']").first().fill("APP_E2E_RTARTS");
+      await apiTokenInput.fill("E2E_TEST_CONNECTIPS_KEY");
+
+      await page.locator("button:has-text('Save Gateway Settings')").first().click();
+      await expect(page.locator("text=Saved & Active").first()).toBeVisible({ timeout: 10000 });
+
+      await page.reload();
+      await page.locator("button[role='tab']:has-text('Banking (ConnectIPS)')").first().click();
+      await expect(page.locator("text=Saved & Active").first()).toBeVisible({ timeout: 10000 });
+
+      // Ensure plaintext token is never returned into the browser DOM after reload
+      const reloadedTokenInput = page
+        .locator("div:has(> div > label:has-text('API Bearer Token')) input")
+        .first();
+      const tokenInputValue = await reloadedTokenInput.inputValue();
+      expect(tokenInputValue).not.toContain("E2E_TEST_CONNECTIPS_KEY");
+
+      await page.locator("button:has-text('Test Connection Handshake')").first().click();
+      await expect(
+        page.locator("text=/API key is saved|NCHL ConnectIPS gateway/i").first(),
+      ).toBeVisible({ timeout: 15000 });
+    } finally {
+      if (adminClient) {
+        if (priorSettings?.setting_value) {
+          await adminClient
+            .from("system_settings")
+            .update({ setting_value: priorSettings.setting_value })
+            .eq("setting_key", "global");
+        } else {
+          await adminClient.from("system_settings").delete().eq("setting_key", "global");
+        }
+      }
+    }
   });
 
   test("3. Fiscal Years: Active FY ledger, Gregorian-Bikram date boundaries, and year transitions", async ({

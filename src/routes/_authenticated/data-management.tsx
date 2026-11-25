@@ -179,13 +179,13 @@ function DataManagementPage() {
   const search = Route.useSearch();
 
   const [activeTab, setActiveTab] = useState<string>(search.tab || "clients");
-
-  useEffect(() => {
-    const tab = search.tab;
-    if (tab) {
-      setActiveTab((prev) => (prev !== tab ? tab : prev));
+  const [prevSearchTab, setPrevSearchTab] = useState(search.tab);
+  if (prevSearchTab !== search.tab) {
+    setPrevSearchTab(search.tab);
+    if (search.tab && activeTab !== search.tab) {
+      setActiveTab(search.tab);
     }
-  }, [search.tab]);
+  }
 
   const { data: companies = [] } = useQuery({
     queryKey: ["companies-lookup"],
@@ -217,19 +217,22 @@ function DataManagementPage() {
   const [explorerSearch, setExplorerSearch] = useState<string>("");
   const [explorerPage, setExplorerPage] = useState<number>(1);
 
-  useEffect(() => {
-    if (search.companyId) {
+  const explorerSyncKey = `${search.companyId ?? ""}|${search.fy ?? ""}|${companies.length}|${fiscalYears.length}`;
+  const [prevExplorerSyncKey, setPrevExplorerSyncKey] = useState("");
+  if (prevExplorerSyncKey !== explorerSyncKey) {
+    setPrevExplorerSyncKey(explorerSyncKey);
+    if (search.companyId && explorerCompanyId !== search.companyId) {
       setExplorerCompanyId(search.companyId);
-    } else {
-      setExplorerCompanyId((prev) => (!prev && companies.length > 0 ? companies[0].id : prev));
+    } else if (!search.companyId && !explorerCompanyId && companies.length > 0) {
+      setExplorerCompanyId(companies[0].id);
     }
 
-    if (search.fy) {
+    if (search.fy && explorerFy !== search.fy) {
       setExplorerFy(search.fy);
-    } else {
-      setExplorerFy((prev) => (!prev && fiscalYears.length > 0 ? fiscalYears[0] : prev));
+    } else if (!search.fy && !explorerFy && fiscalYears.length > 0) {
+      setExplorerFy(fiscalYears[0]);
     }
-  }, [search.companyId, search.fy, companies, fiscalYears]);
+  }
 
   const selectedExplorerCompany = useMemo(
     () => companies.find((c) => c.id === explorerCompanyId),
@@ -345,28 +348,25 @@ function DataManagementPage() {
     qc.invalidateQueries({ queryKey: ["upload-history"] });
   }, [qc]);
 
-  const handleDeleteSuccess = useCallback(
-    (results: BulkDeleteResult[]) => {
-      invalidateAll();
-      setDeleteDialog(null);
-      setDeleteOrphans(false);
+  const handleDeleteSuccess = (results: BulkDeleteResult[]) => {
+    invalidateAll();
+    setDeleteDialog(null);
+    setDeleteOrphans(false);
 
-      const errors = results.filter((r) => r.error);
-      const totalDeleted = results.filter((r) => !r.error).reduce((s, r) => s + r.deleted, 0);
+    const errors = results.filter((r) => r.error);
+    const totalDeleted = results.filter((r) => !r.error).reduce((s, r) => s + r.deleted, 0);
 
-      setLastDeleteResults(results);
-      setShowDeleteResults(true);
+    setLastDeleteResults(results);
+    setShowDeleteResults(true);
 
-      if (errors.length > 0) {
-        toast.error(
-          `Operation completed with ${errors.length} error(s). ${totalDeleted} records deleted.`,
-        );
-      } else {
-        toast.success(`Successfully deleted ${totalDeleted.toLocaleString()} record(s)`);
-      }
-    },
-    [invalidateAll],
-  );
+    if (errors.length > 0) {
+      toast.error(
+        `Operation completed with ${errors.length} error(s). ${totalDeleted} records deleted.`,
+      );
+    } else {
+      toast.success(`Successfully deleted ${totalDeleted.toLocaleString()} record(s)`);
+    }
+  };
 
   const bulkDelete = useMutation({
     mutationFn: async (): Promise<BulkDeleteResult[]> => {

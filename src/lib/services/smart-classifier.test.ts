@@ -91,7 +91,7 @@ describe("Smart Shareholder Classification Engine (Ultra-Smart & Multi-Tier)", (
       const khimadevi = smartClassify({ full_name: "KHIMADEVI LAGANI KOSH PVT.LTD" });
       expect(khimadevi.payee_classification).toBe("COMPANY_INSTITUTION");
       expect(khimadevi.payee_category).toBe("INSTITUTION");
-      expect(khimadevi.tds_rate_dividend).toBe(0.05);
+      expect(khimadevi.tds_rate_dividend).toBe(0.15);
       expect(khimadevi.tds_rate_debenture).toBe(0.15);
 
       const koshByawasthapan = smartClassify({ full_name: "KOSH BYAWASTHAPAN COMPANY" });

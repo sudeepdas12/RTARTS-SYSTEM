@@ -220,6 +220,7 @@ export const UploadService = {
       console.error("Could not verify an existing upload before allowing re-upload:", error);
       throw new Error(
         error?.message || "Could not verify whether this file has already been uploaded.",
+        { cause: error },
       );
     }
   },
@@ -314,7 +315,7 @@ export const UploadService = {
       return (data || []) as UploadErrorRow[];
     } catch (err: any) {
       console.error("Failed to fetch upload errors:", err);
-      throw new Error(err?.message || "Failed to fetch upload error records.");
+      throw new Error(err?.message || "Failed to fetch upload error records.", { cause: err });
     }
   },
 
@@ -430,7 +431,7 @@ export const UploadService = {
         totalPayablesDeleted += Number(count || 0);
       } catch (err: any) {
         console.error(`Failed to delete from ${table}:`, err?.message);
-        throw new Error(`Failed to delete records from ${table}: ${err?.message}`);
+        throw new Error(`Failed to delete records from ${table}: ${err?.message}`, { cause: err });
       }
     }
 

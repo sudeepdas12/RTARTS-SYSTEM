@@ -70,7 +70,16 @@ function recordGate(name, passed, detail) {
 
 async function runLiveVerification() {
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+  const serviceKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SECRET_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  const anonKey =
+    process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.SUPABASE_PUBLISHABLE_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    "";
 
   if (!supabaseUrl || !serviceKey) {
     recordGate(
@@ -178,8 +187,47 @@ async function runLiveVerification() {
       `Unauthenticated invocation responded with HTTP ${unauthRes.status} (Expected: 401)`,
     );
 
-    // 2. Authorized scheduler invocation check with x-cron-secret (injected only, no fallback)
-    const cronSecret = process.env.CRON_SECRET || "";
+    // 2. Verify anonymous callers are denied get_cron_secret()
+    if (anonKey) {
+      const anonCronRes = await fetch(`${supabaseUrl}/rest/v1/rpc/get_cron_secret`, {
+        method: "POST",
+        headers: {
+          apikey: anonKey,
+          Authorization: `Bearer ${anonKey}`,
+          "Content-Type": "application/json",
+        },
+        body: "{}",
+      });
+      recordGate(
+        "Live DB: Anonymous callers blocked from get_cron_secret()",
+        anonCronRes.status === 401 || anonCronRes.status === 403,
+        `Anon RPC call returned HTTP ${anonCronRes.status} (Expected: 401/403)`,
+      );
+    }
+
+    // 3. Authorized scheduler invocation check with x-cron-secret (injected only, no static fallback)
+    let cronSecret =
+      process.env.CRON_SECRET && process.env.CRON_SECRET.length >= 32
+        ? process.env.CRON_SECRET
+        : "";
+    if (!cronSecret) {
+      const rpcRes = await fetch(`${supabaseUrl}/rest/v1/rpc/get_cron_secret`, {
+        method: "POST",
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+          "Content-Type": "application/json",
+        },
+        body: "{}",
+      });
+      if (rpcRes.ok) {
+        const fetched = await rpcRes.json();
+        if (typeof fetched === "string" && fetched.length >= 32) {
+          cronSecret = fetched;
+        }
+      }
+    }
+
     const authRes = await fetch(`${supabaseUrl}/functions/v1/process-scheduled-reports`, {
       method: "POST",
       headers: {
@@ -198,6 +246,27 @@ async function runLiveVerification() {
   } catch (err) {
     recordGate("Live Edge Function: process-scheduled-reports reachable", false, String(err.message || err));
   }
+}
+
+function extractLatestActiveFunctions(migrationsDir) {
+  const activeFiles = fs.existsSync(migrationsDir)
+    ? fs
+        .readdirSync(migrationsDir)
+        .filter((f) => f.endsWith(".sql"))
+        .sort()
+        .map((f) => path.join(migrationsDir, f))
+    : [];
+  const activeSqlText = activeFiles.map((p) => fs.readFileSync(p, "utf-8")).join("\n");
+  const fnBodies = new Map();
+  // Match pg_dump quoted or unquoted CREATE [OR REPLACE] FUNCTION ... up to next top-level DDL statement
+  const fnRegex =
+    /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:"?([a-zA-Z0-9_]+)"?\.)?"?([a-zA-Z0-9_]+)"?\s*\([^;]*?\)\s+RETURNS[\s\S]*?(?=\n(?:CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|TRIGGER|VIEW|MATERIALIZED\s+VIEW|TABLE|INDEX|UNIQUE|POLICY)|ALTER\s+(?:TABLE|FUNCTION|VIEW)|DO\s+\$\$|SET\s+default_|REVOKE\s+|GRANT\s+)|$)/g;
+  let m;
+  while ((m = fnRegex.exec(activeSqlText)) !== null) {
+    const fnName = m[2];
+    fnBodies.set(fnName, m[0]);
+  }
+  return { activeFiles, activeSqlText, fnBodies };
 }
 
 function runSourceAudit() {
@@ -241,39 +310,48 @@ function runSourceAudit() {
   // GATE 2: Database Invariants & Search Path Security
   // -----------------------------------------------------------------------------
   console.log("\n[GATE 2/4] Database Function Search Path & Security Invariants (Source)...");
-  const functionsSqlPath = path.join(
-    rootDir,
-    "supabase",
-    "migrations",
-    "20261005000002_schema_functions_and_rpcs.sql",
-  );
-  if (!fs.existsSync(functionsSqlPath)) {
-    recordGate("Schema functions migration file exists", false, `Missing ${functionsSqlPath}`);
-  } else {
-    const fContent = fs.readFileSync(functionsSqlPath, "utf-8");
-    const lines = fContent.split("\n");
-    const missingSearchPath = [];
-    let currFn = null;
-    let hasPath = false;
+  const migrationsDir = path.join(rootDir, "supabase", "migrations");
+  const { activeFiles: activeMigrationFiles, activeSqlText, fnBodies } =
+    extractLatestActiveFunctions(migrationsDir);
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const match = line.match(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([a-zA-Z0-9_\.]+)/);
-      if (match) {
-        if (currFn && !hasPath) missingSearchPath.push(currFn);
-        currFn = match[1];
-        hasPath = false;
+  if (activeMigrationFiles.length === 0 || fnBodies.size === 0) {
+    recordGate(
+      "Active migration files and functions exist",
+      false,
+      `Found ${activeMigrationFiles.length} migration file(s) and ${fnBodies.size} parsed function(s)`,
+    );
+  } else {
+    const missingSearchPath = [];
+    for (const [fnName, body] of fnBodies.entries()) {
+      if (!body.includes("search_path")) {
+        missingSearchPath.push(fnName);
       }
-      if (line.includes("search_path")) hasPath = true;
     }
-    if (currFn && !hasPath) missingSearchPath.push(currFn);
 
     recordGate(
-      "All PostgreSQL functions enforce immutable search_path",
+      "All active PostgreSQL functions enforce immutable search_path",
       missingSearchPath.length === 0,
       missingSearchPath.length === 0
-        ? "100% of schema functions specify search_path TO 'public'"
-        : `Missing in: ${missingSearchPath.join(", ")}`,
+        ? `100% of ${fnBodies.size} active functions specify search_path`
+        : `Missing in (${missingSearchPath.length}): ${missingSearchPath.slice(0, 10).join(", ")}`,
+    );
+
+    const cronSecretDef = fnBodies.get("get_cron_secret") || "";
+    recordGate(
+      "Database get_cron_secret has no hardcoded fallback secret",
+      cronSecretDef.length > 0 && !cronSecretDef.includes("rtarts-internal-cron-secret"),
+      cronSecretDef.length > 0
+        ? "Checks latest active definition of get_cron_secret()"
+        : "get_cron_secret() definition not found in active migrations",
+    );
+
+    const schedDef = fnBodies.get("trigger_process_scheduled_reports") || "";
+    recordGate(
+      "Database trigger_process_scheduled_reports has no hardcoded cron fallback",
+      schedDef.length > 0 && !schedDef.includes("rtarts-internal-cron-secret"),
+      schedDef.length > 0
+        ? "Checks latest active definition of trigger_process_scheduled_reports()"
+        : "trigger_process_scheduled_reports() definition not found in active migrations",
     );
   }
 
@@ -282,7 +360,6 @@ function runSourceAudit() {
   // -----------------------------------------------------------------------------
   console.log("\n[GATE 3/4] Database Reference Seeds & Statutory Tax Rules (Source)...");
   const seedCandidates = [
-    path.join(rootDir, "supabase", "migrations", "20261005000006_schema_seed_reference_data.sql"),
     path.join(rootDir, "supabase", "seed.sql"),
   ];
   const seedPath = seedCandidates.find((p) => fs.existsSync(p));
@@ -416,45 +493,35 @@ function runSourceAudit() {
   console.log(
     "\n[GATE 6/6] Multi-Tenant Staging, Client Scoping & pg_cron Automation (Source)...",
   );
-  const fixMigPath = path.join(
-    rootDir,
-    "supabase",
-    "migrations",
-    "20261026000004_fix_cron_secret_and_investor_classification.sql",
-  );
-  if (fs.existsSync(fixMigPath)) {
-    const fixContent = fs.readFileSync(fixMigPath, "utf-8");
+  if (activeMigrationFiles.length === 0) {
+    recordGate("Active migration files exist for Gate 6", false, `Missing ${migrationsDir}`);
+  } else {
+    const commitDef = fnBodies.get("commit_staged_import") || "";
     const preservesInvestorClassification =
-      fixContent.includes("v_payee_classification") &&
-      fixContent.includes("v_holder_type") &&
-      fixContent.includes("public.clients.payee_classification");
+      commitDef.length > 0 &&
+      commitDef.includes("v_payee_classification") &&
+      commitDef.includes("v_holder_type") &&
+      activeSqlText.includes("public.clients.payee_classification");
     recordGate(
-      "Forward migration preserves investor classification in staged imports",
+      "Active migrations preserve investor classification in staged imports",
       preservesInvestorClassification,
       "Maps payee_classification and holder_type from staged rows",
     );
 
-    const noDbCronFallback = !fixContent.includes("rtarts-internal-cron-secret") && fixContent.includes("app.settings.cron_secret is not configured");
+    const schedDef = fnBodies.get("trigger_process_scheduled_reports") || "";
+    const noDbCronFallback =
+      schedDef.length > 0 &&
+      !schedDef.includes("rtarts-internal-cron-secret") &&
+      schedDef.includes("app.settings.cron_secret is not configured");
     recordGate(
       "Database trigger_process_scheduled_reports enforces injected cron secret",
       noDbCronFallback,
-      "Hardcoded fallback removed from database stored procedure",
+      "Hardcoded fallback removed from latest active trigger_process_scheduled_reports",
     );
-  }
-  const stageSqlPath = path.join(
-    rootDir,
-    "supabase",
-    "migrations",
-    "20261026000003_staged_imports_and_scheduled_reports.sql",
-  );
-  if (!fs.existsSync(stageSqlPath)) {
-    recordGate("Staged imports & scheduler migration exists", false, `Missing ${stageSqlPath}`);
-  } else {
-    const stgContent = fs.readFileSync(stageSqlPath, "utf-8");
 
     const hasClientIsolation =
-      stgContent.includes("uq_clients_company_client_code") &&
-      stgContent.includes("WHERE company_id = v_staged.company_id AND boid = v_boid");
+      activeSqlText.includes("uq_clients_company_client_code") &&
+      commitDef.includes("WHERE company_id = v_staged.company_id AND boid = v_boid");
     recordGate(
       "Database enforces multi-tenant client lookup & company uniqueness",
       hasClientIsolation,
@@ -462,8 +529,8 @@ function runSourceAudit() {
     );
 
     const hasUploadHistoryLifecycle =
-      stgContent.includes("INSERT INTO public.upload_history") &&
-      stgContent.includes("upload_id = v_upload_id");
+      activeSqlText.includes("INSERT INTO public.upload_history") &&
+      commitDef.includes("upload_id = v_upload_id");
     recordGate(
       "Staged imports integrate with upload_history lifecycle",
       hasUploadHistoryLifecycle,
@@ -471,9 +538,9 @@ function runSourceAudit() {
     );
 
     const hasPgCronSchedule =
-      stgContent.includes("cron.schedule") &&
-      stgContent.includes("process-scheduled-reports-job") &&
-      stgContent.includes("trigger_process_scheduled_reports");
+      activeSqlText.includes("cron.schedule") &&
+      activeSqlText.includes("process-scheduled-reports-job") &&
+      activeSqlText.includes("trigger_process_scheduled_reports");
     recordGate(
       "pg_cron automated scheduler configured for scheduled reports",
       hasPgCronSchedule,

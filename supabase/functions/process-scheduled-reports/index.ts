@@ -171,8 +171,8 @@ serve(async (req: Request) => {
 
         if (!isPrivilegedUser) {
           const { data: hasAccess } = await supabaseAdmin.rpc("has_company_access", {
-            p_user_id: authenticatedUserId,
-            p_company_id: targetSchedule.company_id,
+            _user_id: authenticatedUserId,
+            _company_id: targetSchedule.company_id,
           });
 
           if (!hasAccess) {
@@ -237,17 +237,35 @@ serve(async (req: Request) => {
     for (const schedule of schedules) {
       try {
         let recordCount = 0;
+        const reportTypeLower = String(schedule.report_type || "").toLowerCase();
         const targetTable =
-          schedule.report_type === "tax-register" || schedule.report_type === "ird-tax"
-            ? "dividend_payables"
-            : schedule.report_type === "interest-register"
-              ? "interest_payables"
+          reportTypeLower.includes("interest") || reportTypeLower.includes("debenture")
+            ? "interest_payables"
+            : reportTypeLower.includes("mutual")
+              ? "mutual_fund_payables"
               : "dividend_payables";
 
-        const { count, error: countErr } = await supabaseAdmin
-          .from(targetTable)
-          .select("id", { count: "exact", head: true })
-          .eq("company_id", schedule.company_id);
+        const filters = (schedule.filters || {}) as Record<string, unknown>;
+        const applyScheduleFilters = (q: any) => {
+          let filtered = q.eq("company_id", schedule.company_id);
+          if (filters.fiscalYear && filters.fiscalYear !== "all") {
+            filtered = filtered.eq("fiscal_year", String(filters.fiscalYear));
+          }
+          if (filters.status && filters.status !== "all") {
+            filtered = filtered.eq("payment_status", String(filters.status));
+          }
+          if (filters.startDate) {
+            filtered = filtered.gte("created_at", String(filters.startDate));
+          }
+          if (filters.endDate) {
+            filtered = filtered.lte("created_at", `${String(filters.endDate)}T23:59:59`);
+          }
+          return filtered;
+        };
+
+        const { count, error: countErr } = await applyScheduleFilters(
+          supabaseAdmin.from(targetTable).select("id", { count: "exact", head: true }),
+        );
 
         if (!countErr && typeof count === "number") {
           recordCount = count;
@@ -264,16 +282,54 @@ serve(async (req: Request) => {
           continue;
         }
 
-        // 5. Generate actual report file artifact from database records
-        const { data: reportRecords } = await supabaseAdmin
-          .from(targetTable)
-          .select("*")
-          .eq("company_id", schedule.company_id)
-          .limit(2000);
+        // 5. Fetch joined report records paginated (removing arbitrary 2,000-row cap)
+        const reportRecords: Record<string, unknown>[] = [];
+        const PAGE_SIZE = 1000;
+        const MAX_EXPORT_ROWS = 50000;
+        let pageOffset = 0;
+        while (reportRecords.length < MAX_EXPORT_ROWS) {
+          const { data: pageRows, error: pageErr } = await applyScheduleFilters(
+            supabaseAdmin
+              .from(targetTable)
+              .select(
+                "*, client:clients(full_name, boid, pan_or_citizenship, bank_name, bank_account_no), company:companies(company_name, company_code)",
+              ),
+          )
+            .order("id", { ascending: true })
+            .range(pageOffset, pageOffset + PAGE_SIZE - 1);
 
-        // Helper to format rows into standard RFC 4180 CSV
+          if (pageErr || !pageRows || pageRows.length === 0) break;
+          for (const row of pageRows as any[]) {
+            const client = row.client || {};
+            const company = row.company || {};
+            reportRecords.push({
+              company_code: company.company_code || "",
+              company_name: company.company_name || "",
+              fiscal_year: row.fiscal_year || "",
+              boid: client.boid || "",
+              shareholder_name: client.full_name || "",
+              pan: client.pan_or_citizenship || "",
+              shares_held: row.shares_held ?? 0,
+              gross_amount: row.gross_dividend ?? row.gross_interest ?? 0,
+              tds_rate: row.tds_rate ?? 0,
+              tax_amount: row.tax_amount ?? 0,
+              bonus_tax: row.bonus_tax ?? 0,
+              net_payable: row.net_payable ?? 0,
+              paid_amount: row.paid_amount ?? 0,
+              remaining_amount: row.remaining_amount ?? 0,
+              payment_status: row.payment_status || "Pending",
+              payee_classification: row.payee_classification || "",
+              bank_name: row.bank_name || client.bank_name || "",
+              bank_account_no: row.bank_account_no || client.bank_account_no || "",
+            });
+          }
+          if (pageRows.length < PAGE_SIZE) break;
+          pageOffset += PAGE_SIZE;
+        }
+
+        // Helper to format rows into UTF-8 CSV (with BOM for Excel compatibility)
         const formatAsCsv = (records: Record<string, unknown>[]): string => {
-          if (!records || records.length === 0) return "No records found\r\n";
+          if (!records || records.length === 0) return "\uFEFFNo records found\r\n";
           const keys = Object.keys(records[0]);
           const escapeCell = (val: unknown): string => {
             if (val === null || val === undefined) return "";
@@ -290,15 +346,14 @@ serve(async (req: Request) => {
           };
           const header = keys.map(escapeCell).join(",");
           const lines = records.map((row) => keys.map((k) => escapeCell(row[k])).join(","));
-          return [header, ...lines].join("\r\n");
+          return "\uFEFF" + [header, ...lines].join("\r\n");
         };
 
-        const fileContent = formatAsCsv(reportRecords || []);
+        const fileContent = formatAsCsv(reportRecords);
         const fileBytes = new TextEncoder().encode(fileContent);
         const fileSize = fileBytes.byteLength;
         const requestedFormat = (schedule.export_format || "csv").toLowerCase();
-        const fileExt =
-          requestedFormat === "excel" || requestedFormat === "xlsx" ? "csv" : requestedFormat;
+        const fileExt = requestedFormat === "excel" || requestedFormat === "xlsx" ? "csv" : "csv";
         const timestamp = Date.now();
         const storagePath = `${schedule.company_id}/${schedule.id}_${timestamp}.${fileExt}`;
 
