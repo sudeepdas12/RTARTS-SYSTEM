@@ -89,6 +89,7 @@ export function buildReconciliationResultsPayload(
       rejected_candidates: match.rejectedCandidates || [],
       rule_version: match.ruleVersion || "2.0.0",
       requires_manual_approval: match.requiresManualApproval || false,
+      transaction_fingerprint: match.transactionFingerprint || undefined,
     };
   });
 }

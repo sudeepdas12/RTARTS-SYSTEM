@@ -181,6 +181,7 @@ export interface BankTransaction {
     | "OTHER";
   isLiquiditySweep?: boolean;
   accountHolder?: string;
+  transactionFingerprint?: string;
 }
 
 export interface StatementMetadata {

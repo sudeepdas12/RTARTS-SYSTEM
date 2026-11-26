@@ -174,8 +174,16 @@ export function ManualReconciliationDialog({
   };
 
   const handleSubmit = async () => {
-    if (!companyId) {
+    if (!effectiveCompanyId) {
       toast.error("Please select a target company.");
+      return;
+    }
+
+    const distinctCompanies = new Set(
+      selectedTransactions.map((t) => t.company_id).filter(Boolean),
+    );
+    if (distinctCompanies.size > 1) {
+      toast.error("Selected bank transactions must belong to a single company.");
       return;
     }
 
@@ -184,7 +192,7 @@ export function ManualReconciliationDialog({
       let evidencePath: string | null = null;
       if (evidenceFile) {
         evidencePath = await ReconciliationService.uploadReconciliationEvidence(
-          companyId,
+          effectiveCompanyId,
           evidenceFile,
         );
       }
@@ -200,7 +208,7 @@ export function ManualReconciliationDialog({
           return;
         }
         await ReconciliationService.submitManualBankEntry({
-          companyId,
+          companyId: effectiveCompanyId,
           transactionDate: txDate,
           debitAmount: direction === "debit" ? numAmt : 0,
           creditAmount: direction === "credit" ? numAmt : 0,
@@ -230,7 +238,7 @@ export function ManualReconciliationDialog({
           return;
         }
         await ReconciliationService.submitManualMatchRequest({
-          companyId,
+          companyId: effectiveCompanyId,
           mode,
           transactionIds: selectedTransactions.map((t) => t.id),
           reasonCode,
@@ -311,7 +319,7 @@ export function ManualReconciliationDialog({
             <div className="space-y-1">
               <Label className="text-xs">Target Company</Label>
               <Select
-                value={companyId}
+                value={effectiveCompanyId}
                 onValueChange={setCompanyId}
                 disabled={selectedTransactions.length > 0 && mode !== "manual_entry"}
               >

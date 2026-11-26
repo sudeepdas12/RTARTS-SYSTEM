@@ -154,6 +154,7 @@ describe.skipIf(!isLiveDb)("Multi-Channel Reconciliation Workbench & BRS (Live D
         payment_status: "Pending",
         payee_classification: "NATURAL_PERSON",
         classification_status: "CONFIRMED",
+        remarks: `VARIANCE_TEST_${runTag}`,
       })
       .select("id, net_payable")
       .single();
@@ -180,6 +181,7 @@ describe.skipIf(!isLiveDb)("Multi-Channel Reconciliation Workbench & BRS (Live D
         payment_status: "Pending",
         payee_classification: "NATURAL_PERSON",
         classification_status: "CONFIRMED",
+        remarks: `VARIANCE_TEST_${runTag}`,
       })
       .select("id, net_payable")
       .single();
@@ -441,5 +443,175 @@ describe.skipIf(!isLiveDb)("Multi-Channel Reconciliation Workbench & BRS (Live D
       },
     });
     expect(lockedPostErr).not.toBeNull();
+  });
+
+  it("M5: applies underpaid variance via atomic batch, blocks self-approval, and clears via supervisor approve_reconciliation_variance_atomic", async () => {
+    const { data: varDiv, error: vdErr } = await adminClient
+      .from("dividend_payables")
+      .insert({
+        company_id: companyId,
+        client_id: clientBId,
+        fiscal_year: "2083/84",
+        shares_held: 200,
+        dividend_rate: 10,
+        gross_dividend: 2000,
+        tax_amount: 100,
+        bonus_tax: 0,
+        net_payable: 1900,
+        remaining_amount: 1900,
+        tds_rate: 0.05,
+        payment_status: "Pending",
+        payee_classification: "NATURAL_PERSON",
+        classification_status: "CONFIRMED",
+        remarks: `M5_VARIANCE_${runTag}`,
+      })
+      .select("id, net_payable")
+      .single();
+    expect(vdErr).toBeNull();
+    const expectedAmt = Number(varDiv.net_payable);
+    const actualAmt = Number((expectedAmt - 20).toFixed(2));
+
+    const srcRef = `VAR-${runTag}-001`;
+    const fp = `fp_${runTag}_001`;
+    const { data: impRes, error: impErr } = await makerClient.rpc(
+      "import_bank_statement_ledger_atomic",
+      {
+        p_import_info: {
+          company_id: companyId,
+          bank_name: "Global IME Bank",
+          account_no: "042000111222",
+          file_name: `var_stmt_${runTag}.xml`,
+          file_hash_sha256: `hash_${runTag}_var`,
+          opening_balance: 10000,
+          closing_balance: 10000 - actualAmt,
+          total_debit: actualAmt,
+          total_credit: 0,
+          row_count: 1,
+        },
+        p_transactions: [
+          {
+            transaction_date: "2026-10-15",
+            description: "Partial settlement for testing variance",
+            reference: srcRef,
+            debit_amount: actualAmt,
+            credit_amount: 0,
+            balance: 10000 - actualAmt,
+            transaction_fingerprint: fp,
+          },
+        ],
+      },
+    );
+    expect(impErr).toBeNull();
+    expect(impRes?.inserted_count).toBe(1);
+
+    const { data: applyData, error: applyErr } = await makerClient.rpc(
+      "apply_and_record_reconciliation_batch",
+      {
+        p_run_info: {
+          run_id: null,
+          chunk_index: 0,
+          total_chunks: 1,
+          expected_chunk_count: 1,
+          is_final_chunk: true,
+          company_id: companyId,
+          fiscal_year: "2082/83",
+          source_type: "bank_statement",
+          file_name: `var_stmt_${runTag}.xml`,
+          file_hash_sha256: `hash_${runTag}_var`,
+          idempotency_key: `idem_${runTag}_var`,
+          row_count: 1,
+          total_amount: actualAmt,
+        },
+        p_items: [
+          {
+            payable_id: varDiv.id,
+            company_id: companyId,
+            client_id: clientAId,
+            fiscal_year: "2082/83",
+            payable_type: "dividend",
+            source_a_type: "bank_statement",
+            source_b_type: "payable",
+            target_table: "dividend_payables",
+            actual_amount: actualAmt,
+            expected_amount: expectedAmt,
+            difference: 20,
+            paid_amount: actualAmt,
+            result: "Under_Paid",
+            match_method: "instruction_id",
+            requires_manual_approval: true,
+            source_reference: srcRef,
+            payment_reference: `PAY-${srcRef}`,
+          },
+        ],
+        p_batch_info: {
+          batch_name: `VAR Batch ${runTag}`,
+          company_id: companyId,
+          payable_type: "dividend",
+          payment_method: "ConnectIPS",
+          total_records: 1,
+          total_net: actualAmt,
+          total_tax: 0,
+        },
+      },
+    );
+    expect(applyErr).toBeNull();
+    expect(applyData?.success).toBe(true);
+    const runId = applyData.run_id as string;
+
+    // Mark bank transaction reconciled via our fingerprint RPC
+    const { data: fpMarked, error: fpErr } = await makerClient.rpc(
+      "mark_bank_transactions_reconciled_by_fingerprints",
+      {
+        p_company_id: companyId,
+        p_run_id: runId,
+        p_fingerprints: [fp],
+      },
+    );
+    expect(fpErr).toBeNull();
+    expect(Number(fpMarked)).toBe(1);
+
+    // Fetch created result row
+    const { data: resRow } = await adminClient
+      .from("reconciliation_results")
+      .select("id, requires_manual_approval")
+      .eq("run_id", runId)
+      .eq("payable_id", varDiv.id)
+      .single();
+    expect(resRow?.requires_manual_approval).toBe(true);
+
+    // Maker lacks supervisor/admin role AND cannot self-approve
+    const { error: makerVarErr } = await makerClient.rpc("approve_reconciliation_variance_atomic", {
+      p_approval_info: {
+        result_id: resRow.id,
+        run_id: runId,
+        payable_id: varDiv.id,
+        source_reference: srcRef,
+        approval_reason: "Maker self-approve attempt",
+      },
+    });
+    expect(makerVarErr).not.toBeNull();
+
+    // Distinct Checker (supervisor) approves tolerance variance cleanly
+    const { data: varAppData, error: varAppErr } = await checkerClient.rpc(
+      "approve_reconciliation_variance_atomic",
+      {
+        p_approval_info: {
+          result_id: resRow.id,
+          run_id: runId,
+          payable_id: varDiv.id,
+          source_reference: srcRef,
+          approval_reason: "Approved NPR 20 bank IPS fee deduction after CBS check",
+        },
+      },
+    );
+    expect(varAppErr).toBeNull();
+    expect(varAppData?.success).toBe(true);
+
+    const { data: resAfter } = await adminClient
+      .from("reconciliation_results")
+      .select("requires_manual_approval")
+      .eq("id", resRow.id)
+      .single();
+    expect(resAfter?.requires_manual_approval).toBe(false);
   });
 });

@@ -83,6 +83,7 @@ export interface BankTransaction {
     | "OTHER";
   isLiquiditySweep?: boolean;
   accountHolder?: string;
+  transactionFingerprint?: string;
 }
 
 export type ReconciliationMatchMethod =
@@ -132,6 +133,7 @@ export interface ReconciliationMatch {
   requiresManualApproval?: boolean;
   runId?: string;
   consolidatedParentTxnId?: string;
+  transactionFingerprint?: string;
 }
 
 export interface ComprehensiveReconciliationReport {
@@ -1932,6 +1934,7 @@ export const ReconciliationEngine = {
                 ruleVersion: "2.1.0",
                 requiresManualApproval: false,
                 consolidatedParentTxnId: parentTxnId,
+                transactionFingerprint: txn.transactionFingerprint,
               });
             });
             continue;
@@ -2116,6 +2119,7 @@ export const ReconciliationEngine = {
         rejectedCandidates,
         ruleVersion: "2.0.0",
         requiresManualApproval,
+        transactionFingerprint: txn.transactionFingerprint,
       });
     }
 

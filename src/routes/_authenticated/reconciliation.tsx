@@ -166,6 +166,7 @@ function ReconciliationRoute() {
     "operator",
   ]);
   const canCheckerApprove = hasAny(["admin", "supervisor", "checker", "approver"]);
+  const canApproveVariance = hasAny(["admin", "supervisor"]);
   const canCertifyLock = hasAny(["admin", "supervisor", "approver"]);
   const canDelete = isAdmin;
 
@@ -1084,6 +1085,9 @@ function ReconciliationRoute() {
       qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
       qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
       qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] });
+      qc.invalidateQueries({ queryKey: ["bank_statement_transactions"] });
+      qc.invalidateQueries({ queryKey: ["reconciliation_exceptions"] });
+      qc.invalidateQueries({ queryKey: ["brs_statement"] });
 
       // Update in-memory matches
       setReport((prev) => {
@@ -1849,7 +1853,7 @@ function ReconciliationRoute() {
         <TabsContent value="exceptions_workbench" className="m-0">
           <DurableExceptionsWorkbench
             selectedCompanyIds={reconCompanyIds}
-            canApproveVariance={canCheckerApprove}
+            canApproveVariance={canApproveVariance}
             canEditExceptions={canManualSubmit}
           />
         </TabsContent>

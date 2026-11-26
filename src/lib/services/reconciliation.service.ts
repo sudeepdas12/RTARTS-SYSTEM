@@ -981,6 +981,7 @@ export const ReconciliationService = {
           (r as any).connectips_ref ||
           (r as any).reference_id ||
           (r.id ? `REC-${r.id}` : `ITEM-${itemsPayloadByCompany.get(groupKey)!.length}`),
+        transaction_fingerprint: (r as any).transaction_fingerprint || null,
       });
     }
 
@@ -1108,6 +1109,31 @@ export const ReconciliationService = {
         if (Array.isArray(rpcRes.errors) && rpcRes.errors.length > 0) {
           for (const err of rpcRes.errors) {
             errors.push(err?.error || JSON.stringify(err));
+          }
+        }
+
+        // Link reconciled bank_statement_transactions by deterministic fingerprint (handles keyless & 1-to-N batch rows)
+        const chunkFingerprints = Array.from(
+          new Set(
+            chunk
+              .filter(
+                (it: any) =>
+                  typeof it.transaction_fingerprint === "string" &&
+                  it.transaction_fingerprint.length > 0 &&
+                  String(it.result || "").toUpperCase() === "MATCHED",
+              )
+              .map((it: any) => it.transaction_fingerprint as string),
+          ),
+        );
+        if (resolvedCompanyId && activeRunId && chunkFingerprints.length > 0) {
+          try {
+            await (supabase as any).rpc("mark_bank_transactions_reconciled_by_fingerprints", {
+              p_company_id: resolvedCompanyId,
+              p_run_id: activeRunId,
+              p_fingerprints: chunkFingerprints,
+            });
+          } catch (fpErr) {
+            console.warn("Bank ledger fingerprint sync skipped:", fpErr);
           }
         }
       }
@@ -1441,6 +1467,17 @@ export const ReconciliationService = {
       }
     }
 
+    // Precompute deterministic transaction fingerprints on every row so downstream matching & apply link cleanly
+    const fingerprints = await Promise.all(
+      transactions.map(async (t) => {
+        const resolvedRef = t.reference || t.instructionId || t.referenceId || null;
+        const rawFingerprintStr = `${resolvedCompanyId}|${t.date || ""}|${t.accountNo || ""}|${t.description || ""}|${resolvedRef || ""}|${t.category || ""}|${t.status || ""}|${t.batchId || ""}|${t.debit || 0}|${t.credit || 0}|${t.balance ?? ""}`;
+        const fingerprint = await computeSha256(rawFingerprintStr);
+        t.transactionFingerprint = fingerprint;
+        return fingerprint;
+      }),
+    );
+
     // 1. Check for existing import with identical file hash to prevent duplicate import rows
     const { data: existingImport } = await (supabase as any)
       .from("bank_statement_imports")
@@ -1463,33 +1500,30 @@ export const ReconciliationService = {
 
     // 2. Transactional Ledger Persistence via Atomic RPC
     try {
-      const payloadTransactions = await Promise.all(
-        transactions.map(async (t) => {
-          const resolvedRef = t.reference || t.instructionId || t.referenceId || null;
-          const rawFingerprintStr = `${resolvedCompanyId}|${t.date || ""}|${t.accountNo || ""}|${t.description || ""}|${resolvedRef || ""}|${t.category || ""}|${t.status || ""}|${t.batchId || ""}|${t.debit || 0}|${t.credit || 0}|${t.balance ?? ""}`;
-          const fingerprint = await computeSha256(rawFingerprintStr);
-          return {
-            transaction_date: t.date || new Date().toISOString().slice(0, 10),
-            description: t.description || null,
-            reference: resolvedRef,
-            instruction_id: t.instructionId || null,
-            reference_id: t.referenceId || null,
-            debit_amount: Number(t.debit || 0),
-            credit_amount: Number(t.credit || 0),
-            balance: t.balance != null ? Number(t.balance) : null,
-            transaction_fingerprint: fingerprint,
-            raw_data: {
-              accountNo: t.accountNo || null,
-              category: t.category || null,
-              status: t.status || null,
-              batchId: t.batchId || null,
-              beneficiaryName: t.beneficiaryName || null,
-              instructionId: t.instructionId || null,
-              referenceId: t.referenceId || null,
-            },
-          };
-        }),
-      );
+      const payloadTransactions = transactions.map((t, idx) => {
+        const resolvedRef = t.reference || t.instructionId || t.referenceId || null;
+        const fingerprint = fingerprints[idx];
+        return {
+          transaction_date: t.date || new Date().toISOString().slice(0, 10),
+          description: t.description || null,
+          reference: resolvedRef,
+          instruction_id: t.instructionId || null,
+          reference_id: t.referenceId || null,
+          debit_amount: Number(t.debit || 0),
+          credit_amount: Number(t.credit || 0),
+          balance: t.balance != null ? Number(t.balance) : null,
+          transaction_fingerprint: fingerprint,
+          raw_data: {
+            accountNo: t.accountNo || null,
+            category: t.category || null,
+            status: t.status || null,
+            batchId: t.batchId || null,
+            beneficiaryName: t.beneficiaryName || null,
+            instructionId: t.instructionId || null,
+            referenceId: t.referenceId || null,
+          },
+        };
+      });
 
       const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc(
         "import_bank_statement_ledger_atomic",

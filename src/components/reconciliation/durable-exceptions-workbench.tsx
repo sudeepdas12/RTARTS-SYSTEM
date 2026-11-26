@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { AuditService } from "@/lib/services/audit.service";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
@@ -56,8 +58,11 @@ export function DurableExceptionsWorkbench({
 
   const [resolvingExc, setResolvingExc] = useState<ReconciliationExceptionRow | null>(null);
   const [resolutionNotes, setResolutionNotes] = useState<string>("");
+  const [assigneeId, setAssigneeId] = useState<string>("");
+  const [slaDeadline, setSlaDeadline] = useState<string>("");
   const [nextExcStatus, setNextExcStatus] =
     useState<ReconciliationExceptionLifecycleStatus>("Resolved");
+  const [todayIso] = useState<string>(() => new Date().toISOString().slice(0, 10));
 
   const singleCompanyId = selectedCompanyIds.length === 1 ? selectedCompanyIds[0] : null;
 
@@ -75,6 +80,11 @@ export function DurableExceptionsWorkbench({
       }),
   });
 
+  const { data: profilesMap = {} } = useQuery({
+    queryKey: ["audit_user_profiles_exceptions"],
+    queryFn: () => AuditService.getUserProfiles(),
+  });
+
   const {
     data: varianceRows = [],
     isLoading: isLoadingVar,
@@ -85,7 +95,7 @@ export function DurableExceptionsWorkbench({
       let q = (supabase as any)
         .from("reconciliation_results")
         .select(
-          "id, run_id, company_id, payable_id, payable_type, source_reference, reconciliation_date, expected_amount, actual_amount, difference, result, requires_manual_approval, matched_by, notes, clients:client_id(full_name, boid)",
+          "id, run_id, company_id, payable_id, payable_type, source_reference, reconciliation_date, expected_amount, actual_amount, difference, result, requires_manual_approval, matched_by, notes, client:clients(full_name, boid)",
         )
         .or("requires_manual_approval.eq.true,result.eq.Partial")
         .order("created_at", { ascending: false })
@@ -95,16 +105,30 @@ export function DurableExceptionsWorkbench({
       else if (selectedCompanyIds.length > 1) q = q.in("company_id", selectedCompanyIds);
 
       const { data, error } = await q;
-      if (error) return [];
+      if (error) {
+        console.warn("Variance queue query warning:", error.message);
+        return [];
+      }
       return data || [];
     },
   });
 
   const exceptions = excData?.exceptions || [];
+  const operatorsList = Object.values(profilesMap);
 
   const handleUpdateException = async () => {
     if (!resolvingExc) return;
-    const ok = await ReconciliationService.updateExceptionStatus(
+
+    let ok = true;
+    if (assigneeId && assigneeId !== "__unassigned__") {
+      ok = await ReconciliationService.assignException(
+        resolvingExc.id,
+        assigneeId,
+        slaDeadline || undefined,
+      );
+    }
+
+    const updated = await ReconciliationService.updateExceptionStatus(
       resolvingExc.id,
       nextExcStatus,
       resolutionNotes || undefined,
@@ -112,20 +136,23 @@ export function DurableExceptionsWorkbench({
         ? resolutionNotes || "Resolved via Exception Workbench"
         : undefined,
     );
-    if (ok) {
-      toast.success(`Exception updated to ${nextExcStatus}.`);
+
+    if (ok && updated) {
+      toast.success(`Exception updated (${nextExcStatus}).`);
       setResolvingExc(null);
       setResolutionNotes("");
+      setAssigneeId("");
+      setSlaDeadline("");
       qc.invalidateQueries({ queryKey: ["reconciliation_exceptions"] });
     } else {
-      toast.error("Failed to update exception status.");
+      toast.error("Failed to update exception status or assignment.");
     }
   };
 
   const handleApproveVariance = async () => {
     if (!approvingRow) return;
-    if (approvalReason.trim().length < 3) {
-      toast.error("Enter a clear variance approval reason.");
+    if (approvalReason.trim().length < 5) {
+      toast.error("Enter a detailed Checker approval reason (minimum 5 characters).");
       return;
     }
     setIsApproving(true);
@@ -160,8 +187,8 @@ export function DurableExceptionsWorkbench({
                 Durable Exceptions Queue
               </CardTitle>
               <CardDescription className="text-xs">
-                Persistent cross-run reconciliation exceptions with lifecycle tracking and SLA
-                deadlines.
+                Persistent cross-run reconciliation exceptions with assignee tracking, lifecycle
+                status, and SLA deadlines.
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
@@ -201,8 +228,8 @@ export function DurableExceptionsWorkbench({
                   <TableHead>Reference</TableHead>
                   <TableHead>Exception Reason</TableHead>
                   <TableHead className="text-right">Amount (NPR)</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Deadline</TableHead>
+                  <TableHead>Owner &amp; Status</TableHead>
+                  <TableHead>SLA Deadline</TableHead>
                   <TableHead className="text-right">Action</TableHead>
                 </TableRow>
               </TableHeader>
@@ -226,57 +253,90 @@ export function DurableExceptionsWorkbench({
                     </TableCell>
                   </TableRow>
                 ) : (
-                  exceptions.map((exc) => (
-                    <TableRow key={exc.id}>
-                      <TableCell className="font-mono text-xs whitespace-nowrap">
-                        {new Date(exc.created_at).toLocaleDateString()}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {exc.source_reference || exc.id.slice(0, 8)}
-                      </TableCell>
-                      <TableCell className="text-xs max-w-md">{exc.exception_reason}</TableCell>
-                      <TableCell className="text-right font-mono text-xs tabular-nums">
-                        {exc.amount != null
-                          ? Number(exc.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })
-                          : "—"}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            exc.status === "Resolved" || exc.status === "Accepted"
-                              ? "default"
-                              : exc.status === "Escalated" || exc.status === "Rejected"
-                                ? "destructive"
-                                : "outline"
-                          }
-                          className="text-[10px]"
-                        >
-                          {exc.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {exc.deadline ? new Date(exc.deadline).toLocaleDateString() : "—"}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {canEditExceptions && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 text-xs"
-                            onClick={() => {
-                              setResolvingExc(exc);
-                              setNextExcStatus(
-                                exc.status === "Open" ? "Investigating" : "Resolved",
-                              );
-                              setResolutionNotes(exc.resolution_notes || exc.notes || "");
-                            }}
-                          >
-                            Update
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))
+                  exceptions.map((exc) => {
+                    const owner = exc.assigned_to ? profilesMap[exc.assigned_to] : undefined;
+                    const isOverdue =
+                      Boolean(exc.deadline) &&
+                      !["Resolved", "Accepted"].includes(exc.status) &&
+                      String(exc.deadline).slice(0, 10) < todayIso;
+                    return (
+                      <TableRow key={exc.id}>
+                        <TableCell className="font-mono text-xs whitespace-nowrap">
+                          {new Date(exc.created_at).toLocaleDateString()}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {exc.source_reference || exc.id.slice(0, 8)}
+                        </TableCell>
+                        <TableCell className="text-xs max-w-md">{exc.exception_reason}</TableCell>
+                        <TableCell className="text-right font-mono text-xs tabular-nums">
+                          {exc.amount != null
+                            ? Number(exc.amount).toLocaleString("en-IN", {
+                                minimumFractionDigits: 2,
+                              })
+                            : "—"}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col gap-1">
+                            <Badge
+                              variant={
+                                exc.status === "Resolved" || exc.status === "Accepted"
+                                  ? "default"
+                                  : exc.status === "Escalated" || exc.status === "Rejected"
+                                    ? "destructive"
+                                    : "outline"
+                              }
+                              className="text-[10px] w-fit"
+                            >
+                              {exc.status}
+                            </Badge>
+                            {owner && (
+                              <span className="text-[10px] text-muted-foreground truncate max-w-[140px]">
+                                Owner: {owner.full_name}
+                              </span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {exc.deadline ? (
+                            <span
+                              className={
+                                isOverdue
+                                  ? "text-destructive font-semibold"
+                                  : "text-muted-foreground"
+                              }
+                            >
+                              {new Date(exc.deadline).toLocaleDateString()}
+                              {isOverdue ? " (Overdue)" : ""}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {canEditExceptions && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs"
+                              onClick={() => {
+                                setResolvingExc(exc);
+                                setNextExcStatus(
+                                  exc.status === "Open" ? "Investigating" : "Resolved",
+                                );
+                                setAssigneeId(exc.assigned_to || "__unassigned__");
+                                setSlaDeadline(
+                                  exc.deadline ? String(exc.deadline).slice(0, 10) : "",
+                                );
+                                setResolutionNotes(exc.resolution_notes || exc.notes || "");
+                              }}
+                            >
+                              Assign / Update
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
                 )}
               </TableBody>
             </Table>
@@ -291,9 +351,9 @@ export function DurableExceptionsWorkbench({
             Maker-Checker Variance Approvals
           </CardTitle>
           <CardDescription className="text-xs">
-            Partial/variance matches flagged for Checker sign-off
-            (`approve_reconciliation_variance_atomic` — enforces Maker ≠ Checker and role variance
-            thresholds).
+            Partial/variance matches flagged for Checker sign-off (
+            <code>approve_reconciliation_variance_atomic</code> — Admin / Supervisor with strict
+            Maker ≠ Checker).
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -335,10 +395,10 @@ export function DurableExceptionsWorkbench({
                       <TableCell className="font-mono text-xs">{row.reconciliation_date}</TableCell>
                       <TableCell className="text-xs">
                         <div className="font-medium">
-                          {row.clients?.full_name || row.source_reference || row.id.slice(0, 8)}
+                          {row.client?.full_name || row.source_reference || row.id.slice(0, 8)}
                         </div>
                         <div className="text-[11px] font-mono text-muted-foreground">
-                          {row.clients?.boid ? `BOID ${row.clients.boid} • ` : ""}
+                          {row.client?.boid ? `BOID ${row.client.boid} • ` : ""}
                           {row.payable_type}
                         </div>
                       </TableCell>
@@ -381,7 +441,7 @@ export function DurableExceptionsWorkbench({
                           </Button>
                         ) : (
                           <span className="text-[11px] text-muted-foreground">
-                            {row.requires_manual_approval ? "Checker Only" : "Cleared"}
+                            {row.requires_manual_approval ? "Supervisor / Admin Only" : "Cleared"}
                           </span>
                         )}
                       </TableCell>
@@ -394,46 +454,83 @@ export function DurableExceptionsWorkbench({
         </CardContent>
       </Card>
 
-      {/* Exception Update Dialog */}
+      {/* Exception Update & SLA Assignment Dialog */}
       <Dialog open={Boolean(resolvingExc)} onOpenChange={(o) => !o && setResolvingExc(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-sm">Update Reconciliation Exception</DialogTitle>
+            <DialogTitle className="text-sm">
+              Assign &amp; Update Reconciliation Exception
+            </DialogTitle>
             <DialogDescription className="text-xs">
               {resolvingExc?.exception_reason}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">
-            <Select
-              value={nextExcStatus}
-              onValueChange={(v) => setNextExcStatus(v as ReconciliationExceptionLifecycleStatus)}
-            >
-              <SelectTrigger className="h-9 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="Open">Open</SelectItem>
-                <SelectItem value="Investigating">Investigating</SelectItem>
-                <SelectItem value="Escalated">Escalated</SelectItem>
-                <SelectItem value="Accepted">Accepted</SelectItem>
-                <SelectItem value="Resolved">Resolved</SelectItem>
-                <SelectItem value="Rejected">Rejected</SelectItem>
-              </SelectContent>
-            </Select>
-            <Textarea
-              rows={3}
-              placeholder="Resolution notes or audit findings..."
-              value={resolutionNotes}
-              onChange={(e) => setResolutionNotes(e.target.value)}
-              className="text-xs"
-            />
+            <div className="grid grid-cols-2 gap-2.5">
+              <div className="space-y-1">
+                <Label className="text-xs">Assignee (Owner)</Label>
+                <Select value={assigneeId} onValueChange={setAssigneeId}>
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="Unassigned" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__unassigned__" className="text-xs">
+                      Unassigned
+                    </SelectItem>
+                    {operatorsList.map((op) => (
+                      <SelectItem key={op.id} value={op.id} className="text-xs">
+                        {op.full_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">SLA Deadline</Label>
+                <Input
+                  type="date"
+                  value={slaDeadline}
+                  onChange={(e) => setSlaDeadline(e.target.value)}
+                  className="h-9 text-xs"
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Lifecycle Status</Label>
+              <Select
+                value={nextExcStatus}
+                onValueChange={(v) => setNextExcStatus(v as ReconciliationExceptionLifecycleStatus)}
+              >
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Open">Open</SelectItem>
+                  <SelectItem value="Investigating">Investigating</SelectItem>
+                  <SelectItem value="Escalated">Escalated</SelectItem>
+                  <SelectItem value="Accepted">Accepted</SelectItem>
+                  <SelectItem value="Resolved">Resolved</SelectItem>
+                  <SelectItem value="Rejected">Rejected</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Investigation / Resolution Notes</Label>
+              <Textarea
+                rows={3}
+                placeholder="Resolution notes or audit findings..."
+                value={resolutionNotes}
+                onChange={(e) => setResolutionNotes(e.target.value)}
+                className="text-xs"
+              />
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={() => setResolvingExc(null)}>
               Cancel
             </Button>
             <Button size="sm" onClick={handleUpdateException}>
-              Save Status
+              Save Assignment &amp; Status
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -454,7 +551,7 @@ export function DurableExceptionsWorkbench({
           </DialogHeader>
           <div className="space-y-2 py-2">
             <Input
-              placeholder="Mandatory Checker approval reason..."
+              placeholder="Mandatory Checker approval reason (min 5 chars)..."
               value={approvalReason}
               onChange={(e) => setApprovalReason(e.target.value)}
               className="text-xs"
