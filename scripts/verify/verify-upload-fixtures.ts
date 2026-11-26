@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import * as XLSX from "xlsx";
-import { ExcelParser } from "../src/lib/excel-parser";
-import { ValidationEngine } from "../src/lib/validation-engine";
-import { BankParser } from "../src/lib/bank-parser";
-import { importFromExcel } from "../src/lib/xlsx-utils";
+import { ExcelParser } from "../../src/lib/excel-parser";
+import { ValidationEngine } from "../../src/lib/validation-engine";
+import { BankParser } from "../../src/lib/bank-parser";
+import { importFromExcel } from "../../src/lib/xlsx-utils";
 
 async function run() {
   console.log("=== STARTING COMPREHENSIVE UPLOAD FIXTURES VERIFICATION ===");

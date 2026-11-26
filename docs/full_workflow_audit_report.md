@@ -159,5 +159,5 @@ npm run lint
 npm run build
 
 # 5. Database deployment & RPC verification
-node scripts/verify-supabase-deployment.mjs
+node scripts/ops/verify-supabase-deployment.mjs
 ```

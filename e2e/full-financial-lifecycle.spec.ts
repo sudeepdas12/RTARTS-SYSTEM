@@ -10,7 +10,7 @@ function ensureDividendAndBankFixtures(): void {
   const needed = ["section1_dividend_payables.xlsx", "section4_bank_statement.xlsx"];
   const missing = needed.filter((f) => !fs.existsSync(path.join(FIXTURES_DIR, f)));
   if (missing.length > 0) {
-    execSync("node scripts/generate_all_test_fixtures.mjs", {
+    execSync("node scripts/verify/generate-all-test-fixtures.mjs", {
       cwd: process.cwd(),
       stdio: "inherit",
     });

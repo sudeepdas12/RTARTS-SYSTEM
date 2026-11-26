@@ -16,57 +16,57 @@ console.log("Generating comprehensive test fixtures for all upload sections...")
 // -------------------------------------------------------------
 const dividendRows = [
   {
-    "BOID": "1301020000000001",
+    BOID: "1301020000000001",
     "Shareholder Name": "Ram Prasad Sharma",
     "Father Name": "Hari Prasad Sharma",
     "Grandfather Name": "Krishna Prasad Sharma",
-    "PAN": "100234567",
+    PAN: "100234567",
     "Bank Name": "Rastriya Banijya Bank",
     "Bank Account No": "109000123456",
-    "Kitta": 1000,
-    "Gross Dividend": 5000.00,
-    "Tax Amount": 250.00, // 5% Natural Person
-    "Net Dividend": 4750.00,
+    Kitta: 1000,
+    "Gross Dividend": 5000.0,
+    "Tax Amount": 250.0, // 5% Natural Person
+    "Net Dividend": 4750.0,
   },
   {
-    "BOID": "1301020000000002",
+    BOID: "1301020000000002",
     "Shareholder Name": "HIMALAYAN INVESTMENTS PVT LTD",
     "Father Name": "",
     "Grandfather Name": "",
-    "PAN": "300456789",
+    PAN: "300456789",
     "Bank Name": "Nabil Bank",
     "Bank Account No": "010010002345",
-    "Kitta": 5000,
-    "Gross Dividend": 25000.00,
-    "Tax Amount": 3750.00, // 15% Corporate
-    "Net Dividend": 21250.00,
+    Kitta: 5000,
+    "Gross Dividend": 25000.0,
+    "Tax Amount": 3750.0, // 15% Corporate
+    "Net Dividend": 21250.0,
   },
   {
-    "BOID": "1301020000000003",
+    BOID: "1301020000000003",
     "Shareholder Name": "NAGARIK LAGANI KOSH",
     "Father Name": "",
     "Grandfather Name": "",
-    "PAN": "300000001",
+    PAN: "300000001",
     "Bank Name": "Nepal Bank Limited",
     "Bank Account No": "002001000456",
-    "Kitta": 10000,
-    "Gross Dividend": 50000.00,
-    "Tax Amount": 0.00, // 0% Tax Exempt (Sec 10)
-    "Net Dividend": 50000.00,
+    Kitta: 10000,
+    "Gross Dividend": 50000.0,
+    "Tax Amount": 0.0, // 0% Tax Exempt (Sec 10)
+    "Net Dividend": 50000.0,
   },
   {
-    "BOID": "1301020000000004",
+    BOID: "1301020000000004",
     "Shareholder Name": "GLOBAL CAPITAL VENTURES LLC",
     "Father Name": "",
     "Grandfather Name": "",
-    "PAN": "999888777",
+    PAN: "999888777",
     "Bank Name": "Standard Chartered Bank",
     "Bank Account No": "012345678901",
-    "Kitta": 2000,
-    "Gross Dividend": 10000.00,
-    "Tax Amount": 1500.00, // 15% Foreign
-    "Net Dividend": 8500.00,
-  }
+    Kitta: 2000,
+    "Gross Dividend": 10000.0,
+    "Tax Amount": 1500.0, // 15% Foreign
+    "Net Dividend": 8500.0,
+  },
 ];
 
 const wbDiv = XLSX.utils.book_new();
@@ -81,26 +81,26 @@ console.log("✓ Created section1_dividend_payables.xlsx");
 const debentureRows = [
   {
     "Bondholder Name": "Sita Devi Adhikari",
-    "BOID": "1301020000000010",
+    BOID: "1301020000000010",
     "Citizenship No": "27-01-72-04561",
-    "PAN": "102345678",
+    PAN: "102345678",
     "Bank Name": "Global IME Bank",
     "Account Number": "0010100009876",
-    "Gross Interest": 8500.00,
-    "TDS Amount": 425.00, // 5% Individual
-    "Net Interest": 8075.00,
+    "Gross Interest": 8500.0,
+    "TDS Amount": 425.0, // 5% Individual
+    "Net Interest": 8075.0,
   },
   {
     "Bondholder Name": "PRABHU INSURANCE LIMITED",
-    "BOID": "1301020000000011",
+    BOID: "1301020000000011",
     "Citizenship No": "",
-    "PAN": "301234567",
+    PAN: "301234567",
     "Bank Name": "Prabhu Bank Limited",
     "Account Number": "0120010008888",
-    "Gross Interest": 42500.00,
-    "TDS Amount": 6375.00, // 15% Institutional
-    "Net Interest": 36125.00,
-  }
+    "Gross Interest": 42500.0,
+    "TDS Amount": 6375.0, // 15% Institutional
+    "Net Interest": 36125.0,
+  },
 ];
 
 const wbDeb = XLSX.utils.book_new();
@@ -115,28 +115,28 @@ console.log("✓ Created section2_debenture_interest.xlsx");
 const mfRows = [
   {
     "Unit Holder Name": "Bikash Thapa",
-    "BOID": "1301020000000020",
-    "PAN": "109876543",
+    BOID: "1301020000000020",
+    PAN: "109876543",
     "Units Held": 2000,
-    "Gross Distribution": 3000.00,
+    "Gross Distribution": 3000.0,
     "Tax Rate %": 5,
-    "Tax Amount": 150.00,
-    "Net Payable": 2850.00,
+    "Tax Amount": 150.0,
+    "Net Payable": 2850.0,
     "Bank Name": "Everest Bank",
-    "Bank Account No": "0150010003456"
+    "Bank Account No": "0150010003456",
   },
   {
     "Unit Holder Name": "KOSH BYAWASTHAPAN COMPANY",
-    "BOID": "1301020000000021",
-    "PAN": "309876543",
+    BOID: "1301020000000021",
+    PAN: "309876543",
     "Units Held": 10000,
-    "Gross Distribution": 15000.00,
+    "Gross Distribution": 15000.0,
     "Tax Rate %": 15,
-    "Tax Amount": 2250.00,
-    "Net Payable": 12750.00,
+    "Tax Amount": 2250.0,
+    "Net Payable": 12750.0,
     "Bank Name": "Sanima Bank",
-    "Bank Account No": "0250010006789"
-  }
+    "Bank Account No": "0250010006789",
+  },
 ];
 
 const wbMf = XLSX.utils.book_new();
@@ -150,29 +150,29 @@ console.log("✓ Created section3_mutual_fund.xlsx");
 // -------------------------------------------------------------
 const bankRows = [
   {
-    "Date": "2026-05-15",
-    "Description": "DIVIDEND PAYOUT BATCH 1",
+    Date: "2026-05-15",
+    Description: "DIVIDEND PAYOUT BATCH 1",
     "Reference / Txn ID": "TXN-20260515-001",
-    "Debit": 4750.00,
-    "Credit": 0.00,
-    "Balance": 995250.00
+    Debit: 4750.0,
+    Credit: 0.0,
+    Balance: 995250.0,
   },
   {
-    "Date": "2026-05-15",
-    "Description": "DIVIDEND PAYOUT BATCH 2",
+    Date: "2026-05-15",
+    Description: "DIVIDEND PAYOUT BATCH 2",
     "Reference / Txn ID": "TXN-20260515-002",
-    "Debit": 21250.00,
-    "Credit": 0.00,
-    "Balance": 974000.00
+    Debit: 21250.0,
+    Credit: 0.0,
+    Balance: 974000.0,
   },
   {
-    "Date": "2026-05-16",
-    "Description": "RETURNED UNCLAIMED PAYOUT",
+    Date: "2026-05-16",
+    Description: "RETURNED UNCLAIMED PAYOUT",
     "Reference / Txn ID": "TXN-20260515-003",
-    "Debit": 0.00,
-    "Credit": 8500.00,
-    "Balance": 982500.00
-  }
+    Debit: 0.0,
+    Credit: 8500.0,
+    Balance: 982500.0,
+  },
 ];
 
 const wbBank = XLSX.utils.book_new();
@@ -184,7 +184,7 @@ const csvContent = [
   "Date,Particulars,Instruction ID,Debit,Credit,Balance",
   "2026-05-15,DIVIDEND PAYOUT BATCH 1,TXN-20260515-001,4750.00,0,995250.00",
   "2026-05-15,DIVIDEND PAYOUT BATCH 2,TXN-20260515-002,21250.00,0,974000.00",
-  "2026-05-16,RETURNED UNCLAIMED PAYOUT,TXN-20260515-003,0,8500.00,982500.00"
+  "2026-05-16,RETURNED UNCLAIMED PAYOUT,TXN-20260515-003,0,8500.00,982500.00",
 ].join("\n");
 fs.writeFileSync(path.join(FIXTURES_DIR, "section4_bank_statement.csv"), csvContent);
 console.log("✓ Created section4_bank_statement.xlsx and .csv");
@@ -195,32 +195,32 @@ console.log("✓ Created section4_bank_statement.xlsx and .csv");
 const clientRows = [
   {
     "Full Name": "Ram Prasad Sharma",
-    "BOID": "1301020000000001",
-    "PAN": "100234567",
+    BOID: "1301020000000001",
+    PAN: "100234567",
     "Citizenship No": "12-01-70-12345",
     "Father Name": "Hari Prasad Sharma",
     "Grandfather Name": "Krishna Prasad Sharma",
-    "Address": "Kathmandu-32, Bagmati",
-    "Phone": "9851000001",
+    Address: "Kathmandu-32, Bagmati",
+    Phone: "9851000001",
     "Bank Name": "Rastriya Banijya Bank",
     "Account Number": "109000123456",
     "Holder Type": "Individual",
-    "Payee Classification": "NATURAL_PERSON"
+    "Payee Classification": "NATURAL_PERSON",
   },
   {
     "Full Name": "HIMALAYAN INVESTMENTS PVT LTD",
-    "BOID": "1301020000000002",
-    "PAN": "300456789",
+    BOID: "1301020000000002",
+    PAN: "300456789",
     "Citizenship No": "",
     "Father Name": "",
     "Grandfather Name": "",
-    "Address": "Lalitpur-03, Bagmati",
-    "Phone": "01-5544332",
+    Address: "Lalitpur-03, Bagmati",
+    Phone: "01-5544332",
     "Bank Name": "Nabil Bank",
     "Account Number": "010010002345",
     "Holder Type": "Corporate",
-    "Payee Classification": "COMPANY_INSTITUTION"
-  }
+    "Payee Classification": "COMPANY_INSTITUTION",
+  },
 ];
 
 const wbClient = XLSX.utils.book_new();
@@ -236,19 +236,19 @@ const companyRows = [
   {
     "Company Code": "TESTCO",
     "Company Name": "Test Commercial Corporation Ltd.",
-    "Sector": "Commercial Banks",
+    Sector: "Commercial Banks",
     "Registration Number": "998877-080/081",
     "PAN Number": "301122334",
-    "Is Active": "TRUE"
+    "Is Active": "TRUE",
   },
   {
     "Company Code": "TESTHYDRO",
     "Company Name": "Test Hydropower Power Development Ltd.",
-    "Sector": "Hydro Power",
+    Sector: "Hydro Power",
     "Registration Number": "112233-079/080",
     "PAN Number": "305566778",
-    "Is Active": "TRUE"
-  }
+    "Is Active": "TRUE",
+  },
 ];
 
 const wbComp = XLSX.utils.book_new();
@@ -262,14 +262,14 @@ console.log("✓ Created section6_companies_master.xlsx");
 // -------------------------------------------------------------
 const mathMismatchRows = [
   {
-    "BOID": "1301020000000099",
+    BOID: "1301020000000099",
     "Shareholder Name": "Faulty Calculation Record",
-    "Gross Dividend": 10000.00,
-    "Tax Amount": 500.00,
-    "Net Dividend": 8000.00, // Should be 9500! 1500 discrepancy
+    "Gross Dividend": 10000.0,
+    "Tax Amount": 500.0,
+    "Net Dividend": 8000.0, // Should be 9500! 1500 discrepancy
     "Bank Name": "RBB",
-    "Bank Account No": "123456789"
-  }
+    "Bank Account No": "123456789",
+  },
 ];
 
 const wbMismatch = XLSX.utils.book_new();
@@ -283,23 +283,23 @@ console.log("✓ Created edge_case_math_mismatch.xlsx");
 // -------------------------------------------------------------
 const invalidBoidRows = [
   {
-    "BOID": "130102000012", // Truncated Demat BOID (12 digits starting with 130)
+    BOID: "130102000012", // Truncated Demat BOID (12 digits starting with 130)
     "Shareholder Name": "Truncated Demat User",
-    "Gross Dividend": 500.00,
-    "Tax Amount": 25.00,
-    "Net Dividend": 475.00,
+    "Gross Dividend": 500.0,
+    "Tax Amount": 25.0,
+    "Net Dividend": 475.0,
     "Bank Name": "Rastriya Banijya Bank",
-    "Bank Account No": "123456789"
+    "Bank Account No": "123456789",
   },
   {
-    "BOID": "13010200@#$%9999", // Contains illegal characters
+    BOID: "13010200@#$%9999", // Contains illegal characters
     "Shareholder Name": "Corrupted Chars User",
-    "Gross Dividend": 500.00,
-    "Tax Amount": 25.00,
-    "Net Dividend": 475.00,
+    "Gross Dividend": 500.0,
+    "Tax Amount": 25.0,
+    "Net Dividend": 475.0,
     "Bank Name": "Rastriya Banijya Bank",
-    "Bank Account No": "987654321"
-  }
+    "Bank Account No": "987654321",
+  },
 ];
 
 const wbInvalidBoid = XLSX.utils.book_new();

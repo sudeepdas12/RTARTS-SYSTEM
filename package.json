@@ -35,8 +35,8 @@
     "verify:production-live": "node ./scripts/ops/release-gate-verify.mjs --live",
     "audit:classifications": "node ./scripts/audit/audit-classifications.mjs",
     "audit:summaries": "node ./scripts/audit/audit-all-summaries.mjs",
-    "fixtures:generate": "node ./scripts/generate_all_test_fixtures.mjs",
-    "test:fixtures": "tsx ./scripts/verify_upload_fixtures.ts",
+    "fixtures:generate": "node ./scripts/verify/generate-all-test-fixtures.mjs",
+    "test:fixtures": "tsx ./scripts/verify/verify-upload-fixtures.ts",
     "prepare": "husky"
   },
   "dependencies": {

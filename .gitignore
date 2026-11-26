@@ -11,8 +11,6 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-node_modules_old
-corrupted_trash
 dist
 dist-ssr
 .output
@@ -48,20 +46,8 @@ supabase/.temp/
 supabase/.branches/
 
 # Dev / debug artifacts
-build-out.txt
-dev-server.*
 *.pid
 *.lnk
-repro_out.txt
-tmp_inspect*
-check-db*.mjs
-check-edge.mjs
-debug-path*.mjs
-diagnose.mjs
-inspect-rmf.js
-mock-rts-server.js
-parse-excel.mjs
-run-upload.mjs
 
 # Shareholder PII, bank statements & reconciliation files
 RBB Reconsilation/

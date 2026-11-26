@@ -21,7 +21,7 @@ const REQUIRED_FIXTURES = [
 /**
  * The spreadsheet fixtures live in test-fixtures/ but are intentionally gitignored
  * (*.xlsx / *.xls / *.csv, see .gitignore) because they resemble financial data.
- * They are regenerated deterministically from scripts/generate_all_test_fixtures.mjs.
+ * They are regenerated deterministically from scripts/verify/generate-all-test-fixtures.mjs.
  * Regenerate them on demand so a fresh checkout always has a complete matrix.
  */
 function ensureFixtures(): void {
@@ -30,7 +30,7 @@ function ensureFixtures(): void {
   console.log(
     `[uploads-all-sections] ${missing.length} fixture(s) missing (${missing.join(", ")}) — regenerating…`,
   );
-  execSync("node scripts/generate_all_test_fixtures.mjs", {
+  execSync("node scripts/verify/generate-all-test-fixtures.mjs", {
     cwd: process.cwd(),
     stdio: "inherit",
   });

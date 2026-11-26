@@ -135,12 +135,12 @@ The following specifications define the hardware, operating system, and network 
 
 #### 4. Data Sizing & Storage Growth Planning
 
-| Data Classification                                                 | Storage Growth Estimate                | Retention & Archival Strategy                                    |
-| :------------------------------------------------------------------ | :------------------------------------- | :--------------------------------------------------------------- |
-| **Shareholder Registry (`clients`)**                                | ~15 MB per 10,000 shareholder profiles | Active persistent storage with composite B-Tree indexes.         |
-| **Entitlement Payables (`interest_payables`, `dividend_payables`)** | ~40 MB per 10,000 payable records      | Partitioned and indexed by `fiscal_year` and `company_id`.       |
-| **Audit Compliance Trail (`audit_logs`)**                           | ~50 MB – 100 MB per fiscal year        | Immutable write-only regulatory trail (SEBON 5-year retention).  |
-| **Daily Database Backups (`.sql.gz`)**                              | ~15 MB – 50 MB per compressed snapshot | Automated via `scripts/backup-db.mjs` (30-day rolling rotation). |
+| Data Classification                                                 | Storage Growth Estimate                | Retention & Archival Strategy                                        |
+| :------------------------------------------------------------------ | :------------------------------------- | :------------------------------------------------------------------- |
+| **Shareholder Registry (`clients`)**                                | ~15 MB per 10,000 shareholder profiles | Active persistent storage with composite B-Tree indexes.             |
+| **Entitlement Payables (`interest_payables`, `dividend_payables`)** | ~40 MB per 10,000 payable records      | Partitioned and indexed by `fiscal_year` and `company_id`.           |
+| **Audit Compliance Trail (`audit_logs`)**                           | ~50 MB – 100 MB per fiscal year        | Immutable write-only regulatory trail (SEBON 5-year retention).      |
+| **Daily Database Backups (`.sql.gz`)**                              | ~15 MB – 50 MB per compressed snapshot | Automated via `scripts/ops/backup-db.mjs` (30-day rolling rotation). |
 
 ---
 
@@ -785,7 +785,7 @@ All financial service layers (`PaymentService`, `ReconciliationService`, `Report
 To verify that all required tables, RPCs, constraints, and migrations are applied on any Supabase environment (local or hosted):
 
 ```powershell
-node scripts/verify-supabase-deployment.mjs
+node scripts/ops/verify-supabase-deployment.mjs
 ```
 
 The script audits:
@@ -856,7 +856,7 @@ npm run build
 
 ## 10. Backup, Disaster Recovery & Maintenance
 
-### Universal Adaptive Backup Engine (`scripts/backup-db.mjs`)
+### Universal Adaptive Backup Engine (`scripts/ops/backup-db.mjs`)
 
 The system features an adaptive, cross-platform backup engine that works identically on **Windows servers, Linux servers, cloud VMs (Ubuntu/Debian/RHEL), macOS, and Docker containers**:
 
@@ -879,14 +879,14 @@ npm run db:backup
 
 ---
 
-### Disaster Recovery / Restoration (`scripts/restore-db.mjs`)
+### Disaster Recovery / Restoration (`scripts/ops/restore-db.mjs`)
 
 ```bash
 # Restore latest backup interactively:
 npm run db:restore
 
 # Or specify an exact backup archive to restore:
-node scripts/restore-db.mjs ./backups/rtarts_backup_20260921_073340.sql.gz
+node scripts/ops/restore-db.mjs ./backups/rtarts_backup_20260921_073340.sql.gz
 ```
 
 #### Restoration Workflow:
@@ -907,7 +907,7 @@ node scripts/restore-db.mjs ./backups/rtarts_backup_20260921_073340.sql.gz
 - Trigger: **Daily at 11:00 PM** (post-reconciliation).
 - Action: Start a program:
   - Program: `npm.cmd` (or `node.exe`)
-  - Arguments: `run db:backup` (or `scripts/backup-db.mjs`)
+  - Arguments: `run db:backup` (or `scripts/ops/backup-db.mjs`)
   - Start in: `C:\path\to\RTARTS System`
 
 #### Option B: Linux / Cloud Server (Crontab)

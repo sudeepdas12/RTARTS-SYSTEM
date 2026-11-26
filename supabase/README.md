@@ -7,8 +7,8 @@
 All database-changing SQL belongs in this directory:
 
 - `migrations/` — ordered, immutable schema and data migrations applied by the Supabase CLI.
+- `migrations_archive/` — historical pre-consolidation migrations retained for audit traceability.
 - `seed.sql` — local-development seed data only.
-- `snippets/` — read-only investigation queries; never run automatically.
 - `functions/` — Supabase Edge Functions, not database migrations.
 
 Do not place migrations under `src/`, scripts, or feature folders. Create new migrations with `supabase migration new <name>` and keep the generated file under `supabase/migrations/`.
@@ -50,7 +50,7 @@ To audit that all tables, foreign keys, triggers, RPCs, and RLS policies are app
 
 ```powershell
 # Run the deployment verification script
-node scripts/verify-supabase-deployment.mjs
+node scripts/ops/verify-supabase-deployment.mjs
 ```
 
 This script verifies:
@@ -63,7 +63,7 @@ This script verifies:
 
 ## Initial Seed & Administrative Accounts
 
-On a fresh database reset (`supabase db reset`), initial configuration and superuser accounts are created by `20261147000000_seed_initial_admin_users.sql` and `seed.sql`:
+On a fresh database reset (`supabase db reset`), initial configuration and superuser accounts are created by `20261124000001_initial_schema.sql` and `seed.sql`:
 
 - **Admin Email**: `admin@rbbmbl.com.np`
 - **Default Password**: `Admin123!`

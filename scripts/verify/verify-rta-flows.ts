@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
-import { BankErrorProcessorService } from "../src/lib/services/bank-error-processor.service";
+import { BankErrorProcessorService } from "../../src/lib/services/bank-error-processor.service";
 
 const SUPABASE_URL =
   process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "http://127.0.0.1:54321";

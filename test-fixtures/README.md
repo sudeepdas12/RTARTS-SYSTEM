@@ -7,7 +7,7 @@
 > like production data to end up in version control.
 
 Instead, every fixture is generated deterministically from a single source of truth:
-`scripts/generate_all_test_fixtures.mjs`.
+`scripts/verify/generate-all-test-fixtures.mjs`.
 
 ## Regenerate everything
 
@@ -35,5 +35,5 @@ missing fixtures on startup, so a fresh checkout works with zero manual steps.
 
 ```powershell
 npm run fixtures:generate
-npm run test:fixtures   # runs scripts/verify_upload_fixtures.ts against every parser
+npm run test:fixtures   # runs scripts/verify/verify-upload-fixtures.ts against every parser
 ```

@@ -1,4 +1,0 @@
-{
-  "results": [],
-  "message": "All database security advisors resolved (function search_path mutable and permissive RLS policies tightened)."
-}
