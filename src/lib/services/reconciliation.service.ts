@@ -1845,6 +1845,10 @@ export const ReconciliationService = {
 
     const { data, count, error } = await query.range(offset, offset + limit - 1);
     if (error) {
+      const { data: sessionRes } = await supabase.auth.getSession();
+      if (!sessionRes?.session) {
+        return { rows: [], totalCount: 0 };
+      }
       throw new Error(`Failed to load bank ledger transactions: ${error.message}`);
     }
 
@@ -1852,6 +1856,35 @@ export const ReconciliationService = {
       rows: (data || []) as BankStatementTransactionRow[],
       totalCount: count ?? data?.length ?? 0,
     };
+  },
+
+  async getCompanyOperators(
+    companyId?: string | null,
+  ): Promise<Array<{ id: string; full_name: string; email: string }>> {
+    try {
+      const { data, error } = await (supabase as any).rpc("get_company_operators", {
+        p_company_id: companyId || null,
+      });
+      if (!error && Array.isArray(data)) {
+        return data as Array<{ id: string; full_name: string; email: string }>;
+      }
+    } catch (e) {
+      console.warn("get_company_operators fallback to profiles:", e);
+    }
+
+    try {
+      const { data: profiles } = await (supabase as any)
+        .from("profiles")
+        .select("id, full_name, email")
+        .order("full_name");
+      return (profiles || []).map((p: any) => ({
+        id: p.id,
+        full_name: p.full_name || p.email || "Operator",
+        email: p.email || "",
+      }));
+    } catch {
+      return [];
+    }
   },
 
   async searchPendingPayablesForManualMatch(

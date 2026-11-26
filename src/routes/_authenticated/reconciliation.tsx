@@ -154,6 +154,8 @@ function ReconciliationRoute() {
   const [manualSelectedTxns, setManualSelectedTxns] = useState<BankStatementTransactionRow[]>([]);
   const [isSyncingConnectIps, setIsSyncingConnectIps] = useState<boolean>(false);
   const [opsWorkbenchTab, setOpsWorkbenchTab] = useState<string>("bank_ledger");
+  const [brsCompanyId, setBrsCompanyId] = useState<string>("");
+  const [ledgerSelectionResetKey, setLedgerSelectionResetKey] = useState<number>(0);
 
   const { hasAny, isAdmin, user, roles } = useAuth();
   const canApply = hasAny(["admin", "finance_operator", "reconciliation_officer"]);
@@ -1216,9 +1218,10 @@ function ReconciliationRoute() {
           <div className="flex flex-wrap items-center gap-2">
             {renderCompanyMultiSelect("w-[210px] h-9 text-xs", "All Companies")}
             <BankErrorUploadDialog />
-            {canApply ? (
+            {canApply && (
               <>
                 <Button
+                  type="button"
                   variant="default"
                   className="cursor-pointer"
                   disabled={isProcessing || isSaving || isApplying}
@@ -1237,6 +1240,7 @@ function ReconciliationRoute() {
                   onChange={handleFileUpload}
                 />
                 <Button
+                  type="button"
                   variant="outline"
                   className="cursor-pointer"
                   disabled={isProcessing || isSaving || isApplying}
@@ -1254,17 +1258,22 @@ function ReconciliationRoute() {
                   className="hidden"
                   onChange={handleBankStatementUpload}
                 />
-                {canManualSubmit && (
-                  <Button
-                    variant="secondary"
-                    className="cursor-pointer"
-                    onClick={() => openManualReconciliationDialog("manual_entry", [])}
-                  >
-                    <PlusCircle className="w-4 h-4 mr-1.5" />
-                    Manual Entry / Match
-                  </Button>
-                )}
+              </>
+            )}
+            {canManualSubmit && (
+              <>
                 <Button
+                  id="header-manual-entry-btn"
+                  type="button"
+                  variant="secondary"
+                  className="cursor-pointer"
+                  onClick={() => openManualReconciliationDialog("manual_entry", [])}
+                >
+                  <PlusCircle className="w-4 h-4 mr-1.5" />
+                  Manual Entry / Match
+                </Button>
+                <Button
+                  type="button"
                   variant="outline"
                   className="cursor-pointer"
                   disabled={isSyncingConnectIps}
@@ -1274,7 +1283,8 @@ function ReconciliationRoute() {
                   {isSyncingConnectIps ? "Syncing..." : "Sync ConnectIPS"}
                 </Button>
               </>
-            ) : (
+            )}
+            {!canApply && !canManualSubmit && (
               <Badge
                 variant="outline"
                 className="text-amber-700 dark:text-amber-300 border-amber-300 bg-amber-50 dark:bg-amber-950/20 text-xs px-2.5 py-1"
@@ -1844,6 +1854,8 @@ function ReconciliationRoute() {
         <TabsContent value="bank_ledger" className="m-0">
           <BankLedgerWorkbenchTab
             selectedCompanyIds={reconCompanyIds}
+            currentUserId={user?.id}
+            selectionResetKey={ledgerSelectionResetKey}
             canApply={canManualSubmit}
             onOpenManualDialog={openManualReconciliationDialog}
             onSyncConnectIpsComplete={() => loadHistory()}
@@ -1853,6 +1865,7 @@ function ReconciliationRoute() {
         <TabsContent value="exceptions_workbench" className="m-0">
           <DurableExceptionsWorkbench
             selectedCompanyIds={reconCompanyIds}
+            currentUserId={user?.id}
             canApproveVariance={canApproveVariance}
             canEditExceptions={canManualSubmit}
           />
@@ -1862,6 +1875,8 @@ function ReconciliationRoute() {
           <BankReconciliationStatementPanel
             companiesList={companiesList}
             selectedCompanyIds={reconCompanyIds}
+            selectedCompanyId={brsCompanyId}
+            onSelectCompanyId={setBrsCompanyId}
             currentUserId={user?.id}
             canCertifyLock={canCertifyLock}
             isAdminOrSupervisor={hasAny(["admin", "supervisor"])}
@@ -1916,7 +1931,10 @@ function ReconciliationRoute() {
         defaultCompanyId={reconCompanyIds[0] || companiesList[0]?.id}
         initialMode={manualDialogMode}
         selectedTransactions={manualSelectedTxns}
-        onSubmitted={() => loadHistory()}
+        onSubmitted={() => {
+          setLedgerSelectionResetKey((k) => k + 1);
+          loadHistory();
+        }}
       />
 
       <ReconciliationModalsGroup

@@ -1,7 +1,6 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { AuditService } from "@/lib/services/audit.service";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -41,12 +40,14 @@ import { toast } from "sonner";
 
 export interface DurableExceptionsWorkbenchProps {
   selectedCompanyIds: string[];
+  currentUserId?: string | null;
   canApproveVariance: boolean;
   canEditExceptions: boolean;
 }
 
 export function DurableExceptionsWorkbench({
   selectedCompanyIds,
+  currentUserId,
   canApproveVariance,
   canEditExceptions,
 }: DurableExceptionsWorkbenchProps) {
@@ -72,6 +73,8 @@ export function DurableExceptionsWorkbench({
     refetch: refetchExc,
   } = useQuery({
     queryKey: ["reconciliation_exceptions", singleCompanyId, statusFilter],
+    enabled: Boolean(currentUserId),
+    retry: false,
     queryFn: () =>
       ReconciliationService.getDurableExceptions({
         companyId: singleCompanyId,
@@ -80,10 +83,18 @@ export function DurableExceptionsWorkbench({
       }),
   });
 
-  const { data: profilesMap = {} } = useQuery({
-    queryKey: ["audit_user_profiles_exceptions"],
-    queryFn: () => AuditService.getUserProfiles(),
+  const { data: operatorsList = [] } = useQuery({
+    queryKey: ["company_operators_exceptions", singleCompanyId],
+    enabled: Boolean(currentUserId),
+    retry: false,
+    queryFn: () => ReconciliationService.getCompanyOperators(singleCompanyId),
   });
+
+  const profilesMap = useMemo(() => {
+    const map: Record<string, { id: string; full_name: string; email: string }> = {};
+    for (const op of operatorsList) map[op.id] = op;
+    return map;
+  }, [operatorsList]);
 
   const {
     data: varianceRows = [],
@@ -91,6 +102,8 @@ export function DurableExceptionsWorkbench({
     refetch: refetchVar,
   } = useQuery({
     queryKey: ["reconciliation_variances_pending", selectedCompanyIds],
+    enabled: Boolean(currentUserId),
+    retry: false,
     queryFn: async () => {
       let q = (supabase as any)
         .from("reconciliation_results")
@@ -114,7 +127,6 @@ export function DurableExceptionsWorkbench({
   });
 
   const exceptions = excData?.exceptions || [];
-  const operatorsList = Object.values(profilesMap);
 
   const handleUpdateException = async () => {
     if (!resolvingExc) return;

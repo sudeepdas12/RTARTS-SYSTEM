@@ -30,6 +30,8 @@ import { toast } from "sonner";
 
 export interface BankLedgerWorkbenchTabProps {
   selectedCompanyIds: string[];
+  currentUserId?: string | null;
+  selectionResetKey?: number;
   canApply: boolean;
   onOpenManualDialog: (
     mode: ManualReconciliationMode,
@@ -40,6 +42,8 @@ export interface BankLedgerWorkbenchTabProps {
 
 export function BankLedgerWorkbenchTab({
   selectedCompanyIds,
+  currentUserId,
+  selectionResetKey = 0,
   canApply,
   onOpenManualDialog,
   onSyncConnectIpsComplete,
@@ -51,6 +55,12 @@ export function BankLedgerWorkbenchTab({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isSyncingIps, setIsSyncingIps] = useState(false);
 
+  const [prevResetKey, setPrevResetKey] = useState(selectionResetKey);
+  if (selectionResetKey !== prevResetKey) {
+    setPrevResetKey(selectionResetKey);
+    if (selectedIds.size > 0) setSelectedIds(new Set());
+  }
+
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: [
       "bank_statement_transactions",
@@ -59,6 +69,8 @@ export function BankLedgerWorkbenchTab({
       channelFilter,
       search,
     ],
+    enabled: Boolean(currentUserId),
+    retry: false,
     queryFn: () =>
       ReconciliationService.getBankStatementTransactions({
         companyIds: selectedCompanyIds,
@@ -210,16 +222,16 @@ export function BankLedgerWorkbenchTab({
           )}
         </div>
 
-        <div className="border rounded-lg overflow-hidden">
+        <div className="border rounded-lg overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-10" />
-                <TableHead>Date</TableHead>
+                <TableHead className="w-8 px-2" />
+                <TableHead className="whitespace-nowrap">Date</TableHead>
                 <TableHead>Channel</TableHead>
                 <TableHead>Reference &amp; Description</TableHead>
-                <TableHead className="text-right">Debit (NPR)</TableHead>
-                <TableHead className="text-right">Credit (NPR)</TableHead>
+                <TableHead className="text-right whitespace-nowrap">Debit (NPR)</TableHead>
+                <TableHead className="text-right whitespace-nowrap">Credit (NPR)</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Voucher</TableHead>
               </TableRow>
@@ -244,9 +256,9 @@ export function BankLedgerWorkbenchTab({
                     row.approval_status !== "pending_approval";
                   return (
                     <TableRow key={row.id}>
-                      <TableCell>
+                      <TableCell className="px-2">
                         <Checkbox
-                          checked={selectedIds.has(row.id)}
+                          checked={isSelectable && selectedIds.has(row.id)}
                           disabled={!isSelectable}
                           onCheckedChange={() => toggleRow(row.id)}
                         />
@@ -263,7 +275,7 @@ export function BankLedgerWorkbenchTab({
                               : "File"}
                         </Badge>
                       </TableCell>
-                      <TableCell className="max-w-sm">
+                      <TableCell className="max-w-[230px]">
                         <div className="text-xs font-medium truncate">
                           {row.reference || "No Reference"}
                         </div>

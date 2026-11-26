@@ -30,7 +30,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { AuditService } from "@/lib/services/audit.service";
 import { ReconciliationService } from "@/lib/services/reconciliation.service";
 import { Download, Lock, Printer, RefreshCw, ShieldCheck, Unlock } from "lucide-react";
 import { toast } from "sonner";
@@ -38,6 +37,8 @@ import { toast } from "sonner";
 export interface BankReconciliationStatementPanelProps {
   companiesList: Array<{ id: string; company_name: string; company_code?: string | null }>;
   selectedCompanyIds: string[];
+  selectedCompanyId?: string;
+  onSelectCompanyId?: (id: string) => void;
   currentUserId?: string | null;
   canCertifyLock: boolean;
   isAdminOrSupervisor: boolean;
@@ -49,17 +50,23 @@ const fmtNpr = (val: number | undefined | null) =>
 export function BankReconciliationStatementPanel({
   companiesList,
   selectedCompanyIds,
+  selectedCompanyId,
+  onSelectCompanyId,
   currentUserId,
   canCertifyLock,
   isAdminOrSupervisor,
 }: BankReconciliationStatementPanelProps) {
   const qc = useQueryClient();
-  const [manualCompanyId, setManualCompanyId] = useState<string>("");
+  const [localCompanyId, setLocalCompanyId] = useState<string>("");
+  const effectiveManualId = selectedCompanyId || localCompanyId;
   const companyId =
     selectedCompanyIds.length === 1 && selectedCompanyIds[0]
       ? selectedCompanyIds[0]
-      : manualCompanyId || companiesList[0]?.id || "";
-  const setCompanyId = setManualCompanyId;
+      : effectiveManualId || companiesList[0]?.id || "";
+  const setCompanyId = (id: string) => {
+    setLocalCompanyId(id);
+    onSelectCompanyId?.(id);
+  };
   const [periodStart, setPeriodStart] = useState<string>(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
@@ -91,7 +98,10 @@ export function BankReconciliationStatementPanel({
     refetch,
   } = useQuery({
     queryKey: ["brs_statement", companyId, periodStart, periodEnd, parsedClosing],
-    enabled: Boolean(companyId && periodStart && periodEnd && periodEnd >= periodStart),
+    enabled: Boolean(
+      currentUserId && companyId && periodStart && periodEnd && periodEnd >= periodStart,
+    ),
+    retry: false,
     queryFn: () =>
       ReconciliationService.getBankReconciliationStatement(
         companyId,
@@ -103,18 +113,21 @@ export function BankReconciliationStatementPanel({
 
   const { data: periodLocks = [] } = useQuery({
     queryKey: ["reconciliation_period_locks", companyId],
-    enabled: Boolean(companyId),
+    enabled: Boolean(currentUserId && companyId),
+    retry: false,
     queryFn: () => ReconciliationService.getLockedReconciliationPeriods(companyId),
   });
 
-  const { data: profilesMap = {} } = useQuery({
-    queryKey: ["audit_user_profiles_brs"],
-    queryFn: () => AuditService.getUserProfiles(),
+  const { data: operatorsList = [] } = useQuery({
+    queryKey: ["company_operators_brs", companyId],
+    enabled: Boolean(currentUserId),
+    retry: false,
+    queryFn: () => ReconciliationService.getCompanyOperators(companyId || null),
   });
 
   const distinctPreparers = useMemo(
-    () => Object.values(profilesMap).filter((p) => p.id !== currentUserId),
-    [profilesMap, currentUserId],
+    () => operatorsList.filter((p) => p.id !== currentUserId),
+    [operatorsList, currentUserId],
   );
 
   const selectedCompanyName = useMemo(
@@ -455,14 +468,14 @@ export function BankReconciliationStatementPanel({
             <CardTitle className="text-sm">Certified Reconciliation Period Locks</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="border rounded-lg overflow-hidden">
+            <div className="border rounded-lg overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Period Window</TableHead>
+                    <TableHead className="whitespace-nowrap">Period Window</TableHead>
                     <TableHead>FY</TableHead>
-                    <TableHead className="text-right">Bank Closing</TableHead>
-                    <TableHead className="text-right">Ledger Total</TableHead>
+                    <TableHead className="text-right whitespace-nowrap">Bank Closing</TableHead>
+                    <TableHead className="text-right whitespace-nowrap">Ledger Total</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Certification Notes</TableHead>
                     <TableHead className="text-right">Action</TableHead>
@@ -471,14 +484,16 @@ export function BankReconciliationStatementPanel({
                 <TableBody>
                   {periodLocks.map((lock) => (
                     <TableRow key={lock.id}>
-                      <TableCell className="font-mono text-xs">
+                      <TableCell className="font-mono text-[11px] whitespace-nowrap">
                         {lock.period_start} → {lock.period_end}
                       </TableCell>
-                      <TableCell className="font-mono text-xs">{lock.fiscal_year || "—"}</TableCell>
-                      <TableCell className="text-right font-mono text-xs">
+                      <TableCell className="font-mono text-xs whitespace-nowrap">
+                        {lock.fiscal_year || "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs whitespace-nowrap">
                         {fmtNpr(lock.bank_closing_balance)}
                       </TableCell>
-                      <TableCell className="text-right font-mono text-xs">
+                      <TableCell className="text-right font-mono text-xs whitespace-nowrap">
                         {fmtNpr(lock.ledger_control_balance)}
                       </TableCell>
                       <TableCell>
@@ -486,10 +501,10 @@ export function BankReconciliationStatementPanel({
                           {lock.status}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-xs max-w-xs truncate">
+                      <TableCell className="text-xs max-w-[180px] truncate">
                         {lock.approval_notes}
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-right whitespace-nowrap">
                         {lock.status === "Locked" && isAdminOrSupervisor && (
                           <Button
                             size="sm"

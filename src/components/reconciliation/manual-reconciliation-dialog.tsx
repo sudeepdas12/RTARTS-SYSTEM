@@ -117,6 +117,13 @@ export function ManualReconciliationDialog({
       setNotes("");
       setEvidenceFile(null);
       setSelectedAllocations({});
+      if (initialMode === "manual_entry") {
+        setAmount("");
+        setReference("");
+        setBankName("");
+        setAccountNo("");
+        setDescription("");
+      }
     }
   }
 
@@ -267,7 +274,10 @@ export function ManualReconciliationDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col p-0 gap-0">
+      <DialogContent
+        className="max-w-3xl max-h-[90vh] flex flex-col p-0 gap-0"
+        onCloseAutoFocus={(e) => e.preventDefault()}
+      >
         <DialogHeader className="p-6 pb-4 border-b shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <ShieldCheck className="h-5 w-5 text-primary" />
