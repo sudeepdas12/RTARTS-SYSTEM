@@ -108,6 +108,24 @@ export default defineConfig(({ mode }) => {
               return "vendor-icons";
             }
             if (
+              id.includes("node_modules/@tanstack/react-router") ||
+              id.includes("node_modules/@tanstack/router-core") ||
+              id.includes("node_modules/@tanstack/react-start") ||
+              id.includes("node_modules/@tanstack/react-query") ||
+              id.includes("node_modules/@tanstack/query-core") ||
+              id.includes("node_modules/@tanstack/react-table") ||
+              id.includes("node_modules/@tanstack/table-core")
+            ) {
+              return "vendor-tanstack";
+            }
+            if (
+              id.includes("node_modules/zod") ||
+              id.includes("node_modules/react-hook-form") ||
+              id.includes("node_modules/@hookform/resolvers")
+            ) {
+              return "vendor-forms";
+            }
+            if (
               id.includes("node_modules/date-fns") ||
               id.includes("node_modules/nepali-date-converter")
             ) {

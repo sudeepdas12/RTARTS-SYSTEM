@@ -72,6 +72,7 @@ import { normalizeBoid } from "@/lib/validation-engine";
 import { fmtNpr } from "@/lib/nepal-currency";
 import { DualDate } from "@/components/dual-date";
 import { validateNepaliBankAccount } from "@/lib/nepal-banks";
+import { BulkMarkPaidDialog, MarkPaidDialog } from "@/components/payables/mark-paid-dialog";
 
 export const Route = createFileRoute("/_authenticated/dividend")({
   component: DividendPage,
@@ -3161,86 +3162,29 @@ function DividendPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={!!payOpen} onOpenChange={(o) => !o && setPayOpen(null)}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Mark as Paid</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label>Payment Date</Label>
-              <Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Payment Reference</Label>
-              <Input
-                placeholder="Cheque / Txn no."
-                value={payRef}
-                onChange={(e) => setPayRef(e.target.value)}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPayOpen(null)}>
-              Cancel
-            </Button>
-            <Button disabled={markPaid.isPending} onClick={() => markPaid.mutate()}>
-              Confirm Payment
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <MarkPaidDialog
+        open={!!payOpen}
+        onClose={() => setPayOpen(null)}
+        payDate={payDate}
+        setPayDate={setPayDate}
+        payRef={payRef}
+        setPayRef={setPayRef}
+        isPending={markPaid.isPending}
+        onConfirm={() => markPaid.mutate()}
+      />
 
-      {/* Bulk Mark as Paid Dialog */}
-      <Dialog open={bulkPayOpen} onOpenChange={setBulkPayOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Mark Selected Payables as Paid</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2 text-sm">
-            <div className="rounded-md border bg-muted/30 p-3 space-y-1">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Selected items:</span>
-                <span className="font-semibold">{selectedPendingCount} pending payables</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Total Net Payout:</span>
-                <span className="font-mono font-bold text-foreground">
-                  NPR {fmt(selectedTotalNet)}
-                </span>
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Payment Reference / Bank Trx ID</Label>
-              <Input
-                placeholder="e.g., CIPS-BULK-2081-01"
-                value={bulkPayRef}
-                onChange={(e) => setBulkPayRef(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Payment Date</Label>
-              <Input
-                type="date"
-                value={bulkPayDate}
-                onChange={(e) => setBulkPayDate(e.target.value)}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBulkPayOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              disabled={bulkMarkPaid.isPending}
-              onClick={() => bulkMarkPaid.mutate()}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white"
-            >
-              {bulkMarkPaid.isPending ? "Updating..." : `Mark ${selectedPendingCount} as Paid`}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <BulkMarkPaidDialog
+        open={bulkPayOpen}
+        onOpenChange={setBulkPayOpen}
+        selectedPendingCount={selectedPendingCount}
+        selectedTotalNetFormatted={fmt(selectedTotalNet)}
+        bulkPayRef={bulkPayRef}
+        setBulkPayRef={setBulkPayRef}
+        bulkPayDate={bulkPayDate}
+        setBulkPayDate={setBulkPayDate}
+        isPending={bulkMarkPaid.isPending}
+        onConfirm={() => bulkMarkPaid.mutate()}
+      />
 
       <ShareholderStatementDialog
         boid={selectedStatementBoid}

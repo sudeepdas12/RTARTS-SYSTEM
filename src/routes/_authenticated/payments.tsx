@@ -86,6 +86,12 @@ import { ApprovalBar } from "@/components/workflow/approval-bar";
 import { STANDARD_PERIODS, type PeriodPreset } from "@/lib/services/period-calculator";
 import { BankErrorUploadDialog } from "@/components/reconciliation/bank-error-upload-dialog";
 import { DeclarationSummaryCard } from "@/components/declarations/declaration-summary-card";
+import { CreatePaymentBatchDialog } from "@/components/payments/create-payment-batch-dialog";
+import {
+  EditBatchDialog,
+  ReversePaymentDialog,
+} from "@/components/payments/payment-edit-and-reverse-dialogs";
+import { PaymentBroadcastDialog } from "@/components/payments/payment-broadcast-dialog";
 
 export const Route = createFileRoute("/_authenticated/payments")({
   component: PaymentsRoute,
@@ -1248,380 +1254,39 @@ function PaymentsRoute() {
             )}
             Download Payables ({payablesPreview.count.toLocaleString()})
           </Button>
-          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-            <DialogTrigger asChild>
-              <Button
-                onClick={() => {
-                  setSelectedCompany("all");
-                  setSelectedPayableType("all");
-                  setFiscalYear("all");
-                  setPeriodPreset("12M");
-                  setPeriodDays("365");
-                  setFromDate("");
-                  setToDate("");
-                  setBatchName(`Payment Batch — ${new Date().toISOString().slice(0, 10)}`);
-                }}
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                New Payment Batch
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col p-0 gap-0">
-              <DialogHeader className="p-6 pb-4 border-b shrink-0">
-                <DialogTitle>Create Payment Batch</DialogTitle>
-              </DialogHeader>
-              <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                <div className="space-y-2">
-                  <Label>Batch Name</Label>
-                  <Input
-                    placeholder="e.g., Dividend Payment Batch Q1 2081/82"
-                    value={batchName}
-                    onChange={(e) => setBatchName(e.target.value)}
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Company</Label>
-                    <Select
-                      value={selectedCompany}
-                      onValueChange={(val) => {
-                        setSelectedCompany(val);
-                        if (val !== "all") {
-                          const comp = companies.find((c: any) => c.id === val);
-                          if (comp) {
-                            if (comp.fiscal_year) {
-                              setFiscalYear(comp.fiscal_year);
-                            }
-                            if (comp.company_type === "Debenture") {
-                              setSelectedPayableType("interest");
-                            } else if (comp.company_type === "Mutual Fund") {
-                              setSelectedPayableType("mutual_fund");
-                            } else {
-                              setSelectedPayableType("dividend");
-                            }
-                            const code = comp.company_code || comp.company_name?.slice(0, 8);
-                            setBatchName(
-                              `${code} Payout — ${comp.fiscal_year ? `FY ${comp.fiscal_year}` : new Date().toISOString().slice(0, 10)}`,
-                            );
-                          }
-                        } else {
-                          setSelectedPayableType("all");
-                          setFiscalYear("all");
-                          setBatchName(
-                            `All Schemes Payout — ${new Date().toISOString().slice(0, 10)}`,
-                          );
-                        }
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="All companies" />
-                      </SelectTrigger>
-                      <SelectContent className="max-h-60 overflow-y-auto">
-                        <SelectItem value="all">All companies</SelectItem>
-                        {companies.map((company) => (
-                          <SelectItem key={company.id} value={company.id}>
-                            {company.company_code} — {company.company_name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Payable Type</Label>
-                    <Select value={selectedPayableType} onValueChange={setSelectedPayableType}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="All types" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All types</SelectItem>
-                        <SelectItem value="mutual_fund">Mutual Fund</SelectItem>
-                        <SelectItem value="dividend">Dividend</SelectItem>
-                        <SelectItem value="interest">Interest</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Period / Quarter</Label>
-                    <Select
-                      value={periodPreset}
-                      onValueChange={(v) => {
-                        setPeriodPreset(v);
-                        if (v === "3M") setPeriodDays("91");
-                        else if (v === "6M") setPeriodDays("183");
-                        else if (v === "9M") setPeriodDays("274");
-                        else if (v === "12M") setPeriodDays("365");
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="12M">
-                          Full Period / Annual (12 Months / 365 Days)
-                        </SelectItem>
-                        <SelectItem value="3M">Q1 (1st Quarter / 3 Months / ~91 Days)</SelectItem>
-                        <SelectItem value="6M">
-                          Q2 (2nd Quarter / 6 Months / 183 Days / Semi-Annual)
-                        </SelectItem>
-                        <SelectItem value="9M">Q3 (3rd Quarter / 9 Months / ~274 Days)</SelectItem>
-                        <SelectItem value="CUSTOM">Custom Day / Date Range</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {periodPreset === "CUSTOM" ? (
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="space-y-1">
-                        <Label className="text-xs">From Date</Label>
-                        <Input
-                          type="date"
-                          value={fromDate}
-                          onChange={(e) => setFromDate(e.target.value)}
-                          className="h-9 text-xs"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">To Date</Label>
-                        <Input
-                          type="date"
-                          value={toDate}
-                          onChange={(e) => setToDate(e.target.value)}
-                          className="h-9 text-xs"
-                        />
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <Label>Period Days</Label>
-                      <Input
-                        type="number"
-                        value={periodDays}
-                        onChange={(e) => {
-                          setPeriodDays(e.target.value);
-                          setPeriodPreset("CUSTOM");
-                        }}
-                        placeholder="365"
-                      />
-                    </div>
-                  )}
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Fiscal Year</Label>
-                    <Select value={fiscalYear} onValueChange={setFiscalYear}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="All Fiscal Years" />
-                      </SelectTrigger>
-                      <SelectContent className="max-h-60 overflow-y-auto">
-                        <SelectItem value="all">All Fiscal Years (All Records)</SelectItem>
-                        {fiscalYears.map((fy) => (
-                          <SelectItem key={fy} value={fy}>
-                            {fy}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Payment Method</Label>
-                    <Select
-                      value={paymentMethod}
-                      onValueChange={(v) => setPaymentMethod(v as PaymentMethod)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(["NEFT", "RTGS", "ConnectIPS", "Cheque", "Cash"] as PaymentMethod[]).map(
-                          (m) => (
-                            <SelectItem key={m} value={m}>
-                              {m}
-                            </SelectItem>
-                          ),
-                        )}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Installment / Payout Leg Tag</Label>
-                  <Select
-                    value={installmentTag}
-                    onValueChange={(v) => {
-                      setInstallmentTag(v);
-                      const comp = companies.find((c: any) => c.id === selectedCompany);
-                      const code =
-                        comp?.company_code || comp?.company_name?.slice(0, 8) || "PAYMENT";
-                      const tagLabels: Record<string, string> = {
-                        FULL: "Full Annual Payout",
-                        SEMI_1: "Semi-Annual Installment 1 (Poush End)",
-                        SEMI_2: "Semi-Annual Installment 2 (Asar End)",
-                        INTERIM: "Interim Dividend Distribution",
-                        FINAL: "Final Dividend Distribution",
-                        REMEDIATION: "Remediated Accounts Payout",
-                      };
-                      if (v !== "FULL") {
-                        setBatchName(`${code} — ${tagLabels[v] || v} — ${fiscalYear || "FY"}`);
-                      }
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="FULL">Full Settlement / Annual Payout</SelectItem>
-                      <SelectItem value="SEMI_1">Semi-Annual Installment 1 (Poush End)</SelectItem>
-                      <SelectItem value="SEMI_2">Semi-Annual Installment 2 (Asar End)</SelectItem>
-                      <SelectItem value="INTERIM">Interim Dividend Distribution</SelectItem>
-                      <SelectItem value="FINAL">Final Dividend Distribution</SelectItem>
-                      <SelectItem value="REMEDIATION">
-                        Remediated Accounts Payout (Corrected Bank Accounts)
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="rounded-md border bg-muted/20 p-3 text-sm">
-                  <div className="flex items-center justify-between font-medium mb-1">
-                    <span>Available Payables</span>
-                    <span className="text-xs text-muted-foreground">
-                      {periodPreset !== "12M"
-                        ? `Prorated for ${periodDays} Days`
-                        : "Full Period (365 Days)"}
-                    </span>
-                  </div>
-                  {isPreviewLoading ? (
-                    <div className="flex items-center text-muted-foreground py-1">
-                      <Loader2 className="w-4 h-4 animate-spin text-primary mr-2" />
-                      <span>Calculating matching pending payables...</span>
-                    </div>
-                  ) : (
-                    <>
-                      <p className="text-muted-foreground">
-                        {payablesPreview.count.toLocaleString()} payables found matching your
-                        criteria.
-                        {payablesPreview.count > 0 && (
-                          <span className="ml-2 text-primary font-semibold">
-                            Total: NPR{" "}
-                            {payablesPreview.totalAmount.toLocaleString("en-IN", {
-                              minimumFractionDigits: 2,
-                            })}
-                          </span>
-                        )}
-                      </p>
-                      {payablesPreview.count === 0 && (
-                        <div className="mt-2.5 p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-md text-xs text-amber-700 dark:text-amber-300 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                          <span>No pending payables match the current filter.</span>
-                          {(selectedCompany !== "all" ||
-                            selectedPayableType !== "all" ||
-                            fiscalYear !== "all") && (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="secondary"
-                              className="h-7 text-xs font-semibold shrink-0"
-                              onClick={() => {
-                                setSelectedCompany("all");
-                                setSelectedPayableType("all");
-                                setFiscalYear("all");
-                                setBatchName(
-                                  `Payment Batch — ${new Date().toISOString().slice(0, 10)}`,
-                                );
-                              }}
-                            >
-                              Reset Filters
-                            </Button>
-                          )}
-                        </div>
-                      )}
-                      <div className="mt-3 pt-2.5 border-t flex flex-wrap items-center gap-1.5">
-                        <span className="text-xs text-muted-foreground mr-1">Quick Select:</span>
-                        <Button
-                          type="button"
-                          variant={
-                            selectedCompany === "all" && fiscalYear === "all"
-                              ? "default"
-                              : "outline"
-                          }
-                          size="sm"
-                          className="h-6 px-2 text-[11px]"
-                          onClick={() => {
-                            setSelectedCompany("all");
-                            setSelectedPayableType("all");
-                            setFiscalYear("all");
-                            setBatchName(
-                              `All Schemes Payout — ${new Date().toISOString().slice(0, 10)}`,
-                            );
-                          }}
-                        >
-                          All Schemes
-                        </Button>
-                        {companies
-                          .filter(
-                            (c: any) => c.company_code === "RMF1" || c.company_code === "RMF2",
-                          )
-                          .map((c: any) => (
-                            <Button
-                              key={c.id}
-                              type="button"
-                              variant={selectedCompany === c.id ? "default" : "outline"}
-                              size="sm"
-                              className="h-6 px-2 text-[11px]"
-                              onClick={() => {
-                                setSelectedCompany(c.id);
-                                setSelectedPayableType("mutual_fund");
-                                if (c.fiscal_year) setFiscalYear(c.fiscal_year);
-                                setBatchName(
-                                  `${c.company_code} Payout — ${c.fiscal_year ? `FY ${c.fiscal_year}` : new Date().toISOString().slice(0, 10)}`,
-                                );
-                              }}
-                            >
-                              {c.company_code}
-                            </Button>
-                          ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-              <DialogFooter className="flex sm:justify-between items-center w-full gap-2 p-4 border-t bg-muted/20 shrink-0">
-                <Button
-                  variant="outline"
-                  type="button"
-                  onClick={handleExportAvailablePayables}
-                  disabled={payablesPreview.count === 0 || isExportingAvailablePayables}
-                  className="text-xs"
-                >
-                  {isExportingAvailablePayables ? (
-                    <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                  ) : (
-                    <FileSpreadsheet className="w-3.5 h-3.5 mr-1.5 text-emerald-600" />
-                  )}
-                  Download Payable List (Excel)
-                </Button>
-                <div className="flex items-center gap-2">
-                  <Button variant="outline" onClick={() => setCreateOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button disabled={isPending || isPreviewLoading} onClick={() => createBatch()}>
-                    {isPending ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        {createBatchProgress || "Creating Payment Batch..."}
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle2 className="w-4 h-4 mr-2" />
-                        Create Payment Batch
-                      </>
-                    )}
-                  </Button>
-                </div>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+          <CreatePaymentBatchDialog
+            open={createOpen}
+            onOpenChange={setCreateOpen}
+            batchName={batchName}
+            setBatchName={setBatchName}
+            selectedCompany={selectedCompany}
+            setSelectedCompany={setSelectedCompany}
+            selectedPayableType={selectedPayableType}
+            setSelectedPayableType={setSelectedPayableType}
+            periodPreset={periodPreset}
+            setPeriodPreset={setPeriodPreset}
+            periodDays={periodDays}
+            setPeriodDays={setPeriodDays}
+            fromDate={fromDate}
+            setFromDate={setFromDate}
+            toDate={toDate}
+            setToDate={setToDate}
+            fiscalYear={fiscalYear}
+            setFiscalYear={setFiscalYear}
+            paymentMethod={paymentMethod}
+            setPaymentMethod={setPaymentMethod}
+            installmentTag={installmentTag}
+            setInstallmentTag={setInstallmentTag}
+            companies={companies}
+            fiscalYears={fiscalYears}
+            payablesPreview={payablesPreview}
+            isPreviewLoading={isPreviewLoading}
+            isExportingAvailablePayables={isExportingAvailablePayables}
+            onExportAvailablePayables={handleExportAvailablePayables}
+            isPending={isPending}
+            createBatchProgress={createBatchProgress}
+            onCreateBatch={() => createBatch()}
+          />
         </div>
       </div>
 
@@ -2991,144 +2656,34 @@ function PaymentsRoute() {
       </Dialog>
 
       {/* Edit Draft Batch Dialog */}
-      <Dialog open={editBatchOpen} onOpenChange={setEditBatchOpen}>
-        <DialogContent className="max-w-md max-h-[90vh] flex flex-col p-0 gap-0">
-          <DialogHeader className="p-6 pb-3 border-b shrink-0">
-            <DialogTitle>Edit Batch Settings</DialogTitle>
-          </DialogHeader>
-          <div className="flex-1 overflow-y-auto p-6 space-y-4">
-            <div className="space-y-2">
-              <Label>Batch Name</Label>
-              <Input
-                value={editBatchName}
-                onChange={(e) => setEditBatchName(e.target.value)}
-                placeholder="Batch name"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Payable Type</Label>
-                <Select value={editPayableType} onValueChange={setEditPayableType}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="dividend">Dividend</SelectItem>
-                    <SelectItem value="interest">Interest</SelectItem>
-                    <SelectItem value="mutual_fund">Mutual Fund</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Fiscal Year</Label>
-                <Select value={editFiscalYear} onValueChange={setEditFiscalYear}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Fiscal Year" />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-60 overflow-y-auto">
-                    {fiscalYears.map((fy) => (
-                      <SelectItem key={fy} value={fy}>
-                        {fy}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Payment Method</Label>
-              <Select
-                value={editPaymentMethod}
-                onValueChange={(v) => setEditPaymentMethod(v as PaymentMethod)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(["NEFT", "RTGS", "ConnectIPS", "Cheque", "Cash"] as PaymentMethod[]).map(
-                    (m) => (
-                      <SelectItem key={m} value={m}>
-                        {m}
-                      </SelectItem>
-                    ),
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>CDS Batch Ref</Label>
-                <Input
-                  value={editCdsBatchRef}
-                  onChange={(e) => setEditCdsBatchRef(e.target.value)}
-                  placeholder="Optional"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Registrar</Label>
-                <Input
-                  value={editRegistrar}
-                  onChange={(e) => setEditRegistrar(e.target.value)}
-                  placeholder="Optional"
-                />
-              </div>
-            </div>
-          </div>
-          <DialogFooter className="p-4 border-t bg-muted/20 shrink-0 flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setEditBatchOpen(false)}>
-              Cancel
-            </Button>
-            <Button disabled={isUpdatingBatch} onClick={() => updateBatchSettings()}>
-              {isUpdatingBatch ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <CheckCircle2 className="w-4 h-4 mr-2" />
-              )}
-              Save Changes
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <EditBatchDialog
+        open={editBatchOpen}
+        onOpenChange={setEditBatchOpen}
+        editBatchName={editBatchName}
+        setEditBatchName={setEditBatchName}
+        editPayableType={editPayableType}
+        setEditPayableType={setEditPayableType}
+        editFiscalYear={editFiscalYear}
+        setEditFiscalYear={setEditFiscalYear}
+        editPaymentMethod={editPaymentMethod}
+        setEditPaymentMethod={setEditPaymentMethod}
+        editCdsBatchRef={editCdsBatchRef}
+        setEditCdsBatchRef={setEditCdsBatchRef}
+        editRegistrar={editRegistrar}
+        setEditRegistrar={setEditRegistrar}
+        fiscalYears={fiscalYears}
+        isUpdatingBatch={isUpdatingBatch}
+        onSave={() => updateBatchSettings()}
+      />
 
       {/* Reversal Confirmation Dialog */}
-      <Dialog
-        open={!!reverseDialogOpen}
-        onOpenChange={(open) => !open && setReverseDialogOpen(null)}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Reverse Payment</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 pt-2">
-            <p className="text-sm text-muted-foreground">
-              Are you sure you want to reverse this payment of{" "}
-              <strong>
-                NPR{" "}
-                {Number(reverseDialogOpen?.net_amount || 0).toLocaleString("en-IN", {
-                  minimumFractionDigits: 2,
-                })}
-              </strong>{" "}
-              for {reverseDialogOpen?.clients?.full_name || "this investor"}?
-            </p>
-            <div className="space-y-1.5">
-              <Label>Reversal Reason</Label>
-              <Input
-                value={reversalReason}
-                onChange={(e) => setReversalReason(e.target.value)}
-                placeholder="e.g. Account closed / Bank rejected / Wrong A/C"
-              />
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => setReverseDialogOpen(null)}>
-                Cancel
-              </Button>
-              <Button variant="destructive" onClick={() => executeReversal()}>
-                Confirm Reversal
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ReversePaymentDialog
+        payment={reverseDialogOpen}
+        onClose={() => setReverseDialogOpen(null)}
+        reversalReason={reversalReason}
+        setReversalReason={setReversalReason}
+        onConfirm={() => executeReversal()}
+      />
 
       {/* Sticky Approval Bar when a batch is selected */}
       {activeBatchId && activeBatchData && activeBatchData.status === "Draft" && (
@@ -3144,192 +2699,16 @@ function PaymentsRoute() {
       )}
 
       {/* Shareholder SMS & Email Notification Broadcast Dialog */}
-      <Dialog open={broadcastOpen} onOpenChange={setBroadcastOpen}>
-        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col p-0 gap-0">
-          <DialogHeader className="p-5 pb-3 border-b shrink-0">
-            <DialogTitle className="text-base font-semibold flex items-center gap-2">
-              <Send className="h-5 w-5 text-purple-600" />
-              Shareholder Notification & SMS Broadcast Engine
-            </DialogTitle>
-          </DialogHeader>
-
-          {broadcastSummary && (
-            <div className="flex-1 overflow-y-auto p-5 space-y-4">
-              {/* Batch Metadata & Metric Strip */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="p-3 bg-muted/30 border rounded-lg">
-                  <span className="text-xs text-muted-foreground uppercase font-medium">
-                    Recipients
-                  </span>
-                  <div className="text-lg font-bold mt-0.5">
-                    {broadcastSummary.totalRecipients.toLocaleString()}
-                  </div>
-                </div>
-                <div className="p-3 bg-muted/30 border rounded-lg">
-                  <span className="text-xs text-muted-foreground uppercase font-medium">
-                    Valid Mobile (Nepal)
-                  </span>
-                  <div className="text-lg font-bold mt-0.5 text-emerald-600">
-                    {broadcastSummary.validPhones.toLocaleString()}
-                  </div>
-                </div>
-                <div className="p-3 bg-muted/30 border rounded-lg">
-                  <span className="text-xs text-muted-foreground uppercase font-medium">
-                    Invalid / Missing
-                  </span>
-                  <div className="text-lg font-bold mt-0.5 text-amber-600">
-                    {broadcastSummary.invalidPhones.toLocaleString()}
-                  </div>
-                </div>
-                <div className="p-3 bg-muted/30 border rounded-lg">
-                  <span className="text-xs text-muted-foreground uppercase font-medium">
-                    Total Payout
-                  </span>
-                  <div className="text-lg font-bold mt-0.5 text-primary">
-                    NPR {broadcastSummary.totalAmount.toLocaleString()}
-                  </div>
-                </div>
-              </div>
-
-              {/* Template Selector */}
-              <div className="space-y-2">
-                <Label className="text-xs font-semibold">Notification Template</Label>
-                <Select
-                  value={broadcastTemplateType}
-                  onValueChange={(v) => handleTemplateChange(v as BroadcastTemplateType)}
-                >
-                  <SelectTrigger className="h-9 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="PAYMENT_SUCCESS">
-                      ✅ Payment Disbursed (ConnectIPS Payout Confirmation)
-                    </SelectItem>
-                    <SelectItem value="PAYMENT_FAILED">
-                      ⚠️ Payment Failed / Invalid Bank Mandate Notice
-                    </SelectItem>
-                    <SelectItem value="BONUS_CREDITED">
-                      🎁 Bonus Shares Credited to DEMAT Alert
-                    </SelectItem>
-                    <SelectItem value="AGM_NOTICE">📢 AGM & Book Closure Announcement</SelectItem>
-                    <SelectItem value="CUSTOM">✏️ Custom Message Template</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Message Content Editor / Preview */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs font-semibold">
-                    Message Preview (Supports Tokens: {"{{name}}"}, {"{{amount}}"}, {"{{company}}"},{" "}
-                    {"{{boid}}"}, {"{{fy}}"}, {"{{ref}}"})
-                  </Label>
-                  <span className="text-[11px] text-muted-foreground font-mono">
-                    ~{customMessageTemplate.length} chars (
-                    {Math.ceil(customMessageTemplate.length / 160) || 1} SMS)
-                  </span>
-                </div>
-                <Textarea
-                  rows={3}
-                  value={customMessageTemplate}
-                  onChange={(e) => {
-                    setCustomMessageTemplate(e.target.value);
-                    if (broadcastSummary) {
-                      const updated = SmsBroadcastService.buildBroadcastQueue({
-                        items: broadcastSummary.messages.map((m) => ({
-                          id: m.id,
-                          payeeName: m.recipientName,
-                          boid: m.boid,
-                          phone: m.phone,
-                          companyName: m.companyName,
-                          fiscalYear: m.fiscalYear,
-                          amount: m.amount,
-                        })),
-                        templateType: broadcastTemplateType,
-                        customTemplate: e.target.value,
-                      });
-                      setBroadcastSummary(updated);
-                    }
-                  }}
-                  className="text-xs font-sans leading-relaxed"
-                />
-              </div>
-
-              {/* Recipient Sample Preview Table */}
-              <div className="border rounded-lg overflow-x-auto max-h-52">
-                <Table>
-                  <TableHeader className="bg-muted/50 sticky top-0">
-                    <TableRow>
-                      <TableHead className="w-10">S.N.</TableHead>
-                      <TableHead>Mobile</TableHead>
-                      <TableHead>Payee</TableHead>
-                      <TableHead>BOID</TableHead>
-                      <TableHead>Personalized Message</TableHead>
-                      <TableHead className="text-right">Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {broadcastSummary.messages.slice(0, 10).map((msg, idx) => (
-                      <TableRow key={msg.id || idx}>
-                        <TableCell className="font-mono text-xs">{idx + 1}</TableCell>
-                        <TableCell className="font-mono text-xs font-medium">
-                          {msg.phone || "—"}
-                        </TableCell>
-                        <TableCell className="text-xs font-medium">{msg.recipientName}</TableCell>
-                        <TableCell className="font-mono text-xs">{msg.boid}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground max-w-[280px] truncate">
-                          {msg.messageText}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Badge
-                            variant={msg.status === "QUEUED" ? "default" : "outline"}
-                            className="text-[10px]"
-                          >
-                            {msg.status}
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </div>
-          )}
-
-          <DialogFooter className="p-4 border-t bg-muted/20 shrink-0 flex flex-row items-center justify-between sm:justify-between w-full">
-            <Button variant="outline" size="sm" onClick={() => setBroadcastOpen(false)}>
-              Close
-            </Button>
-            {broadcastSummary && (
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 text-xs text-emerald-700 dark:text-emerald-400 border-emerald-500/40 hover:bg-emerald-50 dark:hover:bg-emerald-950"
-                  onClick={() => SmsBroadcastService.exportBroadcastCsv(broadcastSummary)}
-                >
-                  <FileSpreadsheet className="h-3.5 w-3.5 mr-1.5 text-emerald-600" />
-                  Download Gateway CSV
-                </Button>
-                <Button
-                  size="sm"
-                  className="h-8 text-xs bg-purple-600 hover:bg-purple-700"
-                  onClick={() => {
-                    SmsBroadcastService.exportBroadcastCsv(broadcastSummary);
-                    toast.success(
-                      `Broadcast file generated for ${broadcastSummary.validPhones.toLocaleString()} verified mobile numbers. Ready for SMS gateway dispatch (Sparrow/Aakash/NTC).`,
-                    );
-                    setBroadcastOpen(false);
-                  }}
-                >
-                  <Send className="h-3.5 w-3.5 mr-1.5" />
-                  Export & Dispatch Gateway Broadcast
-                </Button>
-              </div>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <PaymentBroadcastDialog
+        open={broadcastOpen}
+        onOpenChange={setBroadcastOpen}
+        broadcastSummary={broadcastSummary}
+        setBroadcastSummary={setBroadcastSummary}
+        broadcastTemplateType={broadcastTemplateType}
+        onTemplateChange={handleTemplateChange}
+        customMessageTemplate={customMessageTemplate}
+        setCustomMessageTemplate={setCustomMessageTemplate}
+      />
 
       {/* Shareholder Multi-Year Statement Dialog */}
       <ShareholderStatementDialog

@@ -75,6 +75,7 @@ import { normalizeBoid } from "@/lib/validation-engine";
 import { fmtNpr } from "@/lib/nepal-currency";
 import { DualDate } from "@/components/dual-date";
 import { validateNepaliBankAccount } from "@/lib/nepal-banks";
+import { MarkPaidDialog } from "@/components/payables/mark-paid-dialog";
 
 export const Route = createFileRoute("/_authenticated/interest")({
   component: InterestPage,
@@ -2590,35 +2591,16 @@ function InterestPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={!!payOpen} onOpenChange={(o) => !o && setPayOpen(null)}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Mark as Paid</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label>Payment Date</Label>
-              <Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Payment Reference</Label>
-              <Input
-                placeholder="Cheque / Txn no."
-                value={payRef}
-                onChange={(e) => setPayRef(e.target.value)}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPayOpen(null)}>
-              Cancel
-            </Button>
-            <Button disabled={markPaid.isPending} onClick={() => markPaid.mutate()}>
-              Confirm Payment
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <MarkPaidDialog
+        open={!!payOpen}
+        onClose={() => setPayOpen(null)}
+        payDate={payDate}
+        setPayDate={setPayDate}
+        payRef={payRef}
+        setPayRef={setPayRef}
+        isPending={markPaid.isPending}
+        onConfirm={() => markPaid.mutate()}
+      />
 
       <ShareholderStatementDialog
         boid={selectedStatementBoid}

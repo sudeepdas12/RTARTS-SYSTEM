@@ -73,6 +73,7 @@ import {
 import { fmtNpr } from "@/lib/nepal-currency";
 import { DualDate } from "@/components/dual-date";
 import { validateNepaliBankAccount } from "@/lib/nepal-banks";
+import { MarkPaidDialog } from "@/components/payables/mark-paid-dialog";
 
 export const Route = createFileRoute("/_authenticated/mutual-fund")({
   component: MutualFundPage,
@@ -2540,31 +2541,17 @@ function MutualFundPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={Boolean(payOpen)} onOpenChange={(open) => !open && setPayOpen(null)}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Mark as Paid</DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-3">
-            <div className="space-y-1.5">
-              <Label>Payment Date</Label>
-              <Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Payment Reference</Label>
-              <Input value={payRef} onChange={(e) => setPayRef(e.target.value)} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPayOpen(null)}>
-              Cancel
-            </Button>
-            <Button disabled={markPaid.isPending} onClick={() => markPaid.mutate()}>
-              Mark Paid
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <MarkPaidDialog
+        open={Boolean(payOpen)}
+        onClose={() => setPayOpen(null)}
+        payDate={payDate}
+        setPayDate={setPayDate}
+        payRef={payRef}
+        setPayRef={setPayRef}
+        isPending={markPaid.isPending}
+        onConfirm={() => markPaid.mutate()}
+        confirmLabel="Mark Paid"
+      />
 
       <ShareholderStatementDialog
         boid={selectedStatementBoid}

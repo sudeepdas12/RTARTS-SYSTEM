@@ -81,7 +81,7 @@ export const Route = createFileRoute("/_authenticated/reconciliation")({
   component: ReconciliationRoute,
 });
 
-export function ReconciliationRoute() {
+function ReconciliationRoute() {
   const qc = useQueryClient();
   const [report, setReport] = useState<ComprehensiveReconciliationReport | null>(null);
   const [savedResults, setSavedResults] = useState<ReconciliationResultRow[]>([]);
