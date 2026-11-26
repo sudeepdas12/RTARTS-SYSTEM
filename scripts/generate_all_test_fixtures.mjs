@@ -2,6 +2,8 @@ import * as XLSX from "xlsx";
 import fs from "node:fs";
 import path from "node:path";
 
+XLSX.set_fs(fs);
+
 const FIXTURES_DIR = path.resolve(process.cwd(), "test-fixtures");
 if (!fs.existsSync(FIXTURES_DIR)) {
   fs.mkdirSync(FIXTURES_DIR, { recursive: true });

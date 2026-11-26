@@ -36,7 +36,7 @@
     "audit:classifications": "node ./scripts/audit/audit-classifications.mjs",
     "audit:summaries": "node ./scripts/audit/audit-all-summaries.mjs",
     "fixtures:generate": "node ./scripts/generate_all_test_fixtures.mjs",
-    "test:fixtures": "npx tsx ./scripts/verify_upload_fixtures.ts",
+    "test:fixtures": "tsx ./scripts/verify_upload_fixtures.ts",
     "prepare": "husky"
   },
   "dependencies": {
@@ -129,6 +129,7 @@
     "nitro": "3.0.261103-rc",
     "prettier": "^3.7.3",
     "supabase": "^3.4.0",
+    "tsx": "^4.23.15",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
     "typescript-eslint": "^8.74.0",
     "unenv": "^2.0.0-rc.24",
