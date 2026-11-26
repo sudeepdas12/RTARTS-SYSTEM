@@ -99,6 +99,126 @@ export interface ReconciliationRunRow {
 export type ReconciliationExceptionLifecycleStatus =
   "Open" | "Investigating" | "Accepted" | "Rejected" | "Resolved" | "Escalated";
 
+export type ManualReasonCode =
+  | "COUNTER_PAYOUT"
+  | "CHEQUE_CLEARED"
+  | "RTGS_OFFLINE"
+  | "CONNECTIPS_MANUAL"
+  | "BANK_CHARGE"
+  | "INTEREST_CREDIT"
+  | "SWEEP_INTERNAL"
+  | "SUSPENSE_UNIDENTIFIED"
+  | "ROUNDING_ADJUSTMENT"
+  | "MANUAL_PAIR";
+
+export interface BankStatementTransactionRow {
+  id: string;
+  import_id: string;
+  company_id: string;
+  transaction_date: string;
+  description: string | null;
+  reference: string | null;
+  debit_amount: number;
+  credit_amount: number;
+  balance: number | null;
+  reconciliation_status: "unreconciled" | "matched" | "reconciled" | "ignored" | "exception";
+  reconciliation_run_id?: string | null;
+  entry_channel: "file_upload" | "manual_entry" | "api_sync";
+  reason_code?: ManualReasonCode | null;
+  evidence_path?: string | null;
+  maker_id?: string | null;
+  approved_by?: string | null;
+  approval_status: "pending_approval" | "approved" | "rejected";
+  classification_notes?: string | null;
+  matched_payment_ids?: string[];
+  raw_data?: Record<string, any> | null;
+  created_at: string;
+  import?: {
+    id: string;
+    bank_name: string | null;
+    account_no: string | null;
+    file_name: string | null;
+    entry_channel?: string | null;
+  } | null;
+}
+
+export interface ManualPayableAllocationInput {
+  payable_id: string;
+  payable_type: "dividend" | "interest" | "mutual_fund";
+  amount: number;
+  shareholder_name?: string;
+  boid?: string;
+}
+
+export interface ManualPayableSearchHit {
+  id: string;
+  company_id: string;
+  client_id: string | null;
+  payable_type: "dividend" | "interest" | "mutual_fund";
+  fiscal_year: string | null;
+  net_payable: number;
+  paid_amount: number;
+  remaining_amount: number;
+  payment_status: string;
+  payee_classification?: string | null;
+  classification_status?: string | null;
+  boid: string;
+  full_name: string;
+  bank_name: string;
+  bank_account_no: string;
+}
+
+export interface BankReconciliationStatementSummary {
+  company_id: string;
+  period_start: string;
+  period_end: string;
+  is_period_locked: boolean;
+  bank_closing_balance: number;
+  bank_total_debit: number;
+  bank_total_credit: number;
+  reconciled_bank_debits: number;
+  unreconciled_bank_debits: number;
+  unreconciled_bank_credits: number;
+  non_payable_bank_debits: number;
+  non_payable_bank_credits: number;
+  pending_manual_count: number;
+  pending_manual_amount: number;
+  ledger_paid_total: number;
+  in_transit_batches_amount: number;
+  reconciled_net_outflow: number;
+  adjusted_matched_bank_debits: number;
+  unreconciled_variance: number;
+  open_exceptions_count: number;
+  open_exceptions_amount: number;
+  unapproved_variances_count: number;
+  aging: {
+    days_0_7: { count: number; amount: number };
+    days_8_30: { count: number; amount: number };
+    days_31_90: { count: number; amount: number };
+    days_90_plus: { count: number; amount: number };
+  };
+}
+
+export interface ReconciliationPeriodLockRow {
+  id: string;
+  company_id: string;
+  fiscal_year?: string | null;
+  period_start: string;
+  period_end: string;
+  bank_closing_balance: number;
+  ledger_control_balance: number;
+  unreconciled_difference: number;
+  outstanding_items_count: number;
+  status: "Locked" | "Reopened";
+  maker_id: string;
+  approved_by: string;
+  approval_notes: string;
+  locked_at: string;
+  reopened_by?: string | null;
+  reopened_at?: string | null;
+  reopen_reason?: string | null;
+}
+
 export interface ReconciliationExceptionRow {
   id: string;
   run_id: string;
@@ -1642,5 +1762,544 @@ export const ReconciliationService = {
       console.warn("Could not persist audit log for exception acknowledgement:", e);
     }
     return { success: true, id: exceptionId, acknowledgedAt };
+  },
+
+  async getBankStatementTransactions(filter?: {
+    companyIds?: string[];
+    reconciliationStatus?: string;
+    approvalStatus?: string;
+    entryChannel?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ rows: BankStatementTransactionRow[]; totalCount: number }> {
+    const limit = filter?.limit ?? 100;
+    const offset = filter?.offset ?? 0;
+
+    let query = (supabase as any)
+      .from("bank_statement_transactions")
+      .select(
+        "*, import:bank_statement_imports(id, bank_name, account_no, file_name, entry_channel)",
+        { count: "exact" },
+      )
+      .order("transaction_date", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    if (filter?.companyIds && filter.companyIds.length === 1) {
+      query = query.eq("company_id", filter.companyIds[0]);
+    } else if (filter?.companyIds && filter.companyIds.length > 1) {
+      query = query.in("company_id", filter.companyIds);
+    }
+
+    if (filter?.reconciliationStatus && filter.reconciliationStatus !== "all") {
+      query = query.eq("reconciliation_status", filter.reconciliationStatus);
+    }
+    if (filter?.approvalStatus && filter.approvalStatus !== "all") {
+      query = query.eq("approval_status", filter.approvalStatus);
+    }
+    if (filter?.entryChannel && filter.entryChannel !== "all") {
+      query = query.eq("entry_channel", filter.entryChannel);
+    }
+    if (filter?.search && filter.search.trim()) {
+      const s = filter.search.trim().replace(/[%_,]/g, "");
+      if (s) {
+        query = query.or(
+          `description.ilike.%${s}%,reference.ilike.%${s}%,reason_code.ilike.%${s}%`,
+        );
+      }
+    }
+
+    const { data, count, error } = await query.range(offset, offset + limit - 1);
+    if (error) {
+      throw new Error(`Failed to load bank ledger transactions: ${error.message}`);
+    }
+
+    return {
+      rows: (data || []) as BankStatementTransactionRow[],
+      totalCount: count ?? data?.length ?? 0,
+    };
+  },
+
+  async searchPendingPayablesForManualMatch(
+    companyId: string,
+    searchQuery?: string,
+    limit = 40,
+  ): Promise<ManualPayableSearchHit[]> {
+    if (!companyId) return [];
+
+    const qTrim = (searchQuery || "").trim().toLowerCase();
+    const fetchTable = async (
+      table: "dividend_payables" | "interest_payables" | "mutual_fund_payables",
+      payableType: "dividend" | "interest" | "mutual_fund",
+    ): Promise<ManualPayableSearchHit[]> => {
+      const { data, error } = await (supabase as any)
+        .from(table)
+        .select(
+          "id, company_id, client_id, fiscal_year, net_payable, paid_amount, remaining_amount, payment_status, payee_classification, classification_status, bank_name, bank_account_no, clients(id, boid, full_name, bank_name, bank_account_no)",
+        )
+        .eq("company_id", companyId)
+        .in("payment_status", ["Pending", "Partial"])
+        .order("updated_at", { ascending: false })
+        .limit(200);
+
+      if (error) {
+        console.warn(`Manual match search failed on ${table}:`, error.message);
+        return [];
+      }
+
+      return (data || [])
+        .map((row: any): ManualPayableSearchHit => {
+          const net = Number(row.net_payable ?? 0);
+          const paid = Number(row.paid_amount ?? 0);
+          const remaining =
+            row.remaining_amount != null
+              ? Number(row.remaining_amount)
+              : Math.max(0, Number((net - paid).toFixed(2)));
+          return {
+            id: row.id,
+            company_id: row.company_id,
+            client_id: row.client_id ?? null,
+            payable_type: payableType,
+            fiscal_year: row.fiscal_year ?? null,
+            net_payable: net,
+            paid_amount: paid,
+            remaining_amount: remaining,
+            payment_status: row.payment_status,
+            payee_classification: row.payee_classification ?? null,
+            classification_status: row.classification_status ?? null,
+            boid: row.clients?.boid || "",
+            full_name: row.clients?.full_name || "Unknown Beneficiary",
+            bank_name: row.bank_name || row.clients?.bank_name || "",
+            bank_account_no: row.bank_account_no || row.clients?.bank_account_no || "",
+          };
+        })
+        .filter((h: ManualPayableSearchHit) => h.remaining_amount > 0);
+    };
+
+    const [divs, ints, mfs] = await Promise.all([
+      fetchTable("dividend_payables", "dividend"),
+      fetchTable("interest_payables", "interest"),
+      fetchTable("mutual_fund_payables", "mutual_fund"),
+    ]);
+
+    const combined = [...divs, ...ints, ...mfs];
+    const filtered = qTrim
+      ? combined.filter(
+          (item) =>
+            item.boid.toLowerCase().includes(qTrim) ||
+            item.full_name.toLowerCase().includes(qTrim) ||
+            item.bank_account_no.toLowerCase().includes(qTrim) ||
+            item.fiscal_year?.toLowerCase().includes(qTrim) ||
+            String(item.remaining_amount).includes(qTrim) ||
+            String(item.net_payable).includes(qTrim),
+        )
+      : combined;
+
+    return filtered.slice(0, limit);
+  },
+
+  async uploadReconciliationEvidence(companyId: string, file: File): Promise<string> {
+    if (!companyId) throw new Error("Company ID is required before uploading evidence.");
+    const maxBytes = 20 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      throw new Error("Supporting voucher exceeds 20 MB limit.");
+    }
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
+    const objectPath = `${companyId}/${crypto.randomUUID()}-${safeName}`;
+
+    const { error } = await supabase.storage
+      .from("reconciliation-evidence")
+      .upload(objectPath, file, {
+        upsert: false,
+        contentType: file.type || undefined,
+      });
+
+    if (error) {
+      throw new Error(`Evidence upload failed: ${error.message}`);
+    }
+    return objectPath;
+  },
+
+  async getEvidenceSignedUrl(path: string, expiresInSeconds = 300): Promise<string> {
+    const { data, error } = await supabase.storage
+      .from("reconciliation-evidence")
+      .createSignedUrl(path, expiresInSeconds);
+
+    if (error || !data?.signedUrl) {
+      throw new Error(`Unable to open supporting voucher: ${error?.message || "Unknown error"}`);
+    }
+    return data.signedUrl;
+  },
+
+  async submitManualBankEntry(entry: {
+    companyId: string;
+    transactionDate: string;
+    debitAmount?: number;
+    creditAmount?: number;
+    reference: string;
+    description: string;
+    bankName?: string;
+    accountNo?: string;
+    reasonCode: ManualReasonCode;
+    evidencePath?: string | null;
+    notes?: string;
+    allocations?: ManualPayableAllocationInput[];
+  }): Promise<{ success: boolean; transactionId: string; approvalId: string; status: string }> {
+    const { data, error } = await (supabase as any).rpc("submit_manual_bank_entry_atomic", {
+      p_entry: {
+        company_id: entry.companyId,
+        transaction_date: entry.transactionDate,
+        debit_amount: Number(entry.debitAmount || 0),
+        credit_amount: Number(entry.creditAmount || 0),
+        reference: entry.reference,
+        description: entry.description,
+        bank_name: entry.bankName || null,
+        account_no: entry.accountNo || null,
+        reason_code: entry.reasonCode,
+        evidence_path: entry.evidencePath || null,
+        notes: entry.notes || "",
+        allocations: (entry.allocations || []).map((a) => ({
+          payable_id: a.payable_id,
+          payable_type: a.payable_type,
+          amount: Number(a.amount),
+          shareholder_name: a.shareholder_name,
+          boid: a.boid,
+        })),
+      },
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+    return {
+      success: Boolean(data?.success),
+      transactionId: data?.transaction_id,
+      approvalId: data?.approval_id,
+      status: data?.status || "pending_approval",
+    };
+  },
+
+  async submitManualMatchRequest(request: {
+    companyId: string;
+    mode: "pair_payables" | "classify_non_payable";
+    transactionIds: string[];
+    reasonCode: ManualReasonCode;
+    notes: string;
+    evidencePath?: string | null;
+    allocations?: ManualPayableAllocationInput[];
+  }): Promise<{ success: boolean; approvalId: string; transactionCount: number }> {
+    const { data, error } = await (supabase as any).rpc("submit_manual_match_request_atomic", {
+      p_request: {
+        company_id: request.companyId,
+        mode: request.mode,
+        transaction_ids: request.transactionIds,
+        reason_code: request.reasonCode,
+        notes: request.notes,
+        evidence_path: request.evidencePath || null,
+        allocations: (request.allocations || []).map((a) => ({
+          payable_id: a.payable_id,
+          payable_type: a.payable_type,
+          amount: Number(a.amount),
+          shareholder_name: a.shareholder_name,
+          boid: a.boid,
+        })),
+      },
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+    return {
+      success: Boolean(data?.success),
+      approvalId: data?.approval_id,
+      transactionCount: Number(data?.transaction_count || request.transactionIds.length),
+    };
+  },
+
+  async decideManualReconciliation(
+    approvalId: string,
+    decision: "Approved" | "Rejected",
+    reviewNotes?: string,
+  ): Promise<Record<string, any>> {
+    const { data, error } = await (supabase as any).rpc("decide_manual_reconciliation_atomic", {
+      p_approval_id: approvalId,
+      p_decision: decision,
+      p_review_notes: reviewNotes || null,
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+    return (data || {}) as Record<string, any>;
+  },
+
+  async autoReconcileConnectIpsBatches(companyIds?: string[]): Promise<{
+    batchesChecked: number;
+    settledPayments: number;
+    rejectedPayments: number;
+    runsRecorded: number;
+    message: string;
+  }> {
+    const { ConnectIPSService } = await import("./connectips.service");
+    let query = (supabase as any)
+      .from("payment_batches")
+      .select("id, company_id, batch_name, cds_batch_ref, status, payment_method, total_amount")
+      .in("status", ["Approved", "Processing", "Partially Paid", "Completed"])
+      .order("created_at", { ascending: false })
+      .limit(30);
+
+    if (companyIds && companyIds.length === 1) {
+      query = query.eq("company_id", companyIds[0]);
+    } else if (companyIds && companyIds.length > 1) {
+      query = query.in("company_id", companyIds);
+    }
+
+    const { data: batches, error: bErr } = await query;
+    if (bErr) {
+      throw new Error(
+        `Failed to fetch active payment batches for ConnectIPS sync: ${bErr.message}`,
+      );
+    }
+
+    const targetBatches = (batches || []).filter(
+      (b: any) =>
+        b.cds_batch_ref ||
+        String(b.payment_method || "")
+          .toLowerCase()
+          .includes("connectips"),
+    );
+
+    if (targetBatches.length === 0) {
+      return {
+        batchesChecked: 0,
+        settledPayments: 0,
+        rejectedPayments: 0,
+        runsRecorded: 0,
+        message: "No active ConnectIPS batches found for the selected company scope.",
+      };
+    }
+
+    let settledPayments = 0;
+    let rejectedPayments = 0;
+    let runsRecorded = 0;
+    const syncedCompanyMap = new Map<string, any[]>();
+
+    for (const batch of targetBatches) {
+      if (batch.status !== "Completed") {
+        try {
+          const res = await ConnectIPSService.syncBatchTransactionStatuses(batch.id);
+          settledPayments += res.settled || 0;
+          rejectedPayments += (res.failed || 0) + (res.returned || 0);
+        } catch (syncErr) {
+          console.warn(`ConnectIPS batch sync warning for ${batch.batch_name}:`, syncErr);
+        }
+      }
+
+      const { data: unlinkedPaid } = await (supabase as any)
+        .from("payments")
+        .select(
+          "id, company_id, client_id, payable_type, payable_id, net_amount, paid_amount, payment_date, payment_reference, connectips_ref, status",
+        )
+        .eq("batch_id", batch.id)
+        .in("status", ["Paid", "Completed"])
+        .is("reconciliation_run_id", null);
+
+      if (unlinkedPaid && unlinkedPaid.length > 0) {
+        const compKey = batch.company_id || "global";
+        if (!syncedCompanyMap.has(compKey)) syncedCompanyMap.set(compKey, []);
+        unlinkedPaid.forEach((p: any) =>
+          syncedCompanyMap
+            .get(compKey)!
+            .push({ ...p, batch_id: batch.id, batch_name: batch.batch_name }),
+        );
+      }
+    }
+
+    const { data: authData } = await supabase.auth.getUser();
+    const actorId = authData?.user?.id || null;
+
+    for (const [compKey, paymentRows] of syncedCompanyMap.entries()) {
+      if (paymentRows.length === 0 || compKey === "global") continue;
+      const totalAmount = paymentRows.reduce(
+        (s: number, r: any) => s + Number(r.paid_amount ?? r.net_amount ?? 0),
+        0,
+      );
+      const runHash = await computeSha256(
+        `connectips_api|${compKey}|${new Date().toISOString()}|${paymentRows.map((p: any) => p.id).join(",")}`,
+      );
+      const { data: runRow, error: runErr } = await (supabase as any)
+        .from("reconciliation_runs")
+        .insert({
+          company_id: compKey,
+          source_type: "connectips_api",
+          file_name: `ConnectIPS API Sync (${new Date().toISOString().slice(0, 10)})`,
+          file_hash_sha256: runHash,
+          row_count: paymentRows.length,
+          total_amount: Number(totalAmount.toFixed(2)),
+          matched_count: paymentRows.length,
+          unmatched_count: 0,
+          partial_count: 0,
+          rejected_count: 0,
+          parser_version: "3.0.0",
+          matching_rule_version: "3.0.0",
+          status: "applied",
+          created_by: actorId,
+          applied_by: actorId,
+          applied_at: new Date().toISOString(),
+          notes: "Automated ConnectIPS API settlement reconciliation",
+        })
+        .select("id")
+        .single();
+
+      if (runErr || !runRow?.id) continue;
+
+      const resultsPayload = paymentRows.map((p: any) => ({
+        run_id: runRow.id,
+        reconciliation_date: p.payment_date || new Date().toISOString().slice(0, 10),
+        source_reference: `${p.connectips_ref || p.payment_reference || "IPS"}::${p.id}`,
+        source_a_type: "connectips_api",
+        source_a_id: p.id,
+        source_b_type: "payable",
+        source_b_id: p.payable_id,
+        client_id: p.client_id,
+        company_id: p.company_id,
+        payable_type: p.payable_type || "dividend",
+        payable_id: p.payable_id,
+        payment_id: p.id,
+        batch_id: p.batch_id,
+        expected_amount: Number(p.net_amount ?? 0),
+        actual_amount: Number(p.paid_amount ?? p.net_amount ?? 0),
+        difference: 0,
+        result: "Matched",
+        notes: `Auto-reconciled via ConnectIPS API (${p.batch_name || p.batch_id})`,
+        match_method: "payment_reference",
+        match_confidence: 100,
+        candidate_count: 1,
+        rule_version: "3.0.0",
+        requires_manual_approval: false,
+        matched_by: actorId,
+        matched_at: new Date().toISOString(),
+      }));
+
+      await (supabase as any).from("reconciliation_results").insert(resultsPayload);
+      await (supabase as any)
+        .from("payments")
+        .update({ reconciliation_run_id: runRow.id })
+        .in(
+          "id",
+          paymentRows.map((p: any) => p.id),
+        );
+
+      runsRecorded += 1;
+      settledPayments = Math.max(settledPayments, paymentRows.length);
+    }
+
+    return {
+      batchesChecked: targetBatches.length,
+      settledPayments,
+      rejectedPayments,
+      runsRecorded,
+      message: `Checked ${targetBatches.length} ConnectIPS batch(es): ${runsRecorded} new audit run(s) recorded covering ${settledPayments} settled payout(s).`,
+    };
+  },
+
+  async getBankReconciliationStatement(
+    companyId: string,
+    periodStart: string,
+    periodEnd: string,
+    bankClosingBalance?: number | null,
+  ): Promise<BankReconciliationStatementSummary> {
+    const { data, error } = await (supabase as any).rpc("get_bank_reconciliation_statement", {
+      p_company_id: companyId,
+      p_period_start: periodStart,
+      p_period_end: periodEnd,
+      p_bank_closing_balance:
+        bankClosingBalance !== undefined &&
+        bankClosingBalance !== null &&
+        !Number.isNaN(bankClosingBalance)
+          ? Number(bankClosingBalance)
+          : null,
+    });
+
+    if (error) {
+      throw new Error(`Failed to generate Bank Reconciliation Statement: ${error.message}`);
+    }
+    return data as BankReconciliationStatementSummary;
+  },
+
+  async lockReconciliationPeriod(lockInfo: {
+    companyId: string;
+    fiscalYear?: string;
+    periodStart: string;
+    periodEnd: string;
+    bankClosingBalance?: number | null;
+    makerId?: string;
+    approvalNotes: string;
+  }): Promise<{ success: boolean; lockId: string; brs: BankReconciliationStatementSummary }> {
+    const { data, error } = await (supabase as any).rpc("lock_reconciliation_period_atomic", {
+      p_lock_info: {
+        company_id: lockInfo.companyId,
+        fiscal_year: lockInfo.fiscalYear || null,
+        period_start: lockInfo.periodStart,
+        period_end: lockInfo.periodEnd,
+        bank_closing_balance:
+          lockInfo.bankClosingBalance !== undefined && lockInfo.bankClosingBalance !== null
+            ? Number(lockInfo.bankClosingBalance)
+            : null,
+        maker_id: lockInfo.makerId || null,
+        approval_notes: lockInfo.approvalNotes,
+      },
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+    return {
+      success: Boolean(data?.success),
+      lockId: data?.lock_id,
+      brs: data?.brs,
+    };
+  },
+
+  async getLockedReconciliationPeriods(
+    companyId?: string | null,
+  ): Promise<ReconciliationPeriodLockRow[]> {
+    let query = (supabase as any)
+      .from("reconciliation_period_locks")
+      .select("*")
+      .order("period_end", { ascending: false })
+      .limit(50);
+
+    if (companyId) {
+      query = query.eq("company_id", companyId);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.warn("Failed to load period locks:", error.message);
+      return [];
+    }
+    return (data || []) as ReconciliationPeriodLockRow[];
+  },
+
+  async reopenReconciliationPeriod(lockId: string, reopenReason: string): Promise<boolean> {
+    if (!reopenReason || reopenReason.trim().length < 5) {
+      throw new Error("A reason of at least 5 characters is required to reopen a locked period.");
+    }
+    const { data: authData } = await supabase.auth.getUser();
+    const { error } = await (supabase as any)
+      .from("reconciliation_period_locks")
+      .update({
+        status: "Reopened",
+        reopened_by: authData?.user?.id || null,
+        reopened_at: new Date().toISOString(),
+        reopen_reason: reopenReason.trim(),
+      })
+      .eq("id", lockId);
+
+    if (error) {
+      throw new Error(`Failed to reopen period lock: ${error.message}`);
+    }
+    return true;
   },
 };

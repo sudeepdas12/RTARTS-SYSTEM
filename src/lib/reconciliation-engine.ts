@@ -93,6 +93,7 @@ export type ReconciliationMatchMethod =
   | "name_and_amount"
   | "unique_amount"
   | "batch_reference"
+  | "batch_consolidation"
   | "manual";
 
 export interface ReconciliationMatch {
@@ -130,6 +131,7 @@ export interface ReconciliationMatch {
   ruleVersion?: string;
   requiresManualApproval?: boolean;
   runId?: string;
+  consolidatedParentTxnId?: string;
 }
 
 export interface ComprehensiveReconciliationReport {
@@ -998,6 +1000,7 @@ export const ReconciliationEngine = {
       companyIds?: string[] | null;
       client?: any;
       allowUniqueAmountOnly?: boolean;
+      expandConsolidatedBatches?: boolean;
       metadata?: StatementMetadata;
     },
   ): Promise<ComprehensiveReconciliationReport> {
@@ -1046,7 +1049,7 @@ export const ReconciliationEngine = {
         let q = (db as any)
           .from("payments")
           .select(
-            "id,company_id,client_id,net_amount,paid_amount,gross_amount,bank_name,bank_account_no,status,payable_type,payable_id,payment_date,payment_reference,connectips_ref,clients(id,boid,full_name,company_id,bank_name,bank_account_no)",
+            "id,company_id,client_id,batch_id,net_amount,paid_amount,gross_amount,bank_name,bank_account_no,status,payable_type,payable_id,payment_date,payment_reference,connectips_ref,clients(id,boid,full_name,company_id,bank_name,bank_account_no)",
           )
           .range(from, to);
         q = applyCompanyFilter(q);
@@ -1157,6 +1160,7 @@ export const ReconciliationEngine = {
     const paymentsByAmt = new Map<string, any[]>();
     const paymentsByRef = new Map<string, any[]>();
     const paymentsByPayableId = new Map<string, any[]>();
+    const paymentsByBatchId = new Map<string, any[]>();
 
     paymentsList.forEach((p: any) => {
       const acct = cleanAcct(p.bank_account_no || p.clients?.bank_account_no);
@@ -1196,13 +1200,19 @@ export const ReconciliationEngine = {
         if (!paymentsByPayableId.has(p.payable_id)) paymentsByPayableId.set(p.payable_id, []);
         paymentsByPayableId.get(p.payable_id)!.push(p);
       }
+      if (p.batch_id) {
+        if (!paymentsByBatchId.has(p.batch_id)) paymentsByBatchId.set(p.batch_id, []);
+        paymentsByBatchId.get(p.batch_id)!.push(p);
+      }
     });
 
     const payablesByAcct = new Map<string, any[]>();
     const payablesByName = new Map<string, any[]>();
     const payablesByAmt = new Map<string, any[]>();
+    const payablesById = new Map<string, any>();
 
     payablesList.forEach((p: any) => {
+      if (p.id) payablesById.set(p.id, p);
       const acct = cleanAcct(p.bank_account_no || p.clients?.bank_account_no);
       const name = cleanName(p.clients?.full_name);
       const { full, prorated, prorated182, remaining } = getPayableAmounts(p);
@@ -1836,6 +1846,97 @@ export const ReconciliationEngine = {
       if (matchedBatch) {
         matchSources.push("payment_batch");
         usedBatchIds.add(matchedBatch.id);
+
+        if (
+          options?.expandConsolidatedBatches &&
+          !isBankReject &&
+          !bestPayment &&
+          !matchedPayable
+        ) {
+          const childPayments = (paymentsByBatchId.get(matchedBatch.id) || []).filter(
+            (p: any) =>
+              !usedPaymentIds.has(p.id) && p.status !== "Reversed" && p.status !== "Failed",
+          );
+          const childSum = childPayments.reduce(
+            (sum: number, p: any) => sum + Number(p.net_amount ?? p.paid_amount ?? 0),
+            0,
+          );
+          const batchTol = Math.max(RECONCILIATION_TOLERANCE_NPR, childPayments.length * 0.01);
+
+          if (childPayments.length > 0 && Math.abs(childSum - amount) <= batchTol) {
+            const parentTxnId = `bank-${idx + 1}`;
+            grandTotal.totalRecords += childPayments.length - 1;
+
+            childPayments.forEach((cp: any, childIdx: number) => {
+              const linkedPayable = cp.payable_id ? payablesById.get(cp.payable_id) : undefined;
+              const childAmt = Number(cp.net_amount ?? cp.paid_amount ?? 0);
+              usedPaymentIds.add(cp.id);
+              if (linkedPayable) {
+                recordPayableUsage(linkedPayable, childAmt);
+              }
+              const childClient = cp.clients || linkedPayable?.clients || null;
+              const childSources = linkedPayable
+                ? ["payment", "payable", "payment_batch"]
+                : ["payment", "payment_batch"];
+
+              grandTotal.matchedRecords += 1;
+              summary.matchedFromPayment += 1;
+              if (linkedPayable) summary.matchedFromPayable += 1;
+              summary.matchedFromBank += 1;
+
+              const rawType =
+                linkedPayable?.payable_type ??
+                cp.payable_type ??
+                matchedBatch.payable_type ??
+                "interest";
+              const normalizedType =
+                rawType === "dividend_payables" || rawType === "dividend"
+                  ? "dividend"
+                  : rawType === "interest_payables" || rawType === "interest"
+                    ? "interest"
+                    : "mutual_fund";
+
+              matches.push({
+                id: `${parentTxnId}-batch-${childIdx + 1}`,
+                boid: childClient?.boid || matchedBatch.batch_name,
+                shareholderName: childClient?.full_name || `Batch: ${matchedBatch.batch_name}`,
+                category: "Payment Batch Consolidated Debit",
+                kitta: 0,
+                excelAmount: childAmt,
+                systemAmount: childAmt,
+                difference: 0,
+                status: "Matched",
+                bankName: cp.bank_name || childClient?.bank_name || txn.bankName || "",
+                bankAccountNo: cp.bank_account_no || childClient?.bank_account_no || "",
+                lotName: `Batch ${matchedBatch.batch_name || txn.batchId || matchedBatch.id}`,
+                clientId: childClient?.id || cp.client_id || linkedPayable?.client_id || null,
+                companyId: cp.company_id || matchedBatch.company_id || null,
+                paymentId: cp.id,
+                paymentStatus: cp.status ?? cp.payment_status ?? null,
+                payableId: cp.payable_id ?? linkedPayable?.id ?? null,
+                batchId: matchedBatch.id,
+                fiscalYear:
+                  linkedPayable?.fiscal_year ?? (matchedBatch as any)?.fiscal_year ?? null,
+                payableType: normalizedType,
+                transactionDate: txn.date || null,
+                transactionDescription:
+                  `Consolidated Batch Debit (${matchedBatch.batch_name || matchedBatch.cds_batch_ref || matchedBatch.id}) — ${txn.description || ""}`.trim(),
+                sourceType: "bank_statement",
+                matchSources: childSources,
+                instructionId: cp.connectips_ref || txn.instructionId || undefined,
+                referenceId: cp.payment_reference || txn.referenceId || undefined,
+                confidenceScore: 95,
+                matchMethod: "batch_consolidation",
+                candidateCount: childPayments.length,
+                rejectedCandidates: [],
+                ruleVersion: "2.1.0",
+                requiresManualApproval: false,
+                consolidatedParentTxnId: parentTxnId,
+              });
+            });
+            continue;
+          }
+        }
       }
 
       const client = bestPayment?.clients || matchedPayable?.clients || null;

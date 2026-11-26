@@ -56,6 +56,8 @@ import {
   Info,
   Table as TableIcon,
   LayoutGrid,
+  PlusCircle,
+  Zap,
 } from "lucide-react";
 import { type RejectedAccountItem } from "@/components/account-remediation-dialog";
 import { BankErrorUploadDialog } from "@/components/reconciliation/bank-error-upload-dialog";
@@ -74,6 +76,14 @@ import {
 import { ReconciliationExceptionQueueTab } from "@/components/reconciliation/reconciliation-exception-queue";
 import { ReconciliationHistorySection } from "@/components/reconciliation/reconciliation-history-section";
 import { ReconciliationModalsGroup } from "@/components/reconciliation/reconciliation-modals";
+import {
+  ManualReconciliationDialog,
+  type ManualReconciliationMode,
+} from "@/components/reconciliation/manual-reconciliation-dialog";
+import { BankLedgerWorkbenchTab } from "@/components/reconciliation/bank-ledger-workbench-tab";
+import { DurableExceptionsWorkbench } from "@/components/reconciliation/durable-exceptions-workbench";
+import { BankReconciliationStatementPanel } from "@/components/reconciliation/bank-reconciliation-statement";
+import type { BankStatementTransactionRow } from "@/lib/services/reconciliation.service";
 import { useDebounce } from "@/hooks/use-debounce";
 import { toast } from "sonner";
 
@@ -138,9 +148,25 @@ function ReconciliationRoute() {
     files: File[];
     isBankStatement: boolean;
   } | null>(null);
+  const [manualDialogOpen, setManualDialogOpen] = useState<boolean>(false);
+  const [manualDialogMode, setManualDialogMode] =
+    useState<ManualReconciliationMode>("manual_entry");
+  const [manualSelectedTxns, setManualSelectedTxns] = useState<BankStatementTransactionRow[]>([]);
+  const [isSyncingConnectIps, setIsSyncingConnectIps] = useState<boolean>(false);
+  const [opsWorkbenchTab, setOpsWorkbenchTab] = useState<string>("bank_ledger");
 
   const { hasAny, isAdmin, user, roles } = useAuth();
   const canApply = hasAny(["admin", "finance_operator", "reconciliation_officer"]);
+  const canManualSubmit = hasAny([
+    "admin",
+    "supervisor",
+    "finance_operator",
+    "reconciliation_officer",
+    "maker",
+    "operator",
+  ]);
+  const canCheckerApprove = hasAny(["admin", "supervisor", "checker", "approver"]);
+  const canCertifyLock = hasAny(["admin", "supervisor", "approver"]);
   const canDelete = isAdmin;
 
   const groupedLots = useMemo(() => {
@@ -479,6 +505,7 @@ function ReconciliationRoute() {
             const rep = await ReconciliationEngine.analyzeBankStatement(transactions, {
               fileName: bankFiles.map((f) => f.name).join(", "),
               companyIds: [targetCompany],
+              expandConsolidatedBatches: true,
               metadata: statementMetadata,
             });
             setReport(rep);
@@ -598,6 +625,7 @@ function ReconciliationRoute() {
         const rep = await ReconciliationEngine.analyzeBankStatement(transactions, {
           fileName: files.map((f) => f.name).join(", "),
           companyIds: [targetCompany],
+          expandConsolidatedBatches: true,
           metadata: statementMetadata,
         });
         setReport(rep);
@@ -839,6 +867,30 @@ function ReconciliationRoute() {
       return next;
     });
     toast.success(`Acknowledged ${excIds.length} exception item(s) for operator review.`);
+  };
+
+  const openManualReconciliationDialog = (
+    mode: ManualReconciliationMode,
+    txns: BankStatementTransactionRow[] = [],
+  ) => {
+    setManualDialogMode(mode);
+    setManualSelectedTxns(txns);
+    setManualDialogOpen(true);
+  };
+
+  const handleHeaderSyncConnectIps = async () => {
+    setIsSyncingConnectIps(true);
+    try {
+      const res = await ReconciliationService.autoReconcileConnectIpsBatches(reconCompanyIds);
+      toast.success(res.message);
+      await loadHistory();
+      qc.invalidateQueries({ queryKey: ["bank_statement_transactions"] });
+      qc.invalidateQueries({ queryKey: ["brs_statement"] });
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to sync ConnectIPS batches.");
+    } finally {
+      setIsSyncingConnectIps(false);
+    }
   };
 
   const openRemediationForMatches = () => {
@@ -1194,10 +1246,29 @@ function ReconciliationRoute() {
                   id="reconcile-bank-upload"
                   type="file"
                   multiple
-                  accept=".xls,.xlsx,.xlsm,.csv,.txt"
+                  accept=".xls,.xlsx,.xlsm,.csv,.txt,.xml,.mt940,.sta,.940"
                   className="hidden"
                   onChange={handleBankStatementUpload}
                 />
+                {canManualSubmit && (
+                  <Button
+                    variant="secondary"
+                    className="cursor-pointer"
+                    onClick={() => openManualReconciliationDialog("manual_entry", [])}
+                  >
+                    <PlusCircle className="w-4 h-4 mr-1.5" />
+                    Manual Entry / Match
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  className="cursor-pointer"
+                  disabled={isSyncingConnectIps}
+                  onClick={handleHeaderSyncConnectIps}
+                >
+                  <Zap className="w-4 h-4 mr-1.5 text-amber-500" />
+                  {isSyncingConnectIps ? "Syncing..." : "Sync ConnectIPS"}
+                </Button>
               </>
             ) : (
               <Badge
@@ -1720,7 +1791,7 @@ function ReconciliationRoute() {
                     id="reconcile-bank-upload-body"
                     type="file"
                     multiple
-                    accept=".xls,.xlsx,.xlsm,.csv,.txt"
+                    accept=".xls,.xlsx,.xlsm,.csv,.txt,.xml,.mt940,.sta,.940"
                     className="hidden"
                     onChange={handleBankStatementUpload}
                   />
@@ -1751,6 +1822,48 @@ function ReconciliationRoute() {
           </CardContent>
         </Card>
       )}
+
+      {/* Multi-Channel Operational Workbenches: Persistent Bank Ledger, Durable Exceptions & BRS */}
+      <Tabs value={opsWorkbenchTab} onValueChange={setOpsWorkbenchTab} className="space-y-3">
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="bank_ledger" className="text-xs">
+            Bank Ledger &amp; Manual Matching
+          </TabsTrigger>
+          <TabsTrigger value="exceptions_workbench" className="text-xs">
+            Exceptions &amp; Variance Approvals
+          </TabsTrigger>
+          <TabsTrigger value="brs_period_lock" className="text-xs">
+            BRS &amp; Period Close
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="bank_ledger" className="m-0">
+          <BankLedgerWorkbenchTab
+            selectedCompanyIds={reconCompanyIds}
+            canApply={canManualSubmit}
+            onOpenManualDialog={openManualReconciliationDialog}
+            onSyncConnectIpsComplete={() => loadHistory()}
+          />
+        </TabsContent>
+
+        <TabsContent value="exceptions_workbench" className="m-0">
+          <DurableExceptionsWorkbench
+            selectedCompanyIds={reconCompanyIds}
+            canApproveVariance={canCheckerApprove}
+            canEditExceptions={canManualSubmit}
+          />
+        </TabsContent>
+
+        <TabsContent value="brs_period_lock" className="m-0">
+          <BankReconciliationStatementPanel
+            companiesList={companiesList}
+            selectedCompanyIds={reconCompanyIds}
+            currentUserId={user?.id}
+            canCertifyLock={canCertifyLock}
+            isAdminOrSupervisor={hasAny(["admin", "supervisor"])}
+          />
+        </TabsContent>
+      </Tabs>
 
       <ReconciliationHistorySection
         isLoadingHistory={isLoadingHistory}
@@ -1790,6 +1903,16 @@ function ReconciliationRoute() {
         isAdmin={isAdmin}
         canDelete={canDelete}
         isApplying={isApplying}
+      />
+
+      <ManualReconciliationDialog
+        open={manualDialogOpen}
+        onOpenChange={setManualDialogOpen}
+        companiesList={companiesList}
+        defaultCompanyId={reconCompanyIds[0] || companiesList[0]?.id}
+        initialMode={manualDialogMode}
+        selectedTransactions={manualSelectedTxns}
+        onSubmitted={() => loadHistory()}
       />
 
       <ReconciliationModalsGroup

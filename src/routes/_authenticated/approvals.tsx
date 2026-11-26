@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { RBACService, UserContext } from "@/lib/rbac-service";
 import { WorkflowEngine } from "@/lib/workflow-engine";
+import { ReconciliationService } from "@/lib/services/reconciliation.service";
 // import { ChunkProcessor } from "@/lib/chunk-processor";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -45,6 +46,7 @@ import {
   FileCheck,
   Search,
   X,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -191,6 +193,11 @@ function ApprovalsPage() {
     mutationFn: async ({ id, decision }: { id: string; decision: "Approved" | "Rejected" }) => {
       if (!viewing) return;
 
+      if (viewing.entity_type === "manual_reconciliation") {
+        await ReconciliationService.decideManualReconciliation(id, decision, notes || undefined);
+        return;
+      }
+
       const entityId =
         viewing.entity_id || (id.startsWith("batch-") ? id.replace("batch-", "") : null);
 
@@ -263,6 +270,9 @@ function ApprovalsPage() {
       qc.invalidateQueries({ queryKey: ["dividend_payables"] });
       qc.invalidateQueries({ queryKey: ["interest_payables"] });
       qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
+      qc.invalidateQueries({ queryKey: ["bank_statement_transactions"] });
+      qc.invalidateQueries({ queryKey: ["reconciliation_exceptions"] });
+      qc.invalidateQueries({ queryKey: ["brs_statement"] });
       qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
       qc.invalidateQueries({ queryKey: ["dashboard-operational-metrics"] });
     },
@@ -582,6 +592,151 @@ function ApprovalsPage() {
                         </span>
                       </div>
                     )}
+                    {viewing.entity_type === "manual_reconciliation" && (
+                      <>
+                        {(viewing.payload as any).reference && (
+                          <div className="p-2.5 rounded bg-muted/30 border">
+                            <span className="text-muted-foreground block text-[10px] uppercase font-medium">
+                              Bank / Voucher Reference
+                            </span>
+                            <span className="font-mono font-semibold text-xs text-foreground">
+                              {(viewing.payload as any).reference}
+                            </span>
+                          </div>
+                        )}
+                        {(viewing.payload as any).reason_code && (
+                          <div className="p-2.5 rounded bg-muted/30 border">
+                            <span className="text-muted-foreground block text-[10px] uppercase font-medium">
+                              Reason Code
+                            </span>
+                            <Badge variant="outline" className="mt-0.5 font-mono text-[10px]">
+                              {(viewing.payload as any).reason_code}
+                            </Badge>
+                          </div>
+                        )}
+                        {(viewing.payload as any).transaction_date && (
+                          <div className="p-2.5 rounded bg-muted/30 border">
+                            <span className="text-muted-foreground block text-[10px] uppercase font-medium">
+                              Transaction Date
+                            </span>
+                            <span className="font-mono text-xs text-foreground">
+                              {(viewing.payload as any).transaction_date}
+                            </span>
+                          </div>
+                        )}
+                        {((viewing.payload as any).bank_total_amount !== undefined ||
+                          (viewing.payload as any).debit_amount !== undefined ||
+                          (viewing.payload as any).credit_amount !== undefined) && (
+                          <div className="p-2.5 rounded bg-muted/30 border">
+                            <span className="text-muted-foreground block text-[10px] uppercase font-medium">
+                              Voucher / Bank Amount
+                            </span>
+                            <span className="font-bold font-mono text-emerald-600 dark:text-emerald-400 text-sm tabular-nums">
+                              NPR{" "}
+                              {Number(
+                                (viewing.payload as any).bank_total_amount ??
+                                  Math.max(
+                                    Number((viewing.payload as any).debit_amount || 0),
+                                    Number((viewing.payload as any).credit_amount || 0),
+                                  ),
+                              ).toLocaleString("en-IN", {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </span>
+                          </div>
+                        )}
+                        {(viewing.payload as any).alloc_count !== undefined && (
+                          <div className="p-2.5 rounded bg-muted/30 border">
+                            <span className="text-muted-foreground block text-[10px] uppercase font-medium">
+                              Paired Payables ({Number((viewing.payload as any).alloc_count || 0)})
+                            </span>
+                            <span className="font-bold font-mono text-foreground text-sm tabular-nums">
+                              NPR{" "}
+                              {Number((viewing.payload as any).alloc_total || 0).toLocaleString(
+                                "en-IN",
+                                { minimumFractionDigits: 2, maximumFractionDigits: 2 },
+                              )}
+                            </span>
+                          </div>
+                        )}
+                        {(viewing.payload as any).notes && (
+                          <div className="col-span-full p-2.5 rounded bg-muted/30 border">
+                            <span className="text-muted-foreground block text-[10px] uppercase font-medium">
+                              Maker Justification Notes
+                            </span>
+                            <span className="text-xs text-foreground">
+                              {(viewing.payload as any).notes}
+                            </span>
+                          </div>
+                        )}
+                        {(viewing.payload as any).evidence_path && (
+                          <div className="col-span-full flex items-center justify-between p-2.5 rounded bg-primary/5 border border-primary/20">
+                            <div>
+                              <span className="text-muted-foreground block text-[10px] uppercase font-medium">
+                                Supporting Evidence Attachment
+                              </span>
+                              <span className="font-mono text-[11px] text-foreground truncate max-w-md block">
+                                {(viewing.payload as any).evidence_path}
+                              </span>
+                            </div>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs shrink-0"
+                              onClick={async () => {
+                                try {
+                                  const url = await ReconciliationService.getEvidenceSignedUrl(
+                                    (viewing.payload as any).evidence_path,
+                                  );
+                                  window.open(url, "_blank", "noopener,noreferrer");
+                                } catch (err: any) {
+                                  toast.error(err?.message || "Failed to load supporting document");
+                                }
+                              }}
+                            >
+                              <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+                              Open Voucher
+                            </Button>
+                          </div>
+                        )}
+                        {Array.isArray((viewing.payload as any).allocations) &&
+                          (viewing.payload as any).allocations.length > 0 && (
+                            <div className="col-span-full rounded border bg-background overflow-hidden">
+                              <div className="px-2.5 py-1.5 bg-muted/40 border-b text-[10px] font-semibold uppercase text-muted-foreground">
+                                Allocated Payables to Settle Upon Approval
+                              </div>
+                              <div className="divide-y max-h-40 overflow-y-auto">
+                                {(viewing.payload as any).allocations.map(
+                                  (alloc: any, aIdx: number) => (
+                                    <div
+                                      key={alloc.payable_id || aIdx}
+                                      className="flex items-center justify-between px-2.5 py-1.5 text-xs"
+                                    >
+                                      <div className="min-w-0">
+                                        <span className="font-medium text-foreground">
+                                          {alloc.shareholder_name || alloc.payable_id}
+                                        </span>
+                                        <span className="ml-2 font-mono text-[10px] text-muted-foreground">
+                                          {alloc.boid ? `BOID ${alloc.boid} • ` : ""}
+                                          {alloc.payable_type}
+                                        </span>
+                                      </div>
+                                      <span className="font-mono font-semibold text-foreground shrink-0">
+                                        NPR{" "}
+                                        {Number(alloc.amount || 0).toLocaleString("en-IN", {
+                                          minimumFractionDigits: 2,
+                                        })}
+                                      </span>
+                                    </div>
+                                  ),
+                                )}
+                              </div>
+                            </div>
+                          )}
+                      </>
+                    )}
                   </div>
                 </div>
               )}
@@ -623,32 +778,48 @@ function ApprovalsPage() {
               </div>
             </div>
           )}
-          <DialogFooter className="p-4 border-t bg-muted/20 shrink-0 gap-2 flex justify-end">
-            {viewing?.status === "Pending" && canApprove ? (
-              <>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  disabled={decide.isPending}
-                  onClick={() => decide.mutate({ id: viewing.id, decision: "Rejected" })}
-                >
-                  <XCircle className="mr-1.5 h-4 w-4" />
-                  Reject Request
+          <DialogFooter className="p-4 border-t bg-muted/20 shrink-0 gap-2 flex items-center justify-between">
+            {viewing?.status === "Pending" &&
+              viewing.requested_by &&
+              user?.id === viewing.requested_by && (
+                <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium mr-auto">
+                  Maker-Checker: Another authorized Checker/Supervisor must approve your own
+                  submission.
+                </span>
+              )}
+            <div className="flex gap-2 ml-auto">
+              {viewing?.status === "Pending" && canApprove ? (
+                <>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    disabled={
+                      decide.isPending ||
+                      Boolean(viewing.requested_by && user?.id === viewing.requested_by)
+                    }
+                    onClick={() => decide.mutate({ id: viewing.id, decision: "Rejected" })}
+                  >
+                    <XCircle className="mr-1.5 h-4 w-4" />
+                    Reject Request
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={
+                      decide.isPending ||
+                      Boolean(viewing.requested_by && user?.id === viewing.requested_by)
+                    }
+                    onClick={() => decide.mutate({ id: viewing.id, decision: "Approved" })}
+                  >
+                    <CheckCircle2 className="mr-1.5 h-4 w-4" />
+                    Approve & Execute
+                  </Button>
+                </>
+              ) : (
+                <Button variant="outline" size="sm" onClick={() => setViewing(null)}>
+                  Close
                 </Button>
-                <Button
-                  size="sm"
-                  disabled={decide.isPending}
-                  onClick={() => decide.mutate({ id: viewing.id, decision: "Approved" })}
-                >
-                  <CheckCircle2 className="mr-1.5 h-4 w-4" />
-                  Approve & Execute
-                </Button>
-              </>
-            ) : (
-              <Button variant="outline" size="sm" onClick={() => setViewing(null)}>
-                Close
-              </Button>
-            )}
+              )}
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

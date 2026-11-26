@@ -1,5 +1,10 @@
 import * as XLSX from "xlsx";
 import { computeSha256 } from "./crypto-hash";
+import {
+  detectStandardBankFormat,
+  parseIso20022Xml,
+  parseSwiftMt940,
+} from "./bank-standard-parsers";
 
 const parseCsvRow = (row: string): string[] => {
   const values: string[] = [];
@@ -236,6 +241,17 @@ export async function classifyReconciliationFile(
   const name = file.name.toLowerCase();
   const isSpreadsheet = /\.(xlsx|xls|csv|xlsm)$/i.test(file.name);
 
+  if (/\.(xml|mt940|sta|940|txt)$/i.test(name)) {
+    try {
+      const sampleText = await file.slice(0, 8192).text();
+      if (detectStandardBankFormat(sampleText, file.name)) {
+        return "bank_statement";
+      }
+    } catch {
+      // fall through to standard inspection
+    }
+  }
+
   // 1. Inspect first few header rows - content inspection is the most deterministic classifier
   try {
     const buffer = await file.arrayBuffer();
@@ -368,6 +384,18 @@ export const BankParser = {
     if (isExcel) {
       return this.parseExcelSettlementWithMetadata(file, options);
     }
+
+    if (/\.(xml|mt940|sta|940|txt)$/i.test(fileName)) {
+      const rawText = await file.text();
+      const stdFormat = detectStandardBankFormat(rawText, file.name);
+      if (stdFormat === "iso20022") {
+        return parseIso20022Xml(rawText, file.name);
+      }
+      if (stdFormat === "mt940") {
+        return parseSwiftMt940(rawText, file.name);
+      }
+    }
+
     return this.parseCsvStatementWithMetadata(file, options);
   },
 
