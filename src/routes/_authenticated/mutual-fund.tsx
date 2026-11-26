@@ -2033,7 +2033,7 @@ function MutualFundPage() {
                 className="h-7 text-xs px-2.5 font-medium"
                 onClick={() => setCompanyFilter("all")}
               >
-                All Schemes ({totals.count > 0 ? totals.count.toLocaleString() : "55,115"})
+                All Schemes ({(totals.count ?? 0).toLocaleString()})
               </Button>
               {relevantCompanies.map((c) => (
                 <Button
