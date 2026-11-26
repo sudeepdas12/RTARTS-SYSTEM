@@ -72,7 +72,7 @@ graph TD
 #### Required Free Software on Host PC:
 
 1. **Docker Desktop** (Free): Runs PostgreSQL, Auth, and Storage.
-2. **Node.js (v20 or v22 LTS)** (Free): Compiles and serves the web application.
+2. **Node.js (v26 LTS)** (Free): Compiles and serves the web application.
 3. **PM2 & Serve** (Free): Installed via Node.js terminal (`npm install -g pm2 serve`).
 
 ### B. Staff Client PCs (Workstations)

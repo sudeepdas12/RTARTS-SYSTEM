@@ -118,7 +118,7 @@ The following specifications define the hardware, operating system, and network 
   - **Linux (Recommended)**: Ubuntu Server 22.04 LTS / 24.04 LTS, Red Hat Enterprise Linux (RHEL 9), or Rocky Linux 9.
   - **Windows Server**: Windows Server 2022 / 2025 Standard (with Docker Engine / WSL2).
 - **Core Runtimes & Container Engines**:
-  - **Node.js**: v20.x LTS or v22.x LTS.
+  - **Node.js**: v26.x LTS (`v26.13.1`).
   - **Docker Engine & Docker Compose**: v2.20+ (runs the Supabase PostgreSQL 15, GoTrue, PostgREST, and Realtime containers).
   - **PostgreSQL**: PostgreSQL 15.x with `pgcrypto`, `uuid-ossp`, `pg_stat_statements`, `pg_cron` extensions.
   - **Reverse Proxy**: Nginx or Caddy with TLS 1.3 / SSL certificate, HTTPS redirection, and WebSocket reverse-proxying.

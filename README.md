@@ -134,8 +134,8 @@ Designed strictly around Nepalese capital market regulations (Securities Board o
 
 ### Prerequisites
 
-- **Node.js**: v20.x or higher
-- **npm**: v10.x or higher
+- **Node.js**: v26.x LTS (`v26.13.1` recommended)
+- **npm**: v11.x or higher
 - **Docker Desktop**: Running locally (for Supabase PostgreSQL container stack)
 - **Supabase CLI**: Installed (`npm i -g supabase` or via Scoop/Brew)
 
