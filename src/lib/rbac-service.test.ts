@@ -85,10 +85,13 @@ describe("RBACService Security Matrix", () => {
   });
 
   describe("canApprove (Maker-Checker & Approver Separation)", () => {
-    it("allows admin, supervisor, and checker to approve payment batches", () => {
+    it("allows admin, supervisor, and checker to approve payment batches and manual reconciliations", () => {
       expect(RBACService.canApprove(adminUser, "payment_batches")).toBe(true);
       expect(RBACService.canApprove(supervisorUser, "payment_batches")).toBe(true);
       expect(RBACService.canApprove(checkerUser, "payment_batches")).toBe(true);
+      expect(RBACService.canApprove(checkerUser, "manual_reconciliation")).toBe(true);
+      expect(RBACService.canApprove(checkerUser, "approvals")).toBe(true);
+      expect(RBACService.canApprove(checkerUser, "IMPORT_BATCH")).toBe(false);
       expect(RBACService.canApprove(approverUser, "payment_batches")).toBe(true);
       expect(RBACService.hasPermission(checkerUser, "approve_payment_batch")).toBe(true);
       expect(RBACService.hasPermission(checkerUser, "manage_approvals")).toBe(true);

@@ -84,6 +84,27 @@ function ApprovalsPage() {
     : null;
   const canApprove = RBACService.canApprove(currentUser, "approvals");
 
+  const { data: actorProfiles = [] } = useQuery({
+    queryKey: ["approvals_actor_profiles"],
+    queryFn: () => ReconciliationService.getCompanyOperators(null),
+    staleTime: 15_000,
+  });
+
+  const actorMap = useMemo(() => {
+    const map = new Map<string, { full_name: string | null; email: string | null }>();
+    actorProfiles.forEach((p) => map.set(p.id, p));
+    return map;
+  }, [actorProfiles]);
+
+  const formatActorLabel = (actorId: string | null) => {
+    if (!actorId) return "System / Legacy";
+    const prof = actorMap.get(actorId);
+    const name = prof?.full_name?.trim();
+    const email = prof?.email?.trim();
+    if (name && email) return `${name} (${email})`;
+    return email || name || actorId.slice(0, 8);
+  };
+
   // Fetch all approvals so KPI cards are always accurate
   const { data: allRows = [], isLoading } = useQuery({
     queryKey: ["pending_approvals_all"],
@@ -179,15 +200,32 @@ function ApprovalsPage() {
     }
     if (searchTerm.trim()) {
       const q = searchTerm.toLowerCase();
-      list = list.filter(
-        (r) =>
+      list = list.filter((r) => {
+        const prof = r.requested_by ? actorMap.get(r.requested_by) : undefined;
+        return (
           r.entity_type?.toLowerCase().includes(q) ||
           r.action?.toLowerCase().includes(q) ||
-          r.id.toLowerCase().includes(q),
-      );
+          r.id.toLowerCase().includes(q) ||
+          prof?.full_name?.toLowerCase().includes(q) ||
+          prof?.email?.toLowerCase().includes(q)
+        );
+      });
     }
     return list;
-  }, [allRows, status, searchTerm]);
+  }, [allRows, status, searchTerm, actorMap]);
+
+  const canApproveViewing = viewing
+    ? RBACService.canApprove(
+        currentUser,
+        viewing.entity_type === "IMPORT_BATCH" || viewing.action === "MATERIAL_IMPORT_APPROVAL"
+          ? "IMPORT_BATCH"
+          : viewing.entity_type,
+      )
+    : canApprove;
+
+  const isSelfSubmission = Boolean(
+    viewing?.status === "Pending" && viewing.requested_by && user?.id === viewing.requested_by,
+  );
 
   const decide = useMutation({
     mutationFn: async ({ id, decision }: { id: string; decision: "Approved" | "Rejected" }) => {
@@ -411,6 +449,7 @@ function ApprovalsPage() {
               <TableHead>Requested Date</TableHead>
               <TableHead>Entity Type</TableHead>
               <TableHead>Action</TableHead>
+              <TableHead>Requested By</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Review Notes</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -419,13 +458,13 @@ function ApprovalsPage() {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
                   Loading approval items…
                 </TableCell>
               </TableRow>
             ) : filteredRows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
                   No approval requests found matching filter criteria.
                 </TableCell>
               </TableRow>
@@ -441,6 +480,19 @@ function ApprovalsPage() {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-xs font-mono">{r.action}</TableCell>
+                  <TableCell className="text-xs">
+                    <span className="font-medium text-foreground">
+                      {formatActorLabel(r.requested_by)}
+                    </span>
+                    {r.requested_by && user?.id === r.requested_by && (
+                      <Badge
+                        variant="outline"
+                        className="ml-1.5 text-[10px] border-amber-300 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                      >
+                        You
+                      </Badge>
+                    )}
+                  </TableCell>
                   <TableCell>
                     {r.status === "Pending" && (
                       <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800 text-[11px]">
@@ -509,6 +561,20 @@ function ApprovalsPage() {
                 <div>
                   <span className="text-muted-foreground font-medium">Current Status:</span>{" "}
                   <span className="font-semibold">{viewing.status}</span>
+                </div>
+                <div className="col-span-2">
+                  <span className="text-muted-foreground font-medium">Requested By (Maker):</span>{" "}
+                  <span className="font-medium text-foreground">
+                    {formatActorLabel(viewing.requested_by)}
+                  </span>
+                  {isSelfSubmission && (
+                    <Badge
+                      variant="outline"
+                      className="ml-2 text-[10px] border-amber-400 bg-amber-500/15 text-amber-800 dark:text-amber-300"
+                    >
+                      Submitted by You
+                    </Badge>
+                  )}
                 </div>
               </div>
 
@@ -763,6 +829,27 @@ function ApprovalsPage() {
                 )}
               </div>
 
+              {isSelfSubmission && (
+                <div
+                  role="alert"
+                  className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 p-3 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2.5"
+                >
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                  <div>
+                    <div className="font-semibold">
+                      Self-Approval Blocked (Maker-Checker Dual Control)
+                    </div>
+                    <p className="mt-0.5 text-[11px] leading-relaxed">
+                      This request was submitted by your account (
+                      <span className="font-medium">{formatActorLabel(viewing.requested_by)}</span>
+                      ). For dual-control compliance, even an Admin cannot approve or reject their
+                      own submission. Sign in with another authorized Admin, Supervisor, Approver,
+                      or Checker account to complete review.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <div>
                 <div className="mb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                   Reviewer Notes / Remarks
@@ -771,7 +858,7 @@ function ApprovalsPage() {
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Enter remarks or justification for this decision (optional for approval, recommended for rejection)..."
-                  disabled={viewing.status !== "Pending" || !canApprove}
+                  disabled={viewing.status !== "Pending" || !canApproveViewing || isSelfSubmission}
                   className="text-xs"
                   rows={3}
                 />
@@ -779,23 +866,23 @@ function ApprovalsPage() {
             </div>
           )}
           <DialogFooter className="p-4 border-t bg-muted/20 shrink-0 gap-2 flex items-center justify-between">
-            {viewing?.status === "Pending" &&
-              viewing.requested_by &&
-              user?.id === viewing.requested_by && (
-                <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium mr-auto">
-                  Maker-Checker: Another authorized Checker/Supervisor must approve your own
-                  submission.
-                </span>
-              )}
+            {isSelfSubmission && (
+              <span className="text-[11px] text-amber-700 dark:text-amber-400 font-medium mr-auto">
+                Maker-Checker: Another Admin, Supervisor, Approver, or Checker must decide this
+                submission.
+              </span>
+            )}
             <div className="flex gap-2 ml-auto">
-              {viewing?.status === "Pending" && canApprove ? (
+              {viewing?.status === "Pending" && canApproveViewing ? (
                 <>
                   <Button
                     variant="destructive"
                     size="sm"
-                    disabled={
-                      decide.isPending ||
-                      Boolean(viewing.requested_by && user?.id === viewing.requested_by)
+                    disabled={decide.isPending || isSelfSubmission}
+                    title={
+                      isSelfSubmission
+                        ? "Maker-Checker blocks self-rejection of your own submission"
+                        : undefined
                     }
                     onClick={() => decide.mutate({ id: viewing.id, decision: "Rejected" })}
                   >
@@ -804,9 +891,11 @@ function ApprovalsPage() {
                   </Button>
                   <Button
                     size="sm"
-                    disabled={
-                      decide.isPending ||
-                      Boolean(viewing.requested_by && user?.id === viewing.requested_by)
+                    disabled={decide.isPending || isSelfSubmission}
+                    title={
+                      isSelfSubmission
+                        ? "Maker-Checker blocks self-approval of your own submission"
+                        : undefined
                     }
                     onClick={() => decide.mutate({ id: viewing.id, decision: "Approved" })}
                   >

@@ -169,6 +169,7 @@ test.describe("Multi-Channel Reconciliation Workbench & BRS End-to-End", () => {
     }
     if (checkerId) {
       await admin.from("pending_approvals").delete().eq("requested_by", checkerId);
+      await admin.from("bank_statement_transactions").delete().eq("maker_id", checkerId);
     }
     await admin.from("dividend_payables").delete().eq("company_id", companyId);
     await admin.from("clients").delete().eq("company_id", companyId);
@@ -359,11 +360,15 @@ test.describe("Multi-Channel Reconciliation Workbench & BRS End-to-End", () => {
       const approvalRow = checkerPage
         .locator("tr")
         .filter({ hasText: "manual reconciliation" })
+        .filter({ hasText: `E2E Maker ${tag}` })
         .first();
       await expect(approvalRow).toBeVisible({ timeout: 10000 });
       await approvalRow.locator("button:has-text('Review')").click();
 
       const reviewDlg = checkerPage.locator("[role='dialog']");
+      await expect(reviewDlg.locator(`text=E2E Maker ${tag}`).first()).toBeVisible({
+        timeout: 5000,
+      });
       await expect(reviewDlg.locator(`text=${manualRef}`).first()).toBeVisible({ timeout: 5000 });
       await reviewDlg
         .locator("textarea")
@@ -390,6 +395,40 @@ test.describe("Multi-Channel Reconciliation Workbench & BRS End-to-End", () => {
       await expect(checkerPage.locator("text=Unreconciled Aging Bucket").first()).toBeVisible({
         timeout: 10000,
       });
+
+      // Verify Maker-Checker UI blocks self-approval when Checker submits their own manual entry
+      await checkerPage
+        .locator("button[role='tab']:has-text('Bank Ledger & Manual Matching')")
+        .first()
+        .click();
+      await checkerPage.locator("button:has-text('Manual Entry / Match')").first().click();
+      const selfDlg = checkerPage.locator("[role='dialog']");
+      await expect(
+        selfDlg.locator("text=Manual Reconciliation & Voucher Workbench").first(),
+      ).toBeVisible({ timeout: 5000 });
+      await selfDlg.locator("button[role='combobox']").first().click();
+      await checkerPage.getByRole("option", { name: `E2E Recon Banc ${tag}` }).click();
+      await selfDlg.locator("input[placeholder='0.00']").fill("250");
+      await selfDlg.locator("input[placeholder*='CHQ-40912']").fill(`SELF-${tag}`);
+      await selfDlg.locator("input[placeholder*='Global IME Bank']").fill("Rastriya Banijya Bank");
+      await selfDlg.locator("button:has-text('Submit for Checker Approval')").click();
+      await expect(selfDlg).toBeHidden({ timeout: 15000 });
+
+      await checkerPage.goto("/approvals");
+      const selfRow = checkerPage
+        .locator("tr")
+        .filter({ hasText: `E2E Checker ${tag}` })
+        .first();
+      await expect(selfRow).toBeVisible({ timeout: 10000 });
+      await expect(selfRow.locator("text=You").first()).toBeVisible();
+      await selfRow.locator("button:has-text('Review')").click();
+      const selfReviewDlg = checkerPage.locator("[role='dialog']");
+      await expect(
+        selfReviewDlg.locator("text=Self-Approval Blocked (Maker-Checker Dual Control)").first(),
+      ).toBeVisible({ timeout: 5000 });
+      await expect(selfReviewDlg.locator("button:has-text('Approve & Execute')")).toBeDisabled();
+      await expect(selfReviewDlg.locator("button:has-text('Reject Request')")).toBeDisabled();
+      await selfReviewDlg.locator("button:has-text('Close')").first().click();
     } finally {
       await checkerCtx.close();
     }

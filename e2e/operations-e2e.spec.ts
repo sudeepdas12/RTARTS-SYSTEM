@@ -178,6 +178,7 @@ test.describe("Operations Section Comprehensive End-to-End Suite", () => {
 
     // Verify Search & Status Filter
     await expect(page.locator("input[placeholder*='Search approvals']").first()).toBeVisible();
+    await expect(page.locator("th:has-text('Requested By')").first()).toBeVisible();
 
     // If approvals table has rows, test review dialog
     const viewButtons = page.locator("button:has-text('Review')");

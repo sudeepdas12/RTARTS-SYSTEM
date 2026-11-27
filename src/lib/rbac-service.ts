@@ -226,7 +226,14 @@ export const RBACService = {
     if (user.roles.includes("admin")) return true;
     if (user.roles.includes("approver")) return true;
     if (user.roles.includes("supervisor")) return true;
-    if (recordType === "payment_batches" && user.roles.includes("checker")) return true;
+    if (
+      (recordType === "payment_batches" ||
+        recordType === "manual_reconciliation" ||
+        recordType === "approvals") &&
+      user.roles.includes("checker")
+    ) {
+      return true;
+    }
     return false;
   },
 
