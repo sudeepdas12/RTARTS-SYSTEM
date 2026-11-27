@@ -249,7 +249,10 @@ function ApprovalsPage() {
           currentUser,
         );
         if (!res.success) {
-          throw new Error(res.error || "Workflow transition failed");
+          // Allow closing an orphaned Pending approval ticket via Reject when its parent batch was already deleted/reverted
+          if (!(res.notFound && decision === "Rejected" && !id.startsWith("batch-"))) {
+            throw new Error(res.error || "Workflow transition failed");
+          }
         }
       }
 

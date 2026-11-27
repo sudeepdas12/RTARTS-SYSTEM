@@ -165,23 +165,31 @@ export const WorkflowEngine = {
     action: ApprovalAction,
     remarks?: string,
     user?: UserContext | null,
-  ): Promise<{ success: boolean; newStatus?: ApprovalStatus; error?: string }> {
+  ): Promise<{ success: boolean; newStatus?: ApprovalStatus; error?: string; notFound?: boolean }> {
     const config = this.getConfig(table);
     if (!config) {
       return { success: false, error: `No workflow configured for table: ${table}` };
     }
 
-    // Fetch current record status
+    // Fetch current record status safely with maybeSingle() so deleted targets yield a clear message
     const { data: record, error: fetchError } = await (supabase as any)
       .from(config.table)
       .select(config.statusField)
       .eq("id", recordId)
-      .single();
+      .maybeSingle();
 
-    if (fetchError || !record) {
+    if (fetchError) {
       return {
         success: false,
-        error: `Failed to fetch record: ${fetchError?.message || "not found"}`,
+        error: `Failed to fetch record: ${fetchError.message}`,
+      };
+    }
+
+    if (!record) {
+      return {
+        success: false,
+        notFound: true,
+        error: `Target ${table.replace(/_/g, " ")} record (${recordId.slice(0, 8)}) no longer exists or was already reverted/deleted.`,
       };
     }
 
@@ -217,7 +225,7 @@ export const WorkflowEngine = {
             .from(config.table)
             .select("created_by")
             .eq("id", recordId)
-            .single();
+            .maybeSingle();
 
           const createdBy = creatorData?.created_by;
           if (createdBy && createdBy === user.id) {
@@ -323,7 +331,7 @@ export const WorkflowEngine = {
             requested_by: user?.id || null,
           })
           .select("id")
-          .single();
+          .maybeSingle();
 
         if (!insertPaErr && insertedPa?.id) {
           pendingApprovalId = insertedPa.id;

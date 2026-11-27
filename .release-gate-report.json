@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-11-27T07:09:50.572Z",
+  "timestamp": "2026-11-27T07:32:52.643Z",
   "mode": "SOURCE_RELEASE_AUDIT",
   "gates": [
     {
@@ -20,7 +20,7 @@
     {
       "name": "All active PostgreSQL functions enforce immutable search_path",
       "passed": true,
-      "detail": "100% of 100 active functions specify search_path"
+      "detail": "100% of 101 active functions specify search_path"
     },
     {
       "name": "Database get_cron_secret has no hardcoded fallback secret",

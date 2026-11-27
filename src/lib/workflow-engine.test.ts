@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { WorkflowEngine } from "./workflow-engine";
+import { supabase } from "./services/database";
 
 vi.mock("./services/database", () => ({
   supabase: {
@@ -47,5 +48,30 @@ describe("WorkflowEngine", () => {
 
     const canApprove = WorkflowEngine.canTransition(user, "payment_batches", "Pending", "approve");
     expect(canApprove).toBe(false);
+  });
+
+  it("returns notFound=true cleanly via maybeSingle() when target batch no longer exists", async () => {
+    const maybeSingleMock = vi.fn().mockResolvedValue({ data: null, error: null });
+    (supabase.from as any).mockReturnValue({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: maybeSingleMock,
+        }),
+      }),
+    });
+
+    const checker = { id: "checker-1", roles: ["supervisor"] } as any;
+    const res = await WorkflowEngine.processAction(
+      "00000000-0000-0000-0000-000000000099",
+      "payment_batches",
+      "approve",
+      "ok",
+      checker,
+    );
+
+    expect(maybeSingleMock).toHaveBeenCalledTimes(1);
+    expect(res.success).toBe(false);
+    expect(res.notFound).toBe(true);
+    expect(res.error).toContain("no longer exists");
   });
 });
