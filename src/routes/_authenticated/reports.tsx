@@ -42,7 +42,6 @@ import {
   PAYABLE_REPORTS,
   REPORT_COLUMNS,
   formatReportCurrency,
-  formatReportNumber,
   type ReportId,
 } from "@/components/reports/reports-config";
 import { toast } from "sonner";
@@ -53,6 +52,7 @@ function ReportsRoute() {
   const qc = useQueryClient();
   const [companyId, setCompanyId] = useState("all");
   const [activeExport, setActiveExport] = useState<string | null>(null);
+  const [exportRevision, setExportRevision] = useState(0);
   const [viewingReport, setViewingReport] = useState<ReportId | null>(null);
 
   const { data: companies = [] } = useQuery({
@@ -62,7 +62,7 @@ function ReportsRoute() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("companies")
-        .select("id, company_name, company_code")
+        .select("id, company_name, company_code, fiscal_year")
         .order("company_name");
       if (error) throw error;
       return data || [];
@@ -343,6 +343,22 @@ function ReportsRoute() {
           REPORT_COLUMNS[id] || [],
           result.rows as unknown as Record<string, unknown>[],
         );
+        const { data: authRes } = await supabase.auth.getUser();
+        await (supabase as any).from("audit_logs").insert({
+          user_id: authRes?.user?.id || null,
+          action: "EXPORT_REPORT",
+          table_name: "reports",
+          record_id: id,
+          new_value: {
+            reportId: id,
+            reportTitle: title,
+            format: "PDF",
+            companyId: targetCompanyId,
+            companyName: targetCompanyName,
+            rowCount: result.rows.length,
+          },
+        });
+        setExportRevision((r) => r + 1);
         toast.dismiss(toastId);
         if (result.isTruncated) {
           toast.warning(
@@ -364,6 +380,22 @@ function ReportsRoute() {
           result.rows as any[],
           `${targetCompanyName.replace(/[^a-zA-Z0-9]/g, "_")}_${title.replace(/[^a-zA-Z0-9]/g, "_")}`,
         );
+        const { data: authRes } = await supabase.auth.getUser();
+        await (supabase as any).from("audit_logs").insert({
+          user_id: authRes?.user?.id || null,
+          action: "EXPORT_REPORT",
+          table_name: "reports",
+          record_id: id,
+          new_value: {
+            reportId: id,
+            reportTitle: title,
+            format: "XLSX",
+            companyId: targetCompanyId,
+            companyName: targetCompanyName,
+            rowCount: result.rows.length,
+          },
+        });
+        setExportRevision((r) => r + 1);
         toast.dismiss(toastId);
         toast.success(
           `Successfully exported ${result.rows.length.toLocaleString()} record(s) to Excel.`,
@@ -439,7 +471,7 @@ function ReportsRoute() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
         <Card className="glass-card hover-lift">
           <CardContent className="p-4">
             <div className="flex items-center justify-between text-muted-foreground">
@@ -455,7 +487,9 @@ function ReportsRoute() {
               <span className="text-xs font-medium uppercase tracking-wide">Transactions</span>
               <FileText className="h-4 w-4 text-primary" />
             </div>
-            <div className="mt-2 text-2xl font-bold">{formatReportNumber(totals.count)}</div>
+            <div className="mt-2 text-2xl font-bold tabular-nums">
+              {Math.round(totals.count || 0).toLocaleString("en-IN")}
+            </div>
           </CardContent>
         </Card>
         <Card className="glass-card hover-lift">
@@ -464,7 +498,7 @@ function ReportsRoute() {
               <span className="text-xs font-medium uppercase tracking-wide">Gross Payable</span>
               <Wallet className="h-4 w-4 text-primary" />
             </div>
-            <div className="mt-2 text-xl font-bold tabular-nums">
+            <div className="mt-2 text-xl font-bold tabular-nums whitespace-nowrap">
               {formatReportCurrency(totals.gross)}
             </div>
           </CardContent>
@@ -475,7 +509,7 @@ function ReportsRoute() {
               <span className="text-xs font-medium uppercase tracking-wide">TDS Tax</span>
               <Download className="h-4 w-4 text-amber-600" />
             </div>
-            <div className="mt-2 text-xl font-bold tabular-nums text-amber-600">
+            <div className="mt-2 text-xl font-bold tabular-nums whitespace-nowrap text-amber-600">
               {formatReportCurrency(totals.tax)}
             </div>
           </CardContent>
@@ -486,7 +520,7 @@ function ReportsRoute() {
               <span className="text-xs font-medium uppercase tracking-wide">Net Payable</span>
               <Users className="h-4 w-4 text-emerald-600" />
             </div>
-            <div className="mt-2 text-xl font-bold tabular-nums text-emerald-600">
+            <div className="mt-2 text-xl font-bold tabular-nums whitespace-nowrap text-emerald-600">
               {formatReportCurrency(totals.net)}
             </div>
           </CardContent>
@@ -497,8 +531,13 @@ function ReportsRoute() {
         currentReportId="dividend_register"
         currentCompanyId={companyId}
         currentCompanyName={selectedCompany?.company_name || "All Companies (Consolidated)"}
-        currentFiscalYear="2081/82"
+        currentFiscalYear={
+          selectedCompany?.fiscal_year ||
+          companies.find((c) => c.fiscal_year)?.fiscal_year ||
+          "All Fiscal Years"
+        }
         dataAsOf={new Date()}
+        refreshTrigger={exportRevision}
         onApplyPreset={(preset) => {
           if (preset.companyId) setCompanyId(preset.companyId);
           toast.success(`Applied report preset: ${preset.name}`);

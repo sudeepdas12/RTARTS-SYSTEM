@@ -68,15 +68,19 @@ function StatCard({
   return (
     <Card className="relative overflow-hidden glass-card hover-lift">
       <CardContent className="p-5">
-        <div className="flex items-start justify-between">
-          <div className="space-y-1">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+        <div className="flex items-start justify-between gap-2">
+          <div className="space-y-1 min-w-0 flex-1">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide truncate">
               {title}
             </p>
-            <p className={`text-2xl font-bold tabular-nums ${colorClass}`}>{value}</p>
-            {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
+            <p
+              className={`text-xl sm:text-2xl font-bold tabular-nums whitespace-nowrap ${colorClass}`}
+            >
+              {value}
+            </p>
+            {subtitle && <p className="text-xs text-muted-foreground break-words">{subtitle}</p>}
           </div>
-          <div className={`rounded-xl p-2.5 ${colorClass ? "bg-current/10" : "bg-muted"}`}>
+          <div className={`rounded-xl p-2.5 shrink-0 ${colorClass ? "bg-current/10" : "bg-muted"}`}>
             <Icon className={`h-5 w-5 ${colorClass || "text-muted-foreground"}`} />
           </div>
         </div>
@@ -224,7 +228,7 @@ function AnalyticsPage() {
         description="Comprehensive overview of companies, records, and overall payment statuses across Equity Dividends, Debentures, and Mutual Funds."
       />
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard
           title="Companies"
           value={summaryStats.totalCompanies.toString()}

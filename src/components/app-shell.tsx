@@ -64,10 +64,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   };
 
   const signOut = async () => {
-    navigate({ to: "/auth", replace: true });
     await qc.cancelQueries();
-    await supabase.auth.signOut();
-    qc.clear();
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      qc.clear();
+      navigate({ to: "/auth", replace: true });
+    }
   };
 
   const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);

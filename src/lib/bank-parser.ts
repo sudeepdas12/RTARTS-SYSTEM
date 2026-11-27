@@ -166,6 +166,7 @@ export interface BankTransaction {
   balance: number;
   bankName?: string;
   accountNo?: string;
+  boid?: string;
   beneficiaryName?: string;
   status?: string; // e.g. 'ACSC', 'RJCT', 'Success', 'Rejected'
   referenceId?: string;
@@ -578,7 +579,16 @@ export const BankParser = {
         ["batch id", "batchid", "batch.sessionid", "batch"],
       ]),
       referenceId: findColumnIndexByPriority(headerRow, [
-        ["reference id", "referenceid", "ref no", "ref id"],
+        [
+          "reference / txn id",
+          "reference/txn id",
+          "txn ref",
+          "reference id",
+          "referenceid",
+          "ref no",
+          "ref id",
+          "reference",
+        ],
       ]),
       reason: findColumnIndexByPriority(headerRow, [
         [
@@ -713,6 +723,9 @@ export const BankParser = {
       }
 
       const resolvedStatus = normalizeTxnStatus(status, Boolean(isReject), "Rejected");
+      const csvDescBoid = String(desc || "").match(/\b(130\d{13})\b/)?.[1];
+      const csvRefId =
+        indices.referenceId >= 0 ? String(columns[indices.referenceId] || "").trim() : undefined;
 
       transactions.push({
         id: `txn-${rowIndex}`,
@@ -723,9 +736,11 @@ export const BankParser = {
         balance,
         bankName: indices.bankName >= 0 ? columns[indices.bankName] : undefined,
         accountNo: indices.accountNo >= 0 ? columns[indices.accountNo] : undefined,
+        boid: csvDescBoid || undefined,
         beneficiaryName,
         status: resolvedStatus,
         instructionId,
+        referenceId: csvRefId || undefined,
         batchId: indices.batchId >= 0 ? String(columns[indices.batchId] || "").trim() : undefined,
         fileName: file.name,
         isLiquiditySweep: isCircular,
@@ -1094,7 +1109,16 @@ export const BankParser = {
         ]),
         batchId: findColumnIndexByPriority(headerRow, [["batch id", "batchid", "batch.sessionid"]]),
         referenceId: findColumnIndexByPriority(headerRow, [
-          ["reference id", "referenceid", "ref no", "ref id"],
+          [
+            "reference / txn id",
+            "reference/txn id",
+            "txn ref",
+            "reference id",
+            "referenceid",
+            "ref no",
+            "ref id",
+            "reference",
+          ],
         ]),
         reason: findColumnIndexByPriority(headerRow, [
           [
@@ -1317,15 +1341,21 @@ export const BankParser = {
           finalCredit = 0;
         }
 
-        // Extract account number from description if not in dedicated column
+        // Extract BOID and bank account number from description without misclassifying 16-digit CDS BOIDs as accountNo
+        const extractedBoid = rawDesc.match(/\b(130\d{13})\b/)?.[1] || "";
         let extractedAccountNo =
           indices.accountNo >= 0 ? String(row[indices.accountNo] || "").trim() : "";
         if (!extractedAccountNo) {
-          const accMatch =
-            rawDesc.match(/(?:A\/C|AC|ACC|ACCOUNT|:|\.)\s*([0-9A-Za-z]{8,20})/i) ||
-            rawDesc.match(/\b([0-9]{10,20})\b/);
-          if (accMatch && accMatch[1]) {
-            extractedAccountNo = accMatch[1];
+          const explicitAcctMatch = rawDesc.match(
+            /(?:A\/C|AC|ACC|ACCOUNT)\s*[:.]?\s*([0-9A-Za-z]{8,20})/i,
+          );
+          if (explicitAcctMatch?.[1] && !/^130\d{13}$/.test(explicitAcctMatch[1])) {
+            extractedAccountNo = explicitAcctMatch[1];
+          } else {
+            const genericNumMatch = rawDesc.match(/\b([0-9]{10,20})\b/);
+            if (genericNumMatch?.[1] && !/^130\d{13}$/.test(genericNumMatch[1])) {
+              extractedAccountNo = genericNumMatch[1];
+            }
           }
         }
 
@@ -1389,7 +1419,7 @@ export const BankParser = {
           const cipsMatch =
             rawDesc.match(/\b(0201\d{6}[A-Za-z0-9]{3,20})\b/) ||
             rawDesc.match(/\b([0-9]{4,}[A-Za-z0-9]{8,24})\b/);
-          if (cipsMatch) {
+          if (cipsMatch && !/^130\d{13}$/.test(cipsMatch[1])) {
             instructionId = cipsMatch[1];
           }
         }
@@ -1436,6 +1466,7 @@ export const BankParser = {
           balance: balanceVal,
           bankName: indices.bankName >= 0 ? String(row[indices.bankName] || "").trim() : undefined,
           accountNo: extractedAccountNo || undefined,
+          boid: extractedBoid || undefined,
           beneficiaryName: extractedName || undefined,
           status,
           instructionId,

@@ -764,7 +764,7 @@ export const ExcelParser = {
     } else if (
       normalizedSheetName.includes("TAX EXEMPT") ||
       normalizedSheetName.includes("EXEMPTED") ||
-      normalizedSheetName.includes("MUTUAL FUND") ||
+      (fileType !== "mutual_fund" && normalizedSheetName.includes("MUTUAL FUND")) ||
       normalizedSheetName.includes("RETIREMENT")
     ) {
       sheetType = "TAX_EXEMPTED";
@@ -786,7 +786,8 @@ export const ExcelParser = {
       normalizedSheetName.includes("PAYABLE") ||
       normalizedSheetName.includes("DIVIDEND") ||
       normalizedSheetName.includes("INTEREST") ||
-      normalizedSheetName.includes("DISTRIBUTION")
+      normalizedSheetName.includes("DISTRIBUTION") ||
+      (fileType === "mutual_fund" && normalizedSheetName.includes("MUTUAL FUND"))
     ) {
       sheetType = "PUBLIC";
     }
@@ -800,8 +801,12 @@ export const ExcelParser = {
       if (sheetType === "INSTITUTION" || sheetType === "PRIVATE") defaultTdsRate = 0.15;
       else if (sheetType === "TAX_EXEMPTED") defaultTdsRate = 0;
       else defaultTdsRate = 0.06;
+    } else if (fileType === "mutual_fund") {
+      if (sheetType === "TAX_EXEMPTED") defaultTdsRate = 0;
+      else if (sheetType === "INSTITUTION" || sheetType === "PRIVATE") defaultTdsRate = 0.15;
+      else defaultTdsRate = 0.05;
     } else {
-      if (sheetType === "TAX_EXEMPTED" || fileType === "mutual_fund") defaultTdsRate = 0;
+      if (sheetType === "TAX_EXEMPTED") defaultTdsRate = 0;
       else defaultTdsRate = 0.05;
     }
 
@@ -1347,6 +1352,12 @@ export const ExcelParser = {
 
     let isPreCalculated = false;
     if (hasFinancialColumns && processedRows.length > 0) {
+      const colFor = (field: keyof ColumnMapping) =>
+        Object.entries(mapping).find(([, f]) => f === field)?.[0] || "";
+      const grossColKey = colFor("cash_dividend");
+      const divTaxColKey = colFor("div_tax");
+      const bonTaxColKey = colFor("bon_tax");
+      const netColKey = colFor("net_payable");
       let rowsWithFinancials = 0;
       for (const r of processedRows) {
         const cleanNum = (val: any) => {
@@ -1354,11 +1365,11 @@ export const ExcelParser = {
           const s = String(val).replace(/,/g, "").trim();
           return s === "" ? NaN : Number(s);
         };
-        const gross = cleanNum(r[mapping["cash_dividend" as keyof ColumnMapping] || ""]);
-        const tax =
-          cleanNum(r[mapping["div_tax" as keyof ColumnMapping] || ""]) ||
-          cleanNum(r[mapping["bon_tax" as keyof ColumnMapping] || ""]);
-        const net = cleanNum(r[mapping["net_payable" as keyof ColumnMapping] || ""]);
+        const gross = cleanNum(grossColKey ? r[grossColKey] : undefined);
+        const divTaxVal = cleanNum(divTaxColKey ? r[divTaxColKey] : undefined);
+        const bonTaxVal = cleanNum(bonTaxColKey ? r[bonTaxColKey] : undefined);
+        const tax = !isNaN(divTaxVal) ? divTaxVal : bonTaxVal;
+        const net = cleanNum(netColKey ? r[netColKey] : undefined);
         if (!isNaN(gross) && !isNaN(tax) && !isNaN(net) && (gross > 0 || net > 0)) {
           rowsWithFinancials++;
         }

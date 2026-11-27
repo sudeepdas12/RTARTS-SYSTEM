@@ -269,7 +269,8 @@ export const ReconciliationService = {
           `
           *,
           client:clients(full_name, boid, bank_name, bank_account_no),
-          company:companies(company_name, company_code)
+          company:companies(company_name, company_code),
+          run:reconciliation_runs!run_id(status)
         `,
         )
         .order("created_at", { ascending: false })
@@ -278,7 +279,10 @@ export const ReconciliationService = {
         console.error("Failed to fetch reconciliation results:", error.message);
         throw error;
       }
-      const enriched = ((data || []) as ReconciliationResultRow[]).map((r) => {
+      const activeRows = (
+        (data || []) as Array<ReconciliationResultRow & { run?: { status?: string } }>
+      ).filter((r) => r.run?.status !== "reverted");
+      const enriched = activeRows.map((r) => {
         if ((!r.client || !r.client.full_name) && r.notes) {
           const holderMatch = r.notes.match(/\[Holder:\s*([^|\]]+)(?:\|\s*BOID:\s*([^\]]+))?\]/);
           if (holderMatch) {
@@ -303,6 +307,7 @@ export const ReconciliationService = {
     const map = new Map<string, ReconciliationGroupedLot>();
 
     for (const r of results) {
+      if ((r as any).run?.status === "reverted") continue;
       // Extract batch ID, lot name, and file name from notes if present
       let batchRef = "Lot Settlement";
       let extractedFileName: string | undefined = undefined;
@@ -434,6 +439,8 @@ export const ReconciliationService = {
     );
     const fileHash = await computeSha256(`${companyId || ""}-${fileName}-${Date.now()}`);
 
+    const resolvedSourceType = results.find((r) => r.source_a_type)?.source_a_type || "manual";
+
     // Server-authoritative atomic draft persistence RPC
     try {
       const { data: rpcData, error: rpcErr } = await (supabase as any).rpc(
@@ -442,7 +449,7 @@ export const ReconciliationService = {
           p_run_info: {
             run_id: activeRunId,
             company_id: companyId,
-            source_type: "manual",
+            source_type: resolvedSourceType,
             file_name: fileName,
             file_hash_sha256: fileHash,
             row_count: results.length,

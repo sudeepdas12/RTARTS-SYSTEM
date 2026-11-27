@@ -77,7 +77,7 @@ export function ReportsAgmTab({
                     <TableCell>{row.sn}</TableCell>
                     <TableCell className="font-medium">{row.particular}</TableCell>
                     <TableCell className="text-right font-mono tabular-nums">
-                      {formatReportNumber(row.shareholderCount)}
+                      {Math.round(row.shareholderCount || 0).toLocaleString("en-IN")}
                     </TableCell>
                     <TableCell className="text-right font-mono tabular-nums">
                       {formatReportNumber(row.kitta)}
@@ -109,7 +109,7 @@ export function ReportsAgmTab({
                     <TableCell></TableCell>
                     <TableCell className="font-sans uppercase">TOTAL</TableCell>
                     <TableCell className="text-right">
-                      {formatReportNumber(agmSummary.total.shareholderCount)}
+                      {Math.round(agmSummary.total.shareholderCount || 0).toLocaleString("en-IN")}
                     </TableCell>
                     <TableCell className="text-right">
                       {formatReportNumber(agmSummary.total.kitta)}
@@ -369,7 +369,7 @@ export function ReportsMutualFundTab({
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right font-mono tabular-nums">
-                      {formatReportNumber(s.unitholders)}
+                      {Math.round(s.unitholders || 0).toLocaleString("en-IN")}
                     </TableCell>
                     <TableCell className="text-right font-mono tabular-nums">
                       {formatReportNumber(s.kitta)}
@@ -422,12 +422,12 @@ export function ReportsMutualFundTab({
                     TOTAL PORTFOLIO ({mfSchemes.length} SCHEMES)
                   </TableCell>
                   <TableCell className="text-right">
-                    {formatReportNumber(
+                    {Math.round(
                       mfSchemes.reduce(
                         (acc: number, s: any) => acc + Number(s.unitholders || 0),
                         0,
                       ),
-                    )}
+                    ).toLocaleString("en-IN")}
                   </TableCell>
                   <TableCell className="text-right">
                     {formatReportNumber(
@@ -511,7 +511,7 @@ export function ReportsMutualFundTab({
                     <TableCell>{row.sn}</TableCell>
                     <TableCell className="font-medium">{row.type}</TableCell>
                     <TableCell className="text-right font-mono tabular-nums">
-                      {formatReportNumber(row.transaction_count)}
+                      {Math.round(row.transaction_count || 0).toLocaleString("en-IN")}
                     </TableCell>
                     <TableCell className="text-right font-mono tabular-nums">
                       {formatReportNumber(row.kitta)}
@@ -536,7 +536,7 @@ export function ReportsMutualFundTab({
                   <TableCell></TableCell>
                   <TableCell className="font-sans uppercase">TOTAL</TableCell>
                   <TableCell className="text-right">
-                    {formatReportNumber(mfTotal.transaction_count)}
+                    {Math.round(mfTotal.transaction_count || 0).toLocaleString("en-IN")}
                   </TableCell>
                   <TableCell className="text-right">{formatReportNumber(mfTotal.kitta)}</TableCell>
                   <TableCell className="text-right">

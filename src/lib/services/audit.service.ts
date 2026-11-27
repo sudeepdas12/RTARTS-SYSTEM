@@ -41,14 +41,33 @@ function parseClientInfo(): { browser: string; device: string; userAgent: string
 export const AuditService = {
   async getUserProfiles(): Promise<Record<string, AuditUserProfile>> {
     try {
-      const { data, error } = await (supabase as any)
-        .from("profiles")
-        .select("id, full_name, email");
-      if (error || !data) return {};
       const map: Record<string, AuditUserProfile> = {};
-      data.forEach((p: any) => {
-        if (p.id) map[p.id] = { id: p.id, full_name: p.full_name || "User", email: p.email || "" };
-      });
+      const [{ data }, { data: opRows }] = await Promise.all([
+        (supabase as any).from("profiles").select("id, full_name, email"),
+        (supabase as any).rpc("get_company_operators", { p_company_id: null }),
+      ]);
+      if (Array.isArray(opRows)) {
+        opRows.forEach((op: any) => {
+          if (op?.id) {
+            map[op.id] = {
+              id: op.id,
+              full_name: op.full_name || op.email?.split("@")[0] || "User",
+              email: op.email || "",
+            };
+          }
+        });
+      }
+      if (Array.isArray(data)) {
+        data.forEach((p: any) => {
+          if (p?.id) {
+            map[p.id] = {
+              id: p.id,
+              full_name: p.full_name || map[p.id]?.full_name || "User",
+              email: p.email || map[p.id]?.email || "",
+            };
+          }
+        });
+      }
       return map;
     } catch {
       return {};

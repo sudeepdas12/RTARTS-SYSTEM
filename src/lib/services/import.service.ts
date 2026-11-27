@@ -1396,6 +1396,8 @@ export const ImportService = {
           row["INT AMOUNT"] ||
           row["COUPON AMOUNT"] ||
           row["DISTRIBUTION AMOUNT"] ||
+          row["GROSS DISTRIBUTION"] ||
+          row["Gross Distribution"] ||
           row["GROSS AMOUNT"] ||
           row.gross_dividend ||
           row.amount ||
@@ -1407,6 +1409,8 @@ export const ImportService = {
           row.div_tax ||
           row.tax ||
           row.TAX ||
+          row["TAX AMOUNT"] ||
+          row["Tax Amount"] ||
           row["TAX @ 6%"] ||
           row["TAX @6%"] ||
           row["TAX @ 15%"] ||

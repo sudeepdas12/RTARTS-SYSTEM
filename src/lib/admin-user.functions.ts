@@ -255,5 +255,15 @@ export const adminCreateUserDirect = createServerFn({ method: "POST" })
     });
     if (roleError) throw new Error(roleError.message);
 
+    // Ensure profile record exists immediately for audit & approvals actor resolution
+    await supabaseAdmin.from("profiles").upsert(
+      {
+        id: userData.user.id,
+        email: data.email.trim(),
+        full_name: data.fullName?.trim() || data.email.trim().split("@")[0],
+      },
+      { onConflict: "id" },
+    );
+
     return { id: userData.user.id, email: userData.user.email };
   });

@@ -142,11 +142,12 @@ const sections: NavSection[] = [
 
 export function AppSidebar() {
   const pathname = useRouterState({ select: (r) => r.location.pathname });
-  const { roles } = useAuth();
+  const { roles, user } = useAuth();
 
   // Live badge for investors still needing a tax classification.
   const { data: reviewCount = 0 } = useQuery({
-    queryKey: ["classification-review-count"],
+    queryKey: ["classification-review-count", user?.id],
+    enabled: Boolean(user?.id),
     queryFn: async () => {
       const { count } = await (supabase as any)
         .from("clients")
@@ -159,7 +160,8 @@ export function AppSidebar() {
 
   // Live badge for pending approvals
   const { data: pendingApprovalCount = 0 } = useQuery({
-    queryKey: ["pending-approvals-badge-count"],
+    queryKey: ["pending-approvals-badge-count", user?.id],
+    enabled: Boolean(user?.id),
     queryFn: async () => {
       const { count } = await (supabase as any)
         .from("pending_approvals")

@@ -262,6 +262,7 @@ export function ManualReconciliationDialog({
 
       qc.invalidateQueries({ queryKey: ["bank_statement_transactions"] });
       qc.invalidateQueries({ queryKey: ["pending_approvals_all"] });
+      qc.invalidateQueries({ queryKey: ["pending-approvals-badge-count"] });
       qc.invalidateQueries({ queryKey: ["brs_statement"] });
       onSubmitted?.();
       onOpenChange(false);

@@ -3,7 +3,8 @@ import { fetchAllRows } from "./services/database";
 import { ParsedExcelData } from "./excel-parser";
 import { RECONCILIATION_TOLERANCE_NPR, BULK_CHUNK_SIZE } from "./constants";
 import { toPaisa, fromPaisa, roundToPaisa } from "./currency";
-import type { StatementMetadata } from "./bank-parser";
+import type { BankTransaction, StatementMetadata } from "./bank-parser";
+export type { BankTransaction };
 
 /**
  * Compares two amounts in integer paisa to eliminate IEEE 754 float drift.
@@ -59,33 +60,6 @@ export interface CategorySummary {
   pledgedCount: number;
 }
 
-export interface BankTransaction {
-  id: string;
-  date: string;
-  description: string;
-  debit: number;
-  credit: number;
-  balance: number;
-  bankName?: string;
-  accountNo?: string;
-  beneficiaryName?: string;
-  status?: string;
-  referenceId?: string;
-  batchId?: string;
-  instructionId?: string;
-  fileName?: string;
-  category?:
-    | "PAYOUT_DEBIT"
-    | "REJECT_RETURN"
-    | "FUNDING_DEPOSIT"
-    | "BANK_CHARGES"
-    | "NRB_CIRCULAR"
-    | "OTHER";
-  isLiquiditySweep?: boolean;
-  accountHolder?: string;
-  transactionFingerprint?: string;
-}
-
 export type ReconciliationMatchMethod =
   | "instruction_id"
   | "payment_reference"
@@ -134,6 +108,7 @@ export interface ReconciliationMatch {
   runId?: string;
   consolidatedParentTxnId?: string;
   transactionFingerprint?: string;
+  transactionDirection?: "debit" | "credit";
 }
 
 export interface ComprehensiveReconciliationReport {
@@ -1016,6 +991,11 @@ export const ReconciliationEngine = {
       String(val || "")
         .toLowerCase()
         .replace(/[^a-z0-9]/g, "");
+    const normalizeWords = (val: unknown): string =>
+      String(val || "")
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, " ")
+        .trim();
 
     const rawComp = options?.companyIds || options?.companyId;
     const targetCompanyIds: string[] = (Array.isArray(rawComp) ? rawComp : [rawComp]).filter(
@@ -1158,6 +1138,7 @@ export const ReconciliationEngine = {
 
     // Build indexing maps for high-performance matching
     const paymentsByAcct = new Map<string, any[]>();
+    const paymentsByBoid = new Map<string, any[]>();
     const paymentsByName = new Map<string, any[]>();
     const paymentsByAmt = new Map<string, any[]>();
     const paymentsByRef = new Map<string, any[]>();
@@ -1166,6 +1147,7 @@ export const ReconciliationEngine = {
 
     paymentsList.forEach((p: any) => {
       const acct = cleanAcct(p.bank_account_no || p.clients?.bank_account_no);
+      const boid = String(p.clients?.boid || "").trim();
       const name = cleanName(p.clients?.full_name);
       const netAmt = Number(p.net_amount ?? 0);
       const paidAmt = Number(p.paid_amount ?? 0);
@@ -1174,6 +1156,10 @@ export const ReconciliationEngine = {
       if (acct) {
         if (!paymentsByAcct.has(acct)) paymentsByAcct.set(acct, []);
         paymentsByAcct.get(acct)!.push(p);
+      }
+      if (boid) {
+        if (!paymentsByBoid.has(boid)) paymentsByBoid.set(boid, []);
+        paymentsByBoid.get(boid)!.push(p);
       }
       if (name) {
         if (!paymentsByName.has(name)) paymentsByName.set(name, []);
@@ -1209,6 +1195,7 @@ export const ReconciliationEngine = {
     });
 
     const payablesByAcct = new Map<string, any[]>();
+    const payablesByBoid = new Map<string, any[]>();
     const payablesByName = new Map<string, any[]>();
     const payablesByAmt = new Map<string, any[]>();
     const payablesById = new Map<string, any>();
@@ -1216,6 +1203,7 @@ export const ReconciliationEngine = {
     payablesList.forEach((p: any) => {
       if (p.id) payablesById.set(p.id, p);
       const acct = cleanAcct(p.bank_account_no || p.clients?.bank_account_no);
+      const boid = String(p.clients?.boid || "").trim();
       const name = cleanName(p.clients?.full_name);
       const { full, prorated, prorated182, remaining } = getPayableAmounts(p);
       const amtKey = buildAmountKey(full);
@@ -1223,6 +1211,10 @@ export const ReconciliationEngine = {
       if (acct) {
         if (!payablesByAcct.has(acct)) payablesByAcct.set(acct, []);
         payablesByAcct.get(acct)!.push(p);
+      }
+      if (boid) {
+        if (!payablesByBoid.has(boid)) payablesByBoid.set(boid, []);
+        payablesByBoid.get(boid)!.push(p);
       }
       if (name) {
         if (!payablesByName.has(name)) payablesByName.set(name, []);
@@ -1428,6 +1420,7 @@ export const ReconciliationEngine = {
           difference: -amount,
           status: "Pending",
           bankAccountNo: txn.accountNo || undefined,
+          referenceId: txn.instructionId || txn.referenceId || undefined,
           transactionDate: txn.date || null,
           transactionDescription: `EXCLUDED: ${catLabel} (${txn.description || "Non-payout transaction"}). Excluded from payable matching.`,
           sourceType: "bank_statement",
@@ -1435,12 +1428,18 @@ export const ReconciliationEngine = {
           requiresManualApproval: true,
           candidateCount: 0,
           ruleVersion: "2.0.0",
+          transactionFingerprint: txn.transactionFingerprint || undefined,
+          transactionDirection:
+            Number(txn.debit) > 0 && Number(txn.credit) === 0 ? "debit" : "credit",
         });
         summary.missingInSystem += 1;
         continue;
       }
 
-      const txnAcct = cleanAcct(txn.accountNo);
+      const rawDescBoid = String(txn.description || "").match(/\b(130\d{13})\b/)?.[1];
+      const txnBoid = String(txn.boid || rawDescBoid || "").trim();
+      const rawTxnAcct = cleanAcct(txn.accountNo);
+      const txnAcct = /^130\d{13}$/.test(rawTxnAcct) ? "" : rawTxnAcct;
       const txnName = cleanName(txn.beneficiaryName || txn.description);
       const amtKey = buildAmountKey(amount);
       const refToSearch = txn.instructionId || txn.referenceId;
@@ -1505,6 +1504,42 @@ export const ReconciliationEngine = {
             matchMethod = "payment_reference";
             candidateCount = 1;
           }
+        }
+      }
+
+      // 1a-boid. Match against Payments by 16-digit CDS BOID + Exact Amount
+      if (!bestPayment && txnBoid) {
+        const boidPayments = paymentsByBoid.get(txnBoid) || [];
+        bestPayment =
+          boidPayments.find(
+            (p) =>
+              !usedPaymentIds.has(p.id) &&
+              isCompanyAllowed(p.company_id) &&
+              (amountEqualsPaisa(Number(p.net_amount), amount) ||
+                (Number(p.paid_amount || 0) > 0 &&
+                  amountEqualsPaisa(Number(p.paid_amount), amount))),
+          ) || null;
+        if (bestPayment) {
+          matchMethod = "boid_and_amount";
+          candidateCount = 1;
+        }
+      }
+
+      // 1b-boid. Match against Payables by 16-digit CDS BOID + Exact Amount
+      if (!bestPayment && !matchedPayable && txnBoid) {
+        const boidPayables = payablesByBoid.get(txnBoid) || [];
+        const validPayables = boidPayables.filter(
+          (p) =>
+            canUsePayable(p, amount) &&
+            isDateCompatible(txn.date, p.fiscal_year) &&
+            matchesPayableAmount(p, amount) &&
+            isCompanyAllowed(p.company_id),
+        );
+        matchedPayable =
+          validPayables.find((p) => p.payment_status !== "Paid") || validPayables[0] || null;
+        if (matchedPayable) {
+          matchMethod = "boid_and_amount";
+          candidateCount = validPayables.length;
         }
       }
 
@@ -1578,6 +1613,29 @@ export const ReconciliationEngine = {
         if (matchedPayable) {
           matchMethod = "name_and_amount";
           candidateCount = validPayables.length;
+        }
+      }
+
+      // 1e-desc. Match against Payables when unstructured narration embeds the payee full name + exact amount
+      if (!bestPayment && !matchedPayable && !txn.beneficiaryName && txn.description) {
+        const descWords = ` ${normalizeWords(txn.description)} `;
+        const phraseCandidates = payablesList.filter((p) => {
+          const holderWords = normalizeWords(p.clients?.full_name);
+          if (holderWords.replace(/\s+/g, "").length < 6) return false;
+          return (
+            descWords.includes(` ${holderWords} `) &&
+            canUsePayable(p, amount) &&
+            isDateCompatible(txn.date, p.fiscal_year) &&
+            matchesPayableAmount(p, amount) &&
+            isCompanyAllowed(p.company_id)
+          );
+        });
+        const uniqueClientCount = new Set(phraseCandidates.map((p) => p.client_id)).size;
+        if (uniqueClientCount === 1 && phraseCandidates.length > 0) {
+          matchedPayable =
+            phraseCandidates.find((p) => p.payment_status !== "Paid") || phraseCandidates[0];
+          matchMethod = "name_and_amount";
+          candidateCount = phraseCandidates.length;
         }
       }
 
@@ -2011,8 +2069,8 @@ export const ReconciliationEngine = {
           !txn.accountNo.includes("-")
         ) {
           displayBoid = `A/C: ${txn.accountNo}`;
-        } else if (txn.instructionId) {
-          displayBoid = `Ref: ${txn.instructionId}`;
+        } else if (txn.instructionId || txn.referenceId) {
+          displayBoid = `Ref: ${txn.instructionId || txn.referenceId}`;
         } else {
           displayBoid = `Bank Statement Row ${idx + 1}`;
         }
@@ -2120,6 +2178,8 @@ export const ReconciliationEngine = {
         ruleVersion: "2.0.0",
         requiresManualApproval,
         transactionFingerprint: txn.transactionFingerprint,
+        transactionDirection:
+          Number(txn.debit) > 0 && Number(txn.credit) === 0 ? "debit" : "credit",
       });
     }
 
@@ -2190,6 +2250,7 @@ export interface ReconciliationExceptionItem {
   id: string;
   type:
     | "UNMATCHED_BANK_CREDIT"
+    | "UNMATCHED_BANK_DEBIT"
     | "LARGE_VARIANCE"
     | "MISMATCHED_REFERENCE"
     | "UNDER_OVER_PAID"
@@ -2239,14 +2300,18 @@ export function extractReconciliationExceptions(
       isBankSource &&
       (m.status === "Missing" || m.status === "Rejected" || (!m.payableId && !m.paymentId))
     ) {
+      const isDebitTxn =
+        m.transactionDirection === "debit" ||
+        m.category === "Bank Fee / Commission" ||
+        m.category === "Payment Batch Debit";
       unmatchedBankTxnCount++;
       unmatchedBankTotalAmount += m.excelAmount || 0;
       if (exceptions.length < maxDisplayExceptions) {
         exceptions.push({
           id: `exc-bank-${m.id}`,
-          type: "UNMATCHED_BANK_CREDIT",
-          severity: "critical",
-          description: `Unmatched bank statement transaction: ${m.shareholderName || "Unknown Beneficiary"} (NPR ${(m.excelAmount || 0).toLocaleString()})`,
+          type: isDebitTxn ? "UNMATCHED_BANK_DEBIT" : "UNMATCHED_BANK_CREDIT",
+          severity: m.category === "Bank Fee / Commission" ? "warning" : "critical",
+          description: `Unmatched bank ${isDebitTxn ? "debit" : "credit"} transaction: ${m.shareholderName || "Unknown Beneficiary"} (NPR ${(m.excelAmount || 0).toLocaleString()})`,
           amount: m.excelAmount || 0,
           varianceAmount: m.excelAmount || 0,
           bankReference: m.referenceId || null,

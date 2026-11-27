@@ -617,8 +617,16 @@ function DividendPage() {
         const searchFilters = [
           `lot_name.ilike.%${cleanTerm}%`,
           `payment_reference.ilike.%${cleanTerm}%`,
-          `dividend_type.ilike.%${cleanTerm}%`,
         ];
+        const lowerTerm = cleanTerm.toLowerCase();
+        if (
+          lowerTerm === "cash" ||
+          lowerTerm === "bonus" ||
+          lowerTerm === "combined" ||
+          lowerTerm === "right"
+        ) {
+          searchFilters.push(`dividend_type.eq.${lowerTerm[0].toUpperCase()}${lowerTerm.slice(1)}`);
+        }
         if (matchedIds.length > 0) {
           searchFilters.push(`client_id.in.(${matchedIds.join(",")})`);
         }
@@ -691,8 +699,16 @@ function DividendPage() {
         const searchFilters = [
           `lot_name.ilike.%${cleanTerm}%`,
           `payment_reference.ilike.%${cleanTerm}%`,
-          `dividend_type.ilike.%${cleanTerm}%`,
         ];
+        const lowerTerm = cleanTerm.toLowerCase();
+        if (
+          lowerTerm === "cash" ||
+          lowerTerm === "bonus" ||
+          lowerTerm === "combined" ||
+          lowerTerm === "right"
+        ) {
+          searchFilters.push(`dividend_type.eq.${lowerTerm[0].toUpperCase()}${lowerTerm.slice(1)}`);
+        }
         if (matchedIds.length > 0) {
           searchFilters.push(`client_id.in.(${matchedIds.join(",")})`);
         }
@@ -1959,10 +1975,10 @@ function DividendPage() {
         </Card>
       )}
 
-      <div className="mb-4 grid gap-3 grid-cols-2 lg:grid-cols-5">
+      <div className="mb-4 grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-5">
         <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
+          <CardContent className="p-4 flex items-center justify-between gap-2">
+            <div className="min-w-0">
               <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                 Total Shares Held
               </div>
@@ -1993,8 +2009,8 @@ function DividendPage() {
         </Card>
 
         <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
+          <CardContent className="p-4 flex items-center justify-between gap-2">
+            <div className="min-w-0">
               <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                 Gross Dividend Pool
               </div>
@@ -2012,8 +2028,8 @@ function DividendPage() {
         </Card>
 
         <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
+          <CardContent className="p-4 flex items-center justify-between gap-2">
+            <div className="min-w-0">
               <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                 TDS Tax Withheld
               </div>
@@ -2031,8 +2047,8 @@ function DividendPage() {
         </Card>
 
         <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
+          <CardContent className="p-4 flex items-center justify-between gap-2">
+            <div className="min-w-0">
               <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                 Bonus Shares Allotted
               </div>
@@ -2051,8 +2067,8 @@ function DividendPage() {
         </Card>
 
         <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
+          <CardContent className="p-4 flex items-center justify-between gap-2">
+            <div className="min-w-0">
               <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                 Net Dividend Payable
               </div>
@@ -2408,7 +2424,7 @@ function DividendPage() {
                           {row.particular}
                         </td>
                         <td className="py-2 px-3 text-right whitespace-nowrap">
-                          {fmtNr(row.shareholderCount)}
+                          {Math.round(row.shareholderCount || 0).toLocaleString("en-IN")}
                         </td>
                         <td className="py-2 px-3 text-right font-medium whitespace-nowrap">
                           {fmtNr(row.kitta)}
@@ -2450,7 +2466,9 @@ function DividendPage() {
                       <td className="py-2.5 px-3 text-center whitespace-nowrap"></td>
                       <td className="py-2.5 px-3 font-sans uppercase whitespace-nowrap">TOTAL</td>
                       <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                        {fmtNr(agmSummaryReport.total.shareholderCount)}
+                        {Math.round(agmSummaryReport.total.shareholderCount || 0).toLocaleString(
+                          "en-IN",
+                        )}
                       </td>
                       <td className="py-2.5 px-3 text-right whitespace-nowrap">
                         {fmtNr(agmSummaryReport.total.kitta)}

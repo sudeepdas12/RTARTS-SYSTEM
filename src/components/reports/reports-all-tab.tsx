@@ -148,7 +148,7 @@ export function ReportsAllSummariesTab({
                       {row.particular}
                     </td>
                     <td className="py-2 px-3 text-right whitespace-nowrap">
-                      {formatReportNumber(row.shareholderCount)}
+                      {Math.round(row.shareholderCount || 0).toLocaleString("en-IN")}
                     </td>
                     <td className="py-2 px-3 text-right font-medium whitespace-nowrap">
                       {formatReportNumber(row.kitta)}
@@ -179,7 +179,7 @@ export function ReportsAllSummariesTab({
                   <td className="py-2 px-3 text-center whitespace-nowrap"></td>
                   <td className="py-2 px-3 font-sans uppercase whitespace-nowrap">TOTAL</td>
                   <td className="py-2 px-3 text-right whitespace-nowrap">
-                    {formatReportNumber(agmSummary.total.shareholderCount)}
+                    {Math.round(agmSummary.total.shareholderCount || 0).toLocaleString("en-IN")}
                   </td>
                   <td className="py-2 px-3 text-right whitespace-nowrap">
                     {formatReportNumber(agmSummary.total.kitta)}
@@ -472,7 +472,7 @@ export function ReportsAllSummariesTab({
                       {row.type}
                     </td>
                     <td className="py-2 px-3 text-right whitespace-nowrap">
-                      {formatReportNumber(row.transaction_count)}
+                      {Math.round(row.transaction_count || 0).toLocaleString("en-IN")}
                     </td>
                     <td className="py-2 px-3 text-right font-medium whitespace-nowrap">
                       {formatReportNumber(row.kitta)}
@@ -497,7 +497,7 @@ export function ReportsAllSummariesTab({
                   <td className="py-2 px-3 text-center whitespace-nowrap"></td>
                   <td className="py-2 px-3 font-sans uppercase whitespace-nowrap">TOTAL</td>
                   <td className="py-2 px-3 text-right whitespace-nowrap">
-                    {formatReportNumber(mfTotal.transaction_count)}
+                    {Math.round(mfTotal.transaction_count || 0).toLocaleString("en-IN")}
                   </td>
                   <td className="py-2 px-3 text-right whitespace-nowrap">
                     {formatReportNumber(mfTotal.kitta)}

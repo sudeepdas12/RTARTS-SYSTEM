@@ -292,7 +292,10 @@ function UploadRoute() {
           else if (sheet.sheetType === "TAX_EXEMPTED") sheetTds = debRates.exemptRatePct / 100;
           else sheetTds = debRates.publicRatePct / 100;
         } else if (newType === "MutualFund") {
-          sheetTds = mfRates.exemptRatePct / 100;
+          if (sheet.sheetType === "TAX_EXEMPTED") sheetTds = mfRates.exemptRatePct / 100;
+          else if (sheet.sheetType === "INSTITUTION" || sheet.sheetType === "PRIVATE")
+            sheetTds = mfRates.institutionRatePct / 100;
+          else sheetTds = mfRates.publicRatePct / 100;
         } else {
           if (sheet.sheetType === "TAX_EXEMPTED") sheetTds = divRates.exemptRatePct / 100;
           else sheetTds = divRates.publicRatePct / 100;
@@ -699,7 +702,7 @@ function UploadRoute() {
     };
   }
 
-  const handleImport = () => {
+  const handleImport = async () => {
     if (!canWrite) {
       toast.error("Unauthorized: You do not have permission to upload or import files.");
       return;
@@ -728,6 +731,42 @@ function UploadRoute() {
         "Invalid fiscal year format. Use YYYY/YY (e.g. 2081/82) or YYYY/YYYY (e.g. 2081/2082).",
       );
       return;
+    }
+
+    // Run blocking validation BEFORE opening the financial confirmation modal
+    setIsValidating(true);
+    try {
+      const fileHash = cachedFileHash || (await computeFileHash(file));
+      const sheetDivRate = sheetDividendRates[selectedSheetIndex];
+      const rate = sheetDivRate
+        ? Number(sheetDivRate)
+        : dividendRate
+          ? Number(dividendRate)
+          : undefined;
+      const errors = await ValidationEngine.validateBatch(
+        sheet.rows,
+        sheet.mapping,
+        fileHash,
+        parsedData.fileType,
+        {
+          isRawInputFile: sheet.isRawInputFile,
+          isPreCalculated: sheet.isPreCalculated,
+          dividendRate: rate,
+        },
+      );
+      const hardErrors = errors.filter((e) => !SOFT_ERROR_TYPES.has(e.type));
+      if (hardErrors.length > 0) {
+        setValidationErrors(hardErrors);
+        toast.error(
+          `Import blocked: found ${hardErrors.length} fatal validation error${hardErrors.length === 1 ? "" : "s"} in "${sheet.sheetName}". Fix them before importing.`,
+        );
+        return;
+      }
+      setValidationErrors(errors);
+    } catch (e: any) {
+      console.error("Pre-import validation failed:", e);
+    } finally {
+      setIsValidating(false);
     }
 
     setImportReviewMode("single");
@@ -1069,7 +1108,7 @@ function UploadRoute() {
   };
 
   /** Open pre-import review for ALL non-summary sheets */
-  const handleImportAllSheetsClick = () => {
+  const handleImportAllSheetsClick = async () => {
     if (!canWrite) {
       toast.error("Unauthorized: You do not have permission to upload or import files.");
       return;
@@ -1080,6 +1119,41 @@ function UploadRoute() {
     if (dataSheets.length === 0) {
       toast.error("No data sheets to import.");
       return;
+    }
+
+    setIsValidating(true);
+    try {
+      const fileHash = cachedFileHash || (await computeFileHash(file));
+      const allHardErrors: ValidationError[] = [];
+      for (const s of dataSheets) {
+        const sIdx = parsedData.sheets.indexOf(s);
+        const sDivRate = sheetDividendRates[sIdx];
+        const rate = sDivRate ? Number(sDivRate) : dividendRate ? Number(dividendRate) : undefined;
+        const errors = await ValidationEngine.validateBatch(
+          s.rows,
+          s.mapping,
+          `${fileHash}-${s.sheetName}`,
+          parsedData.fileType,
+          {
+            isRawInputFile: s.isRawInputFile,
+            isPreCalculated: s.isPreCalculated,
+            dividendRate: rate,
+          },
+        );
+        const hardErrors = errors.filter((e) => !SOFT_ERROR_TYPES.has(e.type));
+        allHardErrors.push(...hardErrors);
+      }
+      if (allHardErrors.length > 0) {
+        setValidationErrors(allHardErrors);
+        toast.error(
+          `Import blocked: found ${allHardErrors.length} fatal validation error(s) across workbook sheets. Fix them before importing.`,
+        );
+        return;
+      }
+    } catch (e: any) {
+      console.error("Pre-import multi-sheet validation failed:", e);
+    } finally {
+      setIsValidating(false);
     }
 
     setImportReviewMode("all");
@@ -2321,8 +2395,8 @@ function UploadRoute() {
                         {debRates.institutionRatePct}% TDS)
                       </SelectItem>
                       <SelectItem value="MutualFund">
-                        Mutual Fund Distribution ({mfRates.exemptRatePct}% / {mfRates.publicRatePct}
-                        % TDS)
+                        Mutual Fund Distribution ({mfRates.publicRatePct}% /{" "}
+                        {mfRates.institutionRatePct}% TDS)
                       </SelectItem>
                     </SelectContent>
                   </Select>
@@ -2569,12 +2643,12 @@ function UploadRoute() {
             </div>
           )}
 
-          {validationErrors.length > 0 && <ValidationReport errors={validationErrors} />}
           <ImportPreview data={parsedData} selectedSheetIndex={selectedSheetIndex} />
         </div>
       )}
 
       <PreImportReviewDialog
+        key={`${cachedFileHash || "file"}-${selectedSheetIndex}-${importReviewMode}-${showPreImportReview ? "1" : "0"}`}
         open={showPreImportReview}
         onOpenChange={setShowPreImportReview}
         file={file}

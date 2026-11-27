@@ -186,11 +186,10 @@ function Dashboard() {
   const { data: opMetrics } = useQuery({
     queryKey: ["dashboard-operational-metrics", selectedCompanyId],
     queryFn: async () => {
-      let appQ = (supabase as any)
+      const appQ = (supabase as any)
         .from("pending_approvals")
         .select("id", { count: "exact", head: true })
         .eq("status", "Pending");
-      if (selectedCompanyId !== "all") appQ = appQ.eq("company_id", selectedCompanyId);
       const { count: pendingApprovals = 0 } = await appQ;
 
       let clientQ = (supabase as any)

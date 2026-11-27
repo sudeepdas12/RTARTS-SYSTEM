@@ -315,10 +315,11 @@ function SettingsRoute() {
               Equity Dividend TDS
             </p>
             <p className="text-xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">
-              {merged.dividend_tds_natural ?? 5}% / {merged.dividend_tds_legal ?? 5}%
+              {merged.dividend_tds_natural ?? 5}% / {merged.dividend_tds_legal ?? 15}%
             </p>
             <p className="text-[11px] text-muted-foreground mt-0.5">
-              Public (5%) / Institution (5%)
+              Public ({merged.dividend_tds_natural ?? 5}%) / Institution (
+              {merged.dividend_tds_legal ?? 15}%)
             </p>
           </CardContent>
         </Card>
@@ -347,7 +348,7 @@ function SettingsRoute() {
       </div>
 
       <Tabs defaultValue="general" className="w-full">
-        <TabsList className="grid w-full grid-cols-6 max-w-[960px]">
+        <TabsList className="flex flex-wrap sm:grid w-full sm:grid-cols-6 max-w-[960px] h-auto gap-1">
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="tax-rules">Tax Rules (TDS)</TabsTrigger>
           <TabsTrigger value="banking-gateway">Banking (ConnectIPS)</TabsTrigger>

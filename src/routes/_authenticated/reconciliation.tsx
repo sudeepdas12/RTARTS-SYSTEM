@@ -260,7 +260,7 @@ function ReconciliationRoute() {
       const res = await ReconciliationService.revertLot(lot);
       if (res.success) {
         toast.success(
-          `Reverted "${lot.lotName}": ${res.revertedPayables} payables reset to Pending.`,
+          `Reverted "${lot.lotName}": ${res.revertedPayables} payable(s) restored to pre-run state.`,
         );
         const deletedIds = new Set(lot.records.map((r) => r.id));
         setSavedResults((prev) => prev.filter((r) => !deletedIds.has(r.id)));
@@ -945,7 +945,8 @@ function ReconciliationRoute() {
 
     setIsSaving(true);
     try {
-      const results = buildReconciliationResultsPayload(report);
+      const fallbackCompanyId = reconCompanyIds.length === 1 ? reconCompanyIds[0] : null;
+      const results = buildReconciliationResultsPayload(report, undefined, fallbackCompanyId);
       await ReconciliationService.saveResults(results);
       toast.success(`Saved ${results.length.toLocaleString()} reconciliation records.`);
       await loadHistory();
@@ -1020,7 +1021,9 @@ function ReconciliationRoute() {
       return;
     }
 
-    setPostingIsAll(true);
+    const useSelectedOnly =
+      selectedMatchIds.size > 0 && selectedMatchIds.size < report.matches.length;
+    setPostingIsAll(!useSelectedOnly);
     setShowPostingModal(true);
   };
 
@@ -1032,7 +1035,8 @@ function ReconciliationRoute() {
 
     setIsApplying(true);
     try {
-      const results = buildReconciliationResultsPayload(report, targetMatches);
+      const fallbackCompanyId = reconCompanyIds.length === 1 ? reconCompanyIds[0] : null;
+      const results = buildReconciliationResultsPayload(report, targetMatches, fallbackCompanyId);
       const applyRes = await ReconciliationService.applyReconciliation(
         results as unknown as ReconciliationResultRow[],
         "ConnectIPS",
@@ -1578,7 +1582,7 @@ function ReconciliationRoute() {
               </div>
 
               <Tabs defaultValue="all" className="w-full">
-                <TabsList className="mb-4">
+                <TabsList className="mb-4 flex flex-wrap h-auto w-full justify-start gap-1">
                   <TabsTrigger value="all">All Records ({filteredMatches.length})</TabsTrigger>
                   <TabsTrigger value="matched">
                     Exact Matches ({matchedOnlyMatches.length})
@@ -1839,7 +1843,7 @@ function ReconciliationRoute() {
 
       {/* Multi-Channel Operational Workbenches: Persistent Bank Ledger, Durable Exceptions & BRS */}
       <Tabs value={opsWorkbenchTab} onValueChange={setOpsWorkbenchTab} className="space-y-3">
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="flex flex-wrap sm:grid w-full sm:grid-cols-3 h-auto gap-1">
           <TabsTrigger value="bank_ledger" className="text-xs">
             Bank Ledger &amp; Manual Matching
           </TabsTrigger>

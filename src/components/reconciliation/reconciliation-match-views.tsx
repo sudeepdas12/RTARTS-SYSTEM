@@ -142,6 +142,11 @@ export function ReconciliationMatchRowCard({
               <span className="font-mono text-xs bg-muted px-2 py-0.5 rounded text-muted-foreground border">
                 BOID: {match.boid}
               </span>
+              {match.referenceId && !String(match.boid || "").includes(match.referenceId) && (
+                <span className="font-mono text-xs bg-blue-50/60 dark:bg-blue-950/30 px-2 py-0.5 rounded text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                  Ref: {match.referenceId}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-1.5">
               <Badge
@@ -358,6 +363,11 @@ export function ReconciliationMatchTableView({
                   </div>
                   <div className="font-mono text-[11px] text-muted-foreground">
                     {match.boid || "—"}
+                    {match.referenceId && !String(match.boid || "").includes(match.referenceId) && (
+                      <span className="ml-1.5 text-blue-600 dark:text-blue-400">
+                        • Ref: {match.referenceId}
+                      </span>
+                    )}
                   </div>
                 </TableCell>
                 <TableCell>

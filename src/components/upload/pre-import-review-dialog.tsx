@@ -105,6 +105,17 @@ export function PreImportReviewDialog({
   const [advisory, setAdvisory] = useState<HitlAdvisoryResponse | null>(null);
   const [isRunningAdvisory, setIsRunningAdvisory] = useState(false);
 
+  const handleDialogOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      setMakerNotes("");
+      setAcknowledged(false);
+      setCheckerAcknowledged(false);
+      setAdvisory(null);
+      setServerDryRunMetrics(null);
+    }
+    onOpenChange(nextOpen);
+  };
+
   const isMultiSheet = selectedSheetIndex === -1;
   const targetSheets = useMemo(() => {
     if (!parsedData?.sheets) return [];
@@ -197,7 +208,13 @@ export function PreImportReviewDialog({
 
         // Authoritative engine calculation per statutory rules
         const category = detectPayeeCategory(r, sheet.sheetType);
-        const engineTaxRate = getPayeeTaxRate(category, isDebenture, null, isMutualFund, taxRules);
+        const engineTaxRate = getPayeeTaxRate(
+          category,
+          isDebenture,
+          category === "UNKNOWN" ? sheet.defaultTdsRate : null,
+          isMutualFund,
+          taxRules,
+        );
 
         let rowEngineGross = g;
         if (!sheet.isPreCalculated && rateNumber > 0 && shares > 0) {
@@ -454,7 +471,7 @@ export function PreImportReviewDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center justify-between">
@@ -803,7 +820,7 @@ export function PreImportReviewDialog({
         <DialogFooter className="gap-2 sm:gap-0">
           <Button
             variant="outline"
-            onClick={() => onOpenChange(false)}
+            onClick={() => handleDialogOpenChange(false)}
             disabled={isPosting || isSubmittingApproval}
           >
             Cancel & Re-Map

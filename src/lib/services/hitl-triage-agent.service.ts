@@ -608,11 +608,12 @@ export function clusterReconciliationExceptions(
     if (isRejected) {
       buckets.NCHL_REJECTED_OR_INVALID_ACCOUNT.items.push(exc);
     } else if (
-      (exc.type === "LARGE_VARIANCE" || exc.type === "UNDER_OVER_PAID") &&
-      Math.abs(exc.varianceAmount || 0) <= 5
+      ((exc.type === "LARGE_VARIANCE" || exc.type === "UNDER_OVER_PAID") &&
+        Math.abs(exc.varianceAmount || 0) <= 5) ||
+      (exc.type === "UNMATCHED_BANK_DEBIT" && /fee|charge|commission/i.test(desc))
     ) {
       buckets.BANK_FEE_OR_PAISA_DRIFT.items.push(exc);
-    } else if (exc.type === "UNMATCHED_BANK_CREDIT") {
+    } else if (exc.type === "UNMATCHED_BANK_CREDIT" || exc.type === "UNMATCHED_BANK_DEBIT") {
       buckets.UNMATCHED_SWEEP_OR_PRIOR_FY.items.push(exc);
     } else {
       buckets.REFERENCE_OR_AMOUNT_VARIANCE.items.push(exc);

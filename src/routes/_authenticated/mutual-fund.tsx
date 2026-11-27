@@ -205,8 +205,8 @@ function MutualFundPage() {
   const [calcFaceValue, setCalcFaceValue] = useState("10");
   const [calcTaxCategory, setCalcTaxCategory] = useState<
     "TAX_EXEMPTED" | "PUBLIC" | "INSTITUTION" | "CUSTOM"
-  >("TAX_EXEMPTED");
-  const [calcCustomTds, setCalcCustomTds] = useState("0");
+  >("PUBLIC");
+  const [calcCustomTds, setCalcCustomTds] = useState("5");
 
   const { data: companies = [] } = useQuery({
     queryKey: ["companies-lookup"],
@@ -486,9 +486,7 @@ function MutualFundPage() {
         } else if (classFilter === "LOCAL") {
           q = q.or("payee_segment.eq.LOCAL,lot_name.ilike.%LOCAL%");
         } else if (classFilter === "TAX_EXEMPT") {
-          q = q.or(
-            "payee_classification.eq.TAX_EXEMPT,lot_name.ilike.%MUTUAL%,lot_name.ilike.%EXEMPT%",
-          );
+          q = q.or("payee_classification.eq.TAX_EXEMPT,lot_name.ilike.%EXEMPT%");
         } else if (classFilter === "INSTITUTION") {
           q = q.or(
             "payee_classification.eq.COMPANY_INSTITUTION,lot_name.ilike.%INSTITUT%,lot_name.ilike.%COMPANY%",
@@ -575,9 +573,7 @@ function MutualFundPage() {
         } else if (classFilter === "LOCAL") {
           q = q.or("payee_segment.eq.LOCAL,lot_name.ilike.%LOCAL%");
         } else if (classFilter === "TAX_EXEMPT") {
-          q = q.or(
-            "payee_classification.eq.TAX_EXEMPT,lot_name.ilike.%MUTUAL%,lot_name.ilike.%EXEMPT%",
-          );
+          q = q.or("payee_classification.eq.TAX_EXEMPT,lot_name.ilike.%EXEMPT%");
         } else if (classFilter === "INSTITUTION") {
           q = q.or(
             "payee_classification.eq.COMPANY_INSTITUTION,lot_name.ilike.%INSTITUT%,lot_name.ilike.%COMPANY%",

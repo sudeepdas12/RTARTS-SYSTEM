@@ -87,6 +87,7 @@ export interface ReportManagementCenterProps {
   currentFiscalYear: string;
   onApplyPreset: (preset: ReportPreset) => void;
   dataAsOf: Date;
+  refreshTrigger?: number;
 }
 
 export function ReportManagementCenter({
@@ -96,6 +97,7 @@ export function ReportManagementCenter({
   currentFiscalYear,
   onApplyPreset,
   dataAsOf,
+  refreshTrigger = 0,
 }: ReportManagementCenterProps) {
   const [presets, setPresets] = useState<ReportPreset[]>(DEFAULT_PRESETS);
   const [exportHistory, setExportHistory] = useState<ExportHistoryItem[]>([]);
@@ -183,7 +185,7 @@ export function ReportManagementCenter({
               details:
                 d.action === "SCHEDULE_REPORT"
                   ? `Scheduled to: ${nv.recipient}`
-                  : `${nv.rowsCount || "Authoritative"} rows`,
+                  : `${nv.rowCount || nv.rowsCount || "Authoritative"} rows`,
             });
           });
         }
@@ -196,7 +198,7 @@ export function ReportManagementCenter({
       }
     }
     loadData();
-  }, []);
+  }, [refreshTrigger]);
 
   const saveCurrentAsPreset = async () => {
     if (!newPresetName.trim()) {

@@ -144,6 +144,9 @@ function PaymentsRoute() {
       qc.invalidateQueries({ queryKey: ["payment-batch", batchId] });
       qc.invalidateQueries({ queryKey: ["payment-line-items", batchId] });
     }
+    qc.invalidateQueries({ queryKey: ["pending_approvals_all"] });
+    qc.invalidateQueries({ queryKey: ["pending_batches_count"] });
+    qc.invalidateQueries({ queryKey: ["pending-approvals-badge-count"] });
     qc.invalidateQueries({ queryKey: ["payments-individual-server"] });
     qc.invalidateQueries({ queryKey: ["payables-preview"] });
     qc.invalidateQueries({ queryKey: ["available-payables"] });
@@ -643,21 +646,26 @@ function PaymentsRoute() {
       );
       if (!result.success) throw new Error(result.error || "Failed to update status");
 
-      await NotificationService.sendPaymentNotification(
-        currentUser?.id || null,
-        batchId.slice(0, 8),
-        result.success,
-        batchData?.total_amount || 0,
-        batchData?.total_payments || 0,
-      );
+      if (effectiveAction === "complete" || effectiveAction === "process") {
+        await NotificationService.sendPaymentNotification(
+          currentUser?.id || null,
+          batchId.slice(0, 8),
+          result.success,
+          batchData?.total_amount || 0,
+          batchData?.total_payments || 0,
+        );
+      }
     },
     onSuccess: () => {
       toast.success("Batch workflow status updated successfully.");
       qc.invalidateQueries({ queryKey: ["payments"] });
+      qc.invalidateQueries({ queryKey: ["payment-batches"] });
       qc.invalidateQueries({ queryKey: ["payment-batch"] });
       qc.invalidateQueries({ queryKey: ["payment-line-items"] });
+      qc.invalidateQueries({ queryKey: ["payments-individual-server"] });
       qc.invalidateQueries({ queryKey: ["pending_approvals_all"] });
       qc.invalidateQueries({ queryKey: ["pending_batches_count"] });
+      qc.invalidateQueries({ queryKey: ["pending-approvals-badge-count"] });
       qc.invalidateQueries({ queryKey: ["dividend_payables"] });
       qc.invalidateQueries({ queryKey: ["interest_payables"] });
       qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
@@ -697,6 +705,7 @@ function PaymentsRoute() {
       setActiveBatchId(null);
       qc.invalidateQueries({ queryKey: ["payments"] });
       qc.invalidateQueries({ queryKey: ["payment-batches"] });
+      qc.invalidateQueries({ queryKey: ["payments-individual-server"] });
       qc.invalidateQueries({ queryKey: ["payables-for-payment"] });
       qc.invalidateQueries({ queryKey: ["dividend_payables"] });
       qc.invalidateQueries({ queryKey: ["interest_payables"] });
@@ -724,8 +733,10 @@ function PaymentsRoute() {
       setReverseDialogOpen(null);
       setReversalReason("");
       qc.invalidateQueries({ queryKey: ["payments"] });
+      qc.invalidateQueries({ queryKey: ["payment-batches"] });
       qc.invalidateQueries({ queryKey: ["payment-batch"] });
       qc.invalidateQueries({ queryKey: ["payment-line-items"] });
+      qc.invalidateQueries({ queryKey: ["payments-individual-server"] });
       qc.invalidateQueries({ queryKey: ["dividend_payables"] });
       qc.invalidateQueries({ queryKey: ["interest_payables"] });
       qc.invalidateQueries({ queryKey: ["mutual_fund_payables"] });
@@ -1482,7 +1493,7 @@ function PaymentsRoute() {
           </div>
 
           {/* Batches Table */}
-          <div className="border rounded-lg bg-card overflow-hidden">
+          <div className="border rounded-lg bg-card overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -1567,25 +1578,26 @@ function PaymentsRoute() {
                             batch.status === "Failed" ||
                             batch.status === "Returned") && (
                             <>
-                              {(batch.status === "Processed" ||
-                                batch.status === "Failed" ||
-                                batch.status === "Returned") && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-7 text-xs text-sky-600 hover:text-sky-700 hover:bg-sky-50 dark:text-sky-400 dark:hover:bg-sky-950"
-                                  title="Sync NCHL ConnectIPS Payment Status"
-                                  disabled={isSyncingConnectIps}
-                                  onClick={() => handleSyncBatchStatuses(batch.id)}
-                                >
-                                  {isSyncingConnectIps ? (
-                                    <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
-                                  ) : (
-                                    <RefreshCw className="w-3.5 h-3.5 mr-1" />
-                                  )}
-                                  Sync
-                                </Button>
-                              )}
+                              {batch.payment_method === "ConnectIPS" &&
+                                (batch.status === "Processed" ||
+                                  batch.status === "Failed" ||
+                                  batch.status === "Returned") && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 text-xs text-sky-600 hover:text-sky-700 hover:bg-sky-50 dark:text-sky-400 dark:hover:bg-sky-950"
+                                    title="Sync NCHL ConnectIPS Payment Status"
+                                    disabled={isSyncingConnectIps}
+                                    onClick={() => handleSyncBatchStatuses(batch.id)}
+                                  >
+                                    {isSyncingConnectIps ? (
+                                      <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                                    ) : (
+                                      <RefreshCw className="w-3.5 h-3.5 mr-1" />
+                                    )}
+                                    Sync
+                                  </Button>
+                                )}
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1676,34 +1688,44 @@ function PaymentsRoute() {
                               )}
                             </>
                           )}
-                          {batch.status === "Pending" && canApprove && (
-                            <>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 text-xs text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950"
-                                title="Approve Batch"
-                                onClick={() => {
-                                  updateBatchStatus({ batchId: batch.id, action: "approve" });
-                                }}
+                          {batch.status === "Pending" &&
+                            canApprove &&
+                            (batch.created_by === currentUser?.id ? (
+                              <Badge
+                                variant="outline"
+                                className="text-[10px] border-amber-300 text-amber-700 dark:text-amber-300"
+                                title="Maker-Checker policy: another authorized Checker must review your submission"
                               >
-                                <CheckCircle2 className="w-3 h-3 mr-1" />
-                                Approve
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 text-xs text-destructive hover:bg-destructive/10"
-                                title="Reject Batch"
-                                onClick={() => {
-                                  updateBatchStatus({ batchId: batch.id, action: "reject" });
-                                }}
-                              >
-                                <XCircle className="w-3 h-3 mr-1" />
-                                Reject
-                              </Button>
-                            </>
-                          )}
+                                Awaiting Checker
+                              </Badge>
+                            ) : (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-xs text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950"
+                                  title="Approve Batch"
+                                  onClick={() => {
+                                    updateBatchStatus({ batchId: batch.id, action: "approve" });
+                                  }}
+                                >
+                                  <CheckCircle2 className="w-3 h-3 mr-1" />
+                                  Approve
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-xs text-destructive hover:bg-destructive/10"
+                                  title="Reject Batch"
+                                  onClick={() => {
+                                    updateBatchStatus({ batchId: batch.id, action: "reject" });
+                                  }}
+                                >
+                                  <XCircle className="w-3 h-3 mr-1" />
+                                  Reject
+                                </Button>
+                              </>
+                            ))}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -1822,7 +1844,7 @@ function PaymentsRoute() {
             </span>
           </div>
 
-          <div className="border rounded-lg bg-card overflow-hidden">
+          <div className="border rounded-lg bg-card overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/40">
@@ -2086,7 +2108,10 @@ function PaymentsRoute() {
                 <div>
                   <p className="text-xs text-muted-foreground">Payable Type / FY</p>
                   <p className="text-sm font-medium capitalize">
-                    {activeBatchData.payable_type || "All"} ({activeBatchData.fiscal_year || "All"})
+                    {activeBatchData.payable_type
+                      ? activeBatchData.payable_type.replace(/_/g, " ")
+                      : "All"}{" "}
+                    ({activeBatchData.fiscal_year || "All"})
                   </p>
                 </div>
                 <div>
@@ -2211,9 +2236,11 @@ function PaymentsRoute() {
                     variant="outline"
                     className="bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300 px-3 py-1.5 text-xs font-medium mr-2"
                   >
-                    Awaiting Checker / Supervisor Approval
+                    {activeBatchData.created_by === currentUser?.id
+                      ? "Self-Approval Blocked (Submitted by You — Awaiting Checker)"
+                      : "Awaiting Checker / Supervisor Approval"}
                   </Badge>
-                  {canApprove && (
+                  {canApprove && activeBatchData.created_by !== currentUser?.id && (
                     <>
                       <Button
                         size="sm"
@@ -2257,75 +2284,84 @@ function PaymentsRoute() {
 
               {activeBatchData.status === "Approved" && (
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    size="sm"
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow-sm"
-                    disabled={isDisbursing}
-                    onClick={async () => {
-                      const count =
-                        activeBatchData?.total_payments != null &&
-                        activeBatchData.total_payments > 0
-                          ? activeBatchData.total_payments
-                          : lineItems?.length || 0;
-                      if (count === 0) {
-                        toast.error("Cannot disburse an empty batch. Please add payables first.");
-                        return;
-                      }
-                      const totalFormatted = Number(
-                        activeBatchData.total_amount || 0,
-                      ).toLocaleString("en-IN", { minimumFractionDigits: 2 });
-                      if (
-                        !confirm(
-                          `Are you sure you want to disburse NPR ${totalFormatted} across ${count.toLocaleString()} payables directly via ConnectIPS API?`,
-                        )
-                      ) {
-                        return;
-                      }
-                      setIsDisbursing(true);
-                      setDisburseProgress(null);
-                      try {
-                        const { ConnectIPSService } =
-                          await import("@/lib/services/connectips.service");
-                        const res = await ConnectIPSService.disbursePaymentBatch(
-                          activeBatchId!,
-                          (done, total) => setDisburseProgress({ done, total }),
-                        );
-                        invalidatePaymentLedgers(activeBatchId);
-                        if (res.success && (res.totalProcessing || 0) === 0) {
-                          toast.success(
-                            `Disbursed ${res.totalSuccess} payments (NPR ${res.totalAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}) successfully via ConnectIPS.`,
-                          );
-                        } else if ((res.totalProcessing || 0) > 0 || res.totalSuccess > 0) {
-                          toast.info(
-                            `ConnectIPS batch processed: ${res.totalSuccess} settled, ${res.totalProcessing || 0} processing in NCHL clearing, ${res.totalFailed} failed.`,
-                          );
-                        } else {
-                          toast.error(
-                            `Disbursement failed: ${res.results[0]?.errorMessage || "Error executing gateway payment"}`,
-                          );
+                  {activeBatchData.payment_method === "ConnectIPS" && (
+                    <Button
+                      size="sm"
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow-sm"
+                      disabled={isDisbursing}
+                      onClick={async () => {
+                        const count =
+                          activeBatchData?.total_payments != null &&
+                          activeBatchData.total_payments > 0
+                            ? activeBatchData.total_payments
+                            : lineItems?.length || 0;
+                        if (count === 0) {
+                          toast.error("Cannot disburse an empty batch. Please add payables first.");
+                          return;
                         }
-                      } catch (err: any) {
-                        toast.error(`ConnectIPS API error: ${err?.message || err}`);
-                      } finally {
-                        setIsDisbursing(false);
+                        const totalFormatted = Number(
+                          activeBatchData.total_amount || 0,
+                        ).toLocaleString("en-IN", { minimumFractionDigits: 2 });
+                        if (
+                          !confirm(
+                            `Are you sure you want to disburse NPR ${totalFormatted} across ${count.toLocaleString()} payables directly via ConnectIPS API?`,
+                          )
+                        ) {
+                          return;
+                        }
+                        setIsDisbursing(true);
                         setDisburseProgress(null);
-                      }
-                    }}
-                  >
-                    {isDisbursing ? (
-                      <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                    ) : (
-                      <Send className="w-4 h-4 mr-1.5" />
-                    )}
-                    {isDisbursing
-                      ? disburseProgress
-                        ? `Disbursing… ${disburseProgress.done}/${disburseProgress.total}`
-                        : "Disbursing via ConnectIPS…"
-                      : "Disburse via ConnectIPS API"}
-                  </Button>
+                        try {
+                          const { ConnectIPSService } =
+                            await import("@/lib/services/connectips.service");
+                          const res = await ConnectIPSService.disbursePaymentBatch(
+                            activeBatchId!,
+                            (done, total) => setDisburseProgress({ done, total }),
+                          );
+                          invalidatePaymentLedgers(activeBatchId);
+                          if (res.success && (res.totalProcessing || 0) === 0) {
+                            toast.success(
+                              `Disbursed ${res.totalSuccess} payments (NPR ${res.totalAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}) successfully via ConnectIPS.`,
+                            );
+                          } else if ((res.totalProcessing || 0) > 0 || res.totalSuccess > 0) {
+                            toast.info(
+                              `ConnectIPS batch processed: ${res.totalSuccess} settled, ${res.totalProcessing || 0} processing in NCHL clearing, ${res.totalFailed} failed.`,
+                            );
+                          } else {
+                            toast.error(
+                              `Disbursement failed: ${res.results[0]?.errorMessage || "Error executing gateway payment"}`,
+                            );
+                          }
+                        } catch (err: any) {
+                          toast.error(`ConnectIPS API error: ${err?.message || err}`);
+                        } finally {
+                          setIsDisbursing(false);
+                          setDisburseProgress(null);
+                        }
+                      }}
+                    >
+                      {isDisbursing ? (
+                        <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                      ) : (
+                        <Send className="w-4 h-4 mr-1.5" />
+                      )}
+                      {isDisbursing
+                        ? disburseProgress
+                          ? `Disbursing… ${disburseProgress.done}/${disburseProgress.total}`
+                          : "Disbursing via ConnectIPS…"
+                        : "Disburse via ConnectIPS API"}
+                    </Button>
+                  )}
                   <Button
                     size="sm"
-                    variant="outline"
+                    variant={
+                      activeBatchData.payment_method === "ConnectIPS" ? "outline" : "default"
+                    }
+                    className={
+                      activeBatchData.payment_method !== "ConnectIPS"
+                        ? "bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow-sm"
+                        : ""
+                    }
                     onClick={() => {
                       const count =
                         activeBatchData?.total_payments != null &&
@@ -2366,20 +2402,22 @@ function PaymentsRoute() {
                 activeBatchData.status === "Failed" ||
                 activeBatchData.status === "Returned") && (
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="border-sky-300 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/30"
-                    disabled={isSyncingConnectIps}
-                    onClick={() => activeBatchId && handleSyncBatchStatuses(activeBatchId)}
-                  >
-                    {isSyncingConnectIps ? (
-                      <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                    ) : (
-                      <RefreshCw className="w-4 h-4 mr-1.5" />
-                    )}
-                    Sync ConnectIPS Status
-                  </Button>
+                  {activeBatchData.payment_method === "ConnectIPS" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="border-sky-300 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/30"
+                      disabled={isSyncingConnectIps}
+                      onClick={() => activeBatchId && handleSyncBatchStatuses(activeBatchId)}
+                    >
+                      {isSyncingConnectIps ? (
+                        <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-4 h-4 mr-1.5" />
+                      )}
+                      Sync ConnectIPS Status
+                    </Button>
+                  )}
                   {activeBatchData.status === "Processed" && canApprove && (
                     <Button
                       size="sm"
@@ -2394,51 +2432,52 @@ function PaymentsRoute() {
                       Complete Batch
                     </Button>
                   )}
-                  {(lineItems || []).some(
-                    (it) =>
-                      it.status === "Failed" ||
-                      it.status === "Rejected" ||
-                      it.status === "Returned" ||
-                      it.status === "Pending",
-                  ) && (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      disabled={isDisbursing}
-                      onClick={async () => {
-                        if (!activeBatchId) return;
-                        setIsDisbursing(true);
-                        setDisburseProgress(null);
-                        try {
-                          const res = await ConnectIPSService.disbursePaymentBatch(
-                            activeBatchId,
-                            (done, total) => setDisburseProgress({ done, total }),
-                            { retryFailedOnly: false },
-                          );
-                          invalidatePaymentLedgers(activeBatchId);
-                          if (res.success && (res.totalProcessing || 0) === 0) {
-                            toast.success(`Retried & settled ${res.totalSuccess} payment(s).`);
-                          } else {
-                            toast.info(
-                              `ConnectIPS retry: ${res.totalSuccess} settled, ${res.totalProcessing || 0} processing, ${res.totalFailed} failed.`,
-                            );
-                          }
-                        } catch (err: any) {
-                          toast.error(`Retry failed: ${err?.message || err}`);
-                        } finally {
-                          setIsDisbursing(false);
+                  {activeBatchData.payment_method === "ConnectIPS" &&
+                    (lineItems || []).some(
+                      (it) =>
+                        it.status === "Failed" ||
+                        it.status === "Rejected" ||
+                        it.status === "Returned" ||
+                        it.status === "Pending",
+                    ) && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={isDisbursing}
+                        onClick={async () => {
+                          if (!activeBatchId) return;
+                          setIsDisbursing(true);
                           setDisburseProgress(null);
-                        }
-                      }}
-                    >
-                      {isDisbursing ? (
-                        <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                      ) : (
-                        <Send className="w-4 h-4 mr-1.5" />
-                      )}
-                      Retry Unsettled via ConnectIPS
-                    </Button>
-                  )}
+                          try {
+                            const res = await ConnectIPSService.disbursePaymentBatch(
+                              activeBatchId,
+                              (done, total) => setDisburseProgress({ done, total }),
+                              { retryFailedOnly: false },
+                            );
+                            invalidatePaymentLedgers(activeBatchId);
+                            if (res.success && (res.totalProcessing || 0) === 0) {
+                              toast.success(`Retried & settled ${res.totalSuccess} payment(s).`);
+                            } else {
+                              toast.info(
+                                `ConnectIPS retry: ${res.totalSuccess} settled, ${res.totalProcessing || 0} processing, ${res.totalFailed} failed.`,
+                              );
+                            }
+                          } catch (err: any) {
+                            toast.error(`Retry failed: ${err?.message || err}`);
+                          } finally {
+                            setIsDisbursing(false);
+                            setDisburseProgress(null);
+                          }
+                        }}
+                      >
+                        {isDisbursing ? (
+                          <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                        ) : (
+                          <Send className="w-4 h-4 mr-1.5" />
+                        )}
+                        Retry Unsettled via ConnectIPS
+                      </Button>
+                    )}
                   {canExport && (
                     <Button
                       size="sm"
@@ -2460,7 +2499,7 @@ function PaymentsRoute() {
                 </div>
               )}
 
-              <div className="border rounded-lg">
+              <div className="border rounded-lg overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -2531,34 +2570,36 @@ function PaymentsRoute() {
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-1">
-                              {(item.status === "Processing" ||
-                                item.status === "Pending" ||
-                                item.status === "Failed" ||
-                                item.status === "Returned" ||
-                                Boolean(item.connectips_ref || item.payment_reference)) && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-7 text-xs text-sky-700 hover:text-sky-800 dark:text-sky-300"
-                                  title="Check NCHL ConnectIPS Transaction Status"
-                                  disabled={checkingPaymentId === item.id}
-                                  onClick={() =>
-                                    handleCheckSinglePaymentStatus({
-                                      paymentId: item.id,
-                                      referenceId: item.connectips_ref || item.payment_reference,
-                                      batchId: activeBatchId,
-                                    })
-                                  }
-                                >
-                                  {checkingPaymentId === item.id ? (
-                                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                                  ) : (
-                                    <RefreshCw className="w-3 h-3 mr-1" />
-                                  )}
-                                  Check Status
-                                </Button>
-                              )}
-                              {item.status !== "Reversed" &&
+                              {activeBatchData.payment_method === "ConnectIPS" &&
+                                (item.status === "Processing" ||
+                                  item.status === "Pending" ||
+                                  item.status === "Failed" ||
+                                  item.status === "Returned" ||
+                                  Boolean(item.connectips_ref || item.payment_reference)) && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 text-xs text-sky-700 hover:text-sky-800 dark:text-sky-300"
+                                    title="Check NCHL ConnectIPS Transaction Status"
+                                    disabled={checkingPaymentId === item.id}
+                                    onClick={() =>
+                                      handleCheckSinglePaymentStatus({
+                                        paymentId: item.id,
+                                        referenceId: item.connectips_ref || item.payment_reference,
+                                        batchId: activeBatchId,
+                                      })
+                                    }
+                                  >
+                                    {checkingPaymentId === item.id ? (
+                                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                    ) : (
+                                      <RefreshCw className="w-3 h-3 mr-1" />
+                                    )}
+                                    Check Status
+                                  </Button>
+                                )}
+                              {isAdmin &&
+                                item.status !== "Reversed" &&
                                 item.status !== "Failed" &&
                                 item.status !== "Returned" && (
                                   <Button

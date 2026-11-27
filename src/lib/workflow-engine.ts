@@ -283,10 +283,87 @@ export const WorkflowEngine = {
       }
     }
 
-    // Log the approval action
+    // Sync pending_approvals FIRST so we obtain a valid pending_approvals.id FK for approval_logs
+    let pendingApprovalId: string | null = null;
+    try {
+      if (action === "submit") {
+        let extraPayload: Record<string, any> = {};
+        if (table === "payment_batches") {
+          const { data: batchRow } = await (supabase as any)
+            .from("payment_batches")
+            .select("batch_name, total_amount, total_payments, payment_method, company_id")
+            .eq("id", recordId)
+            .maybeSingle();
+          if (batchRow) {
+            extraPayload = {
+              batch_name: batchRow.batch_name,
+              total_amount: batchRow.total_amount,
+              total_payments: batchRow.total_payments,
+              payment_method: batchRow.payment_method,
+              company_id: batchRow.company_id,
+            };
+          }
+        }
+
+        const { data: insertedPa, error: insertPaErr } = await (supabase as any)
+          .from("pending_approvals")
+          .insert({
+            entity_type: table,
+            entity_id: recordId,
+            action: "Batch Submission",
+            payload: {
+              ...extraPayload,
+              recordId,
+              table,
+              previousStatus: currentStatus,
+              status: newStatus,
+              remarks: remarks || null,
+            },
+            status: "Pending",
+            requested_by: user?.id || null,
+          })
+          .select("id")
+          .single();
+
+        if (!insertPaErr && insertedPa?.id) {
+          pendingApprovalId = insertedPa.id;
+        }
+      } else if (action === "approve" || action === "reject" || action === "return") {
+        const mappedPendingStatus =
+          action === "approve" ? "Approved" : action === "return" ? "Returned" : "Rejected";
+        const { data: updatedPa } = await (supabase as any)
+          .from("pending_approvals")
+          .update({
+            status: mappedPendingStatus,
+            review_notes: remarks || null,
+            reviewed_by: user?.id || null,
+            reviewed_at: new Date().toISOString(),
+          })
+          .eq("entity_id", recordId)
+          .eq("status", "Pending")
+          .select("id")
+          .maybeSingle();
+        pendingApprovalId = updatedPa?.id ?? null;
+      }
+
+      if (!pendingApprovalId) {
+        const { data: latestPa } = await (supabase as any)
+          .from("pending_approvals")
+          .select("id")
+          .eq("entity_id", recordId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        pendingApprovalId = latestPa?.id ?? null;
+      }
+    } catch (paErr) {
+      console.warn("Failed to sync pending_approvals record:", paErr);
+    }
+
+    // Log the approval action using valid pending_approvals.id FK (or omit when no ticket exists)
     try {
       await (supabase as any).from("approval_logs").insert({
-        approval_id: recordId,
+        approval_id: pendingApprovalId,
         action,
         previous_status: currentStatus,
         new_status: newStatus,
@@ -296,41 +373,6 @@ export const WorkflowEngine = {
       });
     } catch (logErr) {
       console.warn("Failed to write approval log:", logErr);
-    }
-
-    // Sync pending_approvals table for maker-checker review
-    try {
-      if (action === "submit") {
-        await (supabase as any).from("pending_approvals").insert({
-          entity_type: table,
-          entity_id: recordId,
-          action: "Batch Submission",
-          payload: {
-            recordId,
-            table,
-            previousStatus: currentStatus,
-            status: newStatus,
-            remarks: remarks || null,
-          },
-          status: "Pending",
-          requested_by: user?.id || null,
-        });
-      } else if (action === "approve" || action === "reject" || action === "return") {
-        const mappedPendingStatus =
-          action === "approve" ? "Approved" : action === "return" ? "Returned" : "Rejected";
-        await (supabase as any)
-          .from("pending_approvals")
-          .update({
-            status: mappedPendingStatus,
-            review_notes: remarks || null,
-            reviewed_by: user?.id || null,
-            reviewed_at: new Date().toISOString(),
-          })
-          .eq("entity_id", recordId)
-          .eq("status", "Pending");
-      }
-    } catch (paErr) {
-      console.warn("Failed to sync pending_approvals record:", paErr);
     }
 
     // Send notification

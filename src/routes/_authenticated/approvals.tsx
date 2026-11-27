@@ -304,6 +304,7 @@ function ApprovalsPage() {
       setNotes("");
       qc.invalidateQueries({ queryKey: ["pending_approvals_all"] });
       qc.invalidateQueries({ queryKey: ["pending_batches_count"] });
+      qc.invalidateQueries({ queryKey: ["pending-approvals-badge-count"] });
       qc.invalidateQueries({ queryKey: ["payments"] });
       qc.invalidateQueries({ queryKey: ["dividend_payables"] });
       qc.invalidateQueries({ queryKey: ["interest_payables"] });
@@ -442,7 +443,7 @@ function ApprovalsPage() {
         </Select>
       </div>
 
-      <div className="border rounded-lg bg-card overflow-hidden">
+      <div className="border rounded-lg bg-card overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>

@@ -699,7 +699,13 @@ function InterestPage() {
           (companyFilter === "all" ? "All Debentures" : "Selected Company"),
         selectedCompany?.company_code || "",
         fyFilter !== "all" ? fyFilter : "",
-        summaryCouponRate ? Number(summaryCouponRate) : undefined,
+        summaryCouponRate
+          ? Number(summaryCouponRate)
+          : Number(
+              (selectedCompany as any)?.debenture_rate ||
+                (selectedCompany as any)?.coupon_rate ||
+                0,
+            ) || undefined,
         summaryFaceValue ? Number(summaryFaceValue) : 1000,
         activeDays,
         taxRules,
@@ -1081,6 +1087,8 @@ function InterestPage() {
                   type="file"
                   accept=".xlsx,.xls,.csv"
                   ref={fileRef}
+                  tabIndex={-1}
+                  aria-hidden="true"
                   className="hidden"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
@@ -1644,7 +1652,7 @@ function InterestPage() {
           <CardContent className="p-4 flex items-center justify-between">
             <div>
               <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Total Debentures Held
+                Debenture Holders
               </div>
               <div className="text-xl font-bold font-mono tracking-tight mt-1">
                 {(totals.count ?? 0).toLocaleString()}

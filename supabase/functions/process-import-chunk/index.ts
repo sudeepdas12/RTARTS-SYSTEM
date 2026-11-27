@@ -115,7 +115,7 @@ function buildClientCode(row: any, boid: string): string {
  * Note: PAN numbers are NOT used for classification because both individuals
  * and companies in Nepal have identical 9-digit numeric PANs issued by IRD.
  */
-function detectInvestorCategory(row: any, sheetType?: string): string {
+function detectInvestorCategory(row: any, sheetType?: string, isMutualFund = false): string {
   const rawType = String(
     row.investor_type ||
       row.type ||
@@ -136,7 +136,7 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
     if (/BANK_FI|\bBANK\b|\bBIKAS\s*BANK\b|FINANCIAL_INSTITUTION|\bBFI\b/i.test(rawType)) {
       return "BANK_FI";
     }
-    if (/MUTUAL|\bMF\b/i.test(rawType)) return "MUTUAL_FUND";
+    if (!isMutualFund && /MUTUAL|\bMF\b/i.test(rawType)) return "MUTUAL_FUND";
     if (/TAX.?EXEMPT|EXEMPT/i.test(rawType)) return "TAX_EXEMPT";
     if (/FOREIGN|NRN/i.test(rawType)) return "FOREIGN";
     if (/PROMOT|D-PROMOT/i.test(rawType)) return "PROMOTER";
@@ -195,10 +195,13 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
 
   // 2. Explicit TAX_EXEMPT / MUTUAL sheet-level categorization takes precedence over generic BANK/TRUST regex
   // (e.g., "Nepal Bank Karmachari Awakash Kosh Byawasthapan Trust" or "RASTRIYA BANIJYA BANK RETIREMENT FUND" on RMF TAX_EXEMPTED sheet).
+  // Note: When importing a Mutual Fund distribution file (isMutualFund = true), the sheet tab itself is named
+  // for the mutual fund, while its rows are individual unitholders (5% / 15%) unless explicitly TAX_EXEMPT.
   if (sheetType) {
     const upperSheet = sheetType.toUpperCase();
     if (/TAX.?EXEMPT|EXEMPT/i.test(upperSheet)) return "TAX_EXEMPT";
-    if (upperSheet.includes("MUTUAL") || /\bMF\b/.test(upperSheet)) return "MUTUAL_FUND";
+    if (!isMutualFund && (upperSheet.includes("MUTUAL") || /\bMF\b/.test(upperSheet)))
+      return "MUTUAL_FUND";
   }
 
   // 3. Statutory Tax-Exempt Funds & SEBON Mutual Fund Schemes
@@ -215,7 +218,8 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
       /\b(CITIZEN\s*INVESTMENT\s*TRUST|NAGARIK\s*LAGANI\s*KOSH|\bCIT\b|KARMACHARI\s*SANCHAYA\s*KOSH|EMPLOYEES?\s*PROVIDENT\s*FUND|\bEPF\b|SAMAJIK\s*SURAKSHA\s*KOSH|SOCIAL\s*SECURITY\s*FUND|\bSSF\b)\b/i.test(
         legalPersonName,
       ) ||
-      /MUTUAL|\bMF\b|TAX.?EXEMPT/i.test(rawType))
+      (!isMutualFund && /MUTUAL|\bMF\b|TAX.?EXEMPT/i.test(rawType)) ||
+      (isMutualFund && /TAX.?EXEMPT/i.test(rawType)))
   ) {
     return isMutualFundScheme ? "MUTUAL_FUND" : "TAX_EXEMPT";
   }
@@ -244,7 +248,7 @@ function detectInvestorCategory(row: any, sheetType?: string): string {
   // 6. Sheet Type fallbacks
   if (sheetType) {
     const upper = sheetType.toUpperCase();
-    if (upper.includes("MUTUAL") || /\bMF\b/.test(upper)) return "MUTUAL_FUND";
+    if (!isMutualFund && (upper.includes("MUTUAL") || /\bMF\b/.test(upper))) return "MUTUAL_FUND";
     if (upper.includes("TAX") && upper.includes("EXEMPT")) return "TAX_EXEMPT";
     if (upper.includes("FOREIGN") || /\bNRN\b/.test(upper)) return "FOREIGN";
     if (upper.includes("PROMOT")) return "PROMOTER";
@@ -285,9 +289,22 @@ function payableSegment(category: string, isDebenture = false): string | null {
   const upper = String(category || "")
     .trim()
     .toUpperCase();
+  if (
+    upper === "INSTITUTION" ||
+    upper === "PRIVATE" ||
+    upper === "COMPANY_INSTITUTION" ||
+    upper === "FOREIGN" ||
+    upper === "FOREIGN_INVESTOR" ||
+    upper === "BANK_FI" ||
+    upper === "BANK" ||
+    upper === "MUTUAL_FUND" ||
+    upper === "TAX_EXEMPT" ||
+    upper === "TAX_EXEMPTED" ||
+    upper === "UNKNOWN"
+  ) {
+    return null;
+  }
   if (isDebenture) {
-    if (upper === "INSTITUTION" || upper === "PRIVATE" || upper === "COMPANY_INSTITUTION")
-      return "INSTITUTION";
     return "PUBLIC";
   }
   if (upper === "PROMOTER") return "PROMOTER";
@@ -624,7 +641,7 @@ serve(async (req) => {
       let computedNet = 0;
       let validRows = 0;
       for (const row of chunkData) {
-        const investorCategory = detectInvestorCategory(row, sheetType);
+        const investorCategory = detectInvestorCategory(row, sheetType, isMutualFund);
         const rate = getCategoryTdsRate(investorCategory, isDebenture, isMutualFund, taxRulesMap);
         const rawGross = Number(
           row.gross_dividend ?? row.gross_amount ?? row.gross_interest ?? row.amount ?? 0,
@@ -801,7 +818,7 @@ serve(async (req) => {
         const tempId = resolvedId;
 
         // Smart categorization: detect investor type from row data or sheet name
-        const investorCategory = detectInvestorCategory(row, sheetType);
+        const investorCategory = detectInvestorCategory(row, sheetType, isMutualFund);
         const holderType = mapToHolderType(investorCategory);
 
         function extractRowField(r: any, keys: string[]): string {
@@ -837,6 +854,7 @@ serve(async (req) => {
             "SHAREHOLDER NAME",
             "HOLDER NAME",
             "UNIT HOLDER NAME",
+            "BONDHOLDER NAME",
             "DEBENTURE HOLDER",
             "INVESTOR NAME",
             "ACCOUNT HOLDER",
@@ -1142,6 +1160,8 @@ serve(async (req) => {
           row["INT AMOUNT"] ||
           row["COUPON AMOUNT"] ||
           row["DISTRIBUTION AMOUNT"] ||
+          row["GROSS DISTRIBUTION"] ||
+          row["Gross Distribution"] ||
           row["GROSS AMOUNT"] ||
           row.gross_dividend ||
           row.amount ||
@@ -1153,6 +1173,8 @@ serve(async (req) => {
           row.div_tax ||
           row.tax ||
           row.TAX ||
+          row["TAX AMOUNT"] ||
+          row["Tax Amount"] ||
           row["TAX @ 6%"] ||
           row["TAX @6%"] ||
           row["TAX @ 15%"] ||
@@ -1245,7 +1267,7 @@ serve(async (req) => {
       }
 
       // *** SMART ROW-LEVEL CATEGORIZATION ***
-      const investorCategory = detectInvestorCategory(row, sheetType);
+      const investorCategory = detectInvestorCategory(row, sheetType, isMutualFund);
       // Determine TDS rate: authoritative payable_tax_rules or smart row-level fallback
       const rowTdsRate = getCategoryTdsRate(
         investorCategory,
@@ -1263,6 +1285,8 @@ serve(async (req) => {
         row.div_tax !== undefined ||
         row.tax !== undefined ||
         row.TAX !== undefined ||
+        row["TAX AMOUNT"] !== undefined ||
+        row["Tax Amount"] !== undefined ||
         row["TDS"] !== undefined ||
         row["TDS AMOUNT"] !== undefined;
 
@@ -1431,7 +1455,7 @@ serve(async (req) => {
           payables: payables.slice(0, 50),
           errors: rowErrors,
         }),
-        { headers: { "Content-Type": "application/json" } },
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
@@ -1511,13 +1535,13 @@ serve(async (req) => {
         clientsCreated: clientsInserted,
         errors: rowErrors,
       }),
-      { headers: { "Content-Type": "application/json" } },
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error: any) {
     console.error("Edge function error:", error);
     return new Response(JSON.stringify({ success: false, error: error.message }), {
       status: 500,
-      headers: { "Content-Type": "application/json" },
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });

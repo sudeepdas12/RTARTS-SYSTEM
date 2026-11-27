@@ -94,7 +94,7 @@ test.describe("Payables Module End-to-End Suite", () => {
     });
 
     // Verify KPI summary cards
-    await expect(page.locator("text=Total Debentures Held").first()).toBeVisible();
+    await expect(page.locator("text=Debenture Holders").first()).toBeVisible();
     await expect(page.locator("text=Gross Interest Pool").first()).toBeVisible();
     await expect(page.locator("text=TDS Tax Withheld").first()).toBeVisible();
     await expect(page.locator("text=Net Interest Payable").first()).toBeVisible();

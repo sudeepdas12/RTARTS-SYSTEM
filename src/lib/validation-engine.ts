@@ -1028,7 +1028,7 @@ export const ValidationEngine = {
       }
 
       // RULE 11: Net = Gross - Tax calculation check (Warning tier)
-      if (!options?.isRawInputFile && !options?.isPreCalculated) {
+      if (!options?.isRawInputFile) {
         if (gross !== null && tax !== null && net !== null) {
           const expectedNet = Math.round((gross - tax) * 100) / 100;
           if (Math.abs(expectedNet - net) > RECONCILIATION_TOLERANCE_NPR) {

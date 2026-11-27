@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -87,11 +88,14 @@ export function CreatePaymentBatchDialog({
   createBatchProgress,
   onCreateBatch,
 }: CreatePaymentBatchDialogProps) {
+  const [hasCustomName, setHasCustomName] = useState(false);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
         <Button
           onClick={() => {
+            setHasCustomName(false);
             setSelectedCompany("all");
             setSelectedPayableType("all");
             setFiscalYear("all");
@@ -116,7 +120,10 @@ export function CreatePaymentBatchDialog({
             <Input
               placeholder="e.g., Dividend Payment Batch Q1 2081/82"
               value={batchName}
-              onChange={(e) => setBatchName(e.target.value)}
+              onChange={(e) => {
+                setHasCustomName(true);
+                setBatchName(e.target.value);
+              }}
             />
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -131,6 +138,8 @@ export function CreatePaymentBatchDialog({
                     if (comp) {
                       if (comp.fiscal_year) {
                         setFiscalYear(comp.fiscal_year);
+                      } else {
+                        setFiscalYear("all");
                       }
                       if (comp.company_type === "Debenture") {
                         setSelectedPayableType("interest");
@@ -139,15 +148,19 @@ export function CreatePaymentBatchDialog({
                       } else {
                         setSelectedPayableType("dividend");
                       }
-                      const code = comp.company_code || comp.company_name?.slice(0, 8);
-                      setBatchName(
-                        `${code} Payout — ${comp.fiscal_year ? `FY ${comp.fiscal_year}` : new Date().toISOString().slice(0, 10)}`,
-                      );
+                      if (!hasCustomName) {
+                        const code = comp.company_code || comp.company_name?.slice(0, 8);
+                        setBatchName(
+                          `${code} Payout — ${comp.fiscal_year ? `FY ${comp.fiscal_year}` : new Date().toISOString().slice(0, 10)}`,
+                        );
+                      }
                     }
                   } else {
                     setSelectedPayableType("all");
                     setFiscalYear("all");
-                    setBatchName(`All Schemes Payout — ${new Date().toISOString().slice(0, 10)}`);
+                    if (!hasCustomName) {
+                      setBatchName(`All Schemes Payout — ${new Date().toISOString().slice(0, 10)}`);
+                    }
                   }
                 }}
               >

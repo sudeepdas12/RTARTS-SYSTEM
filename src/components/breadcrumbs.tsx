@@ -8,16 +8,36 @@ const LABELS: Record<string, string> = {
   clients: "Clients",
   interest: "Debenture Interest",
   dividend: "Stock Dividend",
+  "mutual-fund": "Mutual Fund",
+  payments: "Payment Batches",
   reconciliation: "Bank Reconciliation",
   allocations: "IAF Allocations",
   approvals: "Pending Approvals",
+  upload: "Upload Sheet",
   uploads: "Uploads",
+  "upload-history": "Upload History",
+  "classification-review": "Classification Review",
+  "agm-studio": "AGM & Dividend Studio",
+  "data-management": "Data Management",
   reports: "Reports",
+  analytics: "Analytics",
   audit: "Audit Log",
+  "audit-logs": "Audit Logs",
+  backup: "Backup & Restore",
   users: "Users & Roles",
   settings: "Settings",
   "fiscal-years": "Fiscal Years",
 };
+
+function formatBreadcrumbSegment(segment: string): string {
+  return (
+    LABELS[segment] ??
+    segment
+      .split("-")
+      .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : ""))
+      .join(" ")
+  );
+}
 
 export function Breadcrumbs() {
   const pathname = useRouterState({ select: (r) => r.location.pathname });
@@ -25,7 +45,7 @@ export function Breadcrumbs() {
   if (parts.length === 0) return null;
 
   const crumbs = parts.map((p, i) => ({
-    label: LABELS[p] ?? p,
+    label: formatBreadcrumbSegment(p),
     href: "/" + parts.slice(0, i + 1).join("/"),
   }));
 

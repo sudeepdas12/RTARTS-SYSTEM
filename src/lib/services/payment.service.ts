@@ -214,6 +214,7 @@ export const PaymentService = {
     payable_type?: string;
     payment_method: string;
   }): Promise<PaymentBatch> {
+    const { data: authData } = await supabase.auth.getUser();
     const { data, error } = await (supabase as any)
       .from("payment_batches")
       .insert({
@@ -226,6 +227,7 @@ export const PaymentService = {
         total_payments: 0,
         total_amount: 0,
         total_tax: 0,
+        created_by: authData?.user?.id || null,
       })
       .select()
       .single();
@@ -305,6 +307,7 @@ export const PaymentService = {
     onProgress?: (inserted: number, totalExpected: number) => void,
   ): Promise<PaymentBatch> {
     // 1. Create the Batch Header in Draft status
+    const { data: authData } = await supabase.auth.getUser();
     const { data: batch, error: batchErr } = await (supabase as any)
       .from("payment_batches")
       .insert({
@@ -320,6 +323,7 @@ export const PaymentService = {
         total_tax: 0,
         cds_batch_ref: params.cds_batch_ref?.trim() || null,
         registrar: params.registrar?.trim() || null,
+        created_by: authData?.user?.id || null,
       })
       .select()
       .single();

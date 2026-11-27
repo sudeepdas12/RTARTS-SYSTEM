@@ -13,15 +13,17 @@ const isUUID = (str: unknown): str is string =>
 export function buildReconciliationResultsPayload(
   report: ComprehensiveReconciliationReport | null,
   targetMatches?: ReconciliationMatch[],
+  fallbackCompanyId?: string | null,
 ) {
   const matchesToConvert = targetMatches || report?.matches || [];
   if (!matchesToConvert.length) return [];
   const today = new Date().toISOString().slice(0, 10);
+  const validFallbackCompanyId = isUUID(fallbackCompanyId) ? fallbackCompanyId : null;
 
   return matchesToConvert.map((match) => {
     const isBankStatement = report?.sourceType === "bank_statement";
     const clientId = isUUID(match.clientId) ? match.clientId : null;
-    const companyId = isUUID(match.companyId) ? match.companyId : null;
+    const companyId = isUUID(match.companyId) ? match.companyId : validFallbackCompanyId;
     const payableId = isUUID(match.payableId) ? match.payableId : null;
     const paymentId = isUUID(match.paymentId) ? match.paymentId : null;
     const batchId = isUUID(match.batchId) ? match.batchId : null;
@@ -70,6 +72,17 @@ export function buildReconciliationResultsPayload(
         `${contextPrefix ? `[${contextPrefix}] ` : ""}Category: ${match.category}${isBankStatement ? ` / Bank Transaction ${match.transactionDate ?? ""}` : ""}${match.matchSources ? ` / Sources: ${match.matchSources.join(", ")}` : ""}${match.transactionDescription ? ` / Remarks: ${match.transactionDescription}` : ""}`.trim(),
       matched_by: null,
       matched_at: null,
+      reference_id:
+        (match as any).referenceId ||
+        (match as any).instructionId ||
+        (match as any).instruction_id ||
+        null,
+      payment_reference:
+        (match as any).paymentReference ||
+        (match as any).referenceId ||
+        (match as any).instructionId ||
+        (match as any).instruction_id ||
+        null,
       instruction_id:
         (match as any).instructionId ||
         (match as any).instruction_id ||

@@ -4,6 +4,8 @@ import fs from "node:fs";
 import { execSync } from "node:child_process";
 
 const TEST_ADMIN_PASSWORD = process.env.SUPABASE_TEST_ADMIN_PASSWORD || "Admin123!";
+const TEST_CHECKER_EMAIL = "checker-e2elife@rbbmbl.com.np";
+const TEST_CHECKER_PASSWORD = "Password123!";
 const FIXTURES_DIR = path.resolve(process.cwd(), "test-fixtures");
 
 function ensureDividendAndBankFixtures(): void {
@@ -55,9 +57,40 @@ async function cleanupLifecycleData(): Promise<void> {
   }
 
   // Fallback cleanup for batch created under All Schemes scope
-  await adminClient.from("payment_batches").delete().ilike("batch_name", "%All Schemes Payout%");
+  const { data: strayBatches } = await adminClient
+    .from("payment_batches")
+    .select("id")
+    .ilike("batch_name", "%All Schemes Payout%");
+  const strayBatchIds = (strayBatches || []).map((b: any) => b.id);
+  if (strayBatchIds.length > 0) {
+    const { data: pas } = await adminClient
+      .from("pending_approvals")
+      .select("id")
+      .in("entity_id", strayBatchIds);
+    const paIds = (pas || []).map((p: any) => p.id);
+    if (paIds.length > 0) {
+      await adminClient.from("approval_logs").delete().in("approval_id", paIds);
+      await adminClient.from("pending_approvals").delete().in("id", paIds);
+    }
+    await adminClient.from("payments").delete().in("batch_id", strayBatchIds);
+    await adminClient.from("payment_batches").delete().in("id", strayBatchIds);
+  }
   await adminClient.from("upload_history").delete().ilike("file_name", "section1_dividend%");
   await adminClient.from("clients").delete().ilike("boid", "130102000000000%");
+
+  // Remove temporary E2ELIFE Checker user if present
+  const { data: listRes } = await adminClient.auth.admin.listUsers();
+  const checker = (listRes?.users || []).find(
+    (u: any) => u.email?.toLowerCase() === TEST_CHECKER_EMAIL.toLowerCase(),
+  );
+  if (checker?.id) {
+    await adminClient.from("approval_logs").delete().eq("performed_by", checker.id);
+    await adminClient.from("pending_approvals").delete().eq("reviewed_by", checker.id);
+    await adminClient.from("payment_logs").delete().eq("performed_by", checker.id);
+    await adminClient.from("user_roles").delete().eq("user_id", checker.id);
+    await adminClient.from("profiles").delete().eq("id", checker.id);
+    await adminClient.auth.admin.deleteUser(checker.id);
+  }
 }
 
 ensureDividendAndBankFixtures();
@@ -74,6 +107,22 @@ test.describe("Full Financial Lifecycle E2E (Upload -> Batch -> ConnectIPS -> Re
       fiscal_year: "2081/82",
     });
     if (error) throw error;
+
+    const { data: checkerData, error: cErr } = await adminClient.auth.admin.createUser({
+      email: TEST_CHECKER_EMAIL,
+      password: TEST_CHECKER_PASSWORD,
+      email_confirm: true,
+      user_metadata: { full_name: "E2E Lifecycle Checker" },
+    });
+    if (cErr) throw cErr;
+    if (checkerData?.user?.id) {
+      await adminClient
+        .from("user_roles")
+        .upsert(
+          { user_id: checkerData.user.id, role: "supervisor" },
+          { onConflict: "user_id,role" },
+        );
+    }
   });
 
   test.afterAll(async () => {
@@ -82,6 +131,7 @@ test.describe("Full Financial Lifecycle E2E (Upload -> Batch -> ConnectIPS -> Re
 
   test("executes complete lifecycle and passes ledger invariant sentinel before and after settlement and reversal", async ({
     page,
+    browser,
   }) => {
     test.setTimeout(90000);
     page.on("dialog", async (dialog) => {
@@ -176,17 +226,46 @@ test.describe("Full Financial Lifecycle E2E (Upload -> Batch -> ConnectIPS -> Re
     await expect(batchRow).toBeVisible({ timeout: 15000 });
     await batchRow.locator("button:has-text('Submit')").first().click();
     await expect(batchRow.locator("text=Pending").first()).toBeVisible({ timeout: 10000 });
+    // Strict Maker-Checker gate: Maker cannot self-approve their own submitted batch
+    await expect(batchRow.locator("button:has-text('Approve')")).toHaveCount(0);
 
-    await batchRow.locator("button:has-text('Approve')").first().click();
-    await expect(batchRow.locator("text=Approved").first()).toBeVisible({ timeout: 10000 });
+    // Approve via distinct Checker (supervisor) session
+    const checkerCtx = await browser.newContext();
+    const checkerPage = await checkerCtx.newPage();
+    checkerPage.on("dialog", async (dialog) => {
+      await dialog.accept();
+    });
+    try {
+      await checkerPage.goto("/auth");
+      await checkerPage.locator('input[type="email"]').fill(TEST_CHECKER_EMAIL);
+      await checkerPage.locator('input[type="password"]').fill(TEST_CHECKER_PASSWORD);
+      await checkerPage.locator('button[type="submit"]').click();
+      await checkerPage.waitForURL(/.*\/dashboard/, { timeout: 15000 });
 
-    await batchRow.locator("button:has-text('View')").first().click();
+      await checkerPage.goto("/payments");
+      const checkerBatchRow = checkerPage
+        .locator("tbody tr", { hasText: "All Schemes Payout" })
+        .first();
+      await expect(checkerBatchRow).toBeVisible({ timeout: 15000 });
+      await checkerBatchRow.locator("button:has-text('Approve')").first().click();
+      await expect(checkerBatchRow.locator("text=Approved").first()).toBeVisible({
+        timeout: 15000,
+      });
+    } finally {
+      await checkerCtx.close();
+    }
+
+    await page.reload();
+    const approvedRow = page.locator("tbody tr", { hasText: "All Schemes Payout" }).first();
+    await expect(approvedRow.locator("text=Approved").first()).toBeVisible({ timeout: 15000 });
+
+    await approvedRow.locator("button:has-text('View')").first().click();
     const batchDialog = page.locator("[role='dialog']");
     await expect(batchDialog.locator("text=Batch Details").first()).toBeVisible({ timeout: 5000 });
     await batchDialog.locator("button:has-text('Disburse via ConnectIPS API')").first().click();
     await expect(batchDialog.locator("text=Completed").first()).toBeVisible({ timeout: 25000 });
     await page.keyboard.press("Escape");
-    await expect(batchRow.locator("text=Completed").first()).toBeVisible({ timeout: 10000 });
+    await expect(approvedRow.locator("text=Completed").first()).toBeVisible({ timeout: 10000 });
 
     // 6. Verify Ledger Invariant Sentinel passes after settlement
     await page.goto("/audit-logs");

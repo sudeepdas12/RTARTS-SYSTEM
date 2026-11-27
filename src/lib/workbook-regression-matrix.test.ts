@@ -81,8 +81,8 @@ describe("Sample Workbook & Matrix Regression Suite", () => {
     });
   });
 
-  describe("3. Mutual Fund .xlsx Parsing & Zero TDS Exemption", () => {
-    it("detects mutual fund payouts and applies 0% default TDS exemption", async () => {
+  describe("3. Mutual Fund .xlsx Parsing & Unitholder Statutory TDS", () => {
+    it("detects mutual fund payouts with 5% default unitholder TDS while preserving explicit sheet tax", async () => {
       const mfRows = [
         ["BOID", "UNITHOLDER NAME", "UNITS HELD", "GROSS DIVIDEND", "TAX", "NET PAYABLE"],
         ["1301060000000005", "Gopal Shrestha", 1000, 8000, 0, 8000],
@@ -92,7 +92,7 @@ describe("Sample Workbook & Matrix Regression Suite", () => {
       const parsed = await parseExcelFile(buf, "RBB_Mutual_Fund_1_Distribution.xlsx");
 
       expect(parsed.fileType).toBe("mutual_fund");
-      expect(parsed.sheets[0].defaultTdsRate).toBe(0);
+      expect(parsed.sheets[0].defaultTdsRate).toBe(0.05);
       expect(parsed.sheets[0].rows[0].boid).toBe("1301060000000005");
       expect(parsed.sheets[0].totalAmount).toBe(8000);
       expect(parsed.sheets[0].totalTax).toBe(0);

@@ -1360,7 +1360,7 @@ function ClientsPage() {
             },
           },
           {
-            label: "Needs Review",
+            label: "Data Review",
             value: stats.needsReview,
             icon: AlertTriangle,
             color: "text-amber-600",
@@ -1595,7 +1595,7 @@ function ClientsPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Records</SelectItem>
-                <SelectItem value="true">⚠️ Needs Review ({stats.needsReview})</SelectItem>
+                <SelectItem value="true">⚠️ Data Review ({stats.needsReview})</SelectItem>
                 <SelectItem value="false">✓ Clean Records</SelectItem>
               </SelectContent>
             </Select>
