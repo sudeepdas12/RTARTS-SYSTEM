@@ -57,6 +57,9 @@ import {
   Wallet,
   Building2,
   Filter,
+  Sparkles,
+  Loader2,
+  Calendar,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -70,7 +73,12 @@ import {
   calculateDaysBetween,
 } from "@/lib/services/period-calculator";
 import { ShareholderStatementDialog } from "@/components/shareholder-statement-dialog";
-import { loadTaxRules, getDebentureDisplayRates } from "@/lib/services/tax-rules.service";
+import {
+  loadTaxRules,
+  getDebentureDisplayRates,
+  getTaxRateFromRules,
+  type TaxClassification,
+} from "@/lib/services/tax-rules.service";
 import { normalizeBoid } from "@/lib/validation-engine";
 import { fmtNpr } from "@/lib/nepal-currency";
 import { DualDate } from "@/components/dual-date";
@@ -183,6 +191,18 @@ function InterestPage() {
   const [form, setForm] = useState(emptyForm);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // ─── Bulk Apply Coupon Dialog State ──────────────────────────────────────────
+  const [couponOpen, setCouponOpen] = useState(false);
+  const [couponCompanyId, setCouponCompanyId] = useState("");
+  const [couponRate, setCouponRate] = useState("");
+  const [couponFaceValue, setCouponFaceValue] = useState("1000");
+  const [couponDays, setCouponDays] = useState("183");
+  const [couponFiscalYear, setCouponFiscalYear] = useState("");
+  const [couponDueDate, setCouponDueDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [couponInstrumentRef, setCouponInstrumentRef] = useState("");
+  const [couponRemarks, setCouponRemarks] = useState("");
+  const [couponLotName, setCouponLotName] = useState("");
+
   // Fetch settings & active fiscal year
   const { data: settings } = useQuery({
     queryKey: ["system-settings"],
@@ -279,7 +299,7 @@ function InterestPage() {
       const { data, error } = await supabase
         .from("companies")
         .select(
-          "id, company_code, company_name, company_type, sector_type, debenture_rate, coupon_rate",
+          "id, company_code, company_name, company_type, sector_type, debenture_rate, coupon_rate, face_value, fiscal_year, issue_size",
         )
         .order("company_name");
       if (error) throw error;
@@ -291,6 +311,9 @@ function InterestPage() {
         sector_type?: string | null;
         debenture_rate?: number | null;
         coupon_rate?: number | null;
+        face_value?: number | null;
+        fiscal_year?: string | null;
+        issue_size?: number | null;
       }[];
     },
     staleTime: 10_000,
@@ -356,9 +379,14 @@ function InterestPage() {
     queryFn: async () => {
       return await fetchAllRows<{
         id: string;
+        company_id: string | null;
         client_code: string;
         full_name: string;
         boid: string | null;
+        kitta: number | null;
+        holder_type: string | null;
+        payee_classification: string | null;
+        payee_segment: string | null;
         father_name: string | null;
         grandfather_name: string | null;
         pan_or_citizenship: string | null;
@@ -371,7 +399,7 @@ function InterestPage() {
         (supabase as any)
           .from("clients")
           .select(
-            "id, client_code, full_name, boid, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no",
+            "id, company_id, client_code, full_name, boid, kitta, holder_type, payee_classification, payee_segment, father_name, grandfather_name, pan_or_citizenship, address, district, phone, bank_name, bank_account_no",
           )
           .order("full_name")
           .order("id", { ascending: true })
@@ -834,7 +862,15 @@ function InterestPage() {
       setEditing(null);
       setForm(emptyForm);
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: unknown) => {
+      const msg =
+        e instanceof Error
+          ? e.message
+          : e && typeof e === "object" && "message" in e
+            ? String((e as { message: unknown }).message)
+            : "Failed to apply coupon";
+      toast.error(msg);
+    },
   });
 
   const del = useMutation({
@@ -851,7 +887,15 @@ function InterestPage() {
       qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
       toast.success("Payable deleted");
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: unknown) => {
+      const msg =
+        e instanceof Error
+          ? e.message
+          : e && typeof e === "object" && "message" in e
+            ? String((e as { message: unknown }).message)
+            : "Failed to apply coupon";
+      toast.error(msg);
+    },
   });
 
   const markPaid = useMutation({
@@ -878,7 +922,297 @@ function InterestPage() {
       setPayOpen(null);
       setPayRef("");
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: unknown) => {
+      const msg =
+        e instanceof Error
+          ? e.message
+          : e && typeof e === "object" && "message" in e
+            ? String((e as { message: unknown }).message)
+            : "Failed to apply coupon";
+      toast.error(msg);
+    },
+  });
+
+  const resolveClientTaxClassAndRate = useCallback(
+    (
+      client: {
+        payee_classification?: string | null;
+        holder_type?: string | null;
+      } | null,
+    ): {
+      classification: TaxClassification;
+      taxCategory: "PUBLIC" | "INSTITUTION" | "TAX_EXEMPT" | "BANK_FI";
+      tdsRate: number;
+    } => {
+      const cls = String(client?.payee_classification || "").toUpperCase();
+      const ht = String(client?.holder_type || "").toUpperCase();
+
+      if (
+        cls === "TAX_EXEMPT" ||
+        cls === "MUTUAL_FUND" ||
+        ht.includes("MUTUAL") ||
+        ht.includes("EXEMPT")
+      ) {
+        const ruleRate = getTaxRateFromRules(taxRules, "INTEREST", "TAX_EXEMPT");
+        return {
+          classification: "TAX_EXEMPT",
+          taxCategory: "TAX_EXEMPT",
+          tdsRate: ruleRate ?? 0,
+        };
+      }
+      if (cls === "BANK_FI") {
+        const ruleRate = getTaxRateFromRules(taxRules, "INTEREST", "BANK_FI");
+        return {
+          classification: "BANK_FI",
+          taxCategory: "BANK_FI",
+          tdsRate: ruleRate ?? 0,
+        };
+      }
+      if (cls === "COMPANY_INSTITUTION" || ht.includes("LEGAL") || ht.includes("INSTITUT")) {
+        const ruleRate = getTaxRateFromRules(taxRules, "INTEREST", "COMPANY_INSTITUTION");
+        return {
+          classification: "COMPANY_INSTITUTION",
+          taxCategory: "INSTITUTION",
+          tdsRate: ruleRate ?? 0.15,
+        };
+      }
+      const ruleRate = getTaxRateFromRules(taxRules, "INTEREST", "NATURAL_PERSON");
+      return {
+        classification: "NATURAL_PERSON",
+        taxCategory: "PUBLIC",
+        tdsRate: ruleRate ?? 0.06,
+      };
+    },
+    [taxRules],
+  );
+
+  const selectCouponCompany = useCallback(
+    (companyId: string) => {
+      setCouponCompanyId(companyId);
+      const comp = companies.find((c) => c.id === companyId);
+      if (comp) {
+        const inferredRate =
+          comp.coupon_rate ??
+          comp.debenture_rate ??
+          (comp.company_name?.match(/(\d+(?:\.\d+)?)\s*%/)?.[1]
+            ? Number(comp.company_name.match(/(\d+(?:\.\d+)?)\s*%/)![1])
+            : "");
+        setCouponRate(inferredRate ? String(inferredRate) : "");
+        setCouponFaceValue(comp.face_value ? String(comp.face_value) : "1000");
+        if (comp.fiscal_year) {
+          setCouponFiscalYear(comp.fiscal_year);
+        } else if (activeFyData) {
+          setCouponFiscalYear(activeFyData);
+        }
+        setCouponInstrumentRef(`${comp.company_code}-CPN`);
+      }
+    },
+    [companies, activeFyData],
+  );
+
+  const openApplyCoupon = () => {
+    const defaultCid =
+      companyFilter !== "all" ? companyFilter : relevantCompanies[0]?.id || companies[0]?.id || "";
+    selectCouponCompany(defaultCid);
+    if (!couponDays) setCouponDays("183");
+    if (!couponDueDate) setCouponDueDate(new Date().toISOString().slice(0, 10));
+    setCouponOpen(true);
+  };
+
+  const couponCompanyClients = useMemo(() => {
+    if (!couponCompanyId) return [];
+    return clients.filter((c) => c.company_id === couponCompanyId && Number(c.kitta ?? 0) > 0);
+  }, [clients, couponCompanyId]);
+
+  const couponPreview = useMemo(() => {
+    const rate = Number(couponRate) || 0;
+    const face = Number(couponFaceValue) || 1000;
+    const days = Number(couponDays) || 0;
+    if (!couponCompanyId || rate <= 0 || days <= 0 || couponCompanyClients.length === 0) {
+      return {
+        count: couponCompanyClients.length,
+        totalKitta: couponCompanyClients.reduce((s, c) => s + Number(c.kitta ?? 0), 0),
+        gross: 0,
+        tax: 0,
+        net: 0,
+        byClass: { publicCount: 0, instCount: 0, exemptCount: 0 },
+        rows: [] as Record<string, unknown>[],
+      };
+    }
+
+    let totalKitta = 0;
+    let totalGross = 0;
+    let totalTax = 0;
+    let totalNet = 0;
+    let publicCount = 0;
+    let instCount = 0;
+    let exemptCount = 0;
+
+    const comp = companies.find((c) => c.id === couponCompanyId);
+    const dueVal = couponDueDate || new Date().toISOString().slice(0, 10);
+    const fyVal = couponFiscalYear.trim() || activeFyData || "2082/83";
+    const refVal = couponInstrumentRef.trim() || `${comp?.company_code || "DEB"}-CPN`;
+    const remarksVal = couponRemarks.trim() || `${refVal} (${days}d @ ${rate}%)`;
+
+    const rows = couponCompanyClients.map((cl) => {
+      const kitta = Number(cl.kitta ?? 0);
+      const { classification, taxCategory, tdsRate } = resolveClientTaxClassAndRate(cl);
+      const res = InterestCalculator.calculate({
+        debentureKitta: kitta,
+        unitFaceValue: face,
+        annualInterestRate: rate,
+        daysCount: days,
+        taxCategory,
+        taxRate: tdsRate,
+      });
+
+      totalKitta += kitta;
+      totalGross += res.grossPeriodInterest;
+      totalTax += res.taxAmount;
+      totalNet += res.netInterestPayable;
+      if (classification === "TAX_EXEMPT" || classification === "BANK_FI") exemptCount++;
+      else if (classification === "COMPANY_INSTITUTION") instCount++;
+      else publicCount++;
+
+      const derivedLot =
+        couponLotName.trim() ||
+        (classification === "TAX_EXEMPT"
+          ? "MUTUAL FUND"
+          : classification === "COMPANY_INSTITUTION" || classification === "BANK_FI"
+            ? "PRIVATE"
+            : "PUBLIC");
+
+      return {
+        company_id: couponCompanyId,
+        client_id: cl.id,
+        instrument_ref: refVal,
+        shares_held: kitta,
+        kitta,
+        gross_interest: res.grossPeriodInterest,
+        tax_amount: res.taxAmount,
+        net_payable: res.netInterestPayable,
+        tds_rate: tdsRate,
+        is_tax_manual: false,
+        days_count: days,
+        due_date: dueVal,
+        fiscal_year: fyVal,
+        payment_status: "Pending",
+        bank_name: cl.bank_name || null,
+        bank_account_no: cl.bank_account_no || null,
+        lot_name: derivedLot,
+        remarks: remarksVal,
+        payee_classification: classification,
+        payee_segment:
+          cl.payee_segment && ["PROMOTER", "LOCAL", "EMPLOYEE", "PUBLIC"].includes(cl.payee_segment)
+            ? cl.payee_segment
+            : classification === "NATURAL_PERSON"
+              ? "PUBLIC"
+              : null,
+        classification_status: "AUTO_CLASSIFIED",
+        paid_amount: 0,
+        remaining_amount: res.netInterestPayable,
+      };
+    });
+
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    return {
+      count: rows.length,
+      totalKitta,
+      gross: round2(totalGross),
+      tax: round2(totalTax),
+      net: round2(totalNet),
+      byClass: { publicCount, instCount, exemptCount },
+      rows,
+    };
+  }, [
+    couponCompanyId,
+    couponRate,
+    couponFaceValue,
+    couponDays,
+    couponFiscalYear,
+    couponDueDate,
+    couponInstrumentRef,
+    couponRemarks,
+    couponLotName,
+    couponCompanyClients,
+    companies,
+    activeFyData,
+    resolveClientTaxClassAndRate,
+  ]);
+
+  const applyCoupon = useMutation({
+    mutationFn: async () => {
+      if (!canWrite)
+        throw new Error("Unauthorized: You do not have permission to generate coupons.");
+      if (!couponCompanyId) throw new Error("Please select a debenture/company.");
+      if (couponPreview.rows.length === 0) {
+        throw new Error("No bondholders with holding units (Kitta > 0) found for this company.");
+      }
+
+      const BATCH_SIZE = 250;
+      let totalInserted = 0;
+      for (let i = 0; i < couponPreview.rows.length; i += BATCH_SIZE) {
+        const chunk = couponPreview.rows.slice(i, i + BATCH_SIZE);
+        const { data, error } = await (supabase as any).rpc("bulk_insert_interest_payables", {
+          p_payables: chunk,
+        });
+        if (error) throw error;
+        if (data?.errors && Array.isArray(data.errors) && data.errors.length > 0) {
+          throw new Error(data.errors[0]?.error || "Bulk coupon generation returned row errors.");
+        }
+        totalInserted += Number(data?.inserted ?? chunk.length);
+      }
+
+      const comp = companies.find((c) => c.id === couponCompanyId);
+      try {
+        await (supabase as any).from("audit_logs").insert({
+          action: "APPLY_DEBENTURE_COUPON",
+          table_name: "interest_payables",
+          record_id: couponCompanyId,
+          new_value: {
+            company_code: comp?.company_code,
+            fiscal_year: couponFiscalYear || activeFyData,
+            coupon_rate: Number(couponRate),
+            face_value: Number(couponFaceValue),
+            days_count: Number(couponDays),
+            holders_count: couponPreview.rows.length,
+            total_kitta: couponPreview.totalKitta,
+            gross_interest: couponPreview.gross,
+            tax_amount: couponPreview.tax,
+            net_payable: couponPreview.net,
+          },
+        });
+      } catch {
+        // Table-level audit triggers also record row changes
+      }
+
+      return totalInserted;
+    },
+    onSuccess: (count) => {
+      qc.invalidateQueries({ queryKey: ["interest_payables"] });
+      qc.invalidateQueries({ queryKey: ["interest_payables_totals"] });
+      qc.invalidateQueries({ queryKey: ["interest_payables_paginated"] });
+      qc.invalidateQueries({ queryKey: ["interest_payables_all"] });
+      qc.invalidateQueries({ queryKey: ["interest_summary_rows"] });
+      qc.invalidateQueries({ queryKey: ["interest_fiscal_years"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+      if (couponCompanyId && companyFilter === "all") {
+        setCompanyFilter(couponCompanyId);
+      }
+      toast.success(
+        `Applied coupon to ${count.toLocaleString()} bondholders (Net NPR ${fmtNr(couponPreview.net)})`,
+      );
+      setCouponOpen(false);
+    },
+    onError: (e: unknown) => {
+      const msg =
+        e instanceof Error
+          ? e.message
+          : e && typeof e === "object" && "message" in e
+            ? String((e as { message: unknown }).message)
+            : "Failed to apply coupon";
+      toast.error(msg);
+    },
   });
 
   const startNew = () => {
@@ -1053,7 +1387,13 @@ function InterestPage() {
         `Imported ${clean.length} rows${errors.length ? ` (${errors.length} skipped)` : ""}`,
       );
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Import failed");
+      const msg =
+        e instanceof Error
+          ? e.message
+          : e && typeof e === "object" && "message" in e
+            ? String((e as { message: unknown }).message)
+            : "Import failed";
+      toast.error(msg);
     }
   };
 
@@ -1098,6 +1438,14 @@ function InterestPage() {
                 />
                 <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
                   <Upload className="mr-2 h-4 w-4" /> Import
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={openApplyCoupon}
+                  className="border border-primary/30 text-primary hover:bg-primary/10"
+                >
+                  <Sparkles className="mr-2 h-4 w-4" /> Apply Coupon
                 </Button>
                 <Dialog open={open} onOpenChange={setOpen}>
                   <DialogTrigger asChild>
@@ -1286,12 +1634,19 @@ function InterestPage() {
                             <SelectTrigger>
                               <SelectValue placeholder="Select client" />
                             </SelectTrigger>
-                            <SelectContent>
-                              {clients.map((c) => (
-                                <SelectItem key={c.id} value={c.id}>
-                                  {c.full_name} {c.boid ? `(${c.boid})` : ""}
-                                </SelectItem>
-                              ))}
+                            <SelectContent className="max-h-60 overflow-y-auto">
+                              {(form.company_id
+                                ? clients.filter(
+                                    (c) => !c.company_id || c.company_id === form.company_id,
+                                  )
+                                : clients
+                              )
+                                .slice(0, 200)
+                                .map((c) => (
+                                  <SelectItem key={c.id} value={c.id}>
+                                    {c.full_name} {c.boid ? `(${c.boid})` : ""}
+                                  </SelectItem>
+                                ))}
                             </SelectContent>
                           </Select>
                         </div>
@@ -1356,14 +1711,11 @@ function InterestPage() {
                             className="h-6 text-[11px] text-primary hover:underline px-2"
                             onClick={() => {
                               const gross = Number(form.gross_interest) || 0;
-                              const selectedClient = clients.find(
-                                (c) => c.id === form.client_id,
-                              ) as any;
-                              const isInst =
-                                selectedClient?.holder_type === "Institution" ||
-                                selectedClient?.payee_classification === "COMPANY_INSTITUTION";
-                              const rate = isInst ? 0.15 : 0.06;
-                              const tax = Number((gross * rate).toFixed(2));
+                              const selectedClient = clients.find((c) => c.id === form.client_id);
+                              const { tdsRate } = resolveClientTaxClassAndRate(
+                                selectedClient ?? null,
+                              );
+                              const tax = Number((gross * tdsRate).toFixed(2));
                               const net = Number((gross - tax).toFixed(2));
                               setForm((f) => ({
                                 ...f,
@@ -1372,7 +1724,7 @@ function InterestPage() {
                               }));
                             }}
                           >
-                            <Calculator className="h-3 w-3 mr-1" /> Recompute 6%/15% TDS
+                            <Calculator className="h-3 w-3 mr-1" /> Recompute Statutory TDS
                           </Button>
                         </div>
                         <div className="space-y-1.5">
@@ -1647,14 +1999,14 @@ function InterestPage() {
         </Card>
       )}
 
-      <div className="mb-4 grid gap-3 grid-cols-2 md:grid-cols-4">
+      <div className="mb-4 grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
         <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
-              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+          <CardContent className="p-4 flex items-center justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">
                 Debenture Holders
               </div>
-              <div className="text-xl font-bold font-mono tracking-tight mt-1">
+              <div className="text-lg xl:text-xl font-bold font-mono tracking-tight mt-1 tabular-nums">
                 {(totals.count ?? 0).toLocaleString()}
               </div>
               <div className="text-[11px] text-muted-foreground mt-0.5 flex flex-wrap items-center gap-1">
@@ -1678,15 +2030,15 @@ function InterestPage() {
         </Card>
 
         <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
-              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+          <CardContent className="p-4 flex items-center justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">
                 Gross Interest Pool
               </div>
-              <div className="text-xl font-bold font-mono tracking-tight mt-1">
+              <div className="text-lg xl:text-xl font-bold font-mono tracking-tight mt-1 tabular-nums break-words">
                 NPR {fmt(totals.gross)}
               </div>
-              <div className="text-[11px] text-muted-foreground mt-0.5">
+              <div className="text-[11px] text-muted-foreground mt-0.5 truncate">
                 Gross pre-tax coupon entitlement
               </div>
             </div>
@@ -1697,15 +2049,15 @@ function InterestPage() {
         </Card>
 
         <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
-              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+          <CardContent className="p-4 flex items-center justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">
                 TDS Tax Withheld
               </div>
-              <div className="text-xl font-bold font-mono tracking-tight mt-1 text-rose-600 dark:text-rose-400">
+              <div className="text-lg xl:text-xl font-bold font-mono tracking-tight mt-1 text-rose-600 dark:text-rose-400 tabular-nums break-words">
                 NPR {fmt(totals.tax)}
               </div>
-              <div className="text-[11px] text-muted-foreground mt-0.5">
+              <div className="text-[11px] text-muted-foreground mt-0.5 truncate">
                 Statutory coupon tax withholding
               </div>
             </div>
@@ -1716,12 +2068,12 @@ function InterestPage() {
         </Card>
 
         <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
-              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+          <CardContent className="p-4 flex items-center justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">
                 Net Interest Payable
               </div>
-              <div className="text-xl font-bold font-mono tracking-tight mt-1 text-foreground">
+              <div className="text-lg xl:text-xl font-bold font-mono tracking-tight mt-1 text-foreground tabular-nums break-words">
                 NPR {fmt(totals.net)}
               </div>
               <div className="text-[11px] mt-0.5 flex flex-wrap items-center gap-1.5 font-mono">
@@ -2617,6 +2969,175 @@ function InterestPage() {
           if (!openState) setSelectedStatementBoid(null);
         }}
       />
+
+      {/* Bulk Apply Debenture Coupon Dialog */}
+      <Dialog open={couponOpen} onOpenChange={setCouponOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="p-6 pb-3 border-b shrink-0">
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              Apply Debenture Coupon (Bulk Generation)
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            <p className="text-xs text-muted-foreground">
+              Generate interest payables across all registered bondholders of a debenture issue
+              using live statutory TDS rates (Public {debentureDisplayRates.publicRatePct}% ·
+              Institution {debentureDisplayRates.institutionRatePct}% · Tax-Exempt{" "}
+              {debentureDisplayRates.exemptRatePct}%).
+            </p>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-1.5 md:col-span-2">
+                <Label>Debenture / Issuer Company *</Label>
+                <Select value={couponCompanyId} onValueChange={selectCouponCompany}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select debenture company..." />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-60 overflow-y-auto">
+                    {(relevantCompanies.length > 0 ? relevantCompanies : companies).map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.company_code} — {c.company_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Annual Coupon Rate (%) *</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={couponRate}
+                  onChange={(e) => setCouponRate(e.target.value)}
+                  placeholder="8.5"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Face Value (NPR) *</Label>
+                <Input
+                  type="number"
+                  value={couponFaceValue}
+                  onChange={(e) => setCouponFaceValue(e.target.value)}
+                  placeholder="1000"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Period Days (Actual/365) *</Label>
+                <Input
+                  type="number"
+                  value={couponDays}
+                  onChange={(e) => setCouponDays(e.target.value)}
+                  placeholder="183"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Fiscal Year *</Label>
+                <Input
+                  value={couponFiscalYear}
+                  onChange={(e) => setCouponFiscalYear(e.target.value)}
+                  placeholder="2082/83"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Due Date</Label>
+                <Input
+                  type="date"
+                  value={couponDueDate}
+                  onChange={(e) => setCouponDueDate(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Instrument / Coupon Ref</Label>
+                <Input
+                  value={couponInstrumentRef}
+                  onChange={(e) => setCouponInstrumentRef(e.target.value)}
+                  placeholder="RBB83-CPN"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Lot / Batch Tag (Optional)</Label>
+                <Input
+                  value={couponLotName}
+                  onChange={(e) => setCouponLotName(e.target.value)}
+                  placeholder="Auto (PUBLIC / PRIVATE / MUTUAL FUND)"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Coupon Remarks Key</Label>
+                <Input
+                  value={couponRemarks}
+                  onChange={(e) => setCouponRemarks(e.target.value)}
+                  placeholder="Optional deduplication remark"
+                />
+              </div>
+            </div>
+
+            <div className="rounded-lg border bg-muted/30 p-4 space-y-2.5">
+              <div className="flex items-center justify-between text-xs font-semibold">
+                <span className="flex items-center gap-1.5">
+                  <Calendar className="h-3.5 w-3.5 text-primary" />
+                  Live Coupon Computation Preview
+                </span>
+                <Badge variant="outline" className="font-mono text-[11px]">
+                  {couponPreview.count.toLocaleString()} Holders ·{" "}
+                  {couponPreview.totalKitta.toLocaleString()} Kitta
+                </Badge>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="rounded border bg-background p-2">
+                  <div className="text-[10px] text-muted-foreground">Gross Interest</div>
+                  <div className="text-sm font-bold font-mono tabular-nums">
+                    NPR {fmtNr(couponPreview.gross)}
+                  </div>
+                </div>
+                <div className="rounded border bg-background p-2">
+                  <div className="text-[10px] text-muted-foreground">Total TDS</div>
+                  <div className="text-sm font-bold font-mono tabular-nums text-amber-600">
+                    NPR {fmtNr(couponPreview.tax)}
+                  </div>
+                </div>
+                <div className="rounded border bg-emerald-50/60 dark:bg-emerald-950/20 p-2">
+                  <div className="text-[10px] text-emerald-700 dark:text-emerald-400">
+                    Net Payable
+                  </div>
+                  <div className="text-sm font-bold font-mono tabular-nums text-emerald-700 dark:text-emerald-300">
+                    NPR {fmtNr(couponPreview.net)}
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground pt-1">
+                <span>Public: {couponPreview.byClass.publicCount.toLocaleString()}</span>
+                <span>·</span>
+                <span>Institution: {couponPreview.byClass.instCount.toLocaleString()}</span>
+                <span>·</span>
+                <span>Tax-Exempt / MF: {couponPreview.byClass.exemptCount.toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="p-6 pt-3 border-t shrink-0 gap-2">
+            <Button
+              variant="outline"
+              disabled={applyCoupon.isPending}
+              onClick={() => setCouponOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={applyCoupon.isPending || couponPreview.rows.length === 0}
+              onClick={() => applyCoupon.mutate()}
+            >
+              {applyCoupon.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Generating Payables…
+                </>
+              ) : (
+                <>Generate {couponPreview.rows.length.toLocaleString()} Coupon Payables</>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

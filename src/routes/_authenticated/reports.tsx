@@ -428,7 +428,7 @@ function ReportsRoute() {
   };
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6">
       <PageHeader
         title="Reports & Distribution Summaries"
         description="Comprehensive AGM distributions, debenture interest summaries, mutual fund returns, and official registers."
@@ -445,7 +445,7 @@ function ReportsRoute() {
               Filter by company to generate exact regulatory and management distribution reports.
             </p>
           </div>
-          <div className="flex w-full items-center gap-2 md:w-auto">
+          <div className="flex w-full flex-wrap items-center gap-2 md:w-auto">
             <Select value={companyId} onValueChange={setCompanyId}>
               <SelectTrigger className="w-full md:w-[320px] h-9 text-sm">
                 <SelectValue placeholder="All companies" />
@@ -492,35 +492,35 @@ function ReportsRoute() {
             </div>
           </CardContent>
         </Card>
-        <Card className="glass-card hover-lift">
+        <Card className="glass-card hover-lift min-w-0">
           <CardContent className="p-4">
             <div className="flex items-center justify-between text-muted-foreground">
               <span className="text-xs font-medium uppercase tracking-wide">Gross Payable</span>
-              <Wallet className="h-4 w-4 text-primary" />
+              <Wallet className="h-4 w-4 text-primary shrink-0" />
             </div>
-            <div className="mt-2 text-xl font-bold tabular-nums whitespace-nowrap">
+            <div className="mt-2 text-lg xl:text-xl font-bold tabular-nums break-words">
               {formatReportCurrency(totals.gross)}
             </div>
           </CardContent>
         </Card>
-        <Card className="glass-card hover-lift">
+        <Card className="glass-card hover-lift min-w-0">
           <CardContent className="p-4">
             <div className="flex items-center justify-between text-muted-foreground">
               <span className="text-xs font-medium uppercase tracking-wide">TDS Tax</span>
-              <Download className="h-4 w-4 text-amber-600" />
+              <Download className="h-4 w-4 text-amber-600 shrink-0" />
             </div>
-            <div className="mt-2 text-xl font-bold tabular-nums whitespace-nowrap text-amber-600">
+            <div className="mt-2 text-lg xl:text-xl font-bold tabular-nums break-words text-amber-600">
               {formatReportCurrency(totals.tax)}
             </div>
           </CardContent>
         </Card>
-        <Card className="glass-card hover-lift">
+        <Card className="glass-card hover-lift min-w-0">
           <CardContent className="p-4">
             <div className="flex items-center justify-between text-muted-foreground">
               <span className="text-xs font-medium uppercase tracking-wide">Net Payable</span>
-              <Users className="h-4 w-4 text-emerald-600" />
+              <Users className="h-4 w-4 text-emerald-600 shrink-0" />
             </div>
-            <div className="mt-2 text-xl font-bold tabular-nums whitespace-nowrap text-emerald-600">
+            <div className="mt-2 text-lg xl:text-xl font-bold tabular-nums break-words text-emerald-600">
               {formatReportCurrency(totals.net)}
             </div>
           </CardContent>
@@ -592,6 +592,26 @@ function ReportsRoute() {
         <ReportsDebentureTab
           debentureSummary={debentureSummary}
           isLoading={debentureSummaryQuery.isLoading}
+          onLogSummaryExport={async (reportId, reportTitle, format) => {
+            try {
+              const { data: authRes } = await supabase.auth.getUser();
+              await (supabase as any).from("audit_logs").insert({
+                user_id: authRes?.user?.id || null,
+                action: "EXPORT_REPORT",
+                table_name: "reports",
+                record_id: reportId,
+                new_value: {
+                  reportId,
+                  reportTitle,
+                  format,
+                  company: selectedCompany?.company_code || companyId,
+                },
+              });
+              setExportRevision((v) => v + 1);
+            } catch {
+              // Non-blocking audit log
+            }
+          }}
         />
 
         <ReportsMutualFundTab

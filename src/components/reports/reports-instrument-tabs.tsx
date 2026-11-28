@@ -159,10 +159,12 @@ export function ReportsAgmTab({
 export function ReportsDebentureTab({
   debentureSummary,
   isLoading,
+  onLogSummaryExport,
 }: {
   debentureSummary:
     ReturnType<typeof DebentureSummaryReportService.generateReportFromPayables> | undefined;
   isLoading: boolean;
+  onLogSummaryExport?: (reportId: ReportId, title: string, format: "PDF" | "XLSX") => void;
 }) {
   return (
     <TabsContent value="debenture" className="space-y-4">
@@ -200,18 +202,32 @@ export function ReportsDebentureTab({
                 ) disbursed.
               </CardDescription>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => DebentureSummaryReportService.exportToExcel(debentureSummary)}
+                onClick={() => {
+                  DebentureSummaryReportService.exportToExcel(debentureSummary);
+                  onLogSummaryExport?.(
+                    "debenture_pumori_summary" as ReportId,
+                    "Pumori Category Breakdown & TDS Control",
+                    "XLSX",
+                  );
+                }}
               >
                 <FileSpreadsheet className="mr-1.5 h-4 w-4 text-emerald-600" /> Export Excel
               </Button>
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => DebentureSummaryReportService.exportToPdf(debentureSummary)}
+                onClick={() => {
+                  DebentureSummaryReportService.exportToPdf(debentureSummary);
+                  onLogSummaryExport?.(
+                    "debenture_pumori_summary" as ReportId,
+                    "Pumori Category Breakdown & TDS Control",
+                    "PDF",
+                  );
+                }}
               >
                 <FileText className="mr-1.5 h-4 w-4 text-rose-600" /> Export PDF
               </Button>

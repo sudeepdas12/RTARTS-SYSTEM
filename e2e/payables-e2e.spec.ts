@@ -128,7 +128,13 @@ test.describe("Payables Module End-to-End Suite", () => {
     await newBtn.click();
     await expect(page.locator("text=New Interest Payable").first()).toBeVisible({ timeout: 5000 });
 
-    await expect(page.locator("button:has-text('Recompute 6%/15% TDS')").first()).toBeVisible();
+    await expect(
+      page
+        .locator(
+          "button:has-text('Recompute Statutory TDS'), button:has-text('Recompute 6%/15% TDS')",
+        )
+        .first(),
+    ).toBeVisible();
     await page.locator("button:has-text('Cancel')").first().click();
   });
 

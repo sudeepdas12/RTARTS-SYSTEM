@@ -228,4 +228,25 @@ describe("BankParser Comprehensive Unit Tests", () => {
     expect(provenance.hasFailures).toBe(false);
     expect(provenance.statementMetadata?.totalDebit).toBe(15000);
   });
+
+  it("preserves repeating multi-day NRB circular sweeps with identical account reference inside one statement", async () => {
+    const csv = [
+      "Bank: RBB",
+      "Opening Balance: 3000",
+      "Closing Balance: 3000",
+      "Date,Description,Debit,Credit,Balance",
+      "2026-07-02,: 1700100000019006 NRB CIRCULAR,1952928.80,0,3000",
+      "2026-07-02,: 1700100000019006 NRB CIRCULAR,0,1952928.80,1955928.80",
+      "2026-07-03,: 1700100000019006 NRB CIRCULAR,1952928.80,0,3000",
+      "2026-07-03,: 1700100000019006 NRB CIRCULAR,0,1952928.80,1955928.80",
+    ].join("\n");
+
+    const file = createMockFile(csv, "rbb_circular_multi_day.csv");
+    const provenance = await BankParser.parseMultipleFilesWithProvenance([file], {
+      includeCircularSweeps: true,
+    });
+    expect(provenance.transactions).toHaveLength(4);
+    expect(provenance.statementMetadata?.isBalanced).toBe(true);
+    expect(provenance.statementMetadata?.balanceDifference).toBe(0);
+  });
 });

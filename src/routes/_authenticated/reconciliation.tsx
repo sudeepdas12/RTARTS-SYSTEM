@@ -463,6 +463,7 @@ function ReconciliationRoute() {
             variantWarnings,
             statementMetadata,
           } = await BankParser.parseMultipleFilesWithProvenance(bankFiles, {
+            includeCircularSweeps: true,
             onProgress: (cur, tot, name) =>
               setProcessingProgress(`Analyzing settlement report ${cur} of ${tot}: ${name}`),
           });
@@ -584,6 +585,7 @@ function ReconciliationRoute() {
         variantWarnings,
         statementMetadata,
       } = await BankParser.parseMultipleFilesWithProvenance(files, {
+        includeCircularSweeps: true,
         onProgress: (cur, tot, name) =>
           setProcessingProgress(`Parsing bank statement ${cur} of ${tot}: ${name}`),
       });
@@ -1212,7 +1214,7 @@ function ReconciliationRoute() {
   );
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between flex-wrap gap-3">
         <PageHeader
           title="Reconciliation Engine"
@@ -1843,7 +1845,7 @@ function ReconciliationRoute() {
 
       {/* Multi-Channel Operational Workbenches: Persistent Bank Ledger, Durable Exceptions & BRS */}
       <Tabs value={opsWorkbenchTab} onValueChange={setOpsWorkbenchTab} className="space-y-3">
-        <TabsList className="flex flex-wrap sm:grid w-full sm:grid-cols-3 h-auto gap-1">
+        <TabsList className="flex flex-wrap w-full justify-start h-auto gap-1 p-1">
           <TabsTrigger value="bank_ledger" className="text-xs">
             Bank Ledger &amp; Manual Matching
           </TabsTrigger>

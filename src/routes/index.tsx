@@ -30,7 +30,7 @@ function Landing() {
             Registrar & Transfer Agent Platform
           </span>
           <h1 className="mt-6 text-5xl font-bold tracking-tight md:text-6xl">
-            Debenture interest & stock dividend, <span className="text-accent">reconciled.</span>
+            Debenture interest & stock dividend, <span className="text-primary">reconciled.</span>
           </h1>
           <p className="mx-auto mt-6 max-w-2xl text-lg text-muted-foreground">
             A complete platform for RTAs to manage payables, reconcile bank transactions, track
@@ -71,7 +71,7 @@ function Landing() {
             },
           ].map((m) => (
             <div key={m.title} className="rounded-xl border bg-card p-6 shadow-sm">
-              <m.icon className="h-8 w-8 text-accent" />
+              <m.icon className="h-8 w-8 text-primary" />
               <h3 className="mt-4 font-semibold">{m.title}</h3>
               <p className="mt-2 text-sm text-muted-foreground">{m.body}</p>
             </div>

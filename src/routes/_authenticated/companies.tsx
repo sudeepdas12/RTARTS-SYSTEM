@@ -836,13 +836,60 @@ function CompaniesPage() {
               ? 10
               : 100;
 
+          const normalizeSector = (raw: unknown): Sector | null => {
+            if (raw === undefined || raw === null || String(raw).trim() === "") return null;
+            const s = String(raw).trim().toLowerCase();
+            if (
+              s === "public" ||
+              s.includes("public") ||
+              s.includes("debenture") ||
+              s.includes("listed")
+            ) {
+              return "Public";
+            }
+            if (s === "private" || s.includes("private") || s.includes("pvt")) {
+              return "Private";
+            }
+            if (
+              s === "institution" ||
+              s.includes("institut") ||
+              s.includes("bank") ||
+              s.includes("finance") ||
+              s.includes("insur") ||
+              s.includes("mutual") ||
+              s.includes("capital")
+            ) {
+              return "Institution";
+            }
+            if (s === "government" || s.includes("gov")) {
+              return "Government";
+            }
+            return "Other";
+          };
+
+          const normalizeTaxStatus = (raw: unknown): TaxStatus | null => {
+            if (raw === undefined || raw === null || String(raw).trim() === "") return null;
+            const s = String(raw).trim().toLowerCase();
+            if (s.includes("exempt") || s === "0" || s === "0%" || s === "no") return "Exempted";
+            if (s.includes("taxable") || s === "yes") return "Taxable";
+            return null;
+          };
+
+          const cleanNum = (val: unknown): number | null => {
+            if (val === undefined || val === null || val === "") return null;
+            const n = Number(String(val).replace(/,/g, "").trim());
+            return Number.isFinite(n) ? n : null;
+          };
+
           const rawFace = getField(r, "face_value", "facevalue", "par_value");
           const rawIssueSize = getField(
             r,
             "issue_size",
             "issuesize",
+            "issued_units",
             "units",
             "total_units",
+            "total_kitta",
             "kitta",
           );
           const rawDiv = getField(
@@ -874,21 +921,20 @@ function CompaniesPage() {
               ? String(getField(r, "isin", "isin_code")).trim()
               : null,
             listed_date: parseExcelDate(getField(r, "listed_date", "listeddate")),
-            sector_type: (rawSector ? String(rawSector).trim() : null) as Sector | null,
+            sector_type: normalizeSector(rawSector),
             registrar: getField(r, "registrar", "rta", "rts")
               ? String(getField(r, "registrar", "rta", "rts")).trim()
               : "RBB Merchant Banking Limited",
             fiscal_year: getField(r, "fiscal_year", "fiscalyear", "fy")
               ? String(getField(r, "fiscal_year", "fiscalyear", "fy")).trim()
               : null,
-            dividend_rate: rawDiv !== undefined && rawDiv !== "" ? Number(rawDiv) : null,
-            debenture_rate: rawDeb !== undefined && rawDeb !== "" ? Number(rawDeb) : null,
-            coupon_rate: rawCpn !== undefined && rawCpn !== "" ? Number(rawCpn) : null,
+            dividend_rate: cleanNum(rawDiv),
+            debenture_rate: cleanNum(rawDeb),
+            coupon_rate: cleanNum(rawCpn),
             maturity_date: parseExcelDate(getField(r, "maturity_date", "maturitydate", "maturity")),
-            face_value: rawFace !== undefined && rawFace !== "" ? Number(rawFace) : defaultFace,
-            issue_size:
-              rawIssueSize !== undefined && rawIssueSize !== "" ? Number(rawIssueSize) : null,
-            interest_tax_status: (rawTax ? String(rawTax).trim() : null) as TaxStatus | null,
+            face_value: cleanNum(rawFace) ?? defaultFace,
+            issue_size: cleanNum(rawIssueSize),
+            interest_tax_status: normalizeTaxStatus(rawTax),
             pan_no: getField(r, "pan_no", "panno", "pan")
               ? String(getField(r, "pan_no", "panno", "pan")).trim()
               : null,
@@ -928,7 +974,13 @@ function CompaniesPage() {
       qc.invalidateQueries({ queryKey: ["companies-live-stats"] });
       toast.success(`Successfully imported ${clean.length} companies`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Import failed");
+      const msg =
+        e instanceof Error
+          ? e.message
+          : e && typeof e === "object" && "message" in e
+            ? String((e as { message: unknown }).message)
+            : "Import failed";
+      toast.error(msg);
     }
   };
 
@@ -975,7 +1027,7 @@ function CompaniesPage() {
       />
 
       {/* KPI Stats Strip — 100% Dynamic from Database */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[
           {
             label: "Total Registered Entities",
@@ -1002,9 +1054,13 @@ function CompaniesPage() {
                   : `${(stats.totalUnits / 100_000).toFixed(2)} Lakh Kitta`
                 : "—",
             sub:
-              stats.totalNominalCapital > 0
-                ? `Nominal: NPR ${(stats.totalNominalCapital / 100_000_000).toFixed(2)} Arba`
-                : "Nominal capital tracking",
+              stats.totalNominalCapital >= 1_000_000_000
+                ? `Nominal: NPR ${(stats.totalNominalCapital / 1_000_000_000).toFixed(2)} Arba`
+                : stats.totalNominalCapital >= 10_000_000
+                  ? `Nominal: NPR ${(stats.totalNominalCapital / 10_000_000).toFixed(2)} Cr`
+                  : stats.totalNominalCapital > 0
+                    ? `Nominal: NPR ${(stats.totalNominalCapital / 100_000).toFixed(2)} Lakh`
+                    : "Nominal capital tracking",
             icon: Coins,
             color: "text-blue-600",
             bg: "bg-blue-50 dark:bg-blue-950/30",
@@ -1096,12 +1152,14 @@ function CompaniesPage() {
             </span>
           </div>
 
-          <PaginatedTable
-            columns={columns}
-            data={filtered}
-            pageSize={10}
-            onRowClick={(company) => setSelectedCompanyForSheet(company)}
-          />
+          <div className="w-full overflow-x-auto">
+            <PaginatedTable
+              columns={columns}
+              data={filtered}
+              pageSize={10}
+              onRowClick={(company) => setSelectedCompanyForSheet(company)}
+            />
+          </div>
         </CardContent>
       </Card>
 

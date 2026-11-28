@@ -587,7 +587,7 @@ function ClassificationReviewPage() {
   };
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6">
       <PageHeader
         title="Investor Classification Review"
         description="Verify and confirm shareholder categories to ensure TDS is withheld at authoritative regulatory rates."
@@ -595,9 +595,9 @@ function ClassificationReviewPage() {
 
       {/* KPI Cards */}
       <div className="grid gap-4 sm:grid-cols-3">
-        <Card className="border-amber-200/60 bg-amber-50/20 dark:border-amber-900/40">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
+        <Card className="border-amber-200/60 bg-amber-50/20 dark:border-amber-900/40 min-w-0">
+          <CardContent className="p-4 flex items-center justify-between gap-3">
+            <div className="min-w-0 flex-1">
               <p className="text-xs font-medium text-muted-foreground uppercase">Needs Review</p>
               <p className="text-2xl font-bold text-amber-600 mt-1 tabular-nums">
                 {clients.data?.length ?? 0}
@@ -606,15 +606,15 @@ function ClassificationReviewPage() {
                 Shareholders awaiting decision
               </p>
             </div>
-            <div className="p-3 bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400 rounded-xl">
+            <div className="p-3 bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400 rounded-xl shrink-0">
               <ClipboardCheck className="h-5 w-5" />
             </div>
           </CardContent>
         </Card>
 
-        <Card className="border-red-200/60 bg-red-50/20 dark:border-red-900/40">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
+        <Card className="border-red-200/60 bg-red-50/20 dark:border-red-900/40 min-w-0">
+          <CardContent className="p-4 flex items-center justify-between gap-3">
+            <div className="min-w-0 flex-1">
               <p className="text-xs font-medium text-muted-foreground uppercase">Tax Exceptions</p>
               <p className="text-2xl font-bold text-red-600 mt-1 tabular-nums">
                 {exceptions.data?.length ?? 0}
@@ -623,15 +623,15 @@ function ClassificationReviewPage() {
                 Payables with mathematical mismatch
               </p>
             </div>
-            <div className="p-3 bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400 rounded-xl">
+            <div className="p-3 bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400 rounded-xl shrink-0">
               <AlertTriangle className="h-5 w-5" />
             </div>
           </CardContent>
         </Card>
 
-        <Card className="border-emerald-200/60 bg-emerald-50/20 dark:border-emerald-900/40">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
+        <Card className="border-emerald-200/60 bg-emerald-50/20 dark:border-emerald-900/40 min-w-0">
+          <CardContent className="p-4 flex items-center justify-between gap-3">
+            <div className="min-w-0 flex-1">
               <p className="text-xs font-medium text-muted-foreground uppercase">TDS Compliance</p>
               <p className="text-2xl font-bold text-emerald-600 mt-1 flex items-center gap-1.5">
                 {(clients.data?.length ?? 0) === 0 ? "100%" : "Active"}
@@ -642,7 +642,7 @@ function ClassificationReviewPage() {
                   : "Manual verification active"}
               </p>
             </div>
-            <div className="p-3 bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 rounded-xl">
+            <div className="p-3 bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 rounded-xl shrink-0">
               <UserCheck className="h-5 w-5" />
             </div>
           </CardContent>
@@ -650,7 +650,7 @@ function ClassificationReviewPage() {
       </div>
 
       <Tabs defaultValue="review" className="space-y-4">
-        <TabsList>
+        <TabsList className="flex flex-wrap h-auto justify-start gap-1">
           <TabsTrigger value="review" className="gap-2">
             <ClipboardCheck className="w-4 h-4" /> Needs Review
             {clients.data?.length ? (

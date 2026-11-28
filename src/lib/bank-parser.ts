@@ -1617,27 +1617,31 @@ export const BankParser = {
           metadata: fileMeta,
         });
 
+        const fileInstKeys = new Set<string>();
+        const fileLedgerKeys = new Set<string>();
+
         for (const t of txns) {
           const idRef = t.instructionId || t.referenceId;
           if (idRef && idRef.trim()) {
-            const instKey = `${idRef.trim().toUpperCase()}_${t.category || ""}_${t.debit}_${t.credit}`;
-            if (seenInstructionIds.has(instKey)) {
+            const instKey = `${idRef.trim().toUpperCase()}_${t.category || ""}_${t.date || ""}_${t.debit}_${t.credit}_${t.balance ?? 0}`;
+            const isIntraFileDuplicate = t.category !== "NRB_CIRCULAR" && fileInstKeys.has(instKey);
+            if (isIntraFileDuplicate || (i > 0 && seenInstructionIds.has(instKey))) {
               continue;
             }
-            seenInstructionIds.add(instKey);
-          } else if (i > 0 && t.balance !== 0 && t.accountNo) {
-            const ledgerKey = `${t.accountNo}_${t.date}_${t.debit}_${t.credit}_${t.balance}_${t.description.trim()}`;
-            if (seenCrossFileLedger.has(ledgerKey)) {
-              continue;
-            }
-            seenCrossFileLedger.add(ledgerKey);
+            fileInstKeys.add(instKey);
           } else if (t.balance !== 0 && t.accountNo) {
             const ledgerKey = `${t.accountNo}_${t.date}_${t.debit}_${t.credit}_${t.balance}_${t.description.trim()}`;
-            seenCrossFileLedger.add(ledgerKey);
+            if (i > 0 && seenCrossFileLedger.has(ledgerKey)) {
+              continue;
+            }
+            fileLedgerKeys.add(ledgerKey);
           }
 
           allTransactions.push(t);
         }
+
+        for (const k of fileInstKeys) seenInstructionIds.add(k);
+        for (const k of fileLedgerKeys) seenCrossFileLedger.add(k);
       } catch (err: any) {
         console.error(`Failed to parse file ${file.name}:`, err);
         hasFailures = true;
@@ -1690,10 +1694,14 @@ export const BankParser = {
     }
 
     const primaryStatus = fileStatuses.find((s) => s.status === "parsed" && s.metadata);
+    const closingStatus = [...fileStatuses]
+      .reverse()
+      .find((s) => s.status === "parsed" && s.metadata);
     const allDebits = allTransactions.reduce((sum, t) => sum + (t.debit || 0), 0);
     const allCredits = allTransactions.reduce((sum, t) => sum + (t.credit || 0), 0);
     const initialOpening = primaryStatus?.metadata?.openingBalance;
-    const finalClosing = primaryStatus?.metadata?.closingBalance;
+    const finalClosing =
+      closingStatus?.metadata?.closingBalance ?? primaryStatus?.metadata?.closingBalance;
     const calculatedClosingBalance =
       initialOpening !== undefined ? initialOpening + allCredits - allDebits : undefined;
 

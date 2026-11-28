@@ -65,13 +65,29 @@ export function BankReconciliationStatementPanel({
       : effectiveManualId || companiesList[0]?.id || "";
   const setCompanyId = (id: string) => {
     setLocalCompanyId(id);
+    setManualPeriodStart(null);
+    setManualPeriodEnd(null);
     onSelectCompanyId?.(id);
   };
-  const [periodStart, setPeriodStart] = useState<string>(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  const [manualPeriodStart, setManualPeriodStart] = useState<string | null>(null);
+  const [manualPeriodEnd, setManualPeriodEnd] = useState<string | null>(null);
+
+  const { data: txDateRange } = useQuery({
+    queryKey: ["brs_tx_date_range", companyId],
+    enabled: Boolean(currentUserId && companyId),
+    queryFn: () => ReconciliationService.getCompanyBankTransactionDateRange(companyId),
   });
-  const [periodEnd, setPeriodEnd] = useState<string>(() => new Date().toISOString().slice(0, 10));
+
+  const today = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const defaultPeriodStart = txDateRange?.minDate
+    ? `${txDateRange.minDate.slice(0, 7)}-01`
+    : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  const defaultPeriodEnd =
+    txDateRange?.maxDate && txDateRange.maxDate > today ? txDateRange.maxDate : today;
+
+  const periodStart = manualPeriodStart ?? defaultPeriodStart;
+  const periodEnd = manualPeriodEnd ?? defaultPeriodEnd;
   const [bankClosingInput, setBankClosingInput] = useState<string>("");
   const [fiscalYear, setFiscalYear] = useState<string>("2082/83");
 
@@ -297,7 +313,7 @@ export function BankReconciliationStatementPanel({
               <Input
                 type="date"
                 value={periodStart}
-                onChange={(e) => setPeriodStart(e.target.value)}
+                onChange={(e) => setManualPeriodStart(e.target.value)}
                 className="h-8 text-xs"
               />
             </div>
@@ -306,7 +322,7 @@ export function BankReconciliationStatementPanel({
               <Input
                 type="date"
                 value={periodEnd}
-                onChange={(e) => setPeriodEnd(e.target.value)}
+                onChange={(e) => setManualPeriodEnd(e.target.value)}
                 className="h-8 text-xs"
               />
             </div>
@@ -362,51 +378,51 @@ export function BankReconciliationStatementPanel({
                 </AlertDescription>
               </Alert>
 
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <div className="p-3 rounded-lg border bg-card">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                <div className="p-3 rounded-lg border bg-card min-w-0">
                   <div className="text-[11px] text-muted-foreground">Bank Closing Balance</div>
-                  <div className="text-base font-bold font-mono mt-1">
+                  <div className="text-sm xl:text-base font-bold font-mono mt-1 break-words">
                     {fmtNpr(brs.bank_closing_balance)}
                   </div>
-                  <div className="text-[10px] text-muted-foreground mt-1">
+                  <div className="text-[10px] text-muted-foreground mt-1 break-words">
                     Outflows: {fmtNpr(brs.bank_total_debit)}
                   </div>
                 </div>
-                <div className="p-3 rounded-lg border bg-card">
+                <div className="p-3 rounded-lg border bg-card min-w-0">
                   <div className="text-[11px] text-muted-foreground">Reconciled + Non-Payable</div>
-                  <div className="text-base font-bold font-mono text-emerald-600 mt-1">
+                  <div className="text-sm xl:text-base font-bold font-mono text-emerald-600 mt-1 break-words">
                     {fmtNpr(brs.reconciled_net_outflow)}
                   </div>
-                  <div className="text-[10px] text-muted-foreground mt-1">
+                  <div className="text-[10px] text-muted-foreground mt-1 break-words">
                     Payable Outflows: {fmtNpr(brs.reconciled_bank_debits)}
                   </div>
                 </div>
-                <div className="p-3 rounded-lg border bg-card">
+                <div className="p-3 rounded-lg border bg-card min-w-0">
                   <div className="text-[11px] text-muted-foreground">System Ledger Settled</div>
-                  <div className="text-base font-bold font-mono mt-1">
+                  <div className="text-sm xl:text-base font-bold font-mono mt-1 break-words">
                     {fmtNpr(brs.ledger_paid_total)}
                   </div>
-                  <div className="text-[10px] text-muted-foreground mt-1">
+                  <div className="text-[10px] text-muted-foreground mt-1 break-words">
                     In-Transit Batches: {fmtNpr(brs.in_transit_batches_amount)}
                   </div>
                 </div>
-                <div className="p-3 rounded-lg border bg-card">
+                <div className="p-3 rounded-lg border bg-card min-w-0">
                   <div className="text-[11px] text-muted-foreground">Unreconciled Variance</div>
                   <div
-                    className={`text-base font-bold font-mono mt-1 ${
+                    className={`text-sm xl:text-base font-bold font-mono mt-1 break-words ${
                       brs.unreconciled_variance > 0.05 ? "text-destructive" : "text-emerald-600"
                     }`}
                   >
                     {fmtNpr(brs.unreconciled_variance)}
                   </div>
-                  <div className="text-[10px] text-muted-foreground mt-1">
+                  <div className="text-[10px] text-muted-foreground mt-1 break-words">
                     Pending Manual Queue: {brs.pending_manual_count} (
                     {fmtNpr(brs.pending_manual_amount)})
                   </div>
                 </div>
               </div>
 
-              <div className="border rounded-lg overflow-hidden">
+              <div className="border rounded-lg overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>

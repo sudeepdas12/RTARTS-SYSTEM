@@ -462,7 +462,7 @@ function UsersRoute() {
   }
 
   return (
-    <div className="flex flex-col gap-6 p-6 animate-fade-in">
+    <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between flex-wrap gap-3">
         <PageHeader
           title="User & Identity Management"

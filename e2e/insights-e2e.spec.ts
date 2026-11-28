@@ -79,14 +79,17 @@ test.describe("Insights & Operations Comprehensive End-to-End Suite", () => {
     await expect(registersTab).toBeVisible();
 
     // Under All Summaries, verify either distribution summary card or empty state is rendered
-    const distSummaryCard = page.locator("text=/Mutual Fund Distribution Summary/i").first();
+    const distSummaryCard = page
+      .locator("text=/(Mutual Fund Distribution|Debenture.*Interest|AGM Cash & Bonus).*Summary/i")
+      .first();
     const emptyDistCard = page.locator("text=/No Distribution Records Found/i").first();
-    await expect(distSummaryCard.or(emptyDistCard)).toBeVisible();
+    await expect(distSummaryCard.or(emptyDistCard).first()).toBeVisible();
 
     // Under Mutual Funds (CDS) tab, verify either distribution summary card or empty state is rendered
     await mutualFundTab.click();
+    const mfDistCard = page.locator("text=/Mutual Fund Distribution Summary/i").first();
     const mfEmptyCard = page.locator("text=/No mutual fund records found/i").first();
-    await expect(distSummaryCard.or(mfEmptyCard)).toBeVisible({
+    await expect(mfDistCard.or(mfEmptyCard).first()).toBeVisible({
       timeout: 5000,
     });
 

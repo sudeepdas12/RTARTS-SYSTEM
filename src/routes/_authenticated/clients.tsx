@@ -11,6 +11,13 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -67,6 +74,26 @@ import { ShareholderStatementDialog } from "@/components/shareholder-statement-d
 import { ShareholderNoticeDialog } from "@/components/shareholder-notice-dialog";
 import { ShareholderNoticeService } from "@/lib/services/shareholder-notice.service";
 import { normalizeBoid } from "@/lib/validation-engine";
+import { smartClassify } from "@/lib/services/smart-classifier";
+
+const VALID_HOLDER_TYPES = new Set<Holder>([
+  "Natural Person - Public",
+  "Natural Person - Promoter",
+  "Natural Person - Local",
+  "Natural Person - Employee",
+  "Natural Person - Minor",
+  "Natural Person - Joint Holder",
+  "Legal Person",
+  "Legal Person - Promoter",
+  "Mutual Fund",
+  "Foreign",
+  "Tax Exempt",
+  "Public",
+  "Promoter",
+  "Local",
+  "Employee",
+  "Institution",
+]);
 
 export const Route = createFileRoute("/_authenticated/clients")({
   component: ClientsPage,
@@ -93,7 +120,12 @@ type Status = "Active" | "Inactive";
 type Residency = "Resident" | "Non-Resident";
 type Verification = "Pending" | "Verified" | "Rejected";
 type PayeeClassification =
-  "NATURAL_PERSON" | "PUBLIC_LEGAL_PERSON" | "COMPANY_INSTITUTION" | "TAX_EXEMPT" | "UNCLASSIFIED";
+  | "NATURAL_PERSON"
+  | "PUBLIC_LEGAL_PERSON"
+  | "COMPANY_INSTITUTION"
+  | "BANK_FI"
+  | "TAX_EXEMPT"
+  | "UNCLASSIFIED";
 
 function classificationBadge(c: PayeeClassification | null, holderType?: string | null) {
   switch (c) {
@@ -122,6 +154,15 @@ function classificationBadge(c: PayeeClassification | null, holderType?: string 
           className="bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300 border-0 text-[10px]"
         >
           Legal Person / Institution (15% Div / 15% Deb)
+        </Badge>
+      );
+    case "BANK_FI":
+      return (
+        <Badge
+          variant="secondary"
+          className="bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 border-0 text-[10px]"
+        >
+          Bank / FI (5% Div / 0% Deb)
         </Badge>
       );
     case "TAX_EXEMPT":
@@ -416,6 +457,9 @@ function ClientsPage() {
   const [showCounterDropdown, setShowCounterDropdown] = useState(false);
   const [noticeDialogOpen, setNoticeDialogOpen] = useState(false);
   const [noticeTargetClient, setNoticeTargetClient] = useState<any | null>(null);
+  const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
+  const [importTargetCompanyId, setImportTargetCompanyId] = useState<string>("");
+  const [isImportingFile, setIsImportingFile] = useState(false);
 
   const handleCounterLookup = async (queryToSearch?: string) => {
     const raw = (queryToSearch !== undefined ? queryToSearch : counterQuery).trim();
@@ -1089,10 +1133,36 @@ function ClientsPage() {
     return /^\d{4}-\d{2}-\d{2}$/.test(str) ? str : str || null;
   }
 
-  const handleImport = async (file: File) => {
+  const handleImport = async (file: File, explicitCompanyId?: string) => {
+    setIsImportingFile(true);
     try {
       const rows = await importFromExcel<Record<string, unknown>>(file);
-      const clean = rows
+      const hasAnyRowCompany = rows.some((r) =>
+        Boolean(getClientField(r, "company_id", "company_code", "companycode", "company")),
+      );
+
+      if (
+        !explicitCompanyId &&
+        companyFilter === "all" &&
+        !hasAnyRowCompany &&
+        companies.length > 1
+      ) {
+        const lowerName = file.name.toUpperCase();
+        const filenameMatch = companies.find(
+          (c) =>
+            (c.company_code && lowerName.includes(c.company_code.toUpperCase())) ||
+            (c.company_name && lowerName.includes(c.company_name.toUpperCase())),
+        );
+        setPendingImportFile(file);
+        setImportTargetCompanyId(filenameMatch?.id ?? companies[0]?.id ?? "");
+        setIsImportingFile(false);
+        return;
+      }
+
+      const defaultCompanyId =
+        explicitCompanyId || (companyFilter !== "all" ? companyFilter : (companies[0]?.id ?? null));
+
+      const rawMapped = rows
         .map((r, idx) => {
           const rawCode = getClientField(
             r,
@@ -1101,7 +1171,6 @@ function ClientsPage() {
             "code",
             "shareholder_no",
             "folio_no",
-            "account_no",
           );
           const rawName = getClientField(
             r,
@@ -1122,6 +1191,26 @@ function ClientsPage() {
               : `CL-${Date.now().toString().slice(-6)}-${idx + 1}`;
 
           if (!rawName) return null;
+
+          const trimmedName = String(rawName).trim();
+          const fatherName = getClientField(
+            r,
+            "father_name",
+            "fathername",
+            "fathersname",
+            "fathers_name",
+            "father",
+          );
+          const trimmedFather = fatherName ? String(fatherName).trim() : null;
+          const grandfatherName = getClientField(
+            r,
+            "grandfather_name",
+            "grandfathername",
+            "grandfathersname",
+            "grandfathers_name",
+            "grandfather",
+          );
+          const trimmedGrandfather = grandfatherName ? String(grandfatherName).trim() : null;
 
           const pan = getClientField(r, "pan_no", "panno", "pan", "pan_number")
             ? String(getClientField(r, "pan_no", "panno", "pan", "pan_number")).trim()
@@ -1154,7 +1243,37 @@ function ClientsPage() {
             "tax_class",
             "tax_classification",
           );
-          const payeeClass = (rawClass as PayeeClassification) ?? "NATURAL_PERSON";
+          const rawHolder = getClientField(r, "holder_type", "holdertype");
+
+          const sc = smartClassify({
+            full_name: trimmedName,
+            father_name: trimmedFather,
+            grandfather_name: trimmedGrandfather,
+            pan,
+            citizenship_no: ctz,
+            pan_or_citizenship: pan || ctz || legacyPanCtz,
+            boid: cleanBoid || undefined,
+            holder_type: rawHolder ? String(rawHolder).trim() : undefined,
+          });
+
+          const payeeClass = (
+            rawClass ? String(rawClass).trim().toUpperCase() : sc.payee_classification
+          ) as PayeeClassification;
+
+          const candidateHolder = rawHolder
+            ? String(rawHolder).trim()
+            : sc.holder_type === "Bank / Financial Institution"
+              ? "Institution"
+              : sc.holder_type;
+          const safeHolderType =
+            candidateHolder && VALID_HOLDER_TYPES.has(candidateHolder as Holder)
+              ? (candidateHolder as Holder)
+              : null;
+
+          const classificationStatus = rawClass
+            ? "CONFIRMED"
+            : (sc.classification_status ??
+              (payeeClass === "UNCLASSIFIED" ? "REVIEW_REQUIRED" : "AUTO_CLASSIFIED"));
 
           const rowCompanyCode = getClientField(r, "company_code", "companycode", "company");
           const resolvedCompanyId = getClientField(r, "company_id")
@@ -1162,12 +1281,38 @@ function ClientsPage() {
             : rowCompanyCode
               ? (companies.find(
                   (c) => c.company_code === String(rowCompanyCode).trim().toUpperCase(),
-                )?.id ?? null)
-              : companyFilter !== "all"
-                ? companyFilter
-                : (companies[0]?.id ?? null);
+                )?.id ?? defaultCompanyId)
+              : defaultCompanyId;
 
           const rawKitta = getClientField(r, "kitta", "holding_kitta", "shares", "units");
+          const numericKitta =
+            rawKitta !== undefined && rawKitta !== null
+              ? Math.max(0, Number(String(rawKitta).replace(/,/g, "").trim()) || 0)
+              : 0;
+
+          const phoneVal = getClientField(
+            r,
+            "phone",
+            "phone_no",
+            "mobile",
+            "mobile_no",
+            "contact_no",
+            "contact",
+            "contact_number",
+          );
+          const bankAccVal = getClientField(
+            r,
+            "bank_account_no",
+            "bankaccountno",
+            "account_no",
+            "account_number",
+            "bankacno",
+            "bank_a_c_no",
+            "bankac",
+            "a_c_no",
+            "acno",
+          );
+          const bankCodeVal = getClientField(r, "bank_code", "bankcode", "bcode", "b_code");
 
           return {
             client_code: clientCode,
@@ -1175,20 +1320,9 @@ function ClientsPage() {
             client_id: getClientField(r, "client_id")
               ? String(getClientField(r, "client_id")).trim()
               : null,
-            full_name: String(rawName).trim(),
-            father_name: getClientField(r, "father_name", "fathername", "father")
-              ? String(getClientField(r, "father_name", "fathername", "father")).trim()
-              : null,
-            grandfather_name: getClientField(
-              r,
-              "grandfather_name",
-              "grandfathername",
-              "grandfather",
-            )
-              ? String(
-                  getClientField(r, "grandfather_name", "grandfathername", "grandfather"),
-                ).trim()
-              : null,
+            full_name: trimmedName,
+            father_name: trimmedFather,
+            grandfather_name: trimmedGrandfather,
             date_of_birth: parseClientDate(getClientField(r, "date_of_birth", "dob")),
             gender: getClientField(r, "gender", "sex")
               ? String(getClientField(r, "gender", "sex")).trim()
@@ -1197,9 +1331,13 @@ function ClientsPage() {
               ? String(getClientField(r, "occupation", "profession")).trim()
               : null,
             boid: cleanBoid,
-            kitta: Math.max(0, Number(rawKitta ?? 0)),
-            holder_type: (getClientField(r, "holder_type", "holdertype") as Holder) ?? null,
+            kitta: numericKitta,
+            holder_type: safeHolderType,
             payee_classification: payeeClass,
+            payee_segment: sc.payee_segment ?? null,
+            classification_status: classificationStatus,
+            needs_review:
+              payeeClass === "UNCLASSIFIED" || classificationStatus === "REVIEW_REQUIRED",
             pan_no: pan,
             citizenship_no: ctz,
             pan_or_citizenship: pan || ctz || legacyPanCtz,
@@ -1218,35 +1356,18 @@ function ClientsPage() {
             municipality: getClientField(r, "municipality", "city")
               ? String(getClientField(r, "municipality", "city")).trim()
               : null,
-            phone: getClientField(r, "phone", "phone_no", "mobile", "contact_no")
-              ? String(getClientField(r, "phone", "phone_no", "mobile", "contact_no")).trim()
-              : null,
+            phone: phoneVal ? String(phoneVal).trim() : null,
             email: getClientField(r, "email", "email_address")
               ? String(getClientField(r, "email", "email_address")).trim()
               : null,
+            bank_code: bankCodeVal ? String(bankCodeVal).trim() : null,
             bank_name: getClientField(r, "bank_name", "bankname", "bank")
               ? String(getClientField(r, "bank_name", "bankname", "bank")).trim()
               : null,
             bank_branch: getClientField(r, "bank_branch", "branch")
               ? String(getClientField(r, "bank_branch", "branch")).trim()
               : null,
-            bank_account_no: getClientField(
-              r,
-              "bank_account_no",
-              "bankaccountno",
-              "account_no",
-              "account_number",
-            )
-              ? String(
-                  getClientField(
-                    r,
-                    "bank_account_no",
-                    "bankaccountno",
-                    "account_no",
-                    "account_number",
-                  ),
-                ).trim()
-              : null,
+            bank_account_no: bankAccVal ? String(bankAccVal).trim() : null,
             account_type: getClientField(r, "account_type")
               ? String(getClientField(r, "account_type")).trim()
               : null,
@@ -1258,7 +1379,14 @@ function ClientsPage() {
         })
         .filter((r): r is NonNullable<typeof r> => r !== null);
 
-      if (!clean.length) return toast.error("No valid client rows found in spreadsheet");
+      if (!rawMapped.length) return toast.error("No valid client rows found in spreadsheet");
+
+      // Deduplicate by (company_id, client_code) within the batch so Postgres ON CONFLICT never hits duplicate keys in one statement
+      const dedupedMap = new Map<string, (typeof rawMapped)[number]>();
+      for (const item of rawMapped) {
+        dedupedMap.set(`${item.company_id ?? "none"}::${item.client_code}`, item);
+      }
+      const clean = Array.from(dedupedMap.values());
 
       const BATCH_SIZE = 250;
       for (let i = 0; i < clean.length; i += BATCH_SIZE) {
@@ -1271,10 +1399,19 @@ function ClientsPage() {
       if (fileRef.current) fileRef.current.value = "";
       qc.invalidateQueries({ queryKey: ["clients"] });
       qc.invalidateQueries({ queryKey: ["clients-stats"] });
+      qc.invalidateQueries({ queryKey: ["clients_selector"] });
       toast.success(`Successfully imported ${clean.length.toLocaleString()} clients`);
     } catch (e) {
       if (fileRef.current) fileRef.current.value = "";
-      toast.error(e instanceof Error ? e.message : "Import failed");
+      const msg =
+        e instanceof Error
+          ? e.message
+          : e && typeof e === "object" && "message" in e
+            ? String((e as { message: unknown }).message)
+            : "Import failed";
+      toast.error(msg);
+    } finally {
+      setIsImportingFile(false);
     }
   };
 
@@ -1331,7 +1468,7 @@ function ClientsPage() {
       />
 
       {/* KPI Stats Strip — 100% Dynamic & Interactive */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
         {[
           {
             label: "Total Shareholders",
@@ -1422,8 +1559,10 @@ function ClientsPage() {
               >
                 <s.icon className={`h-5 w-5 ${s.color}`} />
               </div>
-              <div className="min-w-0">
-                <p className="text-[11px] font-medium text-muted-foreground truncate">{s.label}</p>
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-medium text-muted-foreground leading-tight">
+                  {s.label}
+                </p>
                 <p className={`text-xl font-bold tabular-nums ${s.color}`}>
                   {s.value.toLocaleString()}
                 </p>
@@ -1436,12 +1575,12 @@ function ClientsPage() {
       {/* RTS Walk-in Counter 360° Quick Lookup */}
       <Card className="border-primary/30 bg-primary/5 shadow-sm">
         <CardContent className="p-4">
-          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+          <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
                 <Landmark className="h-5 w-5" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <h3 className="text-sm font-semibold">RTS Shareholder 360° Counter Lookup</h3>
                 <p className="text-xs text-muted-foreground">
                   Instantly retrieve consolidated holdings, distribution history & print official
@@ -1454,9 +1593,9 @@ function ClientsPage() {
                 e.preventDefault();
                 handleCounterLookup();
               }}
-              className="flex items-center gap-2 relative"
+              className="flex flex-wrap items-center gap-2 relative w-full lg:w-auto"
             >
-              <div className="relative min-w-[280px] sm:min-w-[340px]">
+              <div className="relative flex-1 min-w-[200px] sm:w-[320px] sm:flex-initial">
                 <Input
                   placeholder="Enter 16-digit BOID, PAN, Citizenship, Phone, Name..."
                   value={counterQuery}
@@ -2492,6 +2631,68 @@ function ClientsPage() {
           qc.invalidateQueries({ queryKey: ["clients"] });
         }}
       />
+
+      {/* Target Company Selector for Bulk Client Import */}
+      <Dialog
+        open={!!pendingImportFile}
+        onOpenChange={(o) => {
+          if (!o && !isImportingFile) setPendingImportFile(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Building2 className="h-5 w-5 text-primary" />
+              Select Target Company / Fund
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <p className="text-xs text-muted-foreground">
+              The file <strong className="text-foreground">{pendingImportFile?.name}</strong> does
+              not contain a <code>company_code</code> column. Choose which issuer/debenture company
+              should receive these client records:
+            </p>
+            <div className="space-y-1.5">
+              <Label>Target Company *</Label>
+              <Select value={importTargetCompanyId} onValueChange={setImportTargetCompanyId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select target company..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {companies.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.company_code} — {c.company_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              disabled={isImportingFile}
+              onClick={() => setPendingImportFile(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={!importTargetCompanyId || isImportingFile}
+              onClick={() => {
+                const file = pendingImportFile;
+                const cid = importTargetCompanyId;
+                setPendingImportFile(null);
+                if (file && cid) {
+                  setCompanyFilter(cid);
+                  handleImport(file, cid);
+                }
+              }}
+            >
+              {isImportingFile ? "Importing..." : "Import to Company"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -73,9 +73,7 @@ function StatCard({
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide truncate">
               {title}
             </p>
-            <p
-              className={`text-xl sm:text-2xl font-bold tabular-nums whitespace-nowrap ${colorClass}`}
-            >
+            <p className={`text-lg sm:text-xl font-bold tabular-nums break-words ${colorClass}`}>
               {value}
             </p>
             {subtitle && <p className="text-xs text-muted-foreground break-words">{subtitle}</p>}
@@ -222,7 +220,7 @@ function AnalyticsPage() {
   }, [filteredSummary]);
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6">
       <PageHeader
         title="Analytics & Fiscal Summaries"
         description="Comprehensive overview of companies, records, and overall payment statuses across Equity Dividends, Debentures, and Mutual Funds."

@@ -590,7 +590,7 @@ function AuditLogsRoute() {
   };
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6">
       <PageHeader
         title="Audit & Compliance Intelligence Center"
         description="Comprehensive immutable traceability of all database writes, payment lifecycle shifts, user actions, and system telemetry."
@@ -621,7 +621,7 @@ function AuditLogsRoute() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="h-10 bg-muted/60 p-1">
+        <TabsList className="flex flex-wrap h-auto w-full justify-start bg-muted/60 p-1 gap-1">
           <TabsTrigger value="activity" className="gap-2 text-xs md:text-sm">
             <History className="h-4 w-4" /> Modification History
             {auditLogs.length > 0 && (
@@ -1416,7 +1416,7 @@ function AuditLogsRoute() {
           {/* Deterministic Ledger Invariant Sentinel */}
           <Card>
             <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-3">
                 <div>
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
                     <ShieldCheck className="h-4 w-4 text-primary" /> Deterministic Ledger Invariant

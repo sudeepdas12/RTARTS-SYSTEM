@@ -50,17 +50,19 @@ async function cleanupLifecycleData(): Promise<void> {
       await adminClient.from("payment_batches").delete().in("id", bIds);
     }
     await adminClient.from("dividend_payables").delete().eq("company_id", comp.id);
+    await adminClient.from("bank_statement_transactions").delete().eq("company_id", comp.id);
+    await adminClient.from("bank_statement_imports").delete().eq("company_id", comp.id);
     await adminClient.from("bank_statements").delete().eq("company_id", comp.id);
     await adminClient.from("import_staging").delete().eq("company_id", comp.id);
     await adminClient.from("clients").delete().eq("company_id", comp.id);
     await adminClient.from("companies").delete().eq("id", comp.id);
   }
 
-  // Fallback cleanup for batch created under All Schemes scope
+  // Fallback cleanup for batch created under All Schemes or E2ELIFE scope
   const { data: strayBatches } = await adminClient
     .from("payment_batches")
     .select("id")
-    .ilike("batch_name", "%All Schemes Payout%");
+    .or("batch_name.ilike.%All Schemes Payout%,batch_name.ilike.%E2ELIFE Payout%");
   const strayBatchIds = (strayBatches || []).map((b: any) => b.id);
   if (strayBatchIds.length > 0) {
     const { data: pas } = await adminClient
@@ -207,7 +209,8 @@ test.describe("Full Financial Lifecycle E2E (Upload -> Batch -> ConnectIPS -> Re
     await expect(createDialog.locator("text=Create Payment Batch").first()).toBeVisible({
       timeout: 5000,
     });
-    await createDialog.locator("button:has-text('All Schemes')").first().click();
+    await createDialog.locator("button[role='combobox']").first().click();
+    await page.locator("[role='option']:has-text('E2ELIFE')").first().click();
     await expect(createDialog.locator("text=4 payables found matching").first()).toBeVisible({
       timeout: 10000,
     });
@@ -222,7 +225,7 @@ test.describe("Full Financial Lifecycle E2E (Upload -> Batch -> ConnectIPS -> Re
       await expect(autoBatchDialog).toBeHidden({ timeout: 5000 });
     }
 
-    const batchRow = page.locator("tbody tr", { hasText: "All Schemes Payout" }).first();
+    const batchRow = page.locator("tbody tr", { hasText: "E2ELIFE Payout" }).first();
     await expect(batchRow).toBeVisible({ timeout: 15000 });
     await batchRow.locator("button:has-text('Submit')").first().click();
     await expect(batchRow.locator("text=Pending").first()).toBeVisible({ timeout: 10000 });
@@ -244,7 +247,7 @@ test.describe("Full Financial Lifecycle E2E (Upload -> Batch -> ConnectIPS -> Re
 
       await checkerPage.goto("/payments");
       const checkerBatchRow = checkerPage
-        .locator("tbody tr", { hasText: "All Schemes Payout" })
+        .locator("tbody tr", { hasText: "E2ELIFE Payout" })
         .first();
       await expect(checkerBatchRow).toBeVisible({ timeout: 15000 });
       await checkerBatchRow.locator("button:has-text('Approve')").first().click();
@@ -256,7 +259,7 @@ test.describe("Full Financial Lifecycle E2E (Upload -> Batch -> ConnectIPS -> Re
     }
 
     await page.reload();
-    const approvedRow = page.locator("tbody tr", { hasText: "All Schemes Payout" }).first();
+    const approvedRow = page.locator("tbody tr", { hasText: "E2ELIFE Payout" }).first();
     await expect(approvedRow.locator("text=Approved").first()).toBeVisible({ timeout: 15000 });
 
     await approvedRow.locator("button:has-text('View')").first().click();
@@ -293,7 +296,7 @@ test.describe("Full Financial Lifecycle E2E (Upload -> Batch -> ConnectIPS -> Re
 
     // 8. Revert settled batch on /payments and verify payables return to Pending
     await page.goto("/payments");
-    const completedBatchRow = page.locator("tbody tr", { hasText: "All Schemes Payout" }).first();
+    const completedBatchRow = page.locator("tbody tr", { hasText: "E2ELIFE Payout" }).first();
     await completedBatchRow.locator("button:has-text('Revert')").first().click();
     await expect(completedBatchRow).toBeHidden({ timeout: 20000 });
 

@@ -1358,6 +1358,7 @@ export const ExcelParser = {
       const divTaxColKey = colFor("div_tax");
       const bonTaxColKey = colFor("bon_tax");
       const netColKey = colFor("net_payable");
+      const isTaxExemptSheet = sheetType === "TAX_EXEMPTED";
       let rowsWithFinancials = 0;
       for (const r of processedRows) {
         const cleanNum = (val: any) => {
@@ -1368,8 +1369,19 @@ export const ExcelParser = {
         const gross = cleanNum(grossColKey ? r[grossColKey] : undefined);
         const divTaxVal = cleanNum(divTaxColKey ? r[divTaxColKey] : undefined);
         const bonTaxVal = cleanNum(bonTaxColKey ? r[bonTaxColKey] : undefined);
-        const tax = !isNaN(divTaxVal) ? divTaxVal : bonTaxVal;
+        let tax = !isNaN(divTaxVal) ? divTaxVal : bonTaxVal;
         const net = cleanNum(netColKey ? r[netColKey] : undefined);
+        // Tax-exempt sheets (e.g. MUTUAL FUND CALCULATION) often leave "TAX EXEMPTED" blank ""
+        // or "-" / "NIL" when gross equals net (0% TDS). Treat that explicitly as 0 tax.
+        if (
+          isNaN(tax) &&
+          !isNaN(gross) &&
+          !isNaN(net) &&
+          (isTaxExemptSheet || Math.abs(gross - net) <= 0.05) &&
+          (divTaxColKey || bonTaxColKey)
+        ) {
+          tax = 0;
+        }
         if (!isNaN(gross) && !isNaN(tax) && !isNaN(net) && (gross > 0 || net > 0)) {
           rowsWithFinancials++;
         }

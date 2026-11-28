@@ -52,18 +52,24 @@ export function Breadcrumbs() {
   return (
     <nav
       aria-label="Breadcrumb"
-      className="hidden items-center gap-1 text-sm text-muted-foreground md:flex"
+      className="hidden items-center gap-1 text-sm text-muted-foreground md:flex min-w-0 overflow-hidden"
     >
-      <Link to="/dashboard" className="flex items-center hover:text-foreground" aria-label="Home">
+      <Link
+        to="/dashboard"
+        className="flex shrink-0 items-center hover:text-foreground"
+        aria-label="Home"
+      >
         <Home className="h-3.5 w-3.5" />
       </Link>
       {crumbs.map((c, i) => (
         <Fragment key={c.href}>
-          <ChevronRight className="h-3.5 w-3.5 opacity-50" />
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-50" />
           {i === crumbs.length - 1 ? (
-            <span className="font-medium text-foreground">{c.label}</span>
+            <span className="font-medium text-foreground whitespace-nowrap truncate">
+              {c.label}
+            </span>
           ) : (
-            <Link to={c.href} className="hover:text-foreground">
+            <Link to={c.href} className="hover:text-foreground whitespace-nowrap truncate">
               {c.label}
             </Link>
           )}

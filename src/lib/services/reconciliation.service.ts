@@ -870,6 +870,7 @@ export const ReconciliationService = {
     // 4. Resolve payable IDs and group into per-company payloads
     // Key: company_id (or "__no_company__" for unresolved) → items array
     const itemsPayloadByCompany = new Map<string, any[]>();
+    const unsettledBatchStatsByGroup = new Map<string, { count: number; net: number }>();
 
     for (const r of individualMatches) {
       const groupCid = r.company_id || "__no_company__";
@@ -946,6 +947,22 @@ export const ReconciliationService = {
 
       const lotSuffix = (r as any).lot_name ? `:::${(r as any).lot_name}` : "";
       const groupKey = `${groupCid}${lotSuffix}`;
+
+      const rPayStatus = String((r as any).paymentStatus || "");
+      const needsSettlement =
+        !paymentId &&
+        rPayStatus !== "Paid" &&
+        rPayStatus !== "Completed" &&
+        (r.result === "Matched" ||
+          r.result === "Partial" ||
+          r.result === "Under_Paid" ||
+          r.result === "Over_Paid");
+      if (needsSettlement) {
+        const cur = unsettledBatchStatsByGroup.get(groupKey) || { count: 0, net: 0 };
+        cur.count += 1;
+        cur.net += Number(r.actual_amount || r.expected_amount || 0);
+        unsettledBatchStatsByGroup.set(groupKey, cur);
+      }
 
       if (!itemsPayloadByCompany.has(groupKey)) {
         itemsPayloadByCompany.set(groupKey, []);
@@ -1024,19 +1041,20 @@ export const ReconciliationService = {
         ? `${lotName} (${todayStr})`
         : `Reconciliation Auto-Batch ${todayStr}${resolvedCompanyId ? ` [${resolvedCompanyId.slice(0, 8)}]` : ""}`;
 
-      const batchInfo = {
-        batch_name: batchTitle,
-        company_id: resolvedCompanyId,
-        payable_type: groupDominantType,
-        payment_method: paymentMethod,
-        total_records: groupItems.length,
-        total_net: groupItems.reduce(
-          (acc: number, item: any) => acc + Number(item.actual_amount || item.expected_amount || 0),
-          0,
-        ),
-        total_tax: 0,
-        cds_batch_ref: detectedBatchRef,
-      };
+      const unsettledStats = unsettledBatchStatsByGroup.get(groupKey);
+      const batchInfo =
+        unsettledStats && unsettledStats.count > 0
+          ? {
+              batch_name: batchTitle,
+              company_id: resolvedCompanyId,
+              payable_type: groupDominantType,
+              payment_method: paymentMethod,
+              total_records: unsettledStats.count,
+              total_net: Number(unsettledStats.net.toFixed(2)),
+              total_tax: 0,
+              cds_batch_ref: detectedBatchRef,
+            }
+          : null;
 
       const CHUNK_SIZE = 500;
       const totalChunks = Math.ceil(groupItems.length / CHUNK_SIZE);
@@ -1221,21 +1239,62 @@ export const ReconciliationService = {
         if (tableName && payableId) {
           const rejectRemarks = `Bank Payout Rejected (RJCT): ${rej.notes || "Settlement Bounced"} [${new Date().toISOString().split("T")[0]}]`;
 
+          const { data: activePayments } = await (supabase as any)
+            .from("payments")
+            .select("id, batch_id")
+            .eq("payable_id", payableId)
+            .not("status", "in", '("Failed","Rejected","Returned","Reversed","Cancelled")');
+
+          const activePaymentRows = (activePayments || []) as Array<{
+            id: string;
+            batch_id: string | null;
+          }>;
+
+          if (activePaymentRows.length > 0) {
+            const updatesPayload = activePaymentRows.map((p) => ({
+              payment_id: p.id,
+              status: "Rejected",
+              remarks: rejectRemarks,
+              reversal_reason: rejectRemarks,
+            }));
+
+            const { error: syncErr } = await (supabase as any).rpc(
+              "sync_connectips_payment_results",
+              {
+                p_batch_id: null,
+                p_updates: updatesPayload,
+                p_user_id: null,
+              },
+            );
+
+            if (syncErr) {
+              console.warn(
+                "sync_connectips_payment_results RPC fallback on RJCT:",
+                syncErr.message,
+              );
+              await (supabase as any)
+                .from("payments")
+                .update({
+                  status: "Rejected",
+                  paid_amount: 0,
+                  payment_date: null,
+                  remarks: rejectRemarks,
+                })
+                .eq("payable_id", payableId)
+                .not("status", "in", '("Failed","Rejected","Returned","Reversed","Cancelled")');
+            }
+          }
+
           await (supabase as any)
             .from(tableName)
             .update({
               payment_status: "Pending",
+              paid_amount: 0,
+              payment_date: null,
+              payment_reference: null,
               remarks: rejectRemarks,
             })
             .eq("id", payableId);
-
-          await (supabase as any)
-            .from("payments")
-            .update({
-              status: "Pending",
-              remarks: rejectRemarks,
-            })
-            .eq("payable_id", payableId);
         }
       } catch (rejErr) {
         console.warn("Could not update reject remarks:", rejErr);
@@ -2299,6 +2358,37 @@ export const ReconciliationService = {
       throw new Error(`Failed to generate Bank Reconciliation Statement: ${error.message}`);
     }
     return data as BankReconciliationStatementSummary;
+  },
+
+  async getCompanyBankTransactionDateRange(companyId: string): Promise<{
+    minDate: string | null;
+    maxDate: string | null;
+  }> {
+    if (!companyId) return { minDate: null, maxDate: null };
+    const [{ data: earliest }, { data: latest }] = await Promise.all([
+      (supabase as any)
+        .from("bank_statement_transactions")
+        .select("transaction_date")
+        .eq("company_id", companyId)
+        .neq("reconciliation_status", "ignored")
+        .order("transaction_date", { ascending: true })
+        .limit(1),
+      (supabase as any)
+        .from("bank_statement_transactions")
+        .select("transaction_date")
+        .eq("company_id", companyId)
+        .neq("reconciliation_status", "ignored")
+        .order("transaction_date", { ascending: false })
+        .limit(1),
+    ]);
+    return {
+      minDate: earliest?.[0]?.transaction_date
+        ? String(earliest[0].transaction_date).slice(0, 10)
+        : null,
+      maxDate: latest?.[0]?.transaction_date
+        ? String(latest[0].transaction_date).slice(0, 10)
+        : null,
+    };
   },
 
   async lockReconciliationPeriod(lockInfo: {

@@ -366,11 +366,23 @@ function PaymentsRoute() {
   const { data: fiscalYears = [] } = useQuery({
     queryKey: ["payments-fiscal-years"],
     queryFn: async () => {
-      const { data } = await supabase
-        .from("fiscal_years")
-        .select("fiscal_year")
-        .order("fiscal_year", { ascending: false });
-      return (data || []).map((f) => f.fiscal_year);
+      const [fyTable, compTable, divFys, intFys, mfFys] = await Promise.all([
+        supabase
+          .from("fiscal_years")
+          .select("fiscal_year")
+          .order("fiscal_year", { ascending: false }),
+        supabase.from("companies").select("fiscal_year"),
+        (supabase as any).rpc("get_distinct_fiscal_years", { p_table: "dividend_payables" }),
+        (supabase as any).rpc("get_distinct_fiscal_years", { p_table: "interest_payables" }),
+        (supabase as any).rpc("get_distinct_fiscal_years", { p_table: "mutual_fund_payables" }),
+      ]);
+      const merged = new Set<string>();
+      for (const row of fyTable.data || []) if (row.fiscal_year) merged.add(row.fiscal_year);
+      for (const row of compTable.data || []) if (row.fiscal_year) merged.add(row.fiscal_year);
+      for (const fy of (divFys.data || []) as string[]) if (fy) merged.add(fy);
+      for (const fy of (intFys.data || []) as string[]) if (fy) merged.add(fy);
+      for (const fy of (mfFys.data || []) as string[]) if (fy) merged.add(fy);
+      return Array.from(merged).sort((a, b) => b.localeCompare(a));
     },
   });
 
@@ -1240,13 +1252,13 @@ function PaymentsRoute() {
   }, [lineItems, safeLineItemsPage, lineItemsPageSize]);
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between flex-wrap gap-3">
         <PageHeader
           title="Payments Module"
           description="Create payment batches, manage installment tranches, generate clearing manifests (ConnectIPS, NCHL, RTGS), and authorize disbursements."
         />
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <BankErrorUploadDialog
             companyId={selectedCompany}
             onSuccess={() => {
@@ -1305,44 +1317,46 @@ function PaymentsRoute() {
       <DeclarationSummaryCard companyId={selectedCompany} />
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <Card className="border-border/60 shadow-sm hover:shadow transition-shadow min-w-0">
           <CardContent className="pt-4 pb-3">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
               Total Payment Batches
             </p>
-            <p className="text-2xl font-bold font-mono tracking-tight mt-1">{totalBatchCount}</p>
+            <p className="text-xl xl:text-2xl font-bold font-mono tracking-tight mt-1">
+              {totalBatchCount}
+            </p>
             <p className="text-[11px] text-muted-foreground mt-0.5">Across all payable types</p>
           </CardContent>
         </Card>
-        <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
+        <Card className="border-border/60 shadow-sm hover:shadow transition-shadow min-w-0">
           <CardContent className="pt-4 pb-3">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
               Total Batch Value
             </p>
-            <p className="text-2xl font-bold font-mono tracking-tight mt-1">
+            <p className="text-lg xl:text-xl font-bold font-mono tracking-tight mt-1 break-words">
               NPR {totalBatchAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </p>
             <p className="text-[11px] text-muted-foreground mt-0.5">Disbursement gross sum</p>
           </CardContent>
         </Card>
-        <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
+        <Card className="border-border/60 shadow-sm hover:shadow transition-shadow min-w-0">
           <CardContent className="pt-4 pb-3">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
               Draft Batches
             </p>
-            <p className="text-2xl font-bold font-mono tracking-tight mt-1">
+            <p className="text-xl xl:text-2xl font-bold font-mono tracking-tight mt-1">
               {filteredBatches.filter((p: any) => p.status === "Draft").length}
             </p>
             <p className="text-[11px] text-muted-foreground mt-0.5">Staged for verification</p>
           </CardContent>
         </Card>
-        <Card className="border-border/60 shadow-sm hover:shadow transition-shadow">
+        <Card className="border-border/60 shadow-sm hover:shadow transition-shadow min-w-0">
           <CardContent className="pt-4 pb-3">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
               Approved Batches
             </p>
-            <p className="text-2xl font-bold font-mono tracking-tight mt-1">
+            <p className="text-xl xl:text-2xl font-bold font-mono tracking-tight mt-1">
               {filteredBatches.filter((p: any) => p.status === "Approved").length}
             </p>
             <p className="text-[11px] text-muted-foreground mt-0.5">

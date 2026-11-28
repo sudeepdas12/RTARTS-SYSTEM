@@ -79,15 +79,16 @@ export function AppShell({ children }: { children: ReactNode }) {
     <SidebarProvider>
       <AppSidebar />
       <SidebarInset>
-        <header className="sticky top-0 z-10 flex h-14 items-center gap-3 border-b glass px-4 shrink-0 transition-colors">
-          <SidebarTrigger />
-          <Breadcrumbs />
-          <div className="flex-1" />
+        <header className="sticky top-0 z-10 flex h-14 items-center gap-2 md:gap-3 border-b glass px-3 md:px-4 shrink-0 transition-colors min-w-0">
+          <SidebarTrigger className="shrink-0" />
+          <div className="min-w-0 flex-1 overflow-hidden">
+            <Breadcrumbs />
+          </div>
           <Button
             variant="outline"
             size="sm"
             onClick={() => setOpen(true)}
-            className="hidden gap-2 text-muted-foreground sm:inline-flex hover-lift"
+            className="hidden gap-2 text-muted-foreground sm:inline-flex shrink-0 hover-lift"
             aria-label="Open command palette"
           >
             <Search className="h-4 w-4" />
@@ -166,7 +167,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <div className="hidden items-center gap-1 md:flex">
+          <div className="hidden items-center gap-1 shrink-0 md:flex">
             {roles.map((r) => (
               <Badge key={r} variant="secondary" className="capitalize shadow-sm">
                 {r.replace("_", " ")}
@@ -175,9 +176,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="gap-2 hover-lift">
-                <User className="h-4 w-4" />
-                <span className="hidden max-w-[160px] truncate sm:inline">{user?.email}</span>
+              <Button variant="ghost" size="sm" className="gap-2 shrink-0 hover-lift">
+                <User className="h-4 w-4 shrink-0" />
+                <span className="hidden max-w-[140px] lg:max-w-[200px] truncate sm:inline">
+                  {user?.email}
+                </span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="glass-card">
@@ -192,7 +195,9 @@ export function AppShell({ children }: { children: ReactNode }) {
             </DropdownMenuContent>
           </DropdownMenu>
         </header>
-        <div className="flex-1 p-6 overflow-auto min-w-0 animate-fade-in">{children}</div>
+        <div className="flex-1 p-6 overflow-y-auto overflow-x-hidden min-w-0 animate-fade-in">
+          {children}
+        </div>
       </SidebarInset>
       <CommandPalette open={open} onOpenChange={setOpen} />
     </SidebarProvider>

@@ -243,11 +243,21 @@ test.describe("Comprehensive Upload & Ingestion Across All Sections", () => {
     const clientFileInput = page.locator('input[type="file"]').first();
     await clientFileInput.setInputFiles(path.join(FIXTURES_DIR, "section5_clients_master.xlsx"));
 
+    const targetCompDialog = page.locator("[role='dialog']:has-text('Select Target Company')");
+    const showedTargetDialog = await targetCompDialog
+      .waitFor({ state: "visible", timeout: 5000 })
+      .then(() => true)
+      .catch(() => false);
+    if (showedTargetDialog) {
+      await targetCompDialog.locator("button:has-text('Import to Company')").first().click();
+    }
+
     // Verify toast or notification of import success
     await expect(
       page
         .locator("text=imported")
-        .or(page.locator("text=Successfully").or(page.locator("[data-sonner-toast]"))),
+        .or(page.locator("text=Successfully").or(page.locator("[data-sonner-toast]")))
+        .first(),
     ).toBeVisible({ timeout: 15000 });
   });
 
@@ -263,7 +273,8 @@ test.describe("Comprehensive Upload & Ingestion Across All Sections", () => {
     await expect(
       page
         .locator("text=imported")
-        .or(page.locator("text=saved").or(page.locator("[data-sonner-toast]"))),
+        .or(page.locator("text=saved").or(page.locator("[data-sonner-toast]")))
+        .first(),
     ).toBeVisible({ timeout: 15000 });
   });
 

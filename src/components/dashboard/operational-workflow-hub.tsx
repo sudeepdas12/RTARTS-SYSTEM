@@ -163,7 +163,7 @@ export function OperationalWorkflowHub({
             </span>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-2">
             {steps.map((st) => {
               const Icon = st.icon;
               return (
@@ -176,7 +176,7 @@ export function OperationalWorkflowHub({
                     {st.num}
                   </div>
                   <Icon className="h-4 w-4 text-muted-foreground group-hover:text-primary mb-1" />
-                  <span className="text-xs font-medium line-clamp-1">{st.label}</span>
+                  <span className="text-xs font-medium leading-tight">{st.label}</span>
                 </Link>
               );
             })}
